@@ -1,0 +1,1 @@
+from app.technical_analysis.analyzer import analyze_timeframe

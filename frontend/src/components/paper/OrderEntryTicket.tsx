@@ -1,0 +1,285 @@
+'use client';
+
+import { useState } from 'react';
+import { OrderPayload, BasketOrderPayload } from '@/lib/types';
+import { Send, Zap, PlusCircle } from 'lucide-react';
+
+export function OrderEntryTicket({
+  onPlaceOrder,
+  onPlaceBasket,
+  loading,
+}: {
+  onPlaceOrder: (order: OrderPayload) => void;
+  onPlaceBasket: (basket: BasketOrderPayload) => void;
+  loading: boolean;
+}) {
+  const [activeTab, setActiveTab] = useState<'SINGLE' | 'BASKET'>('SINGLE');
+
+  // Single order state
+  const [symbol, setSymbol] = useState('NIFTY24800CE');
+  const [underlying, setUnderlying] = useState('NIFTY');
+  const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
+  const [product, setProduct] = useState<'INTRADAY' | 'CARRYFORWARD'>('INTRADAY');
+  const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
+  const [quantity, setQuantity] = useState(75);
+  const [price, setPrice] = useState(150.0);
+
+  const handleSingleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onPlaceOrder({
+      symbol: symbol.trim().toUpperCase(),
+      underlying,
+      side,
+      product,
+      order_type: orderType,
+      quantity: Number(quantity),
+      price: orderType === 'MARKET' ? 0.0 : Number(price),
+    });
+  };
+
+  const handlePresetStraddle = () => {
+    onPlaceBasket({
+      name: '9:20 Intraday Short Straddle',
+      orders: [
+        { symbol: `${underlying}ATMCE`, underlying, side: 'SELL', product: 'INTRADAY', quantity: 75, price: 180.0 },
+        { symbol: `${underlying}ATMPE`, underlying, side: 'SELL', product: 'INTRADAY', quantity: 75, price: 175.0 },
+      ],
+    });
+  };
+
+  const handlePresetBullCall = () => {
+    onPlaceBasket({
+      name: 'Bull Call Debit Spread',
+      orders: [
+        { symbol: `${underlying}ATMCE`, underlying, side: 'BUY', product: 'INTRADAY', quantity: 75, price: 180.0 },
+        { symbol: `${underlying}OTMCE`, underlying, side: 'SELL', product: 'INTRADAY', quantity: 75, price: 65.0 },
+      ],
+    });
+  };
+
+  const handlePresetIronCondor = () => {
+    onPlaceBasket({
+      name: 'Weekly Defined-Risk Iron Condor',
+      orders: [
+        { symbol: `${underlying}OTMCE`, underlying, side: 'SELL', product: 'CARRYFORWARD', quantity: 75, price: 55.0 },
+        { symbol: `${underlying}OTMPE`, underlying, side: 'SELL', product: 'CARRYFORWARD', quantity: 75, price: 50.0 },
+        { symbol: `${underlying}WINGCE`, underlying, side: 'BUY', product: 'CARRYFORWARD', quantity: 75, price: 15.0 },
+        { symbol: `${underlying}WINGPE`, underlying, side: 'BUY', product: 'CARRYFORWARD', quantity: 75, price: 12.0 },
+      ],
+    });
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
+      {/* Sub Tabs */}
+      <div className="flex items-center justify-between border-b border-border pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('SINGLE')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'SINGLE'
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Single Order Ticket
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('BASKET')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'BASKET'
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            1-Click Strategy Baskets
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'SINGLE' ? (
+        <form onSubmit={handleSingleSubmit} className="space-y-3 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* Symbol */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Symbol / Strike</label>
+              <input
+                type="text"
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden uppercase"
+              />
+            </div>
+
+            {/* Underlying */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Underlying</label>
+              <select
+                value={underlying}
+                onChange={(e) => setUnderlying(e.target.value)}
+                className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
+              >
+                <option value="NIFTY">NIFTY</option>
+                <option value="BANKNIFTY">BANKNIFTY</option>
+                <option value="FINNIFTY">FINNIFTY</option>
+                <option value="SENSEX">SENSEX</option>
+              </select>
+            </div>
+
+            {/* Side */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Side</label>
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSide('BUY')}
+                  className={`py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    side === 'BUY'
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : 'bg-secondary text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  BUY
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSide('SELL')}
+                  className={`py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    side === 'SELL'
+                      ? 'bg-rose-500 text-white shadow-xs'
+                      : 'bg-secondary text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  SELL
+                </button>
+              </div>
+            </div>
+
+            {/* Product */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Product</label>
+              <select
+                value={product}
+                onChange={(e) => setProduct(e.target.value as 'INTRADAY' | 'CARRYFORWARD')}
+                className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
+              >
+                <option value="INTRADAY">MIS (Intraday)</option>
+                <option value="CARRYFORWARD">NRML (Overnight)</option>
+              </select>
+            </div>
+
+            {/* Quantity */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Quantity</label>
+              <input
+                type="number"
+                step={25}
+                min={25}
+                value={quantity}
+                onChange={(e) => setQuantity(Number(e.target.value))}
+                className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden"
+              />
+            </div>
+
+            {/* Order Type */}
+            <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Order Type</label>
+              <select
+                value={orderType}
+                onChange={(e) => setOrderType(e.target.value as 'MARKET' | 'LIMIT')}
+                className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
+              >
+                <option value="MARKET">Market</option>
+                <option value="LIMIT">Limit</option>
+              </select>
+            </div>
+
+            {/* Limit Price */}
+            {orderType === 'LIMIT' && (
+              <div className="space-y-1">
+                <label className="text-muted-foreground font-semibold">Limit Price (₹)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  value={price}
+                  onChange={(e) => setPrice(Number(e.target.value))}
+                  className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden"
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-2.5 rounded-lg text-white font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 ${
+              side === 'BUY' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'
+            }`}
+          >
+            <Send className="w-4 h-4" />
+            <span>Place Virtual {side} Order</span>
+          </button>
+        </form>
+      ) : (
+        /* Basket Presets */
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-secondary/40 border border-border rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+              <Zap className="w-4 h-4 text-primary" />
+              <span>9:20 Short Straddle</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Sell ATM Call + Sell ATM Put. Captures theta decay.
+            </p>
+            <button
+              onClick={handlePresetStraddle}
+              disabled={loading}
+              className="w-full py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Execute 2-Leg Straddle</span>
+            </button>
+          </div>
+
+          <div className="bg-secondary/40 border border-border rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+              <Zap className="w-4 h-4 text-emerald-400" />
+              <span>Bull Call Spread</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Buy ATM Call + Sell OTM Call. Defined-risk bullish debit spread.
+            </p>
+            <button
+              onClick={handlePresetBullCall}
+              disabled={loading}
+              className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Execute 2-Leg Bull Spread</span>
+            </button>
+          </div>
+
+          <div className="bg-secondary/40 border border-border rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+              <Zap className="w-4 h-4 text-purple-400" />
+              <span>Iron Condor</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Sell OTM CE/PE + Buy protective wings. 4-leg defined risk.
+            </p>
+            <button
+              onClick={handlePresetIronCondor}
+              disabled={loading}
+              className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Execute 4-Leg Iron Condor</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
