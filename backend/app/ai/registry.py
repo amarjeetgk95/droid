@@ -24,7 +24,15 @@ def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
     if p == "gemini":
         return GeminiProvider(api_key=kwargs.get("geminiApiKey") or kwargs.get("api_key"), model=kwargs.get("geminiModel") or kwargs.get("model"))
     if p == "openrouter":
-        return OpenRouterProvider(api_key=kwargs.get("openRouterApiKey") or kwargs.get("api_key"), model=kwargs.get("openRouterModel") or kwargs.get("model"))
+        # Fallback to server-side key if frontend key empty (server-side OPENROUTER_API_KEY is primary)
+        frontend_key = (kwargs.get("openRouterApiKey") or kwargs.get("api_key") or "").strip()
+        if not frontend_key:
+            try:
+                from app.core.config import settings as _cfg
+                frontend_key = (getattr(_cfg, "openrouter_api_key", "") or getattr(_cfg, "OPENROUTER_API_KEY", "") or "").strip()
+            except Exception:
+                frontend_key = ""
+        return OpenRouterProvider(api_key=frontend_key, model=kwargs.get("openRouterModel") or kwargs.get("model"))
     if p == "ollama":
         return OllamaProvider(base_url=kwargs.get("ollamaBaseUrl") or kwargs.get("base_url"), model=kwargs.get("ollamaModel") or kwargs.get("model"))
     if p in ("mock_ai", "mock"):

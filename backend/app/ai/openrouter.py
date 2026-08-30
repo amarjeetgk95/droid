@@ -52,17 +52,50 @@ class OpenRouterProvider(BaseLLMProvider):
                 if resp.status_code != 200:
                     raise ValueError(f"OpenRouter: {resp.status_code} – {resp.text[:300]}")
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"]
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as e:
+                    raise ValueError(f"OpenRouter returned unexpected shape: {json.dumps(data)[:400]}")
                 # content may be JSON string
                 if isinstance(content, str):
-                    parsed = json.loads(content)
+                    # Strip markdown fences if present
+                    c = content.strip()
+                    if c.startswith("```"):
+                        # Remove ```json ... ```
+                        parts = c.split("```")
+                        # parts[1] may be 'json\n{...}' or just json
+                        if len(parts) >= 2:
+                            c = parts[1]
+                            if c.lstrip().startswith("json"):
+                                c = c.lstrip()[4:]
+                            c = c.strip()
+                        else:
+                            c = c.strip("`").strip()
+                    try:
+                        parsed = json.loads(c)
+                    except json.JSONDecodeError as je:
+                        raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]} (json error: {je})")
                 else:
                     parsed = content
+                # Strict JSON schema validation – fail honestly if missing required fields
+                required_fields = ["market_bias", "confidence", "executive_summary", "options_interpretation", "futures_flow_analysis", "regime_and_levels", "recommended_strategy_framework", "risk_management_notes"]
+                missing = [f for f in required_fields if f not in parsed or parsed.get(f) in (None, "")]
+                if missing:
+                    raise ValueError(f"OpenRouter response missing required fields: {missing}. Got keys: {list(parsed.keys())}. Raw: {json.dumps(parsed)[:400]}")
+                # Validate market_bias literal
+                if parsed.get("market_bias") not in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
+                    raise ValueError(f"OpenRouter returned invalid market_bias '{parsed.get('market_bias')}'. Expected BULLISH|BEARISH|NEUTRAL|VOLATILE. Raw: {json.dumps(parsed)[:300]}")
+                try:
+                    conf_val = float(parsed.get("confidence", 80.0))
+                except Exception:
+                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'. Raw: {json.dumps(parsed)[:300]}")
+                if not (0 <= conf_val <= 100):
+                    raise ValueError(f"OpenRouter confidence out of range 0-100: {conf_val}. Raw: {json.dumps(parsed)[:300]}")
                 return AIInsightResponse(
                     symbol=symbol,
                     timestamp=datetime.now(timezone.utc),
                     market_bias=parsed.get("market_bias", "NEUTRAL"),
-                    confidence=float(parsed.get("confidence", 80.0)),
+                    confidence=conf_val,
                     executive_summary=parsed.get("executive_summary", ""),
                     options_interpretation=parsed.get("options_interpretation", ""),
                     futures_flow_analysis=parsed.get("futures_flow_analysis", ""),

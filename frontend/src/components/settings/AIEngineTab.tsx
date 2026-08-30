@@ -124,10 +124,19 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     }
 
     try {
-      const effectiveOpenRouterModel =
-        settings.openRouterSelectedModel && settings.openRouterSelectedModel !== 'auto'
-          ? settings.openRouterSelectedModel
-          : settings.openRouterModel;
+      // For OpenRouter, always send 'auto' when Auto is selected – backend resolves to best free via catalog.
+      // Never fallback to legacy hardcoded paid model (anthropic/claude-3.7-sonnet) when Auto is on.
+      let effectiveOpenRouterModel: string = 'auto';
+      if (settings.provider === 'openrouter') {
+        const sel = (settings.openRouterSelectedModel || 'auto').trim();
+        if (sel && sel.toLowerCase() !== 'auto' && sel.toLowerCase() !== 'auto — best free for trading') {
+          effectiveOpenRouterModel = sel;
+        } else {
+          effectiveOpenRouterModel = 'auto';
+        }
+      } else {
+        effectiveOpenRouterModel = settings.openRouterModel || 'auto';
+      }
       const payload: any = {
         provider: settings.provider,
         symbol: 'NIFTY',
@@ -593,45 +602,69 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
       </div>
 
       {/* 4. Live Provider Verification – Strict, No Mock Fallback */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs overflow-hidden">
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            Live Provider Verification
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 font-mono">NO MOCK FALLBACK</span>
+          <h3 className="text-sm font-semibold text-foreground flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              Live Provider Verification
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 font-mono whitespace-nowrap">NO MOCK FALLBACK</span>
           </h3>
           <p className="text-xs text-muted-foreground leading-relaxed">
             Runs a <strong>real</strong> end-to-end test with live NIFTY market context (regime + futures + options). Measures latency, validates JSON schema, and <strong>fails honestly</strong> if Ollama is not installed, API key is missing/invalid, or model is not pulled. No mock data is used.
           </p>
           {settings.provider === 'ollama' && (settings.ollamaBaseUrl.includes('localhost') || settings.ollamaBaseUrl.includes('127.0.0.1')) && (
-            <p className="text-[11px] p-2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-600">
+            <p className="text-[11px] p-2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-600 break-words">
               Ollama is local – the test does a <strong>direct browser fetch</strong> to {settings.ollamaBaseUrl}/api/tags (Render cannot reach localhost). Ensure <code>ollama serve</code> is running and CORS is allowed.
             </p>
           )}
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border/50">
-          <div className="flex items-center gap-2 text-[11px] font-mono">
-            <span className="text-muted-foreground">Provider:</span>
-            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground font-semibold">{settings.provider}</span>
-            <span className="text-muted-foreground">Model:</span>
-            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground">
-              {settings.provider === 'openrouter'
-                ? settings.openRouterSelectedModel === 'auto'
-                  ? `Auto — Best Free (${settings.openRouterModel})`
-                  : settings.openRouterSelectedModel || settings.openRouterModel
-                : activeModelOption?.name || settings.geminiModel || settings.openRouterModel || settings.ollamaModel || '—'}
-            </span>
+        <div className="flex flex-col gap-3 pt-3 border-t border-border/50">
+          {/* Provider + Model — responsive, no mesh */}
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 items-start">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono min-w-0">
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-muted-foreground whitespace-nowrap">Provider:</span>
+                <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground font-semibold whitespace-nowrap">{settings.provider}</span>
+              </div>
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <span className="text-muted-foreground whitespace-nowrap shrink-0">Model:</span>
+                <span
+                  className="px-2 py-1 rounded bg-secondary border border-border text-foreground truncate max-w-[220px] sm:max-w-[320px] lg:max-w-[380px]"
+                  title={
+                    settings.provider === 'openrouter'
+                      ? settings.openRouterSelectedModel === 'auto' || !settings.openRouterSelectedModel
+                        ? 'Auto — Best Free (resolved via catalog)'
+                        : settings.openRouterSelectedModel
+                      : activeModelOption?.name || settings.geminiModel || settings.ollamaModel || '—'
+                  }
+                >
+                  {(() => {
+                    if (settings.provider === 'openrouter') {
+                      const sel = (settings.openRouterSelectedModel || 'auto').trim();
+                      if (!sel || sel.toLowerCase() === 'auto' || sel.toLowerCase().includes('best free')) return 'Auto — Best Free';
+                      return sel;
+                    }
+                    return activeModelOption?.name || settings.geminiModel || settings.ollamaModel || '—';
+                  })()}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleTestAI}
+              disabled={testing}
+              className="flex items-center justify-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs w-full lg:w-auto shrink-0"
+            >
+              <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+              <span>{testing ? 'Testing…' : 'Run Live Test'}</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={handleTestAI}
-            disabled={testing}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs self-start sm:self-auto"
-          >
-            <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-            <span>{testing ? 'Testing…' : 'Run Live Test'}</span>
-          </button>
+          {settings.provider === 'openrouter' && (settings.openRouterSelectedModel === 'auto' || !settings.openRouterSelectedModel) && (
+            <p className="text-[11px] text-muted-foreground -mt-1">Auto resolves to best <span className="font-semibold text-emerald-600">FREE</span> model from live catalog (top trading_rank). No hard-coded paid model is used.</p>
+          )}
         </div>
 
         {/* Pre-flight warnings */}

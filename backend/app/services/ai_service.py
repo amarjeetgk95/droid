@@ -272,12 +272,51 @@ class AIService:
                 "hint": "Frontend will run a direct browser check to your Ollama instance. Ensure Ollama is running and CORS is allowed, or use a remote Ollama URL.",
             }
 
+        # Strict OpenRouter validation: enforce FREE-only and resolve `auto` before provider instantiation
+        # This prevents paid model leakage and ensures test uses real catalog (no mock fallback)
+        effective_openrouter_model = openRouterModel
+        if provider.lower() == "openrouter":
+            from app.services.openrouter_catalog import validate_model_or_raise
+            from app.core.config import settings as _cfg
+            # Derive free_only from server setting (single source of truth for strict mode)
+            effective_free_only = getattr(_cfg, "openrouter_free_only", True)
+            # Resolve model_id: 'auto' or None -> best free; otherwise validate supplied id
+            raw_model = (openRouterModel or "auto").strip()
+            if raw_model.lower() in ("auto", "auto — best free for trading", "auto-best-free-for-trading", ""):
+                raw_model = "auto"
+            try:
+                validated = await validate_model_or_raise(raw_model, free_only=effective_free_only)
+                effective_openrouter_model = validated["id"]
+            except ValueError as ve:
+                # Honest failure – includes pricing guard message
+                return {
+                    "success": False,
+                    "provider": "openrouter",
+                    "model": raw_model,
+                    "latency_ms": 0,
+                    "schema_valid": False,
+                    "is_mock": False,
+                    "error": str(ve),
+                    "hint": "Select a FREE OpenRouter model (prompt=0 & completion=0). Try Auto — Best Free, or refresh the model catalog.",
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "provider": "openrouter",
+                    "model": raw_model,
+                    "latency_ms": 0,
+                    "schema_valid": False,
+                    "is_mock": False,
+                    "error": f"OpenRouter catalog validation failed: {str(e)[:400]}",
+                    "hint": "Catalog may be temporarily unavailable. Retry with Refresh Models.",
+                }
+
         llm = create_provider_for_test(
             provider,
             geminiApiKey=geminiApiKey,
             geminiModel=geminiModel,
             openRouterApiKey=openRouterApiKey,
-            openRouterModel=openRouterModel,
+            openRouterModel=effective_openrouter_model,
             ollamaBaseUrl=ollamaBaseUrl,
             ollamaModel=ollamaModel,
         )
