@@ -65,6 +65,7 @@ class GrowwProvider(MarketDataProvider):
         self.token_manager.register_refresh_callback(self._refresh_callback)
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
+        self._last_auth_attempt: float = 0
 
         # Groww uses its own symbol map; these are the canonical trading symbols.
         self.symbol_map = {
@@ -140,6 +141,11 @@ class GrowwProvider(MarketDataProvider):
     async def _refresh_callback(self) -> TokenInfo:
         """Refresh callback (registered on the token manager). Fetches a fresh
         Groww access token via the checksum/TOTP flow and persists it."""
+        import time as _time
+        now = _time.time()
+        if now - self._last_auth_attempt < 30:
+            raise RuntimeError(f"Groww token refresh skipped: rate-limit guard (last attempt {int(now - self._last_auth_attempt)}s ago, cooldown 30s)")
+        self._last_auth_attempt = now
         token = await self._fetch_access_token()
         if not token:
             last_err = getattr(self, "_last_auth_error", "unknown error")
