@@ -315,17 +315,7 @@ export default function SettingsPage() {
         const { mergeAppSettingsFromSupabase } = await import('@/lib/settings');
         return mergeAppSettingsFromSupabase(res.app_settings);
       }
-      // Fallback: legacy flat columns → synthesize (backend also does this now)
-      if (res) {
-        const { mergeAppSettingsFromSupabase } = await import('@/lib/settings');
-        // If no app_settings blob, build minimal preferences from legacy fields
-        const legacyBlob = {
-          preferences: { theme: (res as unknown as { theme: string }).theme, defaultIndexSymbol: (res as unknown as { default_symbol: string }).default_symbol },
-          ai: { provider: (res as unknown as { preferred_ai_provider: string }).preferred_ai_provider, geminiModel: (res as unknown as { preferred_ai_model: string }).preferred_ai_model },
-          broker: { provider: (res as unknown as { preferred_market_provider: string }).preferred_market_provider },
-        };
-        return mergeAppSettingsFromSupabase(legacyBlob);
-      }
+      // No app_settings blob — keep localStorage settings (don't clobber real credentials with defaults)
       return null;
     } catch {
       return null; // offline or 404 → keep localStorage
