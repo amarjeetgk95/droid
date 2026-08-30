@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 interface Props { data: any; timeframe?: string; }
 
 function tfMinutes(tf: string): number {
-  const m: Record<string, number> = { '1m':1, '5m':5, '15m':15, '1h':60, '30m':30, '4h':240, '1D':1440 };
+  const m: Record<string, number> = { '1m':1, '5m':5, '15m':15, '1h':60, '30m':30, '4h':240, '1D':1440, '1d':1440 };
   return m[tf] ?? 15;
 }
 
@@ -15,11 +15,21 @@ export function ForecastChart({ data, timeframe = '15m' }: Props) {
   const [showOverlays, setShowOverlays] = useState({ vwap:true, ema:true, walls:true });
 
   if (!data) return null;
-  const activeTf = data.timeframes?.[timeframe] ? timeframe : Object.keys(data.timeframes||{})[0] || '15m';
+  const activeTf = data.timeframes?.[timeframe] ? timeframe : (data.timeframes?.['15m'] ? '15m' : Object.keys(data.timeframes||{})[0] || '15m');
   const tfData = data.timeframes?.[activeTf];
   const forecast = data.forecasts?.[activeTf];
   const candles: any[] = data.candles?.[activeTf] || [];
   const fno = data.fno;
+  const isUnavailable = (tfData as any)?.data_unavailable || (forecast as any)?.data_unavailable || candles.length === 0;
+
+  if (isUnavailable) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-8 text-center">
+        <p className="text-sm font-semibold text-amber-700">Data unavailable</p>
+        <p className="text-xs text-muted-foreground mt-1">No market data for {data.symbol} — {activeTf}. No substitution is made. Timeframes: 1m • 5m • 15m • 1h • 4h • 1D. Fixed universe: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BTC, ETH, SOL.</p>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (!containerRef.current || !candles.length) return;
@@ -61,7 +71,7 @@ export function ForecastChart({ data, timeframe = '15m' }: Props) {
       }));
       candleSeries.setData(candleData);
 
-      // Support / Resistance lines
+      // Support / Resistance + Invalidation / Breakout + Entry/Target zones
       if (tfData?.support_resistance) {
         const sr = tfData.support_resistance;
         if (sr.support) {
@@ -70,11 +80,26 @@ export function ForecastChart({ data, timeframe = '15m' }: Props) {
         if (sr.resistance) {
           candleSeries.createPriceLine({ price: sr.resistance, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: `R ${sr.resistance}` });
         }
+        // Breakout / Breakdown levels (swing)
+        if (tfData?.price_action?.swing_high) {
+          candleSeries.createPriceLine({ price: tfData.price_action.swing_high, color: '#f59e0b', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `Breakout ${tfData.price_action.swing_high}` });
+        }
+        if (tfData?.price_action?.swing_low) {
+          candleSeries.createPriceLine({ price: tfData.price_action.swing_low, color: '#8b5cf6', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `Breakdown ${tfData.price_action.swing_low}` });
+        }
         // F&O walls
         if (showOverlays.walls && fno?.available) {
           if (fno.call_wall) candleSeries.createPriceLine({ price: fno.call_wall, color: '#f97316', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `Call Wall ${fno.call_wall}` });
           if (fno.put_wall) candleSeries.createPriceLine({ price: fno.put_wall, color: '#06b6d4', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `Put Wall ${fno.put_wall}` });
           if (fno.max_pain) candleSeries.createPriceLine({ price: fno.max_pain, color: '#a855f7', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: `Max Pain ${fno.max_pain}` });
+        }
+        // Invalidation + Entry/Target from forecast
+        if (forecast?.invalidation_level) {
+          candleSeries.createPriceLine({ price: forecast.invalidation_level, color: '#ef4444', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: `Invalidation ${forecast.invalidation_level}` });
+        }
+        if (forecast?.expected_range) {
+          const entry = forecast.current_price ?? tfData?.current_price;
+          if (entry) candleSeries.createPriceLine({ price: entry, color: '#6366f1', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: `Entry zone ${Number(entry).toFixed(2)}` });
         }
       }
 
@@ -180,10 +205,10 @@ export function ForecastChart({ data, timeframe = '15m' }: Props) {
 
       {forecast && (
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Direction (PREDICTED)</div><div>↑ {(forecast.direction.up*100).toFixed(0)}% • → {(forecast.direction.sideways*100).toFixed(0)}% • ↓ {(forecast.direction.down*100).toFixed(0)}%</div></div>
-          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Horizon</div><div>{forecast.horizon_minutes} min • {activeTf}</div></div>
-          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Expected range (PREDICTED)</div><div>{forecast.expected_range.low.toFixed(2)} – {forecast.expected_range.high.toFixed(2)}</div><div className="text-[10px]">Median ± {forecast.expected_move_percent.toFixed(2)}%</div></div>
-          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Confidence</div><div className={`font-semibold ${forecast.confidence==='HIGH'?'text-green-600':forecast.confidence==='MODERATE'?'text-amber-600':'text-muted-foreground'}`}>{forecast.confidence}</div><div className="text-[10px]">Generated {new Date(data.generated_at).toLocaleTimeString()} • Data age {data.data_age_seconds}s</div></div>
+          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Direction — {forecast.direction_label || ''} (PREDICTED)</div><div>↑ {(forecast.direction.up*100).toFixed(0)}% • → {(forecast.direction.sideways*100).toFixed(0)}% • ↓ {(forecast.direction.down*100).toFixed(0)}% <span className="ml-1">{forecast.mixed_low_confidence ? '(Mixed / Low Confidence)' : ''}</span></div><div className="text-[10px]">{forecast.reason || ''}</div></div>
+          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Horizon • Market Regime • Bias</div><div>{forecast.horizon_minutes} min • {activeTf} • {forecast.market_regime}</div><div className="text-[10px]">Tech {forecast.technical_bias} • Derivatives {forecast.derivatives_bias} • {forecast.confidence} ({forecast.confidence_percent ?? forecast.confidence_score}%)</div></div>
+          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Expected range (PREDICTED) • Key levels</div><div>{forecast.expected_range.low.toFixed(2)} – {forecast.expected_range.high.toFixed(2)}</div><div className="text-[10px]">Support {forecast.key_support ?? '—'} • Resistance {forecast.key_resistance ?? '—'} • Median ± {forecast.expected_move_percent.toFixed(2)}%</div></div>
+          <div className="bg-muted rounded p-2"><div className="text-muted-foreground">Invalidation • Risk</div><div className={`font-semibold ${forecast.confidence==='HIGH'?'text-green-600':forecast.confidence==='MODERATE'?'text-amber-600':'text-muted-foreground'}`}>{forecast.invalidation_level ?? '—'} • {forecast.confidence}</div><div className="text-[10px]">Current {forecast.current_price ?? tfData?.current_price} • Buy/Sell bias {forecast.technical_bias} • Generated {new Date(data.generated_at).toLocaleTimeString()}</div></div>
         </div>
       )}
 

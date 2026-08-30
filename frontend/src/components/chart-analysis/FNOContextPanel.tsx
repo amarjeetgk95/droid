@@ -29,7 +29,9 @@ export function FNOContextPanel({ data }: { data: any }) {
         <div>Greeks (ATM): Δ {(fno.atm_greeks?.call?.delta ?? fno.atm_greeks?.put?.delta ?? '—')?.toString().slice(0,6)}</div>
       </div>
       {fno.near_expiry_guard_active && <p className="text-xs text-amber-600 mt-2">Near expiry (≤3d) — rollover guard active, no Section 8 hard stop; assessment continues with daily/weekly lens.</p>}
-      <p className="text-xs text-muted-foreground mt-2">F&O engine separate from technical analysis. Values unavailable for non-F&O instruments (e.g., BTC).</p>
+      {['BTC','ETH','SOL'].includes(data?.symbol) && <p className="text-xs text-muted-foreground mt-2">Crypto derivatives: perpetual futures price/volume, OI, funding rate, basis, liquidations, long/short positioning, spot-vs-futures, options OI/IV/put-call positioning & expiry where available — real data only.</p>}
+      {['NIFTY','BANKNIFTY','FINNIFTY','SENSEX'].includes(data?.symbol) && <p className="text-xs text-muted-foreground mt-2">Index F&O: futures price/volume/OI/change/basis, option-chain, Call/Put OI & change, PCR/IV/Greeks/max pain/walls/expiry/rollover where available — real data only.</p>}
+      {!['NIFTY','BANKNIFTY','FINNIFTY','SENSEX','BTC','ETH','SOL'].includes(data?.symbol) && <p className="text-xs text-muted-foreground mt-2">F&O engine separate from technical analysis.</p>}
     </div>
   );
 }

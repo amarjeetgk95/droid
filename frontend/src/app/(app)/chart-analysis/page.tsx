@@ -31,15 +31,13 @@ function ChartAnalysisInner() {
     }
   }, [symbolParam]);
 
-  // Real-time refresh: poll every 30s for selected instrument (configurable triggers per §10)
-  // Not every tick triggers ML inference — use refresh intervals aligned with timeframe
+  // Real-time refresh: poll per timeframe alignment
   useEffect(() => {
     if (!selected || !data) return;
-    const tfRefresh: Record<string, number> = { '1m': 15000, '5m': 30000, '15m': 60000, '1h': 300000 };
+    const tfRefresh: Record<string, number> = { '1m': 15000, '5m': 30000, '15m': 60000, '1h': 300000, '4h': 600000, '1D': 3600000 };
     const interval = tfRefresh[activeTf] ?? 60000;
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
-      // Background refresh — does not block chart; updates forecast overlay
       fetchAnalysis(selected);
     }, interval);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -64,12 +62,22 @@ function ChartAnalysisInner() {
       {data && (
         <>
           <InstrumentHeader data={data} />
-          <div className="flex gap-2">
-            {['1m','5m','15m','1h'].map(tf => (
-              <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1 rounded text-sm border ${activeTf===tf?'bg-primary text-primary-foreground':'bg-card border-border'}`}>{tf}</button>
+          <div className="flex gap-2 flex-wrap">
+            {(['1m','5m','15m','1h','4h','1D'] as const).map(tf => (
+              <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1 rounded text-sm border ${activeTf===tf?'bg-primary text-primary-foreground':'bg-card border-border'}`}>{tf === '1D' ? 'Daily' : tf}</button>
             ))}
-            <span className="text-xs text-muted-foreground self-center ml-2">Active {activeTf} • Auto-refresh every {activeTf==='1m'?'15s':activeTf==='5m'?'30s':activeTf==='15m'?'60s':'5m'} • Forecast updates in real time</span>
+            <span className="text-xs text-muted-foreground self-center ml-2">Active {activeTf} • Auto-refresh every {activeTf==='1m'?'15s':activeTf==='5m'?'30s':activeTf==='15m'?'60s':activeTf==='1h'?'5m':activeTf==='4h'?'10m':'1h'} • Forecast updates in real time</span>
           </div>
+          {data.freshness === 'DATA_UNAVAILABLE' && (
+            <div className="bg-amber-50 border border-amber-300 rounded p-4 text-amber-900 text-sm">
+              <b>Data unavailable</b> — No market data available for {data.symbol} at this time. No substitution is made. Please check data feeds (NSE/BSE for indices, Binance for BTC/ETH/SOL) and try again. {data.unavailable_timeframes?.length ? `Unavailable timeframes: ${data.unavailable_timeframes.join(', ')}.` : ''}
+            </div>
+          )}
+          {Array.isArray(data.unavailable_timeframes) && data.unavailable_timeframes.length > 0 && data.freshness !== 'DATA_UNAVAILABLE' && (
+            <div className="bg-amber-50 border border-amber-200 rounded p-3 text-amber-800 text-xs">
+              Data unavailable for: {data.unavailable_timeframes.join(', ')} — those panes show &quot;Data unavailable&quot; without substituting another instrument.
+            </div>
+          )}
           <ForecastChart data={data} timeframe={activeTf} />
           <LiveForecastPanel data={data} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

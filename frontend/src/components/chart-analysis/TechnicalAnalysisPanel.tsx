@@ -2,6 +2,15 @@
 export function TechnicalAnalysisPanel({ data, timeframe='15m' }: { data: any; timeframe?: string }) {
   const tf = data?.timeframes?.[timeframe];
   if (!tf) return null;
+  if ((tf as any).data_unavailable) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-4">
+        <h3 className="font-semibold mb-2">TECHNICAL ANALYSIS — {timeframe}</h3>
+        <p className="text-sm text-amber-700">Data unavailable</p>
+        <p className="text-xs text-muted-foreground">No candle data for {data.symbol} — {timeframe}. No substitution. Fixed universe: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, BTC, ETH, SOL.</p>
+      </div>
+    );
+  }
   const scores = tf.scores || {};
   return (
     <div className="bg-card border border-border rounded-lg p-4">

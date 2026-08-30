@@ -581,6 +581,55 @@ class ApiClient {
     return this.request<any>(`/api/v1/dashboard/${encodeURIComponent(symbol)}`);
   }
 
+  // Historical Pattern Intelligence (HPI) — user-controlled derivative & historical data
+  async getHpiUniverse() {
+    return this.request<{ data: import('./types').HpiUniverse; error: string | null; meta: any }>('/api/v1/hpi/universe');
+  }
+  async getHpiSelection() {
+    return this.request<{ data: import('./types').HpiSelectionState; error: string | null; meta: any }>('/api/v1/hpi/selection');
+  }
+  async updateHpiSelection(entries: import('./types').HpiSelectionEntry[]) {
+    return this.request<{ data: import('./types').HpiSelectionState; error: string | null; meta: any }>('/api/v1/hpi/selection', { method: 'PUT', body: JSON.stringify({ entries }) });
+  }
+  async listHpiPolicies(symbol?: string) {
+    const q = symbol ? `?symbol=${encodeURIComponent(symbol)}` : '';
+    return this.request<{ data: import('./types').HpiPolicy[]; error: string | null; meta: any }>(`/api/v1/hpi/policies${q}`);
+  }
+  async createHpiPolicy(policy: Partial<import('./types').HpiPolicy>) {
+    return this.request<{ data: import('./types').HpiPolicy; error: string | null; meta: any }>('/api/v1/hpi/policies', { method: 'POST', body: JSON.stringify(policy) });
+  }
+  async updateHpiPolicy(policyId: string, patch: Partial<import('./types').HpiPolicy>) {
+    return this.request<{ data: import('./types').HpiPolicy; error: string | null; meta: any }>(`/api/v1/hpi/policies/${encodeURIComponent(policyId)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+  async deleteHpiPolicy(policyId: string) {
+    return this.request<any>(`/api/v1/hpi/policies/${encodeURIComponent(policyId)}`, { method: 'DELETE' });
+  }
+  async getHpiStorageReport() {
+    return this.request<{ data: import('./types').HpiStorageReport; error: string | null; meta: any }>('/api/v1/hpi/storage/report');
+  }
+  async hpiImport(req: Record<string, unknown>) {
+    return this.request<{ data: import('./types').HpiImportPreview | import('./types').HpiImportResult; error: string | null; meta: any }>('/api/v1/hpi/import', { method: 'POST', body: JSON.stringify(req) });
+  }
+  async hpiDeletePreview(req: Record<string, unknown>) {
+    return this.request<{ data: import('./types').HpiDeletePreview; error: string | null; meta: any }>('/api/v1/hpi/delete/preview', { method: 'POST', body: JSON.stringify(req) });
+  }
+  async hpiDeleteConfirm(token: string, reason?: string) {
+    return this.request<{ data: any; error: string | null; meta: any }>('/api/v1/hpi/delete/confirm', { method: 'POST', body: JSON.stringify({ confirmation_token: token, reason }) });
+  }
+  async getHpiAudit(symbol?: string) {
+    const q = symbol ? `?symbol=${encodeURIComponent(symbol)}` : '';
+    return this.request<{ data: import('./types').HpiAuditEntry[]; error: string | null; meta: any }>(`/api/v1/hpi/audit/deletions${q}`);
+  }
+  async hpiAutoDelete() {
+    return this.request<any>('/api/v1/hpi/maintenance/auto-delete', { method: 'POST' });
+  }
+  async getHpiCoverage(symbol: string) {
+    return this.request<{ data: import('./types').HpiCoverageReport; error: string | null; meta: any }>(`/api/v1/hpi/coverage/${encodeURIComponent(symbol)}`);
+  }
+  async getHpiAnalysis(symbol: string, timeframe: string = '5m') {
+    return this.request<{ data: import('./types').HpiAnalysis; error: string | null; meta: any }>(`/api/v1/hpi/analysis/${encodeURIComponent(symbol)}?timeframe=${timeframe}`);
+  }
+
   // Direct Providers testing
   async testDirectProvider(provider: string, payload: any) {
     return this.request<any>('/api/v1/ai/test', { method: 'POST', body: JSON.stringify({ provider, ...payload }) });

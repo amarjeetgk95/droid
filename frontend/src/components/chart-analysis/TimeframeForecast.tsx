@@ -1,7 +1,7 @@
 'use client';
 export function TimeframeForecast({ data }: { data: any }) {
   if (!data?.forecasts) return null;
-  const order: string[] = ['1m','5m','15m','1h'];
+  const order: string[] = data?.chart_timeframes || data?.supported_timeframes || ['1m','5m','15m','1h','4h','1D'];
   return (
     <div className="bg-card border border-border rounded-lg p-4">
       <h3 className="font-semibold mb-3">Multi-Timeframe Forecast</h3>
@@ -10,11 +10,21 @@ export function TimeframeForecast({ data }: { data: any }) {
           const fc = data.forecasts[tf];
           const tfData = data.timeframes[tf];
           if (!fc || !tfData) return null;
+          if ((tfData as any).data_unavailable || (fc as any).data_unavailable) {
+            return (
+              <div key={tf} className="flex items-center justify-between border border-dashed border-amber-300 rounded px-3 py-2 text-sm bg-amber-50/50">
+                <span className="font-mono w-8">{tf === '1D' ? 'Daily' : tf}</span>
+                <span className="text-amber-700">Data unavailable</span>
+                <span className="text-xs text-muted-foreground">No substitution</span>
+              </div>
+            );
+          }
           const bias = tfData.bias;
           const arrow = bias==='BULLISH'?'↑':bias==='BEARISH'?'↓':'→';
+          const label = tf === '1D' ? 'Daily' : tf;
           return (
             <div key={tf} className="flex items-center justify-between border border-border rounded px-3 py-2 text-sm">
-              <span className="font-mono w-8">{tf}</span>
+              <span className="font-mono w-12">{label}</span>
               <span>{arrow} {(fc.direction.up*100).toFixed(0)}% {bias}</span>
               <span className="text-muted-foreground">Score {tfData.score}</span>
               <span className="text-xs">Exp {fc.expected_move_percent.toFixed(2)}%</span>

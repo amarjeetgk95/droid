@@ -9,9 +9,11 @@ from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
 from app.api import benchmark as benchmark_api
+from app.api import hpi as hpi_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
+from app.hpi.service import hpi_service
 from app.providers.registry import get_provider
 import structlog
 
@@ -51,9 +53,13 @@ async def lifespan(app: FastAPI):
     provider = get_provider()
     await provider.start_stream()
 
+    # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
+    await hpi_service.start()
+
     yield
     
     # Shutdown in reverse order
+    await hpi_service.stop()
     await provider.stop_stream()
     await central_feed.stop()
     await snapshot_service.stop()
@@ -112,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlists_api.router)
     app.include_router(instruments.router)
     app.include_router(chart_analysis.router)
+    app.include_router(hpi_api.router)
     app.include_router(pipeline_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(benchmark_api.router)

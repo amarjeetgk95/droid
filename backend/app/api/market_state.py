@@ -13,6 +13,8 @@ from app.services.pricing_engine import calculate_deterministic_pricing, validat
 from app.services.execution_state_machine import execution_state_machine, ExecutionState
 from app.services.observability import get_trace, get_all_traces, new_analysis_id, log_pipeline_event
 from app.models.market import ApiMeta, DataStatus
+from app.services.master_pipeline import master_pipeline
+from app.services.trigger_gateway import TriggerType as _MasterTriggerType
 
 router = APIRouter(prefix="/api/v1/pipeline", tags=["pipeline"])
 
@@ -200,3 +202,67 @@ async def get_pipeline_trace(analysis_id: str):
 async def list_traces(limit: int = Query(default=20, le=100)):
     traces = get_all_traces(limit=limit)
     return {"data": traces, "error": None, "meta": _meta().model_dump()}
+
+
+class MasterPipelineRequest(BaseModel):
+    symbol: str = "NIFTY"
+    current_price: float = 24750
+    atr: float = 38
+    regime: str = "TRENDING_UP"
+    mtf: dict | None = None
+    technical: dict | None = None
+    direction_model: dict | None = None
+    tsfm: dict | None = None
+    orderflow: dict | None = None
+    options: dict | None = None
+    futures: dict | None = None
+    news: list | None = None
+    trigger_type: str = "MANUAL_ANALYSIS"
+    ai_bias: str | None = None
+    ai_confidence_breakdown: dict | None = None
+    ai_raw_response: str | dict | None = None
+    current_market_price: float | None = None
+    position_context: dict | None = None
+    account_equity: float = 1000000
+
+
+@router.post("/trade-decision")
+async def master_trade_decision(payload: MasterPipelineRequest):
+    """
+    Master trade-decision pipeline §45 — full lifecycle:
+    market data → technical → direction → TSFM → trigger → state version
+    → router → AI validation → stale check → quant alignment → deterministic
+    pricing → R:R → risk → position → execution SM → broker feedback.
+    Never forces a trade; returns explicit outcome states.
+    """
+    try:
+        try:
+            tt = _MasterTriggerType(payload.trigger_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"invalid trigger_type {payload.trigger_type}")
+        result = await master_pipeline.evaluate(
+            symbol=payload.symbol,
+            current_price=payload.current_price,
+            atr=payload.atr,
+            regime=payload.regime,
+            mtf=payload.mtf,
+            technical=payload.technical,
+            direction_model=payload.direction_model,
+            tsfm=payload.tsfm,
+            orderflow=payload.orderflow,
+            options=payload.options,
+            futures=payload.futures,
+            news=payload.news,
+            trigger_type=tt,
+            ai_bias=payload.ai_bias,
+            ai_confidence_breakdown=payload.ai_confidence_breakdown,
+            ai_raw_response=payload.ai_raw_response,
+            current_market_price=payload.current_market_price,
+            position_context=payload.position_context,
+            account_equity=payload.account_equity,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"data": result, "error": None if result.get("outcome") in ("SIGNAL_CREATED", "HOLD", "NO_TRADE", "WAIT_FOR_CONFIRMATION") else result.get("reason"), "meta": _meta().model_dump()}

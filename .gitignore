@@ -55,5 +55,8 @@ desktop.ini
 htmlcov/
 .pytest_cache/
 
+# HPI runtime state (user's derivative data store)
+backend/hpi_state.json
+
 # Build
 *.log

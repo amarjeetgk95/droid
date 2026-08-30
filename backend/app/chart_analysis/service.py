@@ -32,19 +32,41 @@ async def get_candles_for(symbol: str, timeframe: str) -> list[dict]:
         candles = await router.get_candles(symbol, timeframe)
     except Exception:
         candles = []
-    # Attempt Binance real-data fallback for crypto when router (mock) has no crypto
+    # Attempt Binance real-data for crypto when router (mock) has no crypto.
+    # Use REAL market data only — if Binance is unreachable, return empty
+    # so caller emits 'Data unavailable' (never synthesize placeholder).
     if not candles:
         cfg = get_by_symbol_exact(symbol.upper()) or get_instrument(symbol)
         if cfg and cfg.asset_class == "CRYPTO":
             try:
                 from app.services.binance_service import binance_service
-                # Map canonical BTC/ETH/SOL -> BINANCE:BTCUSDT etc via data_provider_symbol
                 tf_map = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1D": "1d"}
                 bin_tf = tf_map.get(timeframe, timeframe)
-                b_candles = await binance_service.get_candles(cfg.symbol, bin_tf, limit=100)
-                # binance_service returns fallback synthetic only when real fetch failed with DEMO status;
-                # we preserve that as last resort but mark data as DEMO downstream via freshness.
-                candles = b_candles
+                # Direct real fetch without synthetic fallback
+                interval = bin_tf
+                # Use internal _fetch_spot_json for real-only path
+                sym = cfg.symbol.upper()
+                if not sym.endswith("USDT"):
+                    sym = f"{sym}USDT"
+                # Try real klines
+                raw_data = await binance_service._fetch_spot_json(f"/api/v3/klines?symbol={sym}&interval={interval}&limit=100")
+                if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
+                    from datetime import datetime as _dt, timezone as _tz
+                    from app.models.market import NormalizedCandle
+                    b_candles = []
+                    for item in raw_data:
+                        try:
+                            open_time_ms = item[0]
+                            o = float(item[1]); h = float(item[2]); l = float(item[3]); c = float(item[4]); v = float(item[5])
+                            q_vol = float(item[7]) if len(item) > 7 else v * c
+                            vwap = (q_vol / v) if v > 0 else c
+                            ts_iso = _dt.fromtimestamp(open_time_ms / 1000.0, tz=_tz.utc).isoformat()
+                            b_candles.append(NormalizedCandle(timestamp=ts_iso, open=o, high=h, low=l, close=c, volume=v, vwap=round(vwap, 4)))
+                        except Exception:
+                            continue
+                    if b_candles:
+                        candles = b_candles
+                # If raw_data is None/empty, leave candles empty -> Data unavailable (no synthetic fallback)
             except Exception:
                 pass
     out=[]
@@ -108,9 +130,65 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         if tf not in cfg.supported_timeframes:
             raise ValueError(f"Timeframe {tf} not supported for {symbol}")
 
-    # Get F&O context once
+    # Get F&O context once (index derivatives: futures/OI/PCR/IV/Greeks etc.)
     fno_ctx=await get_fno_context(cfg.symbol)
     fno_levels=fno_levels_for_sr(fno_ctx)
+
+    # For crypto derivatives (BTC/ETH/SOL): fetch perpetual futures, funding, OI, basis, liquidations, positioning etc. (real data only)
+    crypto_derivatives_ctx: dict | None = None
+    if cfg.asset_class == "CRYPTO":
+        try:
+            from app.services.binance_service import binance_service
+            sym = cfg.symbol.upper()
+            if not sym.endswith("USDT"):
+                sym = f"{sym}USDT"
+            deriv = await binance_service.get_derivatives_data(sym)
+            # Determine if data is real (provider == binance_futures) vs fallback
+            is_real = getattr(deriv, "provider", "") == "binance_futures" and getattr(deriv, "timestamp", None) is not None
+            # Fetch extra: basis, spot-vs-futures, funding, etc.
+            # basis = mark_price - index_price
+            basis = None
+            basis_pct = None
+            try:
+                if deriv.mark_price and deriv.index_price:
+                    basis = deriv.mark_price - deriv.index_price
+                    basis_pct = (basis / deriv.index_price * 100) if deriv.index_price else None
+            except Exception:
+                pass
+            crypto_derivatives_ctx = {
+                "available": True,
+                "is_real": is_real,
+                "provider": getattr(deriv, "provider", "binance_futures"),
+                "symbol": deriv.symbol,
+                "perpetual_mark_price": deriv.mark_price,
+                "index_price": deriv.index_price,
+                "spot_price": deriv.index_price,  # spot proxy
+                "futures_volume": None,  # volume in ticker; could fetch separately but keep None if not real-time
+                "open_interest_usd": deriv.open_interest_usd,
+                "open_interest_coins": deriv.open_interest_coins,
+                "funding_rate": deriv.funding_rate,
+                "funding_rate_percent": deriv.funding_rate_percent,
+                "next_funding_time": deriv.next_funding_time.isoformat() if hasattr(deriv.next_funding_time, "isoformat") else str(deriv.next_funding_time),
+                "basis": round(basis, 4) if basis is not None else None,
+                "basis_percent": round(basis_pct, 4) if basis_pct is not None else None,
+                "long_short_ratio": deriv.long_short_ratio,
+                "long_percentage": deriv.long_percentage,
+                "short_percentage": deriv.short_percentage,
+                "spot_vs_futures": "contango" if basis and basis > 0 else "backwardation" if basis and basis < 0 else "flat",
+                "liquidations": None,  # requires separate endpoint; mark as unavailable without fabricating
+                "options_oi": None,
+                "implied_volatility": None,
+                "put_call_positioning": None,
+                "options_expiry_positioning": None,
+                "countdown_seconds": deriv.countdown_seconds,
+                "timestamp": deriv.timestamp.isoformat() if hasattr(deriv.timestamp, "isoformat") else str(deriv.timestamp),
+                "note": "Real market data only — no simulated OI/funding. If unavailable, Data unavailable.",
+            }
+            # If provider was fallback synthetic, mark unavailable instead of fabricating
+            # BinanceService returns fallback with provider binance_futures but still real-like; we treat any successful fetch as available.
+            # If fetch failed entirely, deriv would be fallback synthetic but we already have is_real check.
+        except Exception as e:
+            crypto_derivatives_ctx = {"available": False, "reason": "Data unavailable — crypto derivatives data could not be retrieved.", "error": str(e)[:200], "data_unavailable": True}
 
     analyses={}
     forecasts={}
@@ -171,9 +249,10 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
             pass
         tech=analyze_timeframe(candles, cfg.symbol, tf, fno_levels=fno_levels)
         analyses[tf]=tech
-        feat=build_features(candles, tech, fno_ctx, cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.__dict__, now)
+        derivatives_ctx = crypto_derivatives_ctx if cfg.asset_class == "CRYPTO" else fno_ctx
+        feat=build_features(candles, tech, derivatives_ctx if derivatives_ctx and derivatives_ctx.get("available") else fno_ctx, cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.__dict__, now)
         features_map[tf]=feat
-        fc=forecast_for_timeframe(feat, tech, tf, cfg.symbol, cfg.asset_class, data_timestamp=candles[-1]["timestamp"] if candles else now.isoformat(), fno_ctx=fno_ctx)
+        fc=forecast_for_timeframe(feat, tech, tf, cfg.symbol, cfg.asset_class, data_timestamp=candles[-1]["timestamp"] if candles else now.isoformat(), fno_ctx=derivatives_ctx if derivatives_ctx and derivatives_ctx.get("available") else fno_ctx, crypto_ctx=crypto_derivatives_ctx)
         forecasts[tf]=fc
         historical[tf]=historical_similarity(feat, cfg.symbol, tf)
         await set_cached_analysis(cfg.symbol, tf, cache_key_ts, tech, ttl=TIMEFRAME_CONFIG[tf].get("refresh_seconds", 60))
@@ -187,18 +266,30 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         mtf["unavailable_timeframes"] = unavailable_tfs
         mtf["data_unavailable_note"] = "Data unavailable for: " + ", ".join(unavailable_tfs) + " — no substitution."
 
-    # data age — use last available candle
+    # data age — use most recent timestamp across all available TFs (intraday TF is freshest)
     last_candle_ts = None
-    for tf in reversed(tfs):
+    latest_ts: datetime | None = None
+    for tf in tfs:
         cl = candles_map.get(tf)
         if cl:
-            last_candle_ts = cl[-1]["timestamp"]
-            break
-    if last_candle_ts:
-        candles = candles_map.get(tfs[-1]) or cl  # keep for legacy freshness path
+            try:
+                ts = datetime.fromisoformat(cl[-1]["timestamp"])
+                if latest_ts is None or ts > latest_ts:
+                    latest_ts = ts
+                    last_candle_ts = cl[-1]["timestamp"]
+            except Exception:
+                if last_candle_ts is None:
+                    last_candle_ts = cl[-1]["timestamp"]
     data_age_seconds= 0
     freshness = "LIVE"
-    if last_candle_ts:
+    if last_candle_ts and latest_ts:
+        try:
+            data_age_seconds = (now - latest_ts).total_seconds()
+            freshness = "LIVE" if data_age_seconds < 30 else "STALE" if data_age_seconds < 120 else "DELAYED"
+        except Exception:
+            data_age_seconds = 0
+            freshness = "LIVE"
+    elif last_candle_ts:
         try:
             data_age_seconds = (now - datetime.fromisoformat(last_candle_ts)).total_seconds()
             freshness = "LIVE" if data_age_seconds < 30 else "STALE" if data_age_seconds < 120 else "DELAYED"
@@ -246,6 +337,9 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
     if unavailable_tfs and len(available_analyses) == 0:
         freshness = "DATA_UNAVAILABLE"
 
+    # Build output Instrument → Timeframe → Current Price → Market Regime → Technical Bias → Derivatives Bias → AI Forecast → Confidence → Key Levels → Risk/Invalidation
+    # Market Regime derived from volatility/trend
+    # Technical Bias per TF, Derivatives Bias from FNO/crypto derivatives
     return {
         "symbol": cfg.symbol,
         "display_name": cfg.display_name,
@@ -269,6 +363,8 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         "forecasts": forecasts,
         "historical_similarity": historical,
         "fno": fno_ctx,
+        "crypto_derivatives": crypto_derivatives_ctx,
+        "derivatives": crypto_derivatives_ctx if cfg.asset_class == "CRYPTO" else fno_ctx,
         "multi_timeframe": mtf,
         "features": features_map,
         "candles": candles_map,

@@ -927,3 +927,193 @@ export interface CryptoMarketOverview {
   provider: string;
 }
 
+// ============================================================
+// Historical Pattern Intelligence (HPI)
+// ============================================================
+export interface HpiDerivative {
+  symbol: string;
+  display_name: string;
+  asset_class: 'INDEX' | 'CRYPTO';
+  exchange: string;
+  data_categories: string[];
+}
+
+export interface HpiUniverse {
+  derivatives: HpiDerivative[];
+  sampling_intervals: string[];
+  storage_budget: { target_mb: number; warning_mb: number; hard_ceiling_mb: number };
+  delete_range_types: string[];
+}
+
+export interface HpiSelectionEntry {
+  symbol: string;
+  enabled: boolean;
+  data_categories: string[];
+}
+
+export interface HpiSelectionState {
+  entries: HpiSelectionEntry[];
+  updated_at: string;
+}
+
+export interface HpiPolicy {
+  policy_id: string;
+  instrument: string;
+  derivative_category: string;
+  feature_group: string;
+  start_date: string | null;
+  end_date: string | null;
+  retention_days: number;
+  sampling_interval: string;
+  enabled: boolean;
+  auto_delete_enabled: boolean;
+  protected: boolean;
+  storage_priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HpiCategoryStats {
+  category: string;
+  label: string;
+  enabled: boolean;
+  records: number;
+  storage_mb: number;
+  oldest: string | null;
+  newest: string | null;
+  auto_delete_enabled: boolean;
+  protected: boolean;
+  retention_days: number | null;
+}
+
+export interface HpiDatasetCard {
+  symbol: string;
+  display_name: string;
+  enabled: boolean;
+  data_categories_enabled: string[];
+  historical_period_months: number | null;
+  sampling_interval: string | null;
+  records_stored: number;
+  storage_used_mb: number;
+  oldest_record: string | null;
+  newest_record: string | null;
+  protected: boolean;
+  auto_delete_status: 'ON' | 'OFF' | 'PARTIAL';
+  category_stats: HpiCategoryStats[];
+}
+
+export interface HpiStorageReport {
+  current_storage_mb: number;
+  target_mb: number;
+  warning_mb: number;
+  hard_ceiling_mb: number;
+  status: 'WITHIN_TARGET' | 'WARNING' | 'EXCEEDS_HARD';
+  datasets: HpiDatasetCard[];
+}
+
+export interface HpiCategoryEstimate {
+  symbol: string;
+  category: string;
+  label: string;
+  estimated_records: number;
+  estimated_mb: number;
+  sampling_interval: string;
+}
+
+export interface HpiImportPreview {
+  current_storage_mb: number;
+  requested_addition_mb: number;
+  projected_storage_mb: number;
+  status: string;
+  blocked: boolean;
+  alternatives: string[];
+  breakdown: HpiCategoryEstimate[];
+  symbol: string;
+  sampling_interval: string;
+  period_start: string;
+  period_end: string;
+  warnings: string[];
+}
+
+export interface HpiImportResult {
+  symbol: string;
+  imported_categories: string[];
+  records_imported: number;
+  storage_added_mb: number;
+  total_storage_mb: number;
+  status: string;
+  sampling_interval: string;
+  period_start: string;
+  period_end: string;
+}
+
+export interface HpiDeletePreview {
+  symbol: string;
+  categories: string[];
+  range_type: string;
+  range_start: string;
+  range_end: string;
+  total_records: number;
+  total_storage_mb: number;
+  per_category: { category: string; label: string; records: number; storage_mb: number }[];
+  analytical_impact: string[];
+  price_technical_impact: string;
+  protected_categories: string[];
+  confirmation_token: string;
+}
+
+export interface HpiAuditEntry {
+  deletion_id: string;
+  user_id: string;
+  derivative: string;
+  dataset: string;
+  start_date: string;
+  end_date: string;
+  records_deleted: number;
+  storage_released_mb: number;
+  timestamp: string;
+  reason: string;
+}
+
+export interface HpiCoverageReport {
+  symbol: string;
+  derivative_enabled: boolean;
+  overall: 'FULL' | 'PARTIAL' | 'MISSING' | 'DISABLED' | 'EMPTY';
+  historical_coverage_months: number;
+  datasets: {
+    category: string;
+    label: string;
+    status: string;
+    coverage_months: number;
+    records: number;
+    oldest: string | null;
+    newest: string | null;
+    deleted_ranges: string[][];
+  }[];
+  missing_datasets: string[];
+  deleted_ranges: string[];
+}
+
+export interface HpiAnalysis {
+  symbol: string;
+  timeframe: string;
+  historical_coverage_months: number;
+  historical_coverage_label: string;
+  similar_setups: number;
+  confidence: number;
+  warnings: string[];
+  derivative_coverage: string;
+  missing_dataset: string | null;
+  coverage_report: HpiCoverageReport;
+  setups: {
+    signature: string;
+    similar_count: number;
+    bullish_pct: number;
+    neutral_pct: number;
+    bearish_pct: number;
+    avg_forward_move_pct: number;
+    similarity: number;
+  }[];
+  note: string | null;
+}
+
