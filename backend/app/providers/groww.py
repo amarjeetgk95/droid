@@ -92,6 +92,8 @@ class GrowwProvider(MarketDataProvider):
     async def _fetch_access_token(self) -> str | None:
         """Obtain a short-lived access token using the configured auth mode."""
         if not self.api_key or not self.api_secret:
+            logger.warning("groww_token_missing_creds", has_key=bool(self.api_key), has_secret=bool(self.api_secret))
+            self._last_auth_error = "missing API key or secret"
             return None
 
         import httpx
@@ -106,21 +108,30 @@ class GrowwProvider(MarketDataProvider):
             checksum = self._generate_checksum(timestamp)
             payload = {"key_type": "approval", "checksum": checksum, "timestamp": timestamp}
         else:  # totp
-            # TOTP mode requires user to provide TOTP code externally
-            # Here we just return None — caller must supply totp via settings
+            logger.warning("groww_token_totp_mode_requires_runtime_totp", auth_mode=self.auth_mode)
+            self._last_auth_error = "TOTP auth mode requires runtime TOTP code"
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     token = data.get("token") or data.get("access_token")
                     if token:
                         return token
-                logger.warning("groww_token_failed", status=resp.status_code, text=resp.text[:200])
+                    self._last_auth_error = f"HTTP 200 but no token in response: {resp.text[:200]}"
+                else:
+                    self._last_auth_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        except httpx.ConnectError as e:
+            self._last_auth_error = f"connection error: {str(e)[:200]}"
+            logger.error("groww_token_connect_error", error=str(e)[:300])
+        except httpx.TimeoutException as e:
+            self._last_auth_error = f"timeout: {str(e)[:200]}"
+            logger.error("groww_token_timeout", error=str(e)[:300])
         except Exception as e:
-            logger.warning("groww_token_exception", error=str(e))
+            self._last_auth_error = f"exception: {type(e).__name__}: {str(e)[:200]}"
+            logger.error("groww_token_exception", error=str(e)[:500], error_type=type(e).__name__)
         return None
 
     def _has_valid_credentials(self) -> bool:
@@ -131,7 +142,8 @@ class GrowwProvider(MarketDataProvider):
         Groww access token via the checksum/TOTP flow and persists it."""
         token = await self._fetch_access_token()
         if not token:
-            raise RuntimeError("Groww token refresh failed (missing credentials or non-200 response)")
+            last_err = getattr(self, "_last_auth_error", "unknown error")
+            raise RuntimeError(f"Groww token refresh failed: {last_err}")
         info = TokenInfo(access_token=token, provider=self.PROVIDER_ID)
         self.token_manager.set_token(info)
         return info
