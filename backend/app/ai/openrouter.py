@@ -43,7 +43,7 @@ class OpenRouterProvider(BaseLLMProvider):
         }
         payload_with_json = {**base_payload, "response_format": {"type": "json_object"}}
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 # Attempt 1: with structured-outputs
                 resp = await client.post(url, json=payload_with_json, headers=headers)
                 # Auto-fallback if model doesn't support structured-outputs (common on free/Novita models)
@@ -84,20 +84,53 @@ class OpenRouterProvider(BaseLLMProvider):
                         raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]} (json error: {je})")
                 else:
                     parsed = content
-                # Strict JSON schema validation – fail honestly if missing required fields
+                # Normalize + sanitize before strict validation (free models often return verbose biases / 0-1 confidence)
+                # --- market_bias normalization ---
+                raw_bias = str(parsed.get("market_bias", "NEUTRAL")).strip()
+                bias_upper = raw_bias.upper()
+                # Direct match
+                if bias_upper in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
+                    parsed["market_bias"] = bias_upper
+                else:
+                    # Fuzzy: map verbose like "Cautiously Bullish with Volatility Premium Edge" -> BULLISH
+                    if "BULL" in bias_upper:
+                        parsed["market_bias"] = "BULLISH"
+                    elif "BEAR" in bias_upper:
+                        parsed["market_bias"] = "BEARISH"
+                    elif "VOLATILE" in bias_upper or "VOLATILITY" in bias_upper:
+                        parsed["market_bias"] = "VOLATILE"
+                    elif "NEUTRAL" in bias_upper or "SIDEWAYS" in bias_upper or "RANGE" in bias_upper:
+                        parsed["market_bias"] = "NEUTRAL"
+                    else:
+                        # Default to NEUTRAL but keep original for logging
+                        logger.warning("openrouter_bias_normalized", raw_bias=raw_bias, normalized="NEUTRAL", model=self.model)
+                        parsed["market_bias"] = "NEUTRAL"
+                # --- confidence normalization (handle "0.68" vs 68) ---
+                try:
+                    raw_conf = parsed.get("confidence", 80.0)
+                    conf_val = float(str(raw_conf).strip().replace("%",""))
+                    # If model returned 0-1 fraction, scale to 0-100
+                    if 0 <= conf_val <= 1.0:
+                        # Heuristic: 0.68 -> 68, but 1.0 -> 100, 0.5 -> 50; keep 0.0 as 0
+                        # Only scale if original was decimal <1 and not already 0-1 edge like 0.9 intended as 0.9% (unlikely)
+                        # We treat any 0<val<=1 as fraction
+                        if conf_val > 0 and conf_val <= 1.0:
+                            conf_val = conf_val * 100
+                    parsed["confidence"] = conf_val
+                except Exception:
+                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'. Raw: {json.dumps(parsed)[:300]}")
+                if not (0 <= parsed["confidence"] <= 100):
+                    raise ValueError(f"OpenRouter confidence out of range 0-100: {parsed['confidence']}. Raw: {json.dumps(parsed)[:300]}")
+                conf_val = float(parsed["confidence"])
+
+                # Strict JSON schema validation – fail honestly if missing required fields (after normalization)
                 required_fields = ["market_bias", "confidence", "executive_summary", "options_interpretation", "futures_flow_analysis", "regime_and_levels", "recommended_strategy_framework", "risk_management_notes"]
                 missing = [f for f in required_fields if f not in parsed or parsed.get(f) in (None, "")]
                 if missing:
                     raise ValueError(f"OpenRouter response missing required fields: {missing}. Got keys: {list(parsed.keys())}. Raw: {json.dumps(parsed)[:400]}")
-                # Validate market_bias literal
+                # Final literal check (should always pass after normalization)
                 if parsed.get("market_bias") not in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
                     raise ValueError(f"OpenRouter returned invalid market_bias '{parsed.get('market_bias')}'. Expected BULLISH|BEARISH|NEUTRAL|VOLATILE. Raw: {json.dumps(parsed)[:300]}")
-                try:
-                    conf_val = float(parsed.get("confidence", 80.0))
-                except Exception:
-                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'. Raw: {json.dumps(parsed)[:300]}")
-                if not (0 <= conf_val <= 100):
-                    raise ValueError(f"OpenRouter confidence out of range 0-100: {conf_val}. Raw: {json.dumps(parsed)[:300]}")
                 return AIInsightResponse(
                     symbol=symbol,
                     timestamp=datetime.now(timezone.utc),
