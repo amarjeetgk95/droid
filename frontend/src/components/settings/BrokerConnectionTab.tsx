@@ -156,11 +156,18 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
     setRefreshing(true);
     setTokenMsg(null);
     try {
-      const res = await api.refreshToken();
-      setTokenMsg({
-        type: 'success',
-        text: `Token successfully refreshed for ${res.data.provider.toUpperCase()} provider!`,
-      });
+       const res = await api.refreshToken();
+      if (res.data.refreshed) {
+        setTokenMsg({
+          type: 'success',
+          text: `Token successfully refreshed for ${res.data.provider.toUpperCase()} provider!`,
+        });
+      } else {
+        setTokenMsg({
+          type: 'error',
+          text: res.error || `Token refresh failed for ${res.data.provider.toUpperCase()}. Check your credentials.`,
+        });
+      }
       await fetchTokenStatus();
     } catch (err: any) {
       setTokenMsg({ type: 'error', text: err?.message || 'Failed to refresh token' });
