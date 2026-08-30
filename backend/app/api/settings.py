@@ -4,6 +4,8 @@ from app.core.config import settings as app_settings
 from app.core.database import get_db_session
 from app.models.user import UserSettingsResponse, UserSettingsUpdate
 from app.services.user_service import SettingsService
+from app.providers.registry import reset_provider
+from app.core.broker_runtime import apply_app_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 from datetime import datetime, timezone
@@ -41,6 +43,20 @@ def _mock_settings(user_id: str) -> UserSettingsResponse:
 
 def _is_dev_mode() -> bool:
     return not app_settings.auth_required
+
+
+def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
+    """After persisting settings, refresh the runtime broker config so saved
+    credentials / provider selection take effect without a backend restart."""
+    if res is None:
+        return
+    try:
+        apply_app_settings(res.app_settings)
+    except Exception as e:
+        logger.warning("broker_config_reconfigure_failed", error=str(e)[:200])
+        return
+    # Force the provider singleton to rebuild from the new config on next access.
+    reset_provider()
 
 async def _get_settings_dev_fallback(user: AuthUser, session: AsyncSession | None, data: UserSettingsUpdate | None = None):
     # Try DB first, fall back to in-memory on any DB error (FK, UUID, connection)
@@ -107,7 +123,9 @@ async def create_settings(
 ):
     """Create or replace the authenticated user's settings."""
     if _is_dev_mode():
-        return await _get_settings_dev_fallback(user, session, data)
+        settings = await _get_settings_dev_fallback(user, session, data)
+        _reconfigure_provider(settings)
+        return settings
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -123,6 +141,7 @@ async def create_settings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create settings"
         )
+    _reconfigure_provider(settings)
     return settings
 
 
@@ -134,7 +153,9 @@ async def update_settings(
 ):
     """Partially update the authenticated user's settings."""
     if _is_dev_mode():
-        return await _get_settings_dev_fallback(user, session, data)
+        settings = await _get_settings_dev_fallback(user, session, data)
+        _reconfigure_provider(settings)
+        return settings
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -150,4 +171,5 @@ async def update_settings(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Settings not found"
         )
+    _reconfigure_provider(settings)
     return settings

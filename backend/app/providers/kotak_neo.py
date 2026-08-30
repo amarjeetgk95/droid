@@ -67,6 +67,7 @@ class KotakNeoProvider(MarketDataProvider):
                     provider=self.PROVIDER_ID,
                 )
             )
+        self.token_manager.register_refresh_callback(self._refresh_callback)
 
         self.rate_limiter = TokenBucketRateLimiter(
             requests_per_second=settings.rate_limit_requests_per_second,
@@ -184,6 +185,14 @@ class KotakNeoProvider(MarketDataProvider):
             self.token_manager.set_token(info)
             return info
         return None
+
+    async def _refresh_callback(self) -> TokenInfo:
+        """Refresh callback (registered on the token manager). Runs the two-step
+        TOTP+MPIN login and persists the resulting trade token."""
+        info = await self.refresh_access_token()
+        if info is None:
+            raise RuntimeError("Kotak Neo re-authentication failed (TOTP login / MPIN validation)")
+        return info
 
     @property
     def provider_name(self) -> str:

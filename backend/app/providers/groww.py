@@ -62,6 +62,7 @@ class GrowwProvider(MarketDataProvider):
             burst_limit=settings.rate_limit_burst_limit,
         )
 
+        self.token_manager.register_refresh_callback(self._refresh_callback)
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
 
@@ -124,6 +125,16 @@ class GrowwProvider(MarketDataProvider):
 
     def _has_valid_credentials(self) -> bool:
         return bool(self.token_manager.token_info and self.token_manager.token_info.access_token)
+
+    async def _refresh_callback(self) -> TokenInfo:
+        """Refresh callback (registered on the token manager). Fetches a fresh
+        Groww access token via the checksum/TOTP flow and persists it."""
+        token = await self._fetch_access_token()
+        if not token:
+            raise RuntimeError("Groww token refresh failed (missing credentials or non-200 response)")
+        info = TokenInfo(access_token=token, provider=self.PROVIDER_ID)
+        self.token_manager.set_token(info)
+        return info
 
     async def get_quote(self, symbol: str) -> NormalizedQuote:
         await self.rate_limiter.acquire()
