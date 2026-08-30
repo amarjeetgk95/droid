@@ -1,0 +1,339 @@
+export interface BrokerSettings {
+  provider: 'mock' | 'fyers' | 'upstox' | 'binance';
+  fyersAppId: string;
+  fyersSecret: string;
+  fyersRedirectUri: string;
+  upstoxApiKey: string;
+  upstoxSecret: string;
+  upstoxRedirectUri: string;
+  binanceApiKey: string;
+  binanceSecretKey: string;
+}
+
+export interface QuantitativeSettings {
+  riskFreeRate: number; // e.g. 0.0675 (6.75%)
+  timeConvention: 'ACT365' | 'ACT360' | 'TradingDays252';
+  defaultPricingModel: 'FUTURES_BLACK76' | 'SPOT_BLACK_SCHOLES';
+  ivMethod: 'BRENT' | 'NEWTON_RAPHSON';
+  brokeragePerOrder: number; // 20
+  slippagePct: number; // 0.05%
+}
+
+export interface AISettings {
+  provider: 'gemini' | 'openrouter' | 'ollama';
+  geminiApiKey: string;
+  geminiModel: string;
+  openRouterApiKey: string;
+  openRouterModel: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  persona: 'INSTITUTIONAL' | 'MOMENTUM' | 'OPTION_SELLER';
+  temperature: number;
+  cacheTtlSeconds: number;
+}
+
+export interface PaperTradingSettings {
+  initialCapital: number;
+  autoSquareOffTime: string;
+  maxCapitalPerTradePct: number;
+  maxDailyDrawdownHaltPct: number;
+  requireOrderConfirm: boolean;
+  allowOvernightPositions: boolean;
+}
+
+export interface PreferencesSettings {
+  theme: 'dark' | 'light' | 'system';
+  numberFormat: 'INDIAN' | 'INTERNATIONAL';
+  defaultIndexSymbol: string;
+}
+
+export interface AppSettings {
+  broker: BrokerSettings;
+  quantitative: QuantitativeSettings;
+  ai: AISettings;
+  paper: PaperTradingSettings;
+  preferences: PreferencesSettings;
+}
+
+export interface SupportedModelOption {
+  id: string;
+  name: string;
+  provider: 'gemini' | 'openrouter' | 'ollama';
+  tag: string;
+  description: string;
+}
+
+export const SUPPORTED_GEMINI_MODELS: SupportedModelOption[] = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', tag: 'Fast & High IQ (Recommended)', description: 'Low latency, advanced reasoning, multimodal and structured JSON' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', tag: 'Deep Reasoning', description: 'Deep quantitative analysis, market thesis generation' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', tag: 'Realtime JSON', description: 'Ultra-fast structured outputs and live market feed analysis' },
+  { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: 'gemini', tag: 'Cost Effective', description: 'High throughput, cost-optimized streaming analysis' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', tag: '2M Context', description: 'Massive context window for full-day tick summaries' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini', tag: 'Balanced', description: 'Lightweight and fast standard model' },
+];
+
+export const SUPPORTED_OPENROUTER_MODELS: SupportedModelOption[] = [
+  { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', provider: 'openrouter', tag: 'Top Tier Reasoning', description: 'Hybrid reasoning and leading quantitative synthesis' },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'openrouter', tag: 'Industry Benchmark', description: 'State-of-the-art coding and financial analysis' },
+  { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', provider: 'openrouter', tag: 'Chain-of-Thought', description: 'Open weights reasoning model with deep mathematical thinking' },
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', provider: 'openrouter', tag: 'High Speed & Value', description: 'Ultra-fast and economical for high-frequency scan queries' },
+  { id: 'openai/gpt-4o', name: 'OpenAI GPT-4o', provider: 'openrouter', tag: 'Flagship Omni', description: 'Strong multi-modal and fast structured data extraction' },
+  { id: 'openai/gpt-4o-mini', name: 'OpenAI GPT-4o Mini', provider: 'openrouter', tag: 'Lightweight Fast', description: 'Extremely fast and budget-friendly' },
+  { id: 'google/gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (OpenRouter)', provider: 'openrouter', tag: 'Preview', description: 'Google flagship reasoning via OpenRouter API' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'openrouter', tag: 'Open Weight', description: 'Meta high-capacity open model' },
+  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', provider: 'openrouter', tag: 'Math & Quantitative', description: 'Superb numerical math and complex derivatives logic' },
+];
+
+export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
+  { id: 'deepseek-r1:8b', name: 'DeepSeek-R1 8B', provider: 'ollama', tag: 'Local CoT', description: 'High efficiency local reasoning model' },
+  { id: 'deepseek-r1:14b', name: 'DeepSeek-R1 14B', provider: 'ollama', tag: 'High Precision', description: 'Balanced memory footprint and analytical depth' },
+  { id: 'llama3.3:70b', name: 'Llama 3.3 70B', provider: 'ollama', tag: 'Full Local Power', description: 'Requires 40GB+ VRAM or quantized setup' },
+  { id: 'llama3.1:8b', name: 'Llama 3.1 8B', provider: 'ollama', tag: 'Light & Fast', description: 'Runs on standard consumer GPUs (8GB VRAM)' },
+  { id: 'qwen2.5:7b', name: 'Qwen 2.5 7B', provider: 'ollama', tag: 'Fast Math', description: 'Specialized in numbers, tables, and quantitative parsing' },
+  { id: 'qwen2.5:14b', name: 'Qwen 2.5 14B', provider: 'ollama', tag: 'Math Balanced', description: 'Robust local quantitative reasoning' },
+  { id: 'mistral:7b', name: 'Mistral 7B', provider: 'ollama', tag: 'Compact Fast', description: 'Fast local instruct model' },
+];
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  broker: {
+    provider: 'mock',
+    fyersAppId: '',
+    fyersSecret: '',
+    fyersRedirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/auth/callback',
+    upstoxApiKey: '',
+    upstoxSecret: '',
+    upstoxRedirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/auth/callback',
+    binanceApiKey: '',
+    binanceSecretKey: '',
+  },
+  quantitative: {
+    riskFreeRate: 0.0675,
+    timeConvention: 'ACT365',
+    defaultPricingModel: 'FUTURES_BLACK76',
+    ivMethod: 'BRENT',
+    brokeragePerOrder: 20,
+    slippagePct: 0.05,
+  },
+  ai: {
+    provider: 'gemini',
+    geminiApiKey: '',
+    geminiModel: 'gemini-2.5-flash',
+    openRouterApiKey: '',
+    openRouterModel: 'anthropic/claude-3.7-sonnet',
+    ollamaBaseUrl: 'http://localhost:11434',
+    ollamaModel: 'deepseek-r1:8b',
+    persona: 'INSTITUTIONAL',
+    temperature: 0.2,
+    cacheTtlSeconds: 60,
+  },
+  paper: {
+    initialCapital: 1000000,
+    autoSquareOffTime: '15:20',
+    maxCapitalPerTradePct: 20,
+    maxDailyDrawdownHaltPct: 10,
+    requireOrderConfirm: true,
+    allowOvernightPositions: true,
+  },
+  preferences: {
+    theme: 'dark',
+    numberFormat: 'INDIAN',
+    defaultIndexSymbol: 'NIFTY 50',
+  },
+};
+
+const STORAGE_KEY = 'droid_app_settings_v1';
+const LEGACY_DEV_CONFIG_KEY = 'droid_developer_api_config';
+
+const SECRET_FIELDS: Record<string, (keyof BrokerSettings | keyof AISettings)[]> = {
+  broker: ['fyersSecret', 'binanceSecretKey', 'upstoxSecret'],
+  ai: ['geminiApiKey', 'openRouterApiKey'],
+};
+
+/**
+ * Migrate legacy DeveloperApiConfig localStorage key into the canonical AppSettings.
+ * This handles the architectural debt of the dual settings system.
+ */
+function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
+  if (typeof window === 'undefined') return settings;
+  try {
+    const legacyRaw = localStorage.getItem(LEGACY_DEV_CONFIG_KEY);
+    if (!legacyRaw) return settings;
+
+    const legacy = JSON.parse(legacyRaw);
+    const merged = { ...settings };
+
+    // Merge AI keys — legacy takes precedence if non-empty (user entered them there)
+    if (legacy.geminiApiKey) merged.ai = { ...merged.ai, geminiApiKey: legacy.geminiApiKey };
+    if (legacy.geminiModel) merged.ai = { ...merged.ai, geminiModel: legacy.geminiModel };
+    if (legacy.openRouterApiKey) merged.ai = { ...merged.ai, openRouterApiKey: legacy.openRouterApiKey };
+    if (legacy.openRouterModel) merged.ai = { ...merged.ai, openRouterModel: legacy.openRouterModel };
+    if (legacy.ollamaBaseUrl) merged.ai = { ...merged.ai, ollamaBaseUrl: legacy.ollamaBaseUrl };
+    if (legacy.ollamaModel) merged.ai = { ...merged.ai, ollamaModel: legacy.ollamaModel };
+    if (legacy.aiTemperature !== undefined) merged.ai = { ...merged.ai, temperature: legacy.aiTemperature };
+    if (legacy.aiAnalysisStyle) {
+      const personaMap: Record<string, AISettings['persona']> = {
+        institutional: 'INSTITUTIONAL',
+        momentum: 'MOMENTUM',
+        options_greek: 'OPTION_SELLER',
+        conservative: 'INSTITUTIONAL',
+      };
+      merged.ai = { ...merged.ai, persona: personaMap[legacy.aiAnalysisStyle] || 'INSTITUTIONAL' };
+    }
+
+    // Merge Broker keys
+    if (legacy.fyersAppId) merged.broker = { ...merged.broker, fyersAppId: legacy.fyersAppId };
+    if (legacy.fyersSecretKey) merged.broker = { ...merged.broker, fyersSecret: legacy.fyersSecretKey };
+    if (legacy.fyersRedirectUri) merged.broker = { ...merged.broker, fyersRedirectUri: legacy.fyersRedirectUri };
+    if (legacy.upstoxApiKey) merged.broker = { ...merged.broker, upstoxApiKey: legacy.upstoxApiKey };
+    if (legacy.upstoxSecretKey) merged.broker = { ...merged.broker, upstoxSecret: legacy.upstoxSecretKey };
+    if (legacy.upstoxRedirectUri) merged.broker = { ...merged.broker, upstoxRedirectUri: legacy.upstoxRedirectUri };
+    if (legacy.binanceApiKey) merged.broker = { ...merged.broker, binanceApiKey: legacy.binanceApiKey };
+    if (legacy.binanceSecretKey) merged.broker = { ...merged.broker, binanceSecretKey: legacy.binanceSecretKey };
+
+    // Remove legacy key after successful migration
+    localStorage.removeItem(LEGACY_DEV_CONFIG_KEY);
+    return merged;
+  } catch {
+    return settings;
+  }
+}
+
+function migrateMockAI(settings: AppSettings): AppSettings {
+  if ((settings.ai as any).provider === 'mock_ai' || (settings.ai as any).provider === 'mock') {
+    return { ...settings, ai: { ...settings.ai, provider: 'gemini' as const } };
+  }
+  return settings;
+}
+
+export function getStoredSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    let settings: AppSettings;
+
+    if (!raw) {
+      settings = DEFAULT_SETTINGS;
+    } else {
+      const parsed = JSON.parse(raw);
+      settings = {
+        broker: { ...DEFAULT_SETTINGS.broker, ...parsed.broker },
+        quantitative: { ...DEFAULT_SETTINGS.quantitative, ...parsed.quantitative },
+        ai: { ...DEFAULT_SETTINGS.ai, ...parsed.ai },
+        paper: { ...DEFAULT_SETTINGS.paper, ...parsed.paper },
+        preferences: { ...DEFAULT_SETTINGS.preferences, ...parsed.preferences },
+      };
+    }
+
+    // Migrate any legacy DeveloperApiConfig into canonical settings
+    settings = migrateLegacyDevConfig(settings);
+    // Remove mock_ai provision entirely – migrate to gemini
+    settings = migrateMockAI(settings);
+
+    return settings;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+export function saveStoredSettings(settings: AppSettings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch (err) {
+    console.error('Failed to save settings to localStorage:', err);
+  }
+}
+
+export function resetStoredSettings(): AppSettings {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_DEV_CONFIG_KEY);
+  }
+  return DEFAULT_SETTINGS;
+}
+
+/**
+ * Export settings as JSON.
+ * By default, strips API keys/secrets for safety.
+ * Pass `includeSecrets: true` to include them.
+ */
+export function exportSettingsJson(
+  settings: AppSettings,
+  options?: { includeSecrets?: boolean }
+): string {
+  if (options?.includeSecrets) {
+    return JSON.stringify(settings, null, 2);
+  }
+
+  // Deep clone and strip secret fields
+  const sanitized = JSON.parse(JSON.stringify(settings)) as AppSettings;
+
+  for (const field of (SECRET_FIELDS.broker || [])) {
+    if (field in sanitized.broker) {
+      (sanitized.broker as unknown as Record<string, unknown>)[field] = '';
+    }
+  }
+  for (const field of (SECRET_FIELDS.ai || [])) {
+    if (field in sanitized.ai) {
+      (sanitized.ai as unknown as Record<string, unknown>)[field] = '';
+    }
+  }
+
+  return JSON.stringify(sanitized, null, 2);
+}
+
+/**
+ * Import settings from JSON string with validation.
+ * Merges with defaults so missing fields don't break the app.
+ * Throws if the JSON is completely unparseable.
+ */
+export function importSettingsJson(jsonStr: string): AppSettings {
+  const parsed = JSON.parse(jsonStr);
+
+  // Gracefully merge with defaults — even if imported JSON is partial
+  const merged: AppSettings = {
+    broker: { ...DEFAULT_SETTINGS.broker, ...(parsed.broker || {}) },
+    quantitative: { ...DEFAULT_SETTINGS.quantitative, ...(parsed.quantitative || {}) },
+    ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai || {}) },
+    paper: { ...DEFAULT_SETTINGS.paper, ...(parsed.paper || {}) },
+    preferences: { ...DEFAULT_SETTINGS.preferences, ...(parsed.preferences || {}) },
+  };
+
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Supabase sync helpers — RECTIFY: Supabase (via backend) is source of truth
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge a raw Supabase app_settings blob (Record) into a validated AppSettings.
+ * Uses DEFAULT_SETTINGS as fallback for missing fields; never throws.
+ */
+export function mergeAppSettingsFromSupabase(raw: unknown): AppSettings {
+  if (!raw || typeof raw !== 'object') return getStoredSettings();
+  const parsed = raw as Partial<AppSettings>;
+  const merged: AppSettings = {
+    broker: { ...DEFAULT_SETTINGS.broker, ...(parsed.broker || {}) },
+    quantitative: { ...DEFAULT_SETTINGS.quantitative, ...(parsed.quantitative || {}) },
+    ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai || {}) },
+    paper: { ...DEFAULT_SETTINGS.paper, ...(parsed.paper || {}) },
+    preferences: { ...DEFAULT_SETTINGS.preferences, ...(parsed.preferences || {}) },
+  };
+  return migrateMockAI(merged);
+}
+
+/**
+ * Build the Supabase payload from AppSettings.
+ * Keeps flat legacy columns in sync so old queries remain valid.
+ */
+export function toSupabasePayload(settings: AppSettings): Record<string, unknown> {
+  return {
+    theme: settings.preferences.theme,
+    default_symbol: settings.preferences.defaultIndexSymbol,
+    preferred_market_provider: settings.broker.provider,
+    preferred_ai_provider: settings.ai.provider,
+    preferred_ai_model: settings.ai.geminiModel,
+    app_settings: settings,
+  };
+}

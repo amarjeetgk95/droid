@@ -174,14 +174,8 @@ export function AIEngineTab({ settings, onChange }: Props) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[
-            {
-              id: 'mock_ai',
-              name: 'Mock AI Analyst',
-              badge: 'Deterministic',
-              desc: 'Instant local heuristics for offline testing',
-            },
             {
               id: 'gemini',
               name: 'Google Gemini',
@@ -198,7 +192,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
               id: 'ollama',
               name: 'Local Ollama',
               badge: '100% Private',
-              desc: 'Self-hosted LLMs via Render cloud',
+              desc: 'Self-hosted LLMs – requires local install',
             },
           ].map((p) => {
             const isSelected = settings.provider === p.id;
@@ -239,9 +233,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
       <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Key className="w-4 h-4 text-primary" />
-          {settings.provider === 'mock_ai'
-            ? 'Mock AI Model & Heuristic Configuration'
-            : settings.provider === 'gemini'
+          {settings.provider === 'gemini'
             ? 'Google Gemini API Key & Model Selection'
             : settings.provider === 'openrouter'
             ? 'OpenRouter API Key & Supported Models'
@@ -540,17 +532,6 @@ export function AIEngineTab({ settings, onChange }: Props) {
             )}
           </div>
         )}
-
-        {/* 2D. Mock AI - zero config */}
-        {settings.provider === 'mock_ai' && (
-          <div className="bg-secondary/30 border border-border/60 rounded-xl p-4 flex items-start gap-3 text-xs">
-            <div className="bg-primary/10 text-primary p-2 rounded-lg shrink-0"><Cpu className="w-4 h-4" /></div>
-            <div>
-              <p className="font-semibold text-foreground">Mock Analyst — Instant & Offline</p>
-              <p className="text-muted-foreground text-[11px] mt-1">Deterministic rule engine, no API key needed. Switch to Gemini/OpenRouter for live LLM synthesis.</p>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 3. Analyst Persona & Generation Controls */}
@@ -625,13 +606,8 @@ export function AIEngineTab({ settings, onChange }: Props) {
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 font-mono">NO MOCK FALLBACK</span>
           </h3>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Runs a <strong>real</strong> end-to-end test with live NIFTY market context (regime + futures + options). Measures latency, validates JSON schema, and <strong>fails honestly</strong> if Ollama is not installed, API key is missing/invalid, or model is not pulled. No deterministic mock data is used for gemini/openrouter/ollama.
+            Runs a <strong>real</strong> end-to-end test with live NIFTY market context (regime + futures + options). Measures latency, validates JSON schema, and <strong>fails honestly</strong> if Ollama is not installed, API key is missing/invalid, or model is not pulled. No mock data is used.
           </p>
-          {settings.provider === 'mock_ai' && (
-            <p className="text-[11px] p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600">
-              Mock AI is offline & deterministic – it does not call any LLM. “Run Test” will only verify prompt building and schema (≈30ms). Switch to Gemini/OpenRouter/Ollama for a live test.
-            </p>
-          )}
           {settings.provider === 'ollama' && (settings.ollamaBaseUrl.includes('localhost') || settings.ollamaBaseUrl.includes('127.0.0.1')) && (
             <p className="text-[11px] p-2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-600">
               Ollama is local – the test does a <strong>direct browser fetch</strong> to {settings.ollamaBaseUrl}/api/tags (Render cannot reach localhost). Ensure <code>ollama serve</code> is running and CORS is allowed.
@@ -653,7 +629,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
             className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs self-start sm:self-auto"
           >
             <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-            <span>{testing ? 'Testing…' : settings.provider === 'mock_ai' ? 'Run Mock Test' : 'Run Live Test'}</span>
+            <span>{testing ? 'Testing…' : 'Run Live Test'}</span>
           </button>
         </div>
 

@@ -29,7 +29,7 @@ export const QuantitativeSettingsSchema = z.object({
 
 // --- AI Settings ---
 export const AISettingsSchema = z.object({
-  provider: z.enum(['mock_ai', 'gemini', 'openrouter', 'ollama']),
+  provider: z.enum(['gemini', 'openrouter', 'ollama']),
   geminiApiKey: z.string().max(500),
   geminiModel: z.string().max(100),
   openRouterApiKey: z.string().max(500),
@@ -40,7 +40,6 @@ export const AISettingsSchema = z.object({
   temperature: z.number().min(0, 'Temperature must be ≥ 0').max(2, 'Temperature must be ≤ 2'),
   cacheTtlSeconds: z.number().int().min(0).max(3600, 'Cache TTL must be ≤ 3600s (1hr)'),
 }).superRefine((data, ctx) => {
-  if (data.provider === 'mock_ai') return;
   if (data.provider === 'gemini') {
     if (!data.geminiModel || data.geminiModel.trim() === '') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['geminiModel'], message: 'Gemini model is required when provider is Gemini' });
