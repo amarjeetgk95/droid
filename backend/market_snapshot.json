@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-08-30T19:51:02.991167Z",
+  "timestamp": "2026-08-30T20:20:03.520307Z",
   "version": "1.0",
   "quotes": [
     {
       "symbol": "NIFTY 50",
       "display_name": "Nifty 50",
-      "timestamp": "2026-08-30T19:51:02.989416Z",
+      "timestamp": "2026-08-30T20:20:03.518456Z",
       "ltp": 24965.81,
       "open": 24980.93,
       "high": 25011.04,
@@ -21,7 +21,7 @@
     {
       "symbol": "BANKNIFTY",
       "display_name": "Banknifty",
-      "timestamp": "2026-08-30T19:51:02.989685Z",
+      "timestamp": "2026-08-30T20:20:03.518636Z",
       "ltp": 52253.45,
       "open": 51950.7,
       "high": 52277.31,
@@ -37,7 +37,7 @@
     {
       "symbol": "FINNIFTY",
       "display_name": "Finnifty",
-      "timestamp": "2026-08-30T19:51:02.989894Z",
+      "timestamp": "2026-08-30T20:20:03.518752Z",
       "ltp": 24087.79,
       "open": 23942.99,
       "high": 24088.01,
@@ -53,7 +53,7 @@
     {
       "symbol": "SENSEX",
       "display_name": "Sensex",
-      "timestamp": "2026-08-30T19:51:02.990184Z",
+      "timestamp": "2026-08-30T20:20:03.518859Z",
       "ltp": 81362.23,
       "open": 81523.53,
       "high": 81538.46,
@@ -69,7 +69,7 @@
     {
       "symbol": "INDIA VIX",
       "display_name": "India VIX",
-      "timestamp": "2026-08-30T19:51:02.990279Z",
+      "timestamp": "2026-08-30T20:20:03.518961Z",
       "ltp": 13.17,
       "open": 13.04,
       "high": 13.26,
@@ -119,7 +119,7 @@
         24965.81
       ],
       "status": "DEMO",
-      "timestamp": "2026-08-30T19:51:02.990349Z",
+      "timestamp": "2026-08-30T20:20:03.519083Z",
       "provider": "mock"
     },
     {
@@ -157,7 +157,7 @@
         52253.45
       ],
       "status": "DEMO",
-      "timestamp": "2026-08-30T19:51:02.990399Z",
+      "timestamp": "2026-08-30T20:20:03.519184Z",
       "provider": "mock"
     },
     {
@@ -195,7 +195,7 @@
         24087.79
       ],
       "status": "DEMO",
-      "timestamp": "2026-08-30T19:51:02.990445Z",
+      "timestamp": "2026-08-30T20:20:03.519275Z",
       "provider": "mock"
     },
     {
@@ -233,7 +233,7 @@
         81362.23
       ],
       "status": "DEMO",
-      "timestamp": "2026-08-30T19:51:02.990564Z",
+      "timestamp": "2026-08-30T20:20:03.519363Z",
       "provider": "mock"
     },
     {
@@ -271,13 +271,13 @@
         13.17
       ],
       "status": "DEMO",
-      "timestamp": "2026-08-30T19:51:02.990606Z",
+      "timestamp": "2026-08-30T20:20:03.519451Z",
       "provider": "mock"
     }
   ],
   "status": {
     "session": "PRE_OPEN",
-    "market_time": "2026-08-30T19:51:02.991037Z",
+    "market_time": "2026-08-30T20:20:03.520120Z",
     "is_trading_day": true,
     "data_status": "DEMO",
     "provider": "mock"
@@ -348,7 +348,7 @@
     "sentiment": "NEUTRAL",
     "sentiment_score": 44.6,
     "status": "DEMO",
-    "timestamp": "2026-08-30T19:51:02.991144Z"
+    "timestamp": "2026-08-30T20:20:03.520278Z"
   },
   "subscriptions": [
     "NIFTY 50",

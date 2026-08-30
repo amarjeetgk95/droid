@@ -39,14 +39,21 @@ class Settings(BaseSettings):
     upstox_access_token: str = ""
 
     # Groww Open API Settings
+    # Groww Open API Settings
+    # Auth: "checksum" (API Key + Secret, SHA256(secret+timestamp)) or "totp"
     groww_api_key: str = ""
     groww_api_secret: str = ""
     groww_access_token: str = ""
+    groww_auth_mode: Literal["checksum", "totp"] = "checksum"
 
     # Kotak Neo (Neo API) Settings
+    # api_key = UCC (Unique Client Code, 5 chars), api_secret = dashboard access token
     kotak_neo_api_key: str = ""
     kotak_neo_api_secret: str = ""
     kotak_neo_access_token: str = ""
+    kotak_neo_mobile_number: str = ""
+    kotak_neo_mpin: str = ""
+    kotak_neo_totp: str = ""
 
     # Binance (Crypto) Settings
     binance_api_key: str = ""

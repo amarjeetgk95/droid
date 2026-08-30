@@ -506,27 +506,27 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
           <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 flex items-start gap-2">
             <Info className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
-              <strong>Session-based auth:</strong> Neo requires API Key, API Secret, registered mobile number, and a 6-digit MPIN. The backend will establish a session and store a 6-hour view token, which is auto-refreshed.
+              <strong>Two-step auth (UCC + TOTP + MPIN):</strong> Enter your Unique Client Code (UCC), the Access Token from the Neo API Dashboard, your registered mobile number, and your 6-digit MPIN. The backend performs TOTP login → MPIN validate to obtain a 6-hour trade token. <strong>TOPT code must be supplied at runtime</strong> — it changes every 30 seconds via Google/Microsoft Authenticator.
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Neo API Key (Consumer Key)</label>
+              <label className="text-xs font-semibold text-foreground block mb-1">UCC — Unique Client Code</label>
               <input
                 type="text"
-                placeholder="e.g. xxxxxxxxxxxxxxxx"
+                placeholder="e.g. AB123 (5 chars)"
                 value={settings.kotakNeo.apiKey}
                 onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, apiKey: e.target.value } })}
                 className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
               />
             </div>
             <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Neo API Secret</label>
+              <label className="text-xs font-semibold text-foreground block mb-1">Access Token (from Neo API Dashboard)</label>
               <div className="relative">
                 <input
                   type={showSecret ? 'text' : 'password'}
-                  placeholder="Enter your Neo API Secret"
+                  placeholder="e.g. ec6a746c-e44b-455e-abf2-c13352b2fc45"
                   value={settings.kotakNeo.apiSecret}
                   onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, apiSecret: e.target.value } })}
                   className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
@@ -555,6 +555,22 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
                 placeholder="••••••"
                 value={settings.kotakNeo.mpin}
                 onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, mpin: e.target.value.replace(/\D/g, '') } })}
+                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono tracking-widest"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="text-xs font-semibold text-foreground block mb-1">TOTP Code (runtime, rotates every 30s)</label>
+              <p className="text-[10px] text-muted-foreground mb-1">
+                Current 6-digit code from Google/Microsoft Authenticator. Enter a fresh code and click Force Refresh to log in (step 1 of 2).
+              </p>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="e.g. 123456"
+                value={settings.kotakNeo.totp}
+                onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, totp: e.target.value.replace(/\D/g, '') } })}
                 className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono tracking-widest"
               />
             </div>

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from app.providers.base import MarketDataProvider
 from app.models.market import (
     NormalizedQuote, NormalizedCandle, NormalizedOptionQuote,
@@ -18,23 +18,41 @@ logger = structlog.get_logger()
 class KotakNeoProvider(MarketDataProvider):
     """Kotak Neo (Neo API) Market Data Provider Adapter.
 
-    Auth flow: API key + API secret + mobile/email + MPIN issued from
-    https://www.kotaksecurities.com/platform/neo-trade-api/. Access
-    tokens are short-lived (6h) and require a TOTP-based view token
-    exchange before a session can be established.
+    Credential mapping (per Kotak Neo Trade API documentation):
+      - API Key     = UCC (Unique Client Code), 5 chars e.g. "AB123"
+      - API Secret  = Access Token generated from Invest → Trade API → API Dashboard
+      - additional = Mobile number (with country code), 6-digit MPIN, and a
+        TOTP code from a registered authenticator app (Google/Microsoft).
+
+    Auth flow (two-step):
+      1. totp_login(mobile_number, ucc, totp) → returns view token + session id
+      2. totp_validate(mpin)                 → returns trade token (6h session)
+
+    Market-data base URL is environment-specific (e.g. https://gw-napi.kotaksecurities.com).
     """
 
     PROVIDER_ID = "kotak_neo"
-    API_BASE = "https://gw-napi.kotaksecurities.com"
+    API_BASE_PROD = "https://gw-napi.kotaksecurities.com"
+    API_BASE_UAT = "https://gw-uat.kotaksecurities.com"
 
     def __init__(
         self,
-        api_key: str | None = None,
-        api_secret: str | None = None,
-        access_token: str | None = None,
+        api_key: str | None = None,       # UCC
+        api_secret: str | None = None,    # Access Token from dashboard
+        access_token: str | None = None,  # Trade token from totp_validate
+        mobile_number: str | None = None,
+        mpin: str | None = None,
+        totp: str | None = None,
+        environment: str = "prod",
     ):
         self.api_key = api_key or settings.kotak_neo_api_key
         self.api_secret = api_secret or settings.kotak_neo_api_secret
+        self.mobile_number = mobile_number or settings.kotak_neo_mobile_number
+        self.mpin = mpin or settings.kotak_neo_mpin
+        self.totp = totp or settings.kotak_neo_totp
+        self.totp = totp or None
+        self.environment = environment
+        self.api_base = self.API_BASE_PROD if environment == "prod" else self.API_BASE_UAT
 
         self.token_manager = TokenManager(
             provider=self.PROVIDER_ID,
@@ -59,14 +77,13 @@ class KotakNeoProvider(MarketDataProvider):
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
 
-        # Neo uses a numeric instrument token (pSymbol) per scrip.
-        # Tokens for major indices are stable across sessions.
+        # Neo uses numeric instrument tokens per exchange segment.
         self.symbol_map = {
-            "NIFTY 50":   {"exchange": "nse_cm",  "p_trading_symbol": "NIFTY",     "p_token": 26000},
-            "BANKNIFTY":  {"exchange": "nse_cm",  "p_trading_symbol": "BANKNIFTY", "p_token": 26001},
-            "FINNIFTY":   {"exchange": "nse_cm",  "p_trading_symbol": "FINNIFTY",  "p_token": 26037},
-            "SENSEX":     {"exchange": "bse_cm",  "p_trading_symbol": "SENSEX",    "p_token": 1},
-            "INDIA VIX":  {"exchange": "nse_cm",  "p_trading_symbol": "INDIAVIX",  "p_token": 26017},
+            "NIFTY 50":   {"exchange": "nse_cm", "p_trading_symbol": "NIFTY",    "p_token": 26000},
+            "BANKNIFTY":  {"exchange": "nse_cm", "p_trading_symbol": "BANKNIFTY", "p_token": 26001},
+            "FINNIFTY":   {"exchange": "nse_cm", "p_trading_symbol": "FINNIFTY",  "p_token": 26037},
+            "SENSEX":     {"exchange": "bse_cm", "p_trading_symbol": "SENSEX",    "p_token": 1},
+            "INDIA VIX":  {"exchange": "nse_cm", "p_trading_symbol": "INDIAVIX",  "p_token": 26017},
         }
 
     @property
@@ -80,7 +97,113 @@ class KotakNeoProvider(MarketDataProvider):
         return self.rate_limiter
 
     def _has_valid_credentials(self) -> bool:
-        return bool(self.token_manager.token_info and self.token_manager.token_info.access_token)
+        return bool(
+            self.token_manager.token_info and self.token_manager.token_info.access_token
+        )
+
+    async def _login(self) -> str | None:
+        """Two-step TOTP+MPIN login.
+
+        Step 1: totp_login(mobile_number, ucc, totp) → view token + session id
+        Step 2: totp_validate(mpin)                  → trade token
+        Returns the trade token on success, None on failure.
+        """
+        if not all([self.api_key, self.api_secret, self.mobile_number, self.mpin, self.totp]):
+            logger.warning("kotak_neo_login_missing_creds")
+            return None
+
+        import httpx
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        # Step 1 — TOTP login (view token + session)
+        totp_payload = {
+            "mobile_number": self.mobile_number,
+            "client_id": self.api_key,
+            "totp": self.totp,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                step1 = await client.post(
+                    f"{self.api_base}/session/totp_login",
+                    json=totp_payload,
+                    headers=headers,
+                )
+                if step1.status_code != 200:
+                    logger.warning("kotak_neo_totp_login_failed", status=step1.status_code)
+                    return None
+                step1_data = step1.json()
+                if step1_data.get("status") != "success":
+                    logger.warning("kotak_neo_totp_login_error", response=step1_data)
+                    return None
+        except Exception as e:
+            logger.warning("kotak_neo_totp_login_exception", error=str(e))
+            return None
+
+        view_token = step1_data.get("data", {}).get("token")
+        if not view_token:
+            logger.warning("kotak_neo_no_view_token")
+            return None
+
+        # Step 2 — MPIN validate (trade token)
+        mpin_payload = {"mpin": self.mpin}
+        auth_headers = {
+            **headers,
+            "Authorization": view_token,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                step2 = await client.post(
+                    f"{self.api_base}/session/totp_validate",
+                    json=mpin_payload,
+                    headers=auth_headers,
+                )
+                if step2.status_code != 200:
+                    logger.warning("kotak_neo_totp_validate_failed", status=step2.status_code)
+                    return None
+                step2_data = step2.json()
+                trade_token = (
+                    step2_data.get("data", {}).get("token")
+                    or step2_data.get("data", {}).get("access_token")
+                )
+                if not trade_token:
+                    logger.warning("kotak_neo_no_trade_token", response=step2_data)
+                    return None
+                return trade_token
+        except Exception as e:
+            logger.warning("kotak_neo_totp_validate_exception", error=str(e))
+            return None
+
+    async def refresh_access_token(self) -> TokenInfo | None:
+        """Attempt to log in and store the resulting trade token."""
+        token = await self._login()
+        if token:
+            info = TokenInfo(access_token=token, provider=self.PROVIDER_ID)
+            self.token_manager.set_token(info)
+            return info
+        return None
+
+    @property
+    def provider_name(self) -> str:
+        return self.PROVIDER_ID
+
+    def get_token_manager(self) -> TokenManager:
+        return self.token_manager
+
+    def get_rate_limiter(self) -> TokenBucketRateLimiter:
+        return self.rate_limiter
+
+    def _has_credentials_configured(self) -> bool:
+        """All non-token credentials are present (UCC + Access Token + mobile + MPIN + TOTP)."""
+        return bool(
+            self.api_key
+            and self.api_secret
+            and self.mobile_number
+            and self.mpin
+            and self.totp
+        )
 
     async def get_quote(self, symbol: str) -> NormalizedQuote:
         await self.rate_limiter.acquire()
@@ -161,7 +284,7 @@ class KotakNeoProvider(MarketDataProvider):
             session=MarketSession.OPEN if is_trading else MarketSession.CLOSED,
             market_time=now,
             is_trading_day=is_trading,
-            data_status=DataStatus.LIVE if self._has_valid_credentials() else DataStatus.DISCONNECTED,
+            data_status=DataStatus.LIVE if self._has_credentials_configured() else DataStatus.DISCONNECTED,
             provider=self.provider_name,
         )
 
@@ -183,7 +306,7 @@ class KotakNeoProvider(MarketDataProvider):
             dropped_events=0,
             circuit_breaker_state="CLOSED",
             last_heartbeat=datetime.now(timezone.utc),
-            message="Kotak Neo API connected" if diag["is_token_valid"] else "Awaiting Kotak Neo session token",
+            message="Kotak Neo API connected" if diag["is_token_valid"] else "Awaiting TOTP login + MPIN validation (two-step auth)",
         )
 
     async def get_market_breadth(self) -> MarketBreadthData:

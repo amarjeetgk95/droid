@@ -21,10 +21,11 @@ export interface GrowwCredentials {
 }
 
 export interface KotakNeoCredentials {
-  apiKey: string;
-  apiSecret: string;
+  apiKey: string;      // UCC (Unique Client Code, 5 chars)
+  apiSecret: string;   // Access Token from Neo API Dashboard
   mobileNumber: string;
   mpin: string;
+  totp: string;        // Runtime TOTP from authenticator app (rotates every 30s)
 }
 
 export interface BinanceCredentials {
@@ -186,6 +187,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       apiSecret: '',
       mobileNumber: '',
       mpin: '',
+      totp: '',
     },
     binance: {
       apiKey: '',
@@ -267,6 +269,7 @@ const SECRET_FIELDS: Record<string, string[]> = {
     'groww.apiSecret',
     'kotakNeo.apiSecret',
     'kotakNeo.mpin',
+    'kotakNeo.totp',
     'binance.apiSecret',
   ],
   ai: ['geminiApiKey', 'openRouterApiKey', 'openaiApiKey', 'novitaApiKey', 'nvidiaApiKey', 'customOpenaiApiKey'],
