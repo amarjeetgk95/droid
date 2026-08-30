@@ -37,17 +37,26 @@ class AIService:
         # 2. Fetch Futures & Rollover (Phase 5)
         futures = await futures_service.get_futures_overview(underlying)
 
-        # 3. Fetch Options & Max Pain (Phase 4)
+        # 3. Fetch Options & Max Pain (Phase 4) — also retain strike rows for §8 detailed checklist (Key Strikes, Premiums, Greeks)
         options_analytics = None
         max_pain = None
+        strikes = None
         try:
             chain = await options_service.get_option_chain_matrix(underlying)
             options_analytics = chain.analytics
-            max_pain = chain.max_pain
+            # chain has no direct .max_pain field; derive robustly (analytics fallback or calculated MaxPainResult)
+            max_pain = getattr(chain, "max_pain", None)
+            if max_pain is None and chain.analytics:
+                # fallback to max_pain strike value; calculate full result if needed
+                try:
+                    max_pain = await options_service.calculate_max_pain(underlying)
+                except Exception:
+                    max_pain = chain.analytics.max_pain_strike
+            strikes = getattr(chain, "strikes", None)
         except Exception as e:
             logger.warning("options_data_fetch_warn", symbol=underlying, error=str(e))
 
-        # 4. Construct Grounded Prompts
+        # 4. Construct Grounded Prompts ( §8 exhaustive F&O + §22 ingestion guardrails )
         system_prompt = build_system_prompt()
         user_prompt = build_market_context_prompt(
             symbol=underlying,
@@ -55,6 +64,7 @@ class AIService:
             futures=futures,
             options_analytics=options_analytics,
             max_pain=max_pain,
+            strikes=strikes,
         )
 
         # 5. Dispatch to LLM Provider (strict – no silent mock fallback)
@@ -126,15 +136,23 @@ class AIService:
             underlying = symbol.upper().replace(" 50", "")
             regime = await regime_service.classify_market_regime(underlying)
             futures = await futures_service.get_futures_overview(underlying)
+            strikes = None
             try:
                 chain = await options_service.get_option_chain_matrix(underlying)
                 options_analytics = chain.analytics
-                max_pain = chain.max_pain
+                max_pain = getattr(chain, "max_pain", None)
+                if max_pain is None and chain.analytics:
+                    try:
+                        max_pain = await options_service.calculate_max_pain(underlying)
+                    except Exception:
+                        max_pain = chain.analytics.max_pain_strike
+                strikes = getattr(chain, "strikes", None)
             except Exception:
                 options_analytics = None
                 max_pain = None
+                strikes = None
             system_prompt = build_system_prompt()
-            user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain)
+            user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
             # Mock generate (honest mock)
             from app.ai.mock_ai import MockLLMProvider
             insight = await MockLLMProvider().generate_analysis(underlying, system_prompt, user_prompt)
@@ -154,15 +172,23 @@ class AIService:
         underlying = symbol.upper().replace(" 50", "")
         regime = await regime_service.classify_market_regime(underlying)
         futures = await futures_service.get_futures_overview(underlying)
+        strikes = None
         try:
             chain = await options_service.get_option_chain_matrix(underlying)
             options_analytics = chain.analytics
-            max_pain = chain.max_pain
+            max_pain = getattr(chain, "max_pain", None)
+            if max_pain is None and chain.analytics:
+                try:
+                    max_pain = await options_service.calculate_max_pain(underlying)
+                except Exception:
+                    max_pain = chain.analytics.max_pain_strike
+            strikes = getattr(chain, "strikes", None)
         except Exception:
             options_analytics = None
             max_pain = None
+            strikes = None
         system_prompt = build_system_prompt()
-        user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain)
+        user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
 
         # Special handling for Ollama when base_url is localhost – backend on Render cannot reach user's laptop.
         # We still try, but will return a clear error indicating frontend must test Ollama directly.
