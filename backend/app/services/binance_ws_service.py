@@ -79,6 +79,15 @@ def build_depth_streams(symbol: str, update_speed: str = "100ms") -> list[str]:
     return [f"{symbol.lower()}@depth"]
 
 
+def build_markprice_streams(symbol: str, interval: str = "1s") -> list[str]:
+    # Futures markPrice stream @1s includes fundingRate (r) and nextFundingTime (T)
+    return [f"{symbol.lower()}@markPrice@{interval}"]
+
+
+def build_markprice_arr_stream(interval: str = "1s") -> str:
+    return f"!markPrice@arr@{interval}"
+
+
 class BinanceWebSocketManager:
     """Manages persistent Binance WebSocket connections with auto-reconnect.
 

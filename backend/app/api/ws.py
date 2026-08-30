@@ -98,19 +98,24 @@ async def websocket_crypto_feed(websocket: WebSocket):
     streams_param = params.get("streams", "ticker")  # comma: ticker,kline,depth
     requested_streams = [s.strip().lower() for s in streams_param.split(",") if s.strip()]
 
-    # Build Binance stream names based on request
+    # Build Binance stream names based on request (depth, kline, funding/markPrice realtime)
     binance_streams: list[str] = []
     if "ticker" in requested_streams:
         binance_streams.extend(build_ticker_streams(symbols))
-    # Depth and kline are typically for a single selected symbol (first in list)
+    # Depth, kline, funding are typically for a single selected symbol (first in list)
     primary_symbol = symbols[0] if symbols else "BTCUSDT"
     if "kline" in requested_streams:
         binance_streams.append(f"{primary_symbol.lower()}@kline_{interval}")
     if "depth" in requested_streams:
         binance_streams.append(f"{primary_symbol.lower()}@depth@100ms")
-
-    if not binance_streams:
-        binance_streams = build_ticker_streams(symbols)
+    # Funding rate realtime via markPrice@1s (futures only)
+    if "funding" in requested_streams or "markprice" in requested_streams:
+        from app.services.binance_ws_service import build_markprice_streams
+        binance_streams.extend(build_markprice_streams(primary_symbol, "1s"))
+    # If market is futures and ticker requested, also include funding by default for derivatives card
+    if market == "futures" and "depth" in requested_streams and "funding" not in requested_streams and "markprice" not in requested_streams:
+        from app.services.binance_ws_service import build_markprice_streams as _bms
+        binance_streams.extend(_bms(primary_symbol, "1s"))
 
     # Verify correct stream URL per market (task requirement)
     combined_url = build_combined_stream_url(market, binance_streams)
@@ -226,6 +231,20 @@ async def websocket_crypto_feed(websocket: WebSocket):
                                     "data": data,
                                     "timestamp": datetime.now(timezone.utc).isoformat(),
                                 }))
+                            elif event_type == "markPriceUpdate" or "markPrice" in stream:
+                                # Realtime funding rate + markPrice (futures)
+                                await websocket.send_text(json.dumps({
+                                    "type": "BINANCE_MARK_PRICE",
+                                    "market": active_market,
+                                    "symbol": data.get("s"),
+                                    "stream": stream,
+                                    "markPrice": data.get("p"),
+                                    "indexPrice": data.get("i"),
+                                    "fundingRate": data.get("r"),
+                                    "nextFundingTime": data.get("T"),
+                                    "data": data,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                }))
                             else:
                                 # Generic forward
                                 await websocket.send_text(json.dumps({
@@ -297,6 +316,13 @@ async def websocket_crypto_feed(websocket: WebSocket):
                         new_bStreams.append(f"{primary.lower()}@kline_{new_interval}")
                     if "depth" in new_streams_req:
                         new_bStreams.append(f"{primary.lower()}@depth@100ms")
+                    if "funding" in new_streams_req or "markprice" in new_streams_req:
+                        from app.services.binance_ws_service import build_markprice_streams as _bms2
+                        new_bStreams.extend(_bms2(primary, "1s"))  # type: ignore
+                    # Auto-include funding realtime when futures depth is subscribed (derivatives card)
+                    if new_market == "futures" and "depth" in new_streams_req and "funding" not in new_streams_req and "markprice" not in new_streams_req:
+                        from app.services.binance_ws_service import build_markprice_streams as _bms3
+                        new_bStreams.extend(_bms3(primary, "1s"))  # type: ignore
                     if not new_bStreams:
                         new_bStreams = build_ticker_streams(new_symbols)  # type: ignore
 

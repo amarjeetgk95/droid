@@ -7,9 +7,11 @@ import { CryptoDerivatives } from '@/lib/types';
 interface Props {
   derivatives: CryptoDerivatives | null;
   loading?: boolean;
+  isLive?: boolean;
+  fundingLive?: boolean;
 }
 
-function CryptoDerivativesCardInner({ derivatives, loading }: Props) {
+function CryptoDerivativesCardInner({ derivatives, loading, isLive, fundingLive }: Props) {
   const [countdown, setCountdown] = useState<number>(0);
 
   useEffect(() => {
@@ -57,9 +59,14 @@ function CryptoDerivativesCardInner({ derivatives, loading }: Props) {
           <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
             <Flame className="w-3.5 h-3.5 text-amber-500" />
             <span>Futures & Derivatives Flow</span>
+            {isLive || fundingLive ? (
+              <span className="ml-1 flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" /> LIVE {fundingLive ? 'Funding @1s' : ''}
+              </span>
+            ) : null}
           </h3>
-          <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded">
-            Binance USDT-M
+          <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded flex items-center gap-1">
+            Binance USDT-M {fundingLive && <span className="w-1 h-1 bg-emerald-400 rounded-full animate-pulse" />}
           </span>
         </div>
 
@@ -78,12 +85,13 @@ function CryptoDerivativesCardInner({ derivatives, loading }: Props) {
 
           <div className="mt-2 flex items-baseline justify-between">
             <div
-              className={`text-xl font-bold font-mono tabular-nums ${
+              className={`text-xl font-bold font-mono tabular-nums transition-colors duration-300 ${
                 isFundingPositive ? 'text-emerald-400' : 'text-rose-400'
-              }`}
+              } ${fundingLive ? 'animate-none' : ''}`}
+              title={fundingLive ? 'Realtime via Binance markPrice@1s WS' : 'Via REST polling'}
             >
               {isFundingPositive ? '+' : ''}
-              {derivatives.funding_rate_percent.toFixed(4)}%
+              {derivatives.funding_rate_percent.toFixed(4)}% {fundingLive && <span className="text-[10px] align-middle opacity-70">● live</span>}
             </div>
             <span
               className={`text-[10px] px-2 py-0.5 rounded font-medium ${
@@ -141,8 +149,8 @@ function CryptoDerivativesCardInner({ derivatives, loading }: Props) {
       </div>
 
       <div className="text-[10px] text-muted-foreground flex justify-between border-t border-border pt-2 mt-1">
-        <span>Settlement: UTC 00:00 / 08:00 / 16:00</span>
-        <span>Perpetuals</span>
+        <span>Settlement: UTC 00:00 / 08:00 / 16:00 {fundingLive ? '· funding WS realtime' : '· REST 15s'}</span>
+        <span>Perpetuals {isLive ? '●' : ''}</span>
       </div>
     </div>
   );

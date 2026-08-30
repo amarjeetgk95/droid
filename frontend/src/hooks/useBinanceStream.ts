@@ -6,10 +6,11 @@ import {
   buildTickerStreams,
   buildKlineStreams,
   buildDepthStreams,
+  buildMarkPriceStreams,
   getBinanceWsUrl,
   buildBinanceCombinedUrl,
 } from '@/lib/binanceLive';
-import type { CryptoTicker, CryptoOrderBook, NormalizedCandle } from '@/lib/types';
+import type { CryptoTicker, CryptoOrderBook, CryptoDerivatives, NormalizedCandle } from '@/lib/types';
 
 const PAIR_DISPLAY_NAMES: Record<string, [string, string, string]> = {
   BTCUSDT: ['Bitcoin', 'BTC', 'USDT'],
@@ -241,22 +242,40 @@ export function useBinanceTickerStream(
 }
 
 /**
- * Live depth + kline for a single selected symbol.
- * Updates order book and candle chart instantly.
+ * Live depth + kline + funding rate for a single selected symbol.
+ * Updates order book, funding rate and candle chart instantly without refresh.
+ * - Depth diffs are merged into full L2 book (realtime depth).
+ * - Futures markPrice stream @1s pushes live funding_rate, mark_price, countdown.
  */
 export function useBinanceSymbolStream(
   symbol: string | null,
   market: BinanceMarket,
   timeframe: string,
-  enabled: boolean = true
+  enabled: boolean = true,
+  initialOrderBook: CryptoOrderBook | null = null
 ) {
   const [orderBook, setOrderBook] = useState<CryptoOrderBook | null>(null);
   const [latestCandle, setLatestCandle] = useState<NormalizedCandle | null>(null);
+  const [derivativesLive, setDerivativesLive] = useState<Partial<CryptoDerivatives> | null>(null);
   const [streamState, setStreamState] = useState<BinanceStreamState>('CONNECTING');
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(1000);
+
+  // Seed live orderbook from REST snapshot so diffs can be merged realtime
+  useEffect(() => {
+    if (initialOrderBook && symbol && initialOrderBook.symbol.toUpperCase() === symbol.toUpperCase()) {
+      setOrderBook(initialOrderBook);
+    } else if (!initialOrderBook) {
+      // keep existing if switching timeframe; only clear on symbol change handled by Ws effect
+    }
+  }, [initialOrderBook, symbol]);
+
+  // Reset orderbook when symbol/market changes to avoid stale book
+  useEffect(() => {
+    setDerivativesLive(null);
+  }, [symbol, market]);
 
   useEffect(() => {
     if (!enabled || !symbol || typeof window === 'undefined') {
@@ -269,6 +288,10 @@ export function useBinanceSymbolStream(
       ...buildDepthStreams(cleanSymbol, '100ms'),
       ...buildKlineStreams(cleanSymbol, timeframe),
     ];
+    // Futures funding rate realtime via markPrice@1s (contains fundingRate r and nextFundingTime T)
+    if (market === 'futures') {
+      streams.push(...buildMarkPriceStreams(cleanSymbol, '1s'));
+    }
     const url = buildBinanceCombinedUrl(market, streams);
 
     let isUnmounted = false;
@@ -300,30 +323,69 @@ export function useBinanceSymbolStream(
             if (!data) return;
 
             if (data.e === 'depthUpdate' || stream.includes('@depth')) {
-              // Depth diff - we store as incremental; frontend will merge or just reflect latest best levels
-              const bidsRaw: Array<[string, string]> = data.b || data.bids || [];
-              const asksRaw: Array<[string, string]> = data.a || data.asks || [];
-              // For diff stream, we show top of book live; full snapshot comes from REST initial load
-              // Merge diff into orderBook by updating price levels (simplified: replace top levels)
-              if (bidsRaw.length > 0 || asksRaw.length > 0) {
-                setOrderBook((prev) => {
-                  if (!prev) return prev;
-                  // Update best bid/ask display instantly
-                  const bestBid = bidsRaw[0] ? parseFloat(bidsRaw[0][0]) : prev.bids[0]?.price;
-                  const bestAsk = asksRaw[0] ? parseFloat(asksRaw[0][0]) : prev.asks[0]?.price;
-                  if (bestBid === undefined || bestAsk === undefined) return prev;
-                  // Repaint spread instantly
-                  const spread = Math.max(0, (bestAsk ?? 0) - (bestBid ?? 0));
-                  const spreadPercent = bestAsk ? (spread / bestAsk) * 100 : prev.spread_percent;
-                  return {
-                    ...prev,
-                    spread: parseFloat(spread.toFixed(4)),
-                    spread_percent: parseFloat(spreadPercent.toFixed(4)),
-                    timestamp: new Date().toISOString(),
-                    provider: `binance_${market}_ws`,
-                  };
+              const bidsRaw: Array<[string, string]> = data.b || data.bids || data.B || [];
+              const asksRaw: Array<[string, string]> = data.a || data.asks || data.A || [];
+              if (bidsRaw.length === 0 && asksRaw.length === 0) return;
+              setOrderBook((prev) => {
+                if (!prev) return prev;
+                // Merge diff into full L2 book realtime - maintain sorted maps
+                const bidMap = new Map<number, number>();
+                prev.bids.forEach((lvl) => bidMap.set(lvl.price, lvl.quantity));
+                const askMap = new Map<number, number>();
+                prev.asks.forEach((lvl) => askMap.set(lvl.price, lvl.quantity));
+
+                for (const [pStr, qStr] of bidsRaw) {
+                  const p = parseFloat(pStr);
+                  const q = parseFloat(qStr);
+                  if (Number.isNaN(p)) continue;
+                  if (q === 0) bidMap.delete(p);
+                  else bidMap.set(p, q);
+                }
+                for (const [pStr, qStr] of asksRaw) {
+                  const p = parseFloat(pStr);
+                  const q = parseFloat(qStr);
+                  if (Number.isNaN(p)) continue;
+                  if (q === 0) askMap.delete(p);
+                  else askMap.set(p, q);
+                }
+
+                // Sort and slice top levels (20 each)
+                const sortedBids = Array.from(bidMap.entries())
+                  .sort((a, b) => b[0] - a[0])
+                  .slice(0, 20)
+                  .map(([price, quantity]) => ({ price, quantity } as { price: number; quantity: number }));
+                const sortedAsks = Array.from(askMap.entries())
+                  .sort((a, b) => a[0] - b[0])
+                  .slice(0, 20)
+                  .map(([price, quantity]) => ({ price, quantity } as { price: number; quantity: number }));
+
+                // Recompute cumulative totals for depth bars
+                let run = 0;
+                const bids = sortedBids.map((lvl) => {
+                  run += lvl.price * lvl.quantity;
+                  return { price: lvl.price, quantity: lvl.quantity, total: parseFloat(run.toFixed(2)) };
                 });
-              }
+                run = 0;
+                const asks = sortedAsks.map((lvl) => {
+                  run += lvl.price * lvl.quantity;
+                  return { price: lvl.price, quantity: lvl.quantity, total: parseFloat(run.toFixed(2)) };
+                });
+
+                const bestBid = bids[0]?.price ?? 0;
+                const bestAsk = asks[0]?.price ?? 0;
+                const spread = Math.max(0, bestAsk - bestBid);
+                const spreadPercent = bestAsk > 0 ? (spread / bestAsk) * 100 : 0;
+
+                return {
+                  ...prev,
+                  bids,
+                  asks,
+                  spread: parseFloat(spread.toFixed(4)),
+                  spread_percent: parseFloat(spreadPercent.toFixed(4)),
+                  timestamp: new Date().toISOString(),
+                  provider: `binance_${market}_ws`,
+                };
+              });
             } else if (data.e === 'kline' || stream.includes('@kline')) {
               const k = data.k || data;
               if (!k) return;
@@ -337,6 +399,26 @@ export function useBinanceSymbolStream(
                 vwap: null,
               };
               setLatestCandle(candle);
+            } else if (data.e === 'markPriceUpdate' || stream.includes('@markPrice')) {
+              const markPrice = parseFloat(data.p ?? data.markPrice ?? '0');
+              const indexPrice = parseFloat(data.i ?? data.indexPrice ?? data.P ?? '0');
+              const fundingRate = parseFloat(data.r ?? data.lastFundingRate ?? '0');
+              const nextFundingMs: number = Number(data.T ?? data.nextFundingTime ?? 0);
+              if (!Number.isFinite(fundingRate)) return;
+              const nowMs = Date.now();
+              const countdown = nextFundingMs > 0 ? Math.max(0, Math.floor((nextFundingMs - nowMs) / 1000)) : 0;
+              const nextFundingIso = nextFundingMs > 0 ? new Date(nextFundingMs).toISOString() : new Date(nowMs + 8 * 3600 * 1000).toISOString();
+              setDerivativesLive({
+                symbol: (data.s || symbol || '').toUpperCase(),
+                mark_price: markPrice || undefined,
+                index_price: indexPrice || undefined,
+                funding_rate: fundingRate,
+                funding_rate_percent: parseFloat((fundingRate * 100).toFixed(4)),
+                next_funding_time: nextFundingIso,
+                countdown_seconds: countdown,
+                provider: 'binance_futures_ws',
+                timestamp: new Date().toISOString(),
+              });
             }
           } catch {
             // ignore
@@ -374,5 +456,5 @@ export function useBinanceSymbolStream(
     };
   }, [symbol, market, timeframe, enabled]);
 
-  return { orderBookLive: orderBook, latestCandle, streamState, setOrderBook };
+  return { orderBookLive: orderBook, latestCandle, derivativesLive, streamState, setOrderBook };
 }

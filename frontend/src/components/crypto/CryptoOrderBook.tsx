@@ -7,9 +7,11 @@ import { CryptoOrderBook as OrderBookType } from '@/lib/types';
 interface Props {
   orderbook: OrderBookType | null;
   loading?: boolean;
+  isLive?: boolean;
+  streamState?: string;
 }
 
-function CryptoOrderBookInner({ orderbook, loading }: Props) {
+function CryptoOrderBookInner({ orderbook, loading, isLive, streamState }: Props) {
   if (loading || !orderbook) {
     return (
       <div className="bg-card border border-border rounded-xl p-4 shadow-xs h-[420px] flex flex-col justify-center items-center text-muted-foreground text-xs animate-pulse">
@@ -42,6 +44,13 @@ function CryptoOrderBookInner({ orderbook, loading }: Props) {
           <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-primary" />
             <span>Order Book Depth</span>
+            {isLive ? (
+              <span className="ml-1 flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" /> LIVE
+              </span>
+            ) : streamState === 'CONNECTING' || streamState === 'RECONNECTING' ? (
+              <span className="ml-1 text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">SYNCING</span>
+            ) : null}
           </h3>
           <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded">
             {orderbook.symbol}
@@ -55,13 +64,13 @@ function CryptoOrderBookInner({ orderbook, loading }: Props) {
           <span className="text-right">TOTAL ($)</span>
         </div>
 
-        {/* Asks (Sell Orders - Red) - stable keys by price to avoid remount flash */}
+        {/* Asks (Sell Orders - Red) - stable keys by price only to avoid remount flash on qty tick */}
         <div className="space-y-0.5 my-1">
           {displayAsks.map((level) => {
             const depthPct = Math.min(100, (level.total / maxTotal) * 100);
             return (
               <div
-                key={`ask-${level.price}-${level.quantity}`}
+                key={`ask-${level.price}`}
                 className="relative grid grid-cols-3 text-[11px] font-mono py-0.5 px-1 hover:bg-rose-500/10"
               >
                 <div
@@ -88,13 +97,13 @@ function CryptoOrderBookInner({ orderbook, loading }: Props) {
           </div>
         </div>
 
-        {/* Bids (Buy Orders - Green) - stable keys */}
+        {/* Bids (Buy Orders - Green) - stable keys by price */}
         <div className="space-y-0.5 my-1">
           {displayBids.map((level) => {
             const depthPct = Math.min(100, (level.total / maxTotal) * 100);
             return (
               <div
-                key={`bid-${level.price}-${level.quantity}`}
+                key={`bid-${level.price}`}
                 className="relative grid grid-cols-3 text-[11px] font-mono py-0.5 px-1 hover:bg-emerald-500/10"
               >
                 <div
@@ -111,8 +120,8 @@ function CryptoOrderBookInner({ orderbook, loading }: Props) {
       </div>
 
       <div className="text-[10px] text-muted-foreground flex justify-between border-t border-border pt-2 mt-1">
-        <span>Source: Binance L2 Depth</span>
-        <span>Live Aggregation</span>
+        <span>Source: Binance L2 Depth {isLive ? '· WS @100ms realtime' : '· REST snapshot'}</span>
+        <span className="tabular-nums">{new Date(orderbook.timestamp).toLocaleTimeString()} {isLive ? '●' : ''}</span>
       </div>
     </div>
   );

@@ -55,11 +55,11 @@ export default function CryptoPage() {
   // --- Binance WebSocket live streams (public, no auth) ---
   const trackedSymbols = useMemo(() => ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','NEARUSDT'], []);
   const { tickers: liveTickers, streamState: tickerStreamState } = useBinanceTickerStream(trackedSymbols, market, true);
-  const { latestCandle, orderBookLive } = useBinanceSymbolStream(selectedSymbol, market, timeframe, true);
+  // Realtime L2 depth + funding rate via WS: seed with REST snapshot orderbook for diff merging
+  const { latestCandle, orderBookLive, derivativesLive, streamState: symbolStreamState } = useBinanceSymbolStream(selectedSymbol, market, timeframe, true, orderbook);
 
   // Prevent initial fetch loops
   const initialLoadDone = useRef(false);
-  const lastSpreadUpdate = useRef<number>(0);
 
   // 1. Initial Load: REST only for initial snapshot (tickers & overview)
   const fetchTickersAndOverview = useCallback(async () => {
@@ -195,6 +195,33 @@ export default function CryptoPage() {
     return displayedTickers.find((t) => t.symbol === selectedSymbol) || displayedTickers[0] || null;
   }, [displayedTickers, selectedSymbol]);
 
+  // Realtime displayed orderbook: prefer live WS merged book, fallback to REST snapshot
+  const displayedOrderBook = useMemo(() => {
+    if (orderBookLive && orderBookLive.symbol.toUpperCase() === selectedSymbol.toUpperCase()) return orderBookLive;
+    return orderbook;
+  }, [orderBookLive, orderbook, selectedSymbol]);
+
+  // Realtime displayed derivatives: merge WS funding live (1s) with REST polled OI/ratio
+  const displayedDerivatives = useMemo(() => {
+    if (!derivatives && !derivativesLive) return null;
+    if (!derivatives) return derivativesLive ? { ...derivativesLive } as CryptoDerivatives : null;
+    if (!derivativesLive) return derivatives;
+    return {
+      ...derivatives,
+      ...derivativesLive,
+      // preserve REST fields that WS does not provide
+      open_interest_usd: derivativesLive.open_interest_usd ?? derivatives.open_interest_usd,
+      open_interest_coins: derivativesLive.open_interest_coins ?? derivatives.open_interest_coins,
+      long_short_ratio: derivativesLive.long_short_ratio ?? derivatives.long_short_ratio,
+      long_percentage: derivativesLive.long_percentage ?? derivatives.long_percentage,
+      short_percentage: derivativesLive.short_percentage ?? derivatives.short_percentage,
+      symbol: derivatives.symbol,
+    } as CryptoDerivatives;
+  }, [derivatives, derivativesLive]);
+
+  const orderBookIsLive = symbolStreamState === 'CONNECTED' && !!orderBookLive;
+  const fundingIsLive = market === 'futures' && symbolStreamState === 'CONNECTED' && !!derivativesLive;
+
   // Live WS: update chart instantly on new kline without page refresh
   useEffect(() => {
     if (!latestCandle) return;
@@ -214,35 +241,15 @@ export default function CryptoPage() {
     });
   }, [latestCandle]);
 
-  // Live WS: depth spread instant update - throttled to 800ms to prevent flashing
-  useEffect(() => {
-    if (!orderBookLive) return;
-    const now = Date.now();
-    if (now - lastSpreadUpdate.current < 700) return;
-    lastSpreadUpdate.current = now;
-    setOrderbook((prev) => {
-      if (!prev) return prev;
-      // Only update spread fields to avoid flashing full depth list every 100ms
-      if (prev.spread === orderBookLive.spread && prev.spread_percent === orderBookLive.spread_percent) return prev;
-      return {
-        ...prev,
-        spread: orderBookLive.spread,
-        spread_percent: orderBookLive.spread_percent,
-        timestamp: orderBookLive.timestamp,
-        provider: orderBookLive.provider,
-      };
-    });
-  }, [orderBookLive]);
-
-  // Derivatives: poll every 15s via REST, but do NOT trigger loading flash on poll
+  // Derivatives: poll every 15s via REST for OI & long/short ratio (WS only gives funding); merge with live funding
   useEffect(() => {
     if (!selectedSymbol) return;
     const poll = setInterval(() => {
       api.getCryptoDerivatives(selectedSymbol)
         .then((res) => {
           if (res.data) setDerivatives((prev) => {
-            // avoid flash if unchanged
-            if (prev && prev.funding_rate === res.data.funding_rate && prev.long_short_ratio === res.data.long_short_ratio) return prev;
+            // avoid flash if unchanged (but let funding be overridden by WS live)
+            if (prev && prev.funding_rate === res.data.funding_rate && prev.long_short_ratio === res.data.long_short_ratio && prev.open_interest_usd === res.data.open_interest_usd) return prev;
             return res.data;
           });
         })
@@ -479,11 +486,11 @@ export default function CryptoPage() {
             </button>
           </div>
 
-          {/* Tab Content - loading only on initial empty state, not on WS spread ticks */}
+          {/* Tab Content - realtime WS depth & funding, fallback to REST snapshot */}
           {rightTab === 'orderbook' ? (
-            <CryptoOrderBook orderbook={orderbook} loading={loadingDetails && !orderbook} />
+            <CryptoOrderBook orderbook={displayedOrderBook} loading={loadingDetails && !displayedOrderBook} isLive={orderBookIsLive} streamState={symbolStreamState} />
           ) : (
-            <CryptoDerivativesCard derivatives={derivatives} loading={loadingDetails && !derivatives} />
+            <CryptoDerivativesCard derivatives={displayedDerivatives} loading={loadingDetails && !displayedDerivatives} isLive={fundingIsLive} fundingLive={!!derivativesLive} />
           )}
 
           {/* Quick Info Card */}
