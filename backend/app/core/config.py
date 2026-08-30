@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from typing import Literal
 
 class Settings(BaseSettings):
@@ -20,8 +21,8 @@ class Settings(BaseSettings):
     database_url: str = ""
     
     # Market Data — api_type gates Indian vs Crypto universes
-    api_type: Literal["indian", "crypto"] = "indian"
-    market_data_provider: Literal["fyers", "upstox", "groww", "kotak_neo", "binance"] = "fyers"
+    api_type: str = "indian"
+    market_data_provider: str = "fyers"
 
     # Logging
     log_level: str = "INFO"
@@ -137,6 +138,32 @@ class Settings(BaseSettings):
     max_exposure_pct: float = 20.0
     max_spread: float = 0.5
     max_slippage: float = 0.3
+
+    @model_validator(mode="after")
+    def _normalize_market_data_provider(self) -> "Settings":
+        import structlog
+        indian_providers = ("fyers", "upstox", "groww", "kotak_neo")
+        crypto_providers = ("binance",)
+
+        if self.api_type == "crypto":
+            if self.market_data_provider not in crypto_providers:
+                structlog.get_logger().warning(
+                    "config_provider_fallback",
+                    api_type=self.api_type,
+                    requested=self.market_data_provider,
+                    using="binance",
+                )
+                self.market_data_provider = "binance"
+        else:
+            if self.market_data_provider not in indian_providers:
+                structlog.get_logger().warning(
+                    "config_provider_fallback",
+                    api_type=self.api_type,
+                    requested=self.market_data_provider,
+                    using="fyers",
+                )
+                self.market_data_provider = "fyers"
+        return self
 
     model_config = {
         "env_file": ".env",
