@@ -13,6 +13,7 @@ from app.api import hpi as hpi_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
+from app.services.pattern_outcome_worker import pattern_outcome_worker
 from app.hpi.service import hpi_service
 from app.providers.registry import get_provider
 import structlog
@@ -56,9 +57,13 @@ async def lifespan(app: FastAPI):
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()
 
+    # Start Pattern Outcome Worker (Historical Intelligence v2)
+    await pattern_outcome_worker.start()
+
     yield
     
     # Shutdown in reverse order
+    await pattern_outcome_worker.stop()
     await hpi_service.stop()
     await provider.stop_stream()
     await central_feed.stop()

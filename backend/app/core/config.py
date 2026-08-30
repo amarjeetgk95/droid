@@ -19,13 +19,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = ""
     
-    # Market Data
-    market_data_provider: Literal["mock", "fyers", "upstox"] = "mock"
-    
-    # Mock Data
-    mock_data_mode: Literal["deterministic", "random"] = "deterministic"
-    mock_seed: int = 42
-    
+    # Market Data — api_type gates Indian vs Crypto universes
+    api_type: Literal["indian", "crypto"] = "indian"
+    market_data_provider: Literal["fyers", "upstox", "groww", "kotak_neo", "binance"] = "fyers"
+
     # Logging
     log_level: str = "INFO"
 
@@ -40,6 +37,20 @@ class Settings(BaseSettings):
     upstox_secret_key: str = ""
     upstox_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback"
     upstox_access_token: str = ""
+
+    # Groww Open API Settings
+    groww_api_key: str = ""
+    groww_api_secret: str = ""
+    groww_access_token: str = ""
+
+    # Kotak Neo (Neo API) Settings
+    kotak_neo_api_key: str = ""
+    kotak_neo_api_secret: str = ""
+    kotak_neo_access_token: str = ""
+
+    # Binance (Crypto) Settings
+    binance_api_key: str = ""
+    binance_api_secret: str = ""
 
     # WebSocket & Reconnect Settings (Phase 2)
     ws_reconnect_initial_seconds: float = 1.0
@@ -73,6 +84,9 @@ class Settings(BaseSettings):
     # Batch Write Pipeline Settings (Phase 3)
     batch_write_flush_interval_ms: int = 500
     batch_write_max_size: int = 200
+
+    # Pattern Outcome Worker Settings (Historical Intelligence v2)
+    pattern_outcome_worker_interval: int = 3600  # 1 hour
 
     # OpenRouter AI Model Catalog Settings (Free-Model Dynamic System)
     openrouter_api_key: str = ""

@@ -22,7 +22,7 @@ class TestNormalizedQuote:
             volume=1234567,
             open_interest=None,
             status=DataStatus.DEMO,
-            provider="mock",
+            provider="fyers",
         )
         assert quote.symbol == "NIFTY 50"
         assert quote.status == DataStatus.DEMO
@@ -60,7 +60,7 @@ class TestNormalizedQuote:
             volume=1000,
         )
         assert quote.status == DataStatus.DEMO
-        assert quote.provider == "mock"
+        assert quote.provider == "fyers"
 
 
 class TestNormalizedCandle:

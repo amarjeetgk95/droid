@@ -32,7 +32,7 @@ export function TopHeader({ health, marketStatus }: { health: MarketHealthStatus
           )}
           <div className="flex items-center gap-2 text-xs">
             <span className="px-2 py-1 rounded font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-              {health?.provider === 'mock' || !health || health?.mode === 'DEMO' ? 'DEMO DATA' : 'LIVE'}
+              {health?.mode === 'DEMO' ? 'DEMO DATA' : 'LIVE'}
             </span>
             
             {/* Realtime Stream Badge */}

@@ -20,7 +20,7 @@ class AIInsightResponse(BaseModel):
     disclaimer: str = Field(
         default="This AI analysis is strictly for quantitative research and education. It does not constitute financial advice or trade recommendations."
     )
-    provider_used: str = "mock_ai"
+    provider_used: str = "gemini"
 
 
 class AIInsightPayload(BaseModel):

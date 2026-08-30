@@ -10,10 +10,10 @@ router = APIRouter(prefix="/api/v1/contracts", tags=["contracts"])
 
 def _make_meta() -> ApiMeta:
     return ApiMeta(
-        provider="mock",
+        provider="fyers",
         timestamp=datetime.now(timezone.utc),
         status=DataStatus.DEMO,
-    )
+     )
 
 
 @router.get("/search")

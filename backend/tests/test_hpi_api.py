@@ -176,3 +176,32 @@ def test_auto_delete_endpoint(client):
     r = client.post("/api/v1/hpi/maintenance/auto-delete")
     assert r.status_code == 200
     assert r.json()["data"]["executed"] is True
+
+
+def test_seed_endpoint(client, monkeypatch):
+    from app.hpi import service as svc_mod
+    monkeypatch.setattr(svc_mod, "ENABLE_REAL_CRYPTO", False)
+
+    r = client.post("/api/v1/hpi/seed?retention_days=2&sampling_interval=1h")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["status"] == "seeded"
+    assert data["records_imported"] > 0
+
+    # Storage report reflects the seeded flag + populated datasets.
+    rep = client.get("/api/v1/hpi/storage/report")
+    assert rep.status_code == 200
+    assert rep.json()["data"]["seeded"] is True
+    enabled = [d for d in rep.json()["data"]["datasets"] if d["enabled"]]
+    assert len(enabled) == 7
+    assert all(d["records_stored"] > 0 for d in enabled)
+
+    # Idempotent second call.
+    r2 = client.post("/api/v1/hpi/seed?retention_days=2&sampling_interval=1h")
+    assert r2.json()["data"]["status"] == "already_seeded"
+
+    # Analysis now produces real results for every derivative.
+    for sym in ("NIFTY", "BTC", "SOL"):
+        a = client.get(f"/api/v1/hpi/analysis/{sym}")
+        assert a.status_code == 200
+        assert a.json()["data"]["similar_setups"] > 0

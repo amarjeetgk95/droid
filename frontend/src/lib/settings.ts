@@ -1,13 +1,45 @@
+export type ApiType = 'indian' | 'crypto';
+export type IndianProviderId = 'fyers' | 'upstox' | 'groww' | 'kotak_neo';
+export type CryptoProviderId = 'binance';
+export type BrokerProviderId = IndianProviderId | CryptoProviderId;
+
+export interface FyersCredentials {
+  appId: string;
+  secret: string;
+  redirectUri: string;
+}
+
+export interface UpstoxCredentials {
+  apiKey: string;
+  secret: string;
+  redirectUri: string;
+}
+
+export interface GrowwCredentials {
+  apiKey: string;
+  apiSecret: string;
+}
+
+export interface KotakNeoCredentials {
+  apiKey: string;
+  apiSecret: string;
+  mobileNumber: string;
+  mpin: string;
+}
+
+export interface BinanceCredentials {
+  apiKey: string;
+  apiSecret: string;
+}
+
 export interface BrokerSettings {
-  provider: 'mock' | 'fyers' | 'upstox' | 'binance';
-  fyersAppId: string;
-  fyersSecret: string;
-  fyersRedirectUri: string;
-  upstoxApiKey: string;
-  upstoxSecret: string;
-  upstoxRedirectUri: string;
-  binanceApiKey: string;
-  binanceSecretKey: string;
+  apiType: ApiType;
+  provider: BrokerProviderId;
+  fyers: FyersCredentials;
+  upstox: UpstoxCredentials;
+  groww: GrowwCredentials;
+  kotakNeo: KotakNeoCredentials;
+  binance: BinanceCredentials;
 }
 
 export interface QuantitativeSettings {
@@ -133,15 +165,32 @@ export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
 
 export const DEFAULT_SETTINGS: AppSettings = {
   broker: {
-    provider: 'mock',
-    fyersAppId: '',
-    fyersSecret: '',
-    fyersRedirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/auth/callback',
-    upstoxApiKey: '',
-    upstoxSecret: '',
-    upstoxRedirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/auth/callback',
-    binanceApiKey: '',
-    binanceSecretKey: '',
+    apiType: 'indian',
+    provider: 'fyers',
+    fyers: {
+      appId: '',
+      secret: '',
+      redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback',
+    },
+    upstox: {
+      apiKey: '',
+      secret: '',
+      redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback',
+    },
+    groww: {
+      apiKey: '',
+      apiSecret: '',
+    },
+    kotakNeo: {
+      apiKey: '',
+      apiSecret: '',
+      mobileNumber: '',
+      mpin: '',
+    },
+    binance: {
+      apiKey: '',
+      apiSecret: '',
+    },
   },
   quantitative: {
     riskFreeRate: 0.0675,
@@ -211,8 +260,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
 const STORAGE_KEY = 'droid_app_settings_v1';
 const LEGACY_DEV_CONFIG_KEY = 'droid_developer_api_config';
 
-const SECRET_FIELDS: Record<string, (keyof BrokerSettings | keyof AISettings)[]> = {
-  broker: ['fyersSecret', 'binanceSecretKey', 'upstoxSecret'],
+const SECRET_FIELDS: Record<string, string[]> = {
+  broker: [
+    'fyers.secret',
+    'upstox.secret',
+    'groww.apiSecret',
+    'kotakNeo.apiSecret',
+    'kotakNeo.mpin',
+    'binance.apiSecret',
+  ],
   ai: ['geminiApiKey', 'openRouterApiKey', 'openaiApiKey', 'novitaApiKey', 'nvidiaApiKey', 'customOpenaiApiKey'],
 };
 
@@ -247,15 +303,31 @@ function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
       merged.ai = { ...merged.ai, persona: personaMap[legacy.aiAnalysisStyle] || 'INSTITUTIONAL' };
     }
 
-    // Merge Broker keys
-    if (legacy.fyersAppId) merged.broker = { ...merged.broker, fyersAppId: legacy.fyersAppId };
-    if (legacy.fyersSecretKey) merged.broker = { ...merged.broker, fyersSecret: legacy.fyersSecretKey };
-    if (legacy.fyersRedirectUri) merged.broker = { ...merged.broker, fyersRedirectUri: legacy.fyersRedirectUri };
-    if (legacy.upstoxApiKey) merged.broker = { ...merged.broker, upstoxApiKey: legacy.upstoxApiKey };
-    if (legacy.upstoxSecretKey) merged.broker = { ...merged.broker, upstoxSecret: legacy.upstoxSecretKey };
-    if (legacy.upstoxRedirectUri) merged.broker = { ...merged.broker, upstoxRedirectUri: legacy.upstoxRedirectUri };
-    if (legacy.binanceApiKey) merged.broker = { ...merged.broker, binanceApiKey: legacy.binanceApiKey };
-    if (legacy.binanceSecretKey) merged.broker = { ...merged.broker, binanceSecretKey: legacy.binanceSecretKey };
+    // Merge Broker keys (legacy flat fields → nested provider objects)
+    if (legacy.fyersAppId) {
+      merged.broker = { ...merged.broker, fyers: { ...merged.broker.fyers, appId: legacy.fyersAppId } };
+    }
+    if (legacy.fyersSecretKey) {
+      merged.broker = { ...merged.broker, fyers: { ...merged.broker.fyers, secret: legacy.fyersSecretKey } };
+    }
+    if (legacy.fyersRedirectUri) {
+      merged.broker = { ...merged.broker, fyers: { ...merged.broker.fyers, redirectUri: legacy.fyersRedirectUri } };
+    }
+    if (legacy.upstoxApiKey) {
+      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, apiKey: legacy.upstoxApiKey } };
+    }
+    if (legacy.upstoxSecretKey) {
+      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, secret: legacy.upstoxSecretKey } };
+    }
+    if (legacy.upstoxRedirectUri) {
+      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, redirectUri: legacy.upstoxRedirectUri } };
+    }
+    if (legacy.binanceApiKey) {
+      merged.broker = { ...merged.broker, binance: { ...merged.broker.binance, apiKey: legacy.binanceApiKey } };
+    }
+    if (legacy.binanceSecretKey) {
+      merged.broker = { ...merged.broker, binance: { ...merged.broker.binance, apiSecret: legacy.binanceSecretKey } };
+    }
 
     // Remove legacy key after successful migration
     localStorage.removeItem(LEGACY_DEV_CONFIG_KEY);
@@ -282,6 +354,19 @@ function mergeSection<T>(defaults: T, incoming: unknown): T {
 function migrateMockAI(settings: AppSettings): AppSettings {
   if ((settings.ai as any).provider === 'mock_ai' || (settings.ai as any).provider === 'mock') {
     return { ...settings, ai: { ...settings.ai, provider: 'gemini' as const } };
+  }
+  return settings;
+}
+
+function migrateMockProvider(settings: AppSettings): AppSettings {
+  // Legacy "mock" provider is no longer supported. Default any historical
+  // mock selection to a sensible Indian broker default.
+  const legacyProvider = (settings.broker as unknown as { provider?: string }).provider;
+  if (legacyProvider === 'mock' || legacyProvider === 'mock_ai') {
+    return {
+      ...settings,
+      broker: { ...settings.broker, provider: 'fyers' as BrokerProviderId },
+    };
   }
   return settings;
 }
@@ -331,6 +416,8 @@ export function getStoredSettings(): AppSettings {
 
     // Migrate any legacy DeveloperApiConfig into canonical settings
     settings = migrateLegacyDevConfig(settings);
+    // Normalize legacy "mock" provider selection to fyers
+    settings = migrateMockProvider(settings);
     // Remove mock_ai provision entirely – migrate to gemini
     settings = migrateMockAI(settings);
     settings = migrateConnectionMode(settings);
@@ -371,19 +458,22 @@ export function exportSettingsJson(
     return JSON.stringify(settings, null, 2);
   }
 
-  // Deep clone and strip secret fields
   const sanitized = JSON.parse(JSON.stringify(settings)) as AppSettings;
 
-  for (const field of (SECRET_FIELDS.broker || [])) {
-    if (field in sanitized.broker) {
-      (sanitized.broker as unknown as Record<string, unknown>)[field] = '';
+  const stripPath = (root: any, path: string) => {
+    const parts = path.split('.');
+    let cursor = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!cursor || typeof cursor !== 'object') return;
+      cursor = cursor[parts[i]];
     }
-  }
-  for (const field of (SECRET_FIELDS.ai || [])) {
-    if (field in sanitized.ai) {
-      (sanitized.ai as unknown as Record<string, unknown>)[field] = '';
+    if (cursor && typeof cursor === 'object') {
+      cursor[parts[parts.length - 1]] = '';
     }
-  }
+  };
+
+  for (const field of SECRET_FIELDS.broker) stripPath(sanitized.broker, field);
+  for (const field of SECRET_FIELDS.ai) stripPath(sanitized.ai, field);
 
   return JSON.stringify(sanitized, null, 2);
 }
@@ -426,7 +516,8 @@ export function mergeAppSettingsFromSupabase(raw: unknown): AppSettings {
     paper: mergeSection(DEFAULT_SETTINGS.paper, parsed.paper),
     preferences: mergeSection(DEFAULT_SETTINGS.preferences, parsed.preferences),
   };
-  let m = migrateMockAI(merged);
+  let m = migrateMockProvider(merged);
+  m = migrateMockAI(m);
   m = migrateConnectionMode(m);
   return m;
 }

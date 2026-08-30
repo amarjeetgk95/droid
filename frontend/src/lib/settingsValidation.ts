@@ -5,16 +5,58 @@ import { z } from 'zod';
 // ============================================================================
 
 // --- Broker Settings ---
+export const FyersCredentialsSchema = z.object({
+  appId: z.string().trim().max(100),
+  secret: z.string().trim().max(500),
+  redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
+});
+
+export const UpstoxCredentialsSchema = z.object({
+  apiKey: z.string().trim().max(500),
+  secret: z.string().trim().max(500),
+  redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
+});
+
+export const GrowwCredentialsSchema = z.object({
+  apiKey: z.string().trim().max(500),
+  apiSecret: z.string().trim().max(500),
+});
+
+export const KotakNeoCredentialsSchema = z.object({
+  apiKey: z.string().trim().max(500),
+  apiSecret: z.string().trim().max(500),
+  mobileNumber: z.string().trim().max(15).regex(/^\+?\d{0,15}$/, 'Must be a valid mobile number').or(z.literal('')),
+  mpin: z.string().trim().max(8).regex(/^\d{0,8}$/, 'MPIN must be up to 8 digits').or(z.literal('')),
+});
+
+export const BinanceCredentialsSchema = z.object({
+  apiKey: z.string().trim().max(500),
+  apiSecret: z.string().trim().max(500),
+});
+
 export const BrokerSettingsSchema = z.object({
-  provider: z.enum(['mock', 'fyers', 'upstox', 'binance']),
-  fyersAppId: z.string().trim().max(100),
-  fyersSecret: z.string().trim().max(500),
-  fyersRedirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
-  upstoxApiKey: z.string().trim().max(500),
-  upstoxSecret: z.string().trim().max(500),
-  upstoxRedirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
-  binanceApiKey: z.string().trim().max(500),
-  binanceSecretKey: z.string().trim().max(500),
+  apiType: z.enum(['indian', 'crypto']),
+  provider: z.enum(['fyers', 'upstox', 'groww', 'kotak_neo', 'binance']),
+  fyers: FyersCredentialsSchema,
+  upstox: UpstoxCredentialsSchema,
+  groww: GrowwCredentialsSchema,
+  kotakNeo: KotakNeoCredentialsSchema,
+  binance: BinanceCredentialsSchema,
+}).superRefine((data, ctx) => {
+  if (data.apiType === 'indian' && data.provider === 'binance') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['provider'],
+      message: 'Binance is a crypto provider — set API type to "crypto" first',
+    });
+  }
+  if (data.apiType === 'crypto' && data.provider !== 'binance') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['provider'],
+      message: 'Indian brokers require API type "indian"',
+    });
+  }
 });
 
 // --- Quantitative Settings ---
@@ -29,7 +71,7 @@ export const QuantitativeSettingsSchema = z.object({
 
 // --- AI Settings ---
 export const AISettingsSchema = z.object({
-  provider: z.enum(['gemini', 'openrouter', 'ollama', 'mock_ai', 'openai', 'novita', 'nvidia', 'custom']),
+  provider: z.enum(['gemini', 'openrouter', 'ollama', 'openai', 'novita', 'nvidia', 'custom']),
   connectionMode: z.enum(['OpenRouter', 'Direct Provider', 'Local Ollama']).optional().default('OpenRouter'),
   directProvider: z.enum(['OpenAI', 'Novita AI', 'NVIDIA', 'Google Gemini', 'Custom OpenAI-Compatible']).optional().default('OpenAI'),
   routingMode: z.enum(['Manual', 'Task Optimized', 'Best Available', 'Cost Optimized']).optional().default('Task Optimized'),

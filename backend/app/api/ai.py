@@ -24,7 +24,7 @@ def _make_meta() -> ApiMeta:
 
 
 class AITestRequest(BaseModel):
-    provider: str = "mock_ai"
+    provider: str = "openrouter"
     symbol: str = "NIFTY"
     geminiApiKey: str | None = None
     geminiModel: str | None = None
@@ -61,7 +61,7 @@ async def test_ai_provider(payload: AITestRequest = Body(...)):
 @router.post("/analyze/{symbol}")
 async def generate_market_analysis(
     symbol: str,
-    provider: str = Query(default="mock_ai", description="LLM provider: mock_ai | gemini | openrouter | ollama"),
+    provider: str = Query(default="openrouter", description="LLM provider: openrouter | gemini | ollama"),
     model: str | None = Query(default=None, description="OpenRouter model ID or auto (when provider=openrouter)"),
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
@@ -296,11 +296,11 @@ async def analyze_with_model(
 
     try:
         # Validate model against catalog — skip for non-openrouter providers
-        if provider.lower() not in ("gemini", "ollama", "mock_ai", "mock"):
+        if provider.lower() not in ("gemini", "ollama"):
             validated = await validate_model_or_raise(model_id, free_only=free_only)
             effective_model = validated["id"]
         else:
-            # For gemini/ollama/mock, don't validate against OpenRouter catalog
+            # For gemini/ollama, don't validate against OpenRouter catalog
             effective_model = model_id
             validated = None
 
@@ -308,7 +308,7 @@ async def analyze_with_model(
         # If model is openrouter model, provider is openrouter with specific model
         # Use openrouter provider
         # For backward compat, if provider is gemini/ollama, bypass catalog check and use that provider
-        if provider.lower() in ("gemini", "ollama", "mock_ai", "mock"):
+        if provider.lower() in ("gemini", "ollama"):
             # Those providers have their own validation; allow through — gemini key passed via payload/header if needed
             # For gemini, we need to use test path? For analyze, we still use get_llm_provider but that ignores key.
             # Instead create provider with key if supplied.

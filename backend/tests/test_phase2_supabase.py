@@ -181,8 +181,8 @@ class TestSettingsService:
         mock_settings.default_symbol = "NIFTY"
         mock_settings.default_timeframe = "5m"
         mock_settings.default_expiry = None
-        mock_settings.preferred_market_provider = "mock"
-        mock_settings.preferred_ai_provider = "mock_ai"
+        mock_settings.preferred_market_provider = "fyers"
+        mock_settings.preferred_ai_provider = "gemini"
         mock_settings.preferred_ai_model = None
         mock_settings.notification_enabled = True
         mock_settings.created_at = "2024-01-01T00:00:00Z"
@@ -208,8 +208,8 @@ class TestSettingsService:
         mock_settings.default_symbol = "BANKNIFTY"
         mock_settings.default_timeframe = "15m"
         mock_settings.default_expiry = None
-        mock_settings.preferred_market_provider = "mock"
-        mock_settings.preferred_ai_provider = "mock_ai"
+        mock_settings.preferred_market_provider = "fyers"
+        mock_settings.preferred_ai_provider = "gemini"
         mock_settings.preferred_ai_model = None
         mock_settings.notification_enabled = True
         mock_settings.created_at = "2024-01-01T00:00:00Z"

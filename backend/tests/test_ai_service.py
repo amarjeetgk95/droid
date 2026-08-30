@@ -6,7 +6,7 @@ class TestAIService:
     @pytest.mark.asyncio
     async def test_generate_market_analysis(self):
         service = AIService()
-        insight = await service.generate_market_analysis("NIFTY", "mock_ai")
+        insight = await service.generate_market_analysis("NIFTY", "openrouter")
 
         assert insight.symbol == "NIFTY"
         assert insight.market_bias in ["BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"]
@@ -22,7 +22,7 @@ class TestAIService:
     @pytest.mark.asyncio
     async def test_history_caching(self):
         service = AIService()
-        await service.generate_market_analysis("BANKNIFTY", "mock_ai")
+        await service.generate_market_analysis("BANKNIFTY", "openrouter")
         history = service.get_history("BANKNIFTY")
 
         assert len(history) >= 1

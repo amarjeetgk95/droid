@@ -42,8 +42,8 @@ class UserSettings(Base):
     default_symbol: Mapped[str] = mapped_column(Text, default="NIFTY")
     default_timeframe: Mapped[str] = mapped_column(Text, default="5m")
     default_expiry: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    preferred_market_provider: Mapped[str] = mapped_column(Text, default="mock")
-    preferred_ai_provider: Mapped[str] = mapped_column(Text, default="mock_ai")
+    preferred_market_provider: Mapped[str] = mapped_column(Text, default="fyers")
+    preferred_ai_provider: Mapped[str] = mapped_column(Text, default="gemini")
     preferred_ai_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Full AppSettings blob — Supabase is source of truth (RECTIFY: was localStorage-only)
@@ -272,10 +272,39 @@ class AIReportDB(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    provider: Mapped[str] = mapped_column(Text, default="mock_ai")
+    provider: Mapped[str] = mapped_column(Text, default="gemini")
     market_bias: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     raw_json: Mapped[Any] = mapped_column(JSONB, default=dict)
     user_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
+
+
+# ============================================================
+# Pattern Outcomes Table
+# ============================================================
+class PatternOutcomeDB(Base):
+    __tablename__ = "pattern_outcomes"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
+    symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    pattern_type: Mapped[str] = mapped_column(Text, nullable=False)
+    pattern_name: Mapped[str] = mapped_column(Text, nullable=False)
+    bias: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_price: Mapped[float] = mapped_column(Float, nullable=False)
+    invalidation_level: Mapped[float] = mapped_column(Float, nullable=False)
+    target_level: Mapped[float] = mapped_column(Float, nullable=False)
+    detection_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    regime_state: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    outcome_1d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    outcome_3d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    outcome_5d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    hit_target_before_invalidation: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    outcome_labeled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome_source: Mapped[str] = mapped_column(Text, default="background_worker")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

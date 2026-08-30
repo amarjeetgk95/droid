@@ -100,6 +100,20 @@ async def delete_policy(policy_id: str):
         _err(e)
 
 
+@router.post("/seed")
+async def seed_defaults(
+    force: bool = Query(default=False),
+    sampling_interval: str = Query(default="1h"),
+    retention_days: int = Query(default=180, ge=1, le=3650),
+):
+    """One-click bootstrap — enable all derivatives and load their history."""
+    try:
+        return _ok(hpi_service.seed_defaults(
+            force=force, sampling_interval=sampling_interval, retention_days=retention_days))
+    except Exception as e:
+        _err(e)
+
+
 @router.get("/storage/report")
 async def storage_report():
     """§5 — per-derivative data-management cards + storage budget status."""

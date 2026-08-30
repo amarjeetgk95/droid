@@ -28,7 +28,7 @@ class TokenInfo(BaseModel):
     token_type: str = "Bearer"
     expires_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    provider: str = "mock"
+    provider: str = "fyers"
 
 
 class TokenManager:
@@ -39,7 +39,7 @@ class TokenManager:
 
     def __init__(
         self,
-        provider: str = "mock",
+        provider: str = "fyers",
         initial_backoff: float = 1.0,
         max_backoff: float = 60.0,
         enable_jitter: bool = True,
@@ -104,9 +104,6 @@ class TokenManager:
 
     async def get_valid_token(self) -> str:
         """Get a valid access token, triggering refresh if supported and expired."""
-        if self.provider == "mock":
-            return "mock-demo-token"
-
         if self.is_token_expired():
             if self._refresh_callback:
                 try:

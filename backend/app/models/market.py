@@ -34,7 +34,7 @@ class NormalizedQuote(BaseModel):
     volume: int
     open_interest: int | None = None  # None when not applicable (e.g., VIX)
     status: DataStatus = DataStatus.DEMO
-    provider: str = "mock"
+    provider: str = "fyers"
 
 
 class NormalizedCandle(BaseModel):
@@ -81,7 +81,7 @@ class IndexCard(BaseModel):
     sparkline: list[float] = Field(default_factory=list)
     status: DataStatus = DataStatus.DEMO
     timestamp: datetime | None = None
-    provider: str = "mock"
+    provider: str = "fyers"
 
 
 class MarketBreadthData(BaseModel):
@@ -109,7 +109,7 @@ class SectorBreadth(BaseModel):
 class MarketHealthStatus(BaseModel):
     """Market data health information with full telemetry diagnostics (Section 72)."""
     status: Literal["HEALTHY", "DEGRADED", "UNHEALTHY"] = "HEALTHY"
-    provider: str = "mock"
+    provider: str = "fyers"
     mode: Literal["DEMO", "LIVE"] = "DEMO"
     last_update: datetime | None = None
     data_age_seconds: float | None = None
@@ -136,7 +136,7 @@ class MarketStatusResponse(BaseModel):
 # API Response Envelope
 class ApiMeta(BaseModel):
     """Standard API response metadata."""
-    provider: str = "mock"
+    provider: str = "fyers"
     timestamp: datetime
     status: DataStatus = DataStatus.DEMO
 

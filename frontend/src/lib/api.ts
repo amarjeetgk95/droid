@@ -325,6 +325,36 @@ class ApiClient {
     });
   }
 
+  // Historical Intelligence v2 — Pattern Outcomes & Hit Rates
+  async getPatternHitRates(symbol: string, timeframe?: string) {
+    const query = timeframe ? `?timeframe=${timeframe}` : '';
+    return this.request<{ data: import('./types').PatternHitRateResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/hit-rates${query}`);
+  }
+
+  async getPatternOutcomes(symbol: string, patternTypes?: string, timeframe?: string, limit: number = 20) {
+    const params = new URLSearchParams();
+    if (patternTypes) params.set('pattern_types', patternTypes);
+    if (timeframe) params.set('timeframe', timeframe);
+    params.set('limit', limit.toString());
+    return this.request<{ data: import('./types').PatternOutcomeRecord[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/outcomes?${params.toString()}`);
+  }
+
+  async labelPatternOutcomes(symbol: string, patternTypes?: string, timeframe?: string) {
+    const params = new URLSearchParams();
+    if (patternTypes) params.set('pattern_types', patternTypes);
+    if (timeframe) params.set('timeframe', timeframe);
+    return this.request<{ data: { symbol: string; labeled_count: number; status: string }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/label-outcomes`, {
+      method: 'POST',
+      body: JSON.stringify({ pattern_types: patternTypes, timeframe }),
+    });
+  }
+
+  async refreshHitRatesView() {
+    return this.request<{ data: { refreshed: boolean }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/history/hit-rates/refresh', {
+      method: 'POST',
+    });
+  }
+
   // Quantitative Backtesting Engine (Phase 10)
   async runBacktest(payload: import('./types').BacktestPayload) {
     return this.request<{ data: import('./types').BacktestResult; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/backtest/run', {

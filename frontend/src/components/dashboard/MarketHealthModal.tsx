@@ -98,7 +98,7 @@ export function MarketHealthModal({
               <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
                 <Server className="w-3.5 h-3.5 text-primary" /> Provider
               </span>
-              <p className="font-bold text-foreground capitalize">{health?.provider || 'Mock'}</p>
+               <p className="font-bold text-foreground capitalize">{health?.provider || 'Fyers'}</p>
               <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-mono">
                 {health?.mode || 'DEMO'}
               </span>

@@ -31,6 +31,56 @@ BASE_PRICES = {
 }
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+# ---------------------------------------------------------------------------
+# Real crypto historical data (Binance public klines) with synthetic fallback.
+# BTC/ETH/SOL 1m market data uses real exchange candles; anything else falls
+# back to deterministic synthetic records (demo provider).
+# ---------------------------------------------------------------------------
+ENABLE_REAL_CRYPTO = True
+REAL_CRYPTO_INTERVALS = {60: "1m", 300: "5m", 900: "15m", 3600: "1h", 86400: "1d"}
+REAL_CRYPTO_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
+
+
+def _fetch_real_crypto_candles(
+    symbol: str, interval_seconds: int, start: datetime, end: datetime
+) -> list[tuple] | None:
+    """Real OHLCV candles from Binance public API. Returns None on any failure."""
+    import httpx
+
+    interval = REAL_CRYPTO_INTERVALS.get(int(interval_seconds))
+    pair = REAL_CRYPTO_SYMBOLS.get(symbol.upper())
+    if not interval or not pair:
+        return None
+    cur_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    out: list[tuple] = []
+    try:
+        with httpx.Client(timeout=10) as client:
+            while cur_ms < end_ms:
+                r = client.get(
+                    "https://api.binance.com/api/v3/klines",
+                    params={"symbol": pair, "interval": interval,
+                            "startTime": cur_ms, "endTime": end_ms, "limit": 1000},
+                )
+                if r.status_code != 200:
+                    return None
+                rows = r.json()
+                if not rows:
+                    break
+                for row in rows:
+                    out.append((
+                        round(row[0] / 1000, 3),
+                        float(row[1]), float(row[2]),
+                        float(row[3]), float(row[4]), float(row[5]),
+                    ))
+                last_ms = int(rows[-1][0])
+                if last_ms <= cur_ms:
+                    break
+                cur_ms = last_ms + 1
+    except Exception:
+        return None
+    return out or None
+
 
 class HPIValidationError(ValueError):
     """User-input validation failure (HTTP 400)."""
@@ -56,6 +106,7 @@ class HPIService:
         self._pending_deletes: dict[str, DeleteRequest] = {}
         self._running = False
         self._sweep_task: asyncio.Task | None = None
+        self._seeded: bool = False
         self._load()
 
     # ------------------------------------------------------------------
@@ -71,6 +122,7 @@ class HPIService:
             self._policies[pol.policy_id] = pol
         for a in extra.get("audit", []):
             self._audit.append(DeletionAuditEntry(**a))
+        self._seeded = bool(extra.get("seeded", False))
         # Default selection: a sensible starter subset (§2 example).
         if not self._selection:
             for sym in C.HPI_UNIVERSE:
@@ -85,6 +137,7 @@ class HPIService:
             "selection": [e.model_dump(mode="json") for e in self._selection.values()],
             "policies": [p.model_dump(mode="json") for p in self._policies.values()],
             "audit": [a.model_dump(mode="json") for a in self._audit],
+            "seeded": self._seeded,
         })
 
     # ------------------------------------------------------------------
@@ -212,7 +265,18 @@ class HPIService:
 
     @staticmethod
     def _generate_records(symbol: str, category: str, start: datetime, end: datetime, interval_seconds: int) -> list[tuple]:
-        """Deterministic synthetic historical records (demo data provider)."""
+        """Historical records: real Binance candles for crypto market data,
+        deterministic synthetic otherwise (demo data provider)."""
+        # Real exchange candles for crypto 1m market data when available.
+        if (
+            ENABLE_REAL_CRYPTO
+            and category == "1m_market_data"
+            and C.HPI_DERIVATIVES.get(symbol.upper(), {}).get("asset_class") == "CRYPTO"
+        ):
+            real = _fetch_real_crypto_candles(symbol, interval_seconds, start, end)
+            if real:
+                return real
+
         rng = random.Random(f"{symbol}:{category}:{interval_seconds}")
         is_candle = category in CANDLE_CATEGORIES
         n = int((end - start).total_seconds() // interval_seconds) + 1
@@ -364,6 +428,53 @@ class HPIService:
             period_start=preview.period_start,
             period_end=preview.period_end,
         )
+
+    # ------------------------------------------------------------------
+    # One-click bootstrap — load ALL derivatives' history in one go.
+    # ------------------------------------------------------------------
+    def seed_defaults(self, force: bool = False, sampling_interval: str = "1h",
+                      retention_days: int = 180) -> dict:
+        """Enable all 7 derivatives (all categories) and import history for each.
+
+        Safe to run any time: re-imports replace the same window, so storage
+        never silently grows. Returns a summary + storage report.
+        """
+        if self._seeded and not force:
+            return {
+                "status": "already_seeded",
+                "info": "Derivative history already loaded.",
+                "records_imported": 0,
+                "storage_mb": self.current_storage_mb(),
+            }
+
+        entries = [
+            DerivativeSelectionEntry(symbol=sym, enabled=True, data_categories=C.categories_for(sym))
+            for sym in C.HPI_UNIVERSE
+        ]
+        self.update_selection(entries)
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=retention_days)
+        total = 0
+        for sym in C.HPI_UNIVERSE:
+            res = self.run_import(ImportRequest(
+                symbol=sym, categories=C.categories_for(sym),
+                start_date=start, end_date=end, sampling_interval=sampling_interval,
+            ))
+            total += res.records_imported
+        self._seeded = True
+        self.save_state()
+        logger.info("hpi_seeded", records=total, sampling=sampling_interval, days=retention_days)
+        return {
+            "status": "seeded",
+            "records_imported": total,
+            "storage_mb": self.current_storage_mb(),
+            "sampling_interval": sampling_interval,
+            "retention_days": retention_days,
+        }
+
+    def is_seeded(self) -> bool:
+        return self._seeded
 
     def capture_live_record(self, symbol: str, category: str, payload: tuple) -> bool:
         """Live collection gate — rejects new data for disabled derivatives (§2)."""
@@ -570,6 +681,7 @@ class HPIService:
             warning_mb=C.STORAGE_WARNING_MB,
             hard_ceiling_mb=C.STORAGE_HARD_CEILING_MB,
             status=self.evaluate_budget(current),
+            seeded=self._seeded,
             datasets=cards,
         )
 

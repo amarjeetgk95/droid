@@ -25,7 +25,7 @@ class AIService:
     async def generate_market_analysis(
         self,
         symbol: str = "NIFTY",
-        provider_name: str = "mock_ai",
+        provider_name: str = "openrouter",
         user_id: Optional[UUID] = None,
         openrouter_model: str | None = None,
         allow_paid: bool | None = None,
@@ -193,7 +193,7 @@ class AIService:
     async def test_provider(
         self,
         symbol: str = "NIFTY",
-        provider: str = "mock_ai",
+        provider: str = "openrouter",
         geminiApiKey: str | None = None,
         geminiModel: str | None = None,
         openRouterApiKey: str | None = None,
@@ -201,46 +201,7 @@ class AIService:
         ollamaBaseUrl: str | None = None,
         ollamaModel: str | None = None,
     ) -> dict:
-        """Strict connectivity + prompt + schema test. Returns latency and detailed result, never falls back to mock."""
-        # For mock_ai we just validate prompt building and mock generation (honest: it's mock)
-        if provider.lower() in ("mock_ai", "mock"):
-            start = time.perf_counter()
-            # Still do real prompt building to verify pipeline
-            underlying = symbol.upper().replace(" 50", "")
-            regime = await regime_service.classify_market_regime(underlying)
-            futures = await futures_service.get_futures_overview(underlying)
-            strikes = None
-            try:
-                chain = await options_service.get_option_chain_matrix(underlying)
-                options_analytics = chain.analytics
-                max_pain = getattr(chain, "max_pain", None)
-                if max_pain is None and chain.analytics:
-                    try:
-                        max_pain = await options_service.calculate_max_pain(underlying)
-                    except Exception:
-                        max_pain = chain.analytics.max_pain_strike
-                strikes = getattr(chain, "strikes", None)
-            except Exception:
-                options_analytics = None
-                max_pain = None
-                strikes = None
-            system_prompt = build_system_prompt()
-            user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
-            # Mock generate (honest mock)
-            from app.ai.mock_ai import MockLLMProvider
-            insight = await MockLLMProvider().generate_analysis(underlying, system_prompt, user_prompt)
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return {
-                "success": True,
-                "provider": "mock_ai",
-                "model": "mock-deterministic-v1",
-                "latency_ms": latency_ms,
-                "schema_valid": True,
-                "is_mock": True,
-                "message": "Mock AI is deterministic and requires no external service. Prompt pipeline and schema validation passed.",
-                "insight": insight.model_dump(mode="json"),
-            }
-
+        """Strict connectivity + prompt + schema test. Returns latency and detailed result."""
         # Real providers – instantiate with supplied keys and do strict test
         underlying = symbol.upper().replace(" 50", "")
         regime = await regime_service.classify_market_regime(underlying)

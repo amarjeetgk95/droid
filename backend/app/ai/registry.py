@@ -1,5 +1,4 @@
 from app.ai.base import BaseLLMProvider
-from app.ai.mock_ai import MockLLMProvider
 from app.ai.gemini import GeminiProvider
 from app.ai.ollama import OllamaProvider
 from app.ai.openrouter import OpenRouterProvider
@@ -23,8 +22,6 @@ except Exception:
     CustomOpenAICompatibleProvider = None  # type: ignore
 
 _providers: dict[str, BaseLLMProvider] = {
-    "mock_ai": MockLLMProvider(),
-    "mock": MockLLMProvider(),
     "gemini": GeminiProvider(),
     "ollama": OllamaProvider(),
     "openrouter": OpenRouterProvider(),
@@ -39,8 +36,8 @@ if NvidiaProvider:
     _providers["nvidia"] = NvidiaProvider()
 # custom_openai requires base_url, so not pre-registered singleton
 
-def get_llm_provider(name: str = "mock_ai") -> BaseLLMProvider:
-    key = (name or "mock_ai").lower()
+def get_llm_provider(name: str = "gemini") -> BaseLLMProvider:
+    key = (name or "gemini").lower()
     # Normalize direct provider aliases
     if key in ("custom", "custom_openai", "custom_openai_compatible"):
         key = "custom_openai"
@@ -48,7 +45,7 @@ def get_llm_provider(name: str = "mock_ai") -> BaseLLMProvider:
         # Try lazy creation for custom
         if key == "custom_openai" and CustomOpenAICompatibleProvider:
             raise ValueError("Custom OpenAI-compatible requires base_url – use create_provider_for_test with base_url")
-        raise ValueError(f"Unknown AI provider '{name}'. Supported: mock_ai, gemini, openrouter, ollama, openai, novita, nvidia, custom_openai")
+        raise ValueError(f"Unknown AI provider '{name}'. Supported: gemini, openrouter, ollama, openai, novita, nvidia, custom_openai")
     return _providers[key]
 
 def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
@@ -80,10 +77,8 @@ def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
         if not NvidiaProvider:
             raise ValueError("NVIDIA provider not available")
         return NvidiaProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("nvidiaApiKey"), model=kwargs.get("model") or kwargs.get("nvidiaModel"), base_url=kwargs.get("base_url"))
-    if p in ("custom", "custom_openai", "custom_openai_compatible"):
+    if p == "custom":
         if not CustomOpenAICompatibleProvider:
             raise ValueError("Custom OpenAI provider not available")
         return CustomOpenAICompatibleProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key"), model=kwargs.get("model"), base_url=kwargs.get("base_url") or kwargs.get("apiBaseUrl") or kwargs.get("customBaseUrl"))
-    if p in ("mock_ai", "mock"):
-        return MockLLMProvider()
     raise ValueError(f"Unknown provider '{provider}'")

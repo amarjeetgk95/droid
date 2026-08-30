@@ -6,7 +6,7 @@ client = TestClient(app)
 
 class TestAIEndpoints:
     def test_generate_ai_analysis_api(self):
-        r = client.post("/api/v1/ai/analyze/NIFTY?provider=mock_ai")
+        r = client.post("/api/v1/ai/analyze/NIFTY?provider=openrouter")
         assert r.status_code == 200
         body = r.json()
         assert "data" in body
@@ -21,7 +21,7 @@ class TestAIEndpoints:
 
     def test_ai_history_api(self):
         # Generate one to populate history
-        client.post("/api/v1/ai/analyze/FINNIFTY?provider=mock_ai")
+        client.post("/api/v1/ai/analyze/FINNIFTY?provider=openrouter")
         r = client.get("/api/v1/ai/history/FINNIFTY")
         assert r.status_code == 200
         body = r.json()

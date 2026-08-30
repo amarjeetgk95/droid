@@ -307,3 +307,52 @@ def test_state_persists_across_restart(tmp_path):
     assert svc2.store.count("SOL", "funding") > 0
     assert len(svc2.list_policies("SOL")) == 1
     assert svc2.list_audit() == []  # nothing deleted — log empty but functional
+
+
+# ---------------------------------------------------------------------------
+# §17 Practical — one-click seed (load all history on the page itself)
+# ---------------------------------------------------------------------------
+def test_seed_loads_all_derivatives(svc, monkeypatch):
+    # Never hit Binance in tests.
+    from app.hpi import service as svc_mod
+    monkeypatch.setattr(svc_mod, "ENABLE_REAL_CRYPTO", False)
+
+    result = svc.seed_defaults(retention_days=2, sampling_interval="1h")
+    assert result["status"] == "seeded"
+    assert result["records_imported"] > 0
+
+    # Every derivative is enabled with all its categories and has data.
+    for sym in C.HPI_UNIVERSE:
+        assert svc.is_enabled(sym)
+        assert svc.enabled_categories(sym) == C.categories_for(sym)
+        assert svc.store.count(sym, "1m_market_data") > 0
+
+    # Seeded flag is persisted and idempotent.
+    svc.save_state()
+    svc2 = HPIService(state_path=svc.store.state_path)
+    assert svc2.is_seeded() is True
+    again = svc.seed_defaults(retention_days=2, sampling_interval="1h")
+    assert again["status"] == "already_seeded"
+    assert again["records_imported"] == 0
+
+    # force re-seed works and replaces (not duplicates) the same window.
+    before_count = svc.store.count("NIFTY", "1m_market_data")
+    forced = svc.seed_defaults(force=True, retention_days=2, sampling_interval="1h")
+    assert forced["status"] == "seeded"
+    assert svc.store.count("NIFTY", "1m_market_data") == before_count  # replaced, not appended
+
+
+def test_analysis_works_after_seed(svc, monkeypatch):
+    from app.hpi import service as svc_mod
+    monkeypatch.setattr(svc_mod, "ENABLE_REAL_CRYPTO", False)
+
+    svc.seed_defaults(retention_days=30, sampling_interval="1h")
+    engine = HPITrendPatternEngine(svc)
+    for sym in ("NIFTY", "BTC", "SOL", "SENSEX"):
+        a = engine.analyze(sym, "5m")
+        assert a.derivative_coverage in ("FULL", "PARTIAL"), sym
+        assert a.similar_setups > 0, sym
+        assert a.confidence > 0, sym
+    report = svc.get_storage_report()
+    assert report.seeded is True
+    assert report.status == "WITHIN_TARGET"

@@ -140,7 +140,7 @@ class TestAIRepository:
             regime_and_levels="Above VWAP and 20 EMA",
             recommended_strategy_framework="Bull Call Spread",
             risk_management_notes="Strict stop loss below 24,700",
-            provider_used="mock_ai",
+            provider_used="gemini",
         )
 
         db_report = await AIRepository.save_report(mock_session, report)

@@ -529,6 +529,51 @@ export interface WatchlistItem {
   regime_state?: string | null;
 }
 
+export interface PatternHitRate {
+  symbol: string;
+  pattern_type: string;
+  pattern_name: string;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  timeframe: string;
+  sample_count: number;
+  avg_return_1d?: number | null;
+  stddev_return_1d?: number | null;
+  avg_return_3d?: number | null;
+  avg_return_5d?: number | null;
+  hit_target_rate?: number | null;
+  directional_accuracy?: number | null;
+  first_detection?: string | null;
+  last_detection?: string | null;
+}
+
+export interface PatternHitRateResponse {
+  symbol: string;
+  hit_rates: PatternHitRate[];
+  total_patterns_tracked: number;
+  total_labeled_outcomes: number;
+}
+
+export interface PatternOutcomeRecord {
+  id: string;
+  symbol: string;
+  pattern_type: string;
+  pattern_name: string;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  confidence: number;
+  timeframe: string;
+  trigger_price: number;
+  invalidation_level: number;
+  target_level: number;
+  detection_timestamp: string;
+  regime_state?: string | null;
+  outcome_1d?: number | null;
+  outcome_3d?: number | null;
+  outcome_5d?: number | null;
+  hit_target_before_invalidation?: boolean | null;
+  outcome_labeled_at?: string | null;
+  outcome_source?: string | null;
+}
+
 export interface BacktestPayload {
   strategy_id: string;
   underlying: string;

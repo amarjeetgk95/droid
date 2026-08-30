@@ -74,7 +74,7 @@ class ContractMaster(BaseModel):
     contract_status: ContractStatus = ContractStatus.ACTIVE
     effective_from: date
     effective_until: date | None = None
-    provider: str = "mock"
+    provider: str = "fyers"
 
 
 class ExpiryResolution(BaseModel):
@@ -104,5 +104,5 @@ class TickEvent(BaseModel):
     bid_qty: int | None = None
     ask_qty: int | None = None
     sequence_number: int | None = None
-    provider: str = "mock"
+    provider: str = "fyers"
     priority: EventPriority = EventPriority.HIGH

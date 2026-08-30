@@ -12,6 +12,7 @@ import { DataManagementPanel } from '@/components/hpi/DataManagementPanel';
 import { ImportDialog } from '@/components/hpi/ImportDialog';
 import { DeleteDialog } from '@/components/hpi/DeleteDialog';
 import { PatternAnalysisPanel } from '@/components/hpi/PatternAnalysisPanel';
+import { PatternOutcomesPanel } from '@/components/hpi/PatternOutcomesPanel';
 
 export default function HpiPage() {
   const [universe, setUniverse] = useState<HpiUniverse | null>(null);
@@ -27,6 +28,7 @@ export default function HpiPage() {
 
   const [importSymbol, setImportSymbol] = useState<string | null>(null);
   const [deleteSymbol, setDeleteSymbol] = useState<string | null>(null);
+  const [outcomesSymbol, setOutcomesSymbol] = useState<string>('');
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -52,6 +54,14 @@ export default function HpiPage() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Set outcomes symbol when data loads
+  useEffect(() => {
+    const firstDerivative = universe?.derivatives?.[0];
+    if (!outcomesSymbol && firstDerivative) {
+      setOutcomesSymbol(firstDerivative.symbol);
+    }
+  }, [universe, outcomesSymbol]);
 
   const refresh = () => { setRefreshKey((k) => k + 1); loadAll(); };
 
@@ -169,6 +179,10 @@ export default function HpiPage() {
       />
 
       <PatternAnalysisPanel universe={universe} selection={selection} report={report} refreshKey={refreshKey} />
+
+      {outcomesSymbol && (
+        <PatternOutcomesPanel symbol={outcomesSymbol} refreshKey={refreshKey} />
+      )}
 
       {audit.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4">

@@ -160,6 +160,7 @@ class StorageReport(BaseModel):
     warning_mb: float
     hard_ceiling_mb: float
     status: BudgetStatus
+    seeded: bool = False
     datasets: list[DatasetCard]
 
 

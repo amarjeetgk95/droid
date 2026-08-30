@@ -1,4 +1,5 @@
-from typing import Literal
+from datetime import datetime
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -60,3 +61,61 @@ class WatchlistItem(BaseModel):
     open_interest: int | None = None
     active_pattern: str | None = None
     regime_state: str | None = None
+
+
+# ============================================================
+# Pattern Outcomes (Historical Intelligence v2)
+# ============================================================
+class PatternOutcomeRecord(BaseModel):
+    """Single pattern detection with outcome tracking."""
+    id: str
+    symbol: str
+    pattern_type: str
+    pattern_name: str
+    bias: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    confidence: float
+    timeframe: str
+    trigger_price: float
+    invalidation_level: float
+    target_level: float
+    detection_timestamp: datetime
+    regime_state: Optional[str] = None
+    outcome_1d: Optional[float] = None
+    outcome_3d: Optional[float] = None
+    outcome_5d: Optional[float] = None
+    hit_target_before_invalidation: Optional[bool] = None
+    outcome_labeled_at: Optional[datetime] = None
+    outcome_source: Optional[str] = None
+
+
+class PatternHitRate(BaseModel):
+    """Aggregated hit-rate statistics per pattern."""
+    symbol: str
+    pattern_type: str
+    pattern_name: str
+    bias: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    timeframe: str
+    sample_count: int
+    avg_return_1d: Optional[float] = None
+    stddev_return_1d: Optional[float] = None
+    avg_return_3d: Optional[float] = None
+    avg_return_5d: Optional[float] = None
+    hit_target_rate: Optional[float] = None
+    directional_accuracy: Optional[float] = None
+    first_detection: Optional[datetime] = None
+    last_detection: Optional[datetime] = None
+
+
+class PatternHitRateResponse(BaseModel):
+    """Hit-rate response for a symbol across all patterns."""
+    symbol: str
+    hit_rates: list[PatternHitRate]
+    total_patterns_tracked: int
+    total_labeled_outcomes: int
+
+
+class PatternOutcomesRequest(BaseModel):
+    """Request to label outcomes for unlabeled patterns (on-demand)."""
+    symbol: str
+    pattern_types: Optional[list[str]] = None
+    timeframe: Optional[str] = None

@@ -32,8 +32,8 @@ class UserSettingsBase(BaseModel):
     default_symbol: str = "NIFTY"
     default_timeframe: str = "5m"
     default_expiry: Optional[str] = None
-    preferred_market_provider: str = "mock"
-    preferred_ai_provider: str = "mock_ai"
+    preferred_market_provider: str = "fyers"
+    preferred_ai_provider: str = "gemini"
     preferred_ai_model: Optional[str] = None
     notification_enabled: bool = True
 

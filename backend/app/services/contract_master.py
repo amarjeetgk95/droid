@@ -51,7 +51,7 @@ class ContractMasterService:
                 pricing_style=PricingStyle.SPOT_BLACK_SCHOLES,
                 contract_status=ContractStatus.ACTIVE,
                 effective_from=date(2020, 1, 1),
-                provider="mock"
+                provider="fyers"
             )
             self.add_contract(spot_contract)
 
@@ -78,7 +78,7 @@ class ContractMasterService:
                     pricing_style=PricingStyle.FUTURES_BLACK76,
                     contract_status=ContractStatus.ACTIVE,
                     effective_from=today - timedelta(days=60),
-                    provider="mock"
+                    provider="fyers"
                 )
                 self.add_contract(fut_contract)
 
@@ -109,7 +109,7 @@ class ContractMasterService:
                         pricing_style=PricingStyle.FUTURES_BLACK76,
                         contract_status=ContractStatus.ACTIVE,
                         effective_from=today - timedelta(days=30),
-                        provider="mock"
+                        provider="fyers"
                     )
                     self.add_contract(ce_contract)
 
@@ -132,7 +132,7 @@ class ContractMasterService:
                         pricing_style=PricingStyle.FUTURES_BLACK76,
                         contract_status=ContractStatus.ACTIVE,
                         effective_from=today - timedelta(days=30),
-                        provider="mock"
+                        provider="fyers"
                     )
                     self.add_contract(pe_contract)
 

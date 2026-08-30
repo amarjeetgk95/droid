@@ -1,11 +1,15 @@
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from app.models.historical import (
     DetectedPatternModel, HistoricalShiftPoint, HistoricalShiftsResponse,
-    DaySeasonality, SeasonalityResponse, WatchlistItem
+    DaySeasonality, SeasonalityResponse, WatchlistItem,
+    PatternHitRate, PatternHitRateResponse, PatternOutcomeRecord, PatternOutcomesRequest
 )
 from app.services.market_service import MarketService
 from app.services.regime_service import regime_service
 from app.quant.patterns import detect_patterns_in_candles
+from app.repositories.pattern_outcome_repository import PatternOutcomeRepository
+from app.core.database import get_async_session_factory
 import structlog
 
 logger = structlog.get_logger()
@@ -18,10 +22,19 @@ class HistoricalService:
         self.market_service = market_service or MarketService()
         self._watchlist: set[str] = {"NIFTY 50", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIA VIX"}
 
+    async def _get_db_session(self):
+        """Get database session if available."""
+        factory = get_async_session_factory()
+        if factory is None:
+            return None
+        return factory()
+
     async def scan_patterns(
         self,
         symbol: str = "NIFTY",
         timeframe: str = "5m",
+        persist: bool = True,
+        user_id: Optional[str] = None,
     ) -> list[DetectedPatternModel]:
         """Scan candle time-series for candlestick & price action patterns."""
         underlying = symbol.upper().replace(" 50", "")
@@ -34,6 +47,14 @@ class HistoricalService:
         volumes = [float(c.volume) for c in candles]
 
         raw_patterns = detect_patterns_in_candles(opens, highs, lows, closes, volumes, timeframe)
+
+        # Get regime state for context
+        regime_state = None
+        try:
+            regime = await regime_service.classify_market_regime(underlying)
+            regime_state = regime.regime_state
+        except Exception:
+            pass
 
         # Return latest patterns first
         result = [
@@ -50,6 +71,34 @@ class HistoricalService:
             )
             for p in reversed(raw_patterns[-10:])
         ]
+
+        # Persist patterns for outcome tracking
+        if persist and result:
+            session = await self._get_db_session()
+            if session:
+                try:
+                    from uuid import UUID as UUIDClass
+                    uid = UUIDClass(user_id) if user_id else None
+                    for p in result:
+                        await PatternOutcomeRepository.save_detection(
+                            session=session,
+                            symbol=underlying,
+                            pattern_type=p.pattern_type,
+                            pattern_name=p.name,
+                            bias=p.bias,
+                            confidence=p.confidence,
+                            timeframe=p.timeframe,
+                            trigger_price=p.trigger_price,
+                            invalidation_level=p.invalidation_level,
+                            target_level=p.target_level,
+                            regime_state=regime_state,
+                            user_id=uid,
+                        )
+                except Exception as e:
+                    logger.warning("pattern_persist_fail", symbol=underlying, error=str(e))
+                finally:
+                    await session.close()
+
         return result
 
     async def get_historical_shifts(
@@ -120,7 +169,7 @@ class HistoricalService:
                     try:
                         reg = await regime_service.classify_market_regime(sym)
                         regime = reg.regime_state
-                        pats = await self.scan_patterns(sym)
+                        pats = await self.scan_patterns(sym, persist=False)
                         if pats:
                             pattern_name = pats[0].name
                     except Exception:
@@ -153,6 +202,202 @@ class HistoricalService:
             self._watchlist.remove(sym_clean)
             return True
         return False
+
+    # ============================================================
+    # Pattern Outcome Tracking (Historical Intelligence v2)
+    # ============================================================
+
+    async def label_outcomes_for_symbol(
+        self,
+        symbol: str,
+        pattern_types: Optional[list[str]] = None,
+        timeframe: Optional[str] = None,
+        source: str = "on_demand",
+    ) -> int:
+        """Label outcomes for unlabeled patterns of a symbol by fetching forward candles."""
+        session = await self._get_db_session()
+        if not session:
+            return 0
+
+        try:
+            unlabeled = await PatternOutcomeRepository.get_unlabeled(
+                session, symbol, pattern_types, timeframe
+            )
+            if not unlabeled:
+                return 0
+
+            labeled_count = 0
+            for record in unlabeled:
+                try:
+                    # Fetch forward candles from detection time
+                    outcomes = await self._compute_outcomes_from_candles(
+                        record.symbol,
+                        record.detection_timestamp,
+                        record.timeframe,
+                        record.trigger_price,
+                        record.invalidation_level,
+                        record.target_level,
+                        record.bias,
+                    )
+                    if outcomes:
+                        await PatternOutcomeRepository.update_outcomes(
+                            session=session,
+                            outcome_id=record.id,
+                            outcome_1d=outcomes.get("1d"),
+                            outcome_3d=outcomes.get("3d"),
+                            outcome_5d=outcomes.get("5d"),
+                            hit_target_before_invalidation=outcomes.get("hit_target"),
+                            outcome_source=source,
+                        )
+                        labeled_count += 1
+                except Exception as e:
+                    logger.warning("outcome_label_fail", record_id=str(record.id), error=str(e))
+
+            return labeled_count
+        finally:
+            await session.close()
+
+    async def _compute_outcomes_from_candles(
+        self,
+        symbol: str,
+        detection_time: datetime,
+        timeframe: str,
+        trigger_price: float,
+        invalidation_level: float,
+        target_level: float,
+        bias: str,
+    ) -> dict:
+        """Compute forward outcomes by fetching candles after detection."""
+        try:
+            # For 1D outcome: fetch daily candles after detection
+            # For 3D/5D: fetch daily candles
+            # Convert timeframe to daily for forward-looking
+            from datetime import timedelta
+            from app.core.config import settings
+
+            # Determine number of trading days needed
+            days_needed = 5
+            end_time = detection_time + timedelta(days=days_needed + 2)  # buffer for weekends
+
+            candles = await self.market_service.get_candles(
+                symbol, timeframe="1D", start=detection_time, end=end_time
+            )
+
+            if len(candles) < 2:
+                return {}
+
+            # Find the first candle after detection (open of next day)
+            next_day_open = candles[1].open if len(candles) > 1 else candles[0].close
+
+            # Compute outcomes at 1D, 3D, 5D (using close prices)
+            outcomes = {}
+            hit_target = False
+            target_hit_price = target_level
+            invalidation_hit_price = invalidation_level
+
+            for horizon_days, horizon_label in [(1, "1d"), (3, "3d"), (5, "5d")]:
+                if len(candles) > horizon_days:
+                    horizon_close = candles[horizon_days].close
+                    pct_change = ((horizon_close - next_day_open) / next_day_open) * 100
+                    outcomes[horizon_label] = round(pct_change, 2)
+
+                    # Check if target or invalidation was hit first (simplified: check closes)
+                    if bias == "BULLISH":
+                        if not hit_target and horizon_close >= target_level:
+                            hit_target = True
+                        elif horizon_close <= invalidation_level:
+                            hit_target = False  # Invalidation hit first
+                    else:  # BEARISH
+                        if not hit_target and horizon_close <= target_level:
+                            hit_target = True
+                        elif horizon_close >= invalidation_level:
+                            hit_target = False
+
+            outcomes["hit_target"] = hit_target
+            return outcomes
+        except Exception as e:
+            logger.warning("outcome_compute_fail", symbol=symbol, error=str(e))
+            return {}
+
+    async def get_hit_rates(
+        self,
+        symbol: Optional[str] = None,
+        timeframe: Optional[str] = None,
+    ) -> PatternHitRateResponse:
+        """Get aggregated hit-rate statistics for patterns."""
+        session = await self._get_db_session()
+        if not session:
+            return PatternHitRateResponse(
+                symbol=symbol or "ALL",
+                hit_rates=[],
+                total_patterns_tracked=0,
+                total_labeled_outcomes=0,
+            )
+
+        try:
+            hit_rates = await PatternOutcomeRepository.get_hit_rates(session, symbol, timeframe)
+
+            # Get total counts
+            from sqlalchemy import select, func
+            from app.models.database import PatternOutcomeDB
+
+            total_query = select(func.count(PatternOutcomeDB.id)).where(PatternOutcomeDB.symbol == symbol.upper())
+            if symbol:
+                total_query = total_query.where(PatternOutcomeDB.symbol == symbol.upper())
+            total_result = await session.execute(total_query)
+            total_patterns = total_result.scalar() or 0
+
+            labeled_query = select(func.count(PatternOutcomeDB.id)).where(
+                PatternOutcomeDB.symbol == symbol.upper(),
+                PatternOutcomeDB.outcome_labeled_at.is_not(None)
+            )
+            if symbol:
+                labeled_query = labeled_query.where(PatternOutcomeDB.symbol == symbol.upper())
+            labeled_result = await session.execute(labeled_query)
+            total_labeled = labeled_result.scalar() or 0
+
+            return PatternHitRateResponse(
+                symbol=symbol or "ALL",
+                hit_rates=hit_rates,
+                total_patterns_tracked=total_patterns,
+                total_labeled_outcomes=total_labeled,
+            )
+        finally:
+            await session.close()
+
+    async def get_recent_outcomes(
+        self,
+        symbol: str,
+        pattern_types: Optional[list[str]] = None,
+        timeframe: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[PatternOutcomeRecord]:
+        """Get recent labeled outcomes for a symbol."""
+        session = await self._get_db_session()
+        if not session:
+            return []
+
+        try:
+            return await PatternOutcomeRepository.get_labeled_outcomes(
+                session, symbol, pattern_types, timeframe, limit
+            )
+        finally:
+            await session.close()
+
+    async def refresh_hit_rates_view(self) -> bool:
+        """Refresh the materialized view for hit rates."""
+        session = await self._get_db_session()
+        if not session:
+            return False
+
+        try:
+            await PatternOutcomeRepository.refresh_materialized_view(session)
+            return True
+        except Exception as e:
+            logger.error("hit_rate_refresh_fail", error=str(e))
+            return False
+        finally:
+            await session.close()
 
 
 historical_service = HistoricalService()
