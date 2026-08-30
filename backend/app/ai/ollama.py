@@ -25,6 +25,37 @@ class OllamaProvider(BaseLLMProvider):
     def provider_name(self) -> str:
         return "ollama"
 
+    async def list_models(self) -> list[dict]:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{self.base_url}/api/tags")
+            if r.status_code != 200:
+                raise ValueError(f"Ollama {r.status_code}: {r.text[:200]}")
+            data = r.json()
+            return data.get("models", [])
+
+    async def get_model_info(self, model_id: str) -> dict:
+        models = await self.list_models()
+        for m in models:
+            if m.get("name") == model_id or model_id in m.get("name", ""):
+                return m
+        return {"name": model_id, "model": model_id}
+
+    async def test_connection(self) -> dict:
+        try:
+            models = await self.list_models()
+            has_model = any(self.model in m.get("name", "") or m.get("name", "") in self.model for m in models)
+            return {"success": True, "provider": "ollama", "model": self.model, "installed_models": [m.get("name") for m in models[:5]], "has_model": has_model, "base_url": self.base_url}
+        except Exception as e:
+            return {"success": False, "provider": "ollama", "error": str(e)[:400], "base_url": self.base_url}
+
+    async def analyze(self, market_state: dict, task: str) -> dict:
+        from app.ai.prompt_builder import build_system_prompt
+        system_prompt = build_system_prompt()
+        user_prompt = f"Task: {task}\nMarketState: {market_state}"
+        import json as _j
+        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, _j.dumps(market_state, default=str))
+        return insight.model_dump(mode="json")
+
     async def _check_connectivity(self):
         # 1. Check if Ollama server is reachable (works for remote URLs, but for localhost from server it will fail – caller must handle)
         try:

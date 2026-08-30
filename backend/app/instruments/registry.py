@@ -1,4 +1,18 @@
+# Chart Analysis — Restricted Derivatives Universe
+# ---------------------------------------------------------------------------
+# This registry is permanently restricted to the seven approved derivatives
+# for the Chart Analysis module (see module spec):
+#   NIFTY 50 | BANKNIFTY | FINNIFTY | SENSEX | BTC | ETH | SOL
+# No other instrument may be added automatically based on liquidity,
+# volatility, user activity, or API availability.  Other providers/
+# app-wide registries may exist elsewhere, but chart_analysis MUST
+# only expose these seven — see CHART_ANALYSIS_UNIVERSE.
+# ---------------------------------------------------------------------------
+
 from app.instruments.schemas import InstrumentConfig
+
+# Timeframes required by Chart Analysis: 1m / 5m / 15m / 1h / 4h / Daily
+CHART_ANALYSIS_TIMEFRAMES: list[str] = ["1m", "5m", "15m", "1h", "4h", "1D"]
 
 # Centralized registry — single source of truth for all searchable instruments
 INSTRUMENT_REGISTRY: dict[str, InstrumentConfig] = {}
@@ -7,7 +21,8 @@ def _reg(cfg: InstrumentConfig):
     INSTRUMENT_REGISTRY[cfg.symbol.upper()] = cfg
     return cfg
 
-# Indices (NSE/BSE)
+# ---- Approved Chart-Analysis Universe (7 instruments only) ----
+# Indian Index Derivatives
 _reg(InstrumentConfig(
     symbol="NIFTY",
     display_name="NIFTY 50",
@@ -17,7 +32,7 @@ _reg(InstrumentConfig(
     data_provider_symbol="NSE:NIFTY",
     instrument_type="INDEX",
     currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=True, options_available=True, futures_available=True,
     trading_session="NSE_0915_1530", timezone="Asia/Kolkata",
 ))
@@ -31,7 +46,7 @@ _reg(InstrumentConfig(
     data_provider_symbol="NSE:BANKNIFTY",
     instrument_type="INDEX",
     currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=True, options_available=True, futures_available=True,
 ))
 
@@ -44,7 +59,7 @@ _reg(InstrumentConfig(
     data_provider_symbol="NSE:FINNIFTY",
     instrument_type="INDEX",
     currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=True, options_available=True, futures_available=True,
 ))
 
@@ -57,155 +72,83 @@ _reg(InstrumentConfig(
     data_provider_symbol="BSE:SENSEX",
     instrument_type="INDEX",
     currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=True, options_available=True, futures_available=True,
 ))
 
+# Crypto Derivatives — canonical symbols are BTC/ETH/SOL (plain).  BTCUSD/BTCUSDT
+# etc. are retained as ALIASES only so external feeds can still resolve.
 _reg(InstrumentConfig(
-    symbol="MIDCPNIFTY",
-    display_name="NIFTY Midcap Select",
-    aliases=["midcpnifty", "midcap nifty"],
-    asset_class="INDEX",
-    exchange="NSE",
-    data_provider_symbol="NSE:MIDCPNIFTY",
-    instrument_type="INDEX",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=True, options_available=True, futures_available=True,
-))
-
-# Equities
-_reg(InstrumentConfig(
-    symbol="RELIANCE",
-    display_name="Reliance Industries Ltd",
-    aliases=["reliance", "ril"],
-    asset_class="EQUITY",
-    exchange="NSE",
-    data_provider_symbol="NSE:RELIANCE",
-    instrument_type="EQUITY",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=True, options_available=True, futures_available=True,
-))
-
-_reg(InstrumentConfig(
-    symbol="TCS",
-    display_name="Tata Consultancy Services",
-    aliases=["tcs"],
-    asset_class="EQUITY",
-    exchange="NSE",
-    data_provider_symbol="NSE:TCS",
-    instrument_type="EQUITY",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=True, options_available=True, futures_available=True,
-))
-
-_reg(InstrumentConfig(
-    symbol="INFY",
-    display_name="Infosys Ltd",
-    aliases=["infy", "infosys"],
-    asset_class="EQUITY",
-    exchange="NSE",
-    data_provider_symbol="NSE:INFY",
-    instrument_type="EQUITY",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=True, options_available=True, futures_available=True,
-))
-
-_reg(InstrumentConfig(
-    symbol="HDFCBANK",
-    display_name="HDFC Bank Ltd",
-    aliases=["hdfcbank", "hdfc bank"],
-    asset_class="EQUITY",
-    exchange="NSE",
-    data_provider_symbol="NSE:HDFCBANK",
-    instrument_type="EQUITY",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=True, options_available=True, futures_available=True,
-))
-
-# Crypto
-_reg(InstrumentConfig(
-    symbol="BTCUSD",
-    display_name="Bitcoin / US Dollar",
-    aliases=["bitcoin", "btc", "btc usd", "btc-usd", "btcusd", "xbt"],
-    asset_class="CRYPTO",
-    exchange="CONFIGURED_PROVIDER",
-    data_provider_symbol="BTCUSD",
-    instrument_type="SPOT",
-    currency="USD",
-    price_precision=2,
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=False, options_available=False, futures_available=True,
-    trading_session="24x7", timezone="UTC",
-))
-
-_reg(InstrumentConfig(
-    symbol="BTCUSDT",
-    display_name="Bitcoin / Tether",
-    aliases=["btcusdt", "btc usdt", "btc-usdt"],
+    symbol="BTC",
+    display_name="Bitcoin",
+    aliases=["bitcoin", "btcusd", "btc usd", "btc-usd", "btc-usd", "btcusdt", "btc usdt", "btc-usdt", "xbt", "binance:btcusdt"],
     asset_class="CRYPTO",
     exchange="BINANCE",
     data_provider_symbol="BINANCE:BTCUSDT",
     instrument_type="SPOT",
     currency="USDT",
-    supported_timeframes=["1m","5m","15m","1h"],
+    price_precision=2,
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=False, options_available=False, futures_available=True,
     trading_session="24x7", timezone="UTC",
 ))
 
 _reg(InstrumentConfig(
-    symbol="ETHUSD",
-    display_name="Ethereum / US Dollar",
-    aliases=["ethereum", "eth", "eth usd", "eth-usd"],
-    asset_class="CRYPTO",
-    exchange="CONFIGURED_PROVIDER",
-    data_provider_symbol="ETHUSD",
-    instrument_type="SPOT",
-    currency="USD",
-    supported_timeframes=["1m","5m","15m","1h"],
-    fno_available=False, options_available=False, futures_available=True,
-    trading_session="24x7", timezone="UTC",
-))
-
-_reg(InstrumentConfig(
-    symbol="ETHUSDT",
-    display_name="Ethereum / Tether",
-    aliases=["ethusdt", "eth usdt"],
+    symbol="ETH",
+    display_name="Ethereum",
+    aliases=["ethereum", "ethusd", "eth usd", "eth-usd", "ethusdt", "eth usdt", "eth-usdt", "binance:ethusdt"],
     asset_class="CRYPTO",
     exchange="BINANCE",
     data_provider_symbol="BINANCE:ETHUSDT",
     instrument_type="SPOT",
     currency="USDT",
-    supported_timeframes=["1m","5m","15m","1h"],
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=False, options_available=False, futures_available=True,
     trading_session="24x7", timezone="UTC",
 ))
 
-# Commodities / FX placeholder
 _reg(InstrumentConfig(
-    symbol="GOLD",
-    display_name="Gold Spot",
-    aliases=["gold", "xau", "xauusd"],
-    asset_class="COMMODITY",
-    exchange="MCX",
-    data_provider_symbol="MCX:GOLD",
+    symbol="SOL",
+    display_name="Solana",
+    aliases=["solana", "sol", "solusd", "sol usd", "sol-usd", "solusdt", "sol usdt", "sol-usdt", "binance:solusdt"],
+    asset_class="CRYPTO",
+    exchange="BINANCE",
+    data_provider_symbol="BINANCE:SOLUSDT",
     instrument_type="SPOT",
-    currency="INR",
-    supported_timeframes=["1m","5m","15m","1h"],
+    currency="USDT",
+    price_precision=2,
+    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=False, options_available=False, futures_available=True,
+    trading_session="24x7", timezone="UTC",
 ))
+
+# Fixed universe constant — chart_analysis must not expose anything else.
+CHART_ANALYSIS_UNIVERSE: list[str] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BTC", "ETH", "SOL"]
 
 def get_all_instruments() -> list[InstrumentConfig]:
     return list(INSTRUMENT_REGISTRY.values())
 
+def get_chart_analysis_universe() -> list[InstrumentConfig]:
+    """Return ONLY the seven approved chart-analysis instruments in canonical order."""
+    return [INSTRUMENT_REGISTRY[s] for s in CHART_ANALYSIS_UNIVERSE if s in INSTRUMENT_REGISTRY]
+
 def get_instrument(symbol: str) -> InstrumentConfig | None:
     if not symbol:
         return None
-    return INSTRUMENT_REGISTRY.get(symbol.strip().upper().replace(" ", "").replace("-", "").replace("/", "")) or INSTRUMENT_REGISTRY.get(symbol.strip().upper())
+    # First try exact/compact lookup in restricted registry
+    direct = INSTRUMENT_REGISTRY.get(symbol.strip().upper().replace(" ", "").replace("-", "").replace("/", "")) or INSTRUMENT_REGISTRY.get(symbol.strip().upper())
+    if direct:
+        return direct
+    # Fallback: alias match across restricted universe only
+    import re as _re
+    compact = _re.sub(r"[^a-z0-9]", "", symbol.strip().lower())
+    for cfg in INSTRUMENT_REGISTRY.values():
+        for alias in cfg.aliases:
+            if _re.sub(r"[^a-z0-9]", "", alias.lower()) == compact:
+                return cfg
+        if _re.sub(r"[^a-z0-9]", "", cfg.display_name.lower()) == compact:
+            return cfg
+    return None
 
 def get_by_symbol_exact(symbol: str) -> InstrumentConfig | None:
     return INSTRUMENT_REGISTRY.get(symbol.strip().upper())

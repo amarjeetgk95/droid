@@ -1,8 +1,11 @@
 import json
 import httpx
 from datetime import datetime, timezone
+from typing import Any
+
 from app.ai.base import BaseLLMProvider
 from app.models.ai import AIInsightResponse
+from app.ai.capability_registry import should_use_structured_outputs, validate_no_unsupported_params
 import structlog
 
 logger = structlog.get_logger()
@@ -18,6 +21,39 @@ class OpenRouterProvider(BaseLLMProvider):
     def provider_name(self) -> str:
         return "openrouter"
 
+    async def list_models(self) -> list[dict[str, Any]]:
+        from app.services.openrouter_catalog import get_model_catalog
+        catalog = await get_model_catalog()
+        return catalog.get("models", [])
+
+    async def get_model_info(self, model_id: str) -> dict[str, Any]:
+        from app.services.openrouter_catalog import validate_model_or_raise
+        try:
+            return await validate_model_or_raise(model_id)
+        except Exception:
+            from app.ai.capability_registry import get_model_capabilities
+            return get_model_capabilities(model_id)
+
+    async def test_connection(self) -> dict[str, Any]:
+        if not self.api_key:
+            return {"success": False, "provider": "openrouter", "error": "API key missing"}
+        if not self.api_key.startswith("sk-or-"):
+            return {"success": False, "provider": "openrouter", "error": "API key must start with sk-or-"}
+        try:
+            # Lightweight catalog fetch proves connectivity
+            from app.services.openrouter_catalog import get_model_catalog
+            catalog = await get_model_catalog()
+            return {"success": True, "provider": "openrouter", "model": self.model, "free_count": catalog.get("free_count", 0)}
+        except Exception as e:
+            return {"success": False, "provider": "openrouter", "error": str(e)[:300]}
+
+    async def analyze(self, market_state: dict, task: str) -> dict:
+        from app.ai.prompt_builder import build_system_prompt
+        system_prompt = build_system_prompt()
+        user_prompt = f"Task: {task}\nMarketState: {json.dumps(market_state, default=str)}"
+        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
+        return insight.model_dump(mode="json")
+
     async def generate_analysis(self, symbol: str, system_prompt: str, user_prompt: str) -> AIInsightResponse:
         if not self.api_key:
             raise ValueError("OpenRouter API key is missing. Go to Settings -> AI Engine -> OpenRouter and add your sk-or-v1-... key (from https://openrouter.ai/keys). No .env hardcode required - key is stored via Settings and sent per-request.")
@@ -31,25 +67,35 @@ class OpenRouterProvider(BaseLLMProvider):
             "HTTP-Referer": "https://fo-droid.web.app",
             "X-Title": "DROID F&O Analysis",
         }
-        # Some free models (e.g. Novita-routed ling-3.0-flash-fin:free) do NOT support response_format
-        # We try with json_object first, then fallback to plain prompt if provider returns INVALID_REQUEST_BODY structured-outputs
+        # Capability-aware protocol per §17-18: Ling 3.0 Flash Fin must NOT receive response_format
+        # Otherwise use native structured outputs if supported; else prompted JSON + local validation
+        use_structured = should_use_structured_outputs(self.model)
+        prompted_suffix = "\n\nReturn ONLY one valid JSON object. Do not use markdown. Do not include explanations outside the JSON. Do not include code fences."
         base_payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. No markdown, no extra text."},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. No markdown, no extra text." + ("" if use_structured else prompted_suffix)},
+                {"role": "user", "content": user_prompt + ("" if use_structured else prompted_suffix)},
             ],
             "temperature": 0.2,
         }
-        payload_with_json = {**base_payload, "response_format": {"type": "json_object"}}
+        if use_structured:
+            payload_with_json = {**base_payload, "response_format": {"type": "json_object"}}
+            # Ensure we don't send unsupported params when capability says no
+            payload_with_json = validate_no_unsupported_params(self.model, payload_with_json)
+        else:
+            payload_with_json = base_payload  # never send response_format for Ling etc.
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                # Attempt 1: with structured-outputs
+                # Single attempt based on capability; fallback only if provider still rejects (defensive)
                 resp = await client.post(url, json=payload_with_json, headers=headers)
-                # Auto-fallback if model doesn't support structured-outputs (common on free/Novita models)
-                if resp.status_code == 400 and "structured-outputs" in resp.text:
+                if use_structured and resp.status_code == 400 and "structured-outputs" in resp.text:
                     logger.warning("openrouter_structured_not_supported_fallback", model=self.model, error=resp.text[:300])
                     resp = await client.post(url, json=base_payload, headers=headers)
+                if not use_structured and resp.status_code == 400 and "response_format" in resp.text:
+                    # Already not sending, but log
+                    logger.warning("openrouter_unexpected_structured_error", model=self.model, error=resp.text[:300])
                 if resp.status_code == 401:
                     raise ValueError("OpenRouter: 401 Unauthorized – API key invalid or expired. Check AI Engine settings.")
                 if resp.status_code == 402:

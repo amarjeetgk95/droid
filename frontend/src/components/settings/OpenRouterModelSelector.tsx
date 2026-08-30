@@ -17,6 +17,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>('ALL');
 
   const freeOnly = settings.openRouterFreeOnly ?? true;
   const allowPaid = settings.openRouterAllowPaid ?? false;
@@ -68,6 +69,22 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
   const filteredModels: OpenRouterModel[] = useMemo(() => {
     if (!catalog?.models) return [];
     let list = catalog.models as OpenRouterModel[];
+    // Apply spec §33 filter if active
+    if (activeFilter !== 'ALL') {
+      const f = activeFilter;
+      list = list.filter((m: any) => {
+        if (f === 'FREE') return m.is_free;
+        if (f === 'REASONING') return m.category === 'Reasoning';
+        if (f === 'FINANCE') return m.category === 'Finance';
+        if (f === 'FAST') return m.category === 'Fast';
+        if (f === 'RESEARCH') return m.category === 'Research';
+        if (f === 'VISION') return m.supports_vision || m.category === 'Vision';
+        if (f === 'CODING') return m.category === 'Coding';
+        if (f === 'TOOLS') return m.supports_tools === true;
+        if (f === 'STRUCTURED') return (m as any).supports_structured_outputs !== false;
+        return true;
+      });
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -79,7 +96,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
       );
     }
     return list;
-  }, [catalog, search]);
+  }, [catalog, search, activeFilter]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, OpenRouterModel[]> = {};
@@ -243,9 +260,9 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           </button>
 
           {showDropdown && (
-            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-xl shadow-lg max-h-[420px] overflow-hidden flex flex-col">
-              {/* Search */}
-              <div className="p-2 border-b border-border">
+            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-xl shadow-lg max-h-[520px] overflow-hidden flex flex-col">
+              {/* Search + §33 Filters */}
+              <div className="p-2 border-b border-border space-y-2">
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
                   <input
@@ -257,8 +274,41 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                     autoFocus
                   />
                 </div>
-                <div className="flex items-center justify-between mt-2 text-[11px] text-muted-foreground">
-                  <span>{catalog ? `${catalog.free_count} free / ${catalog.total_count} total` : 'Loading...'}</span>
+                {/* §33 Model Search / Filtering — only show supported */}
+                {catalog?.models && (
+                  <div className="flex flex-wrap gap-1">
+                    {(['ALL', 'FREE', 'REASONING', 'FINANCE', 'FAST', 'RESEARCH', 'VISION', 'CODING', 'TOOLS', 'STRUCTURED'] as const).map((f) => {
+                      // Compute count for filter
+                      const count = (catalog.models as any[]).filter((m: any) => {
+                        if (f === 'ALL') return true;
+                        if (f === 'FREE') return m.is_free;
+                        if (f === 'REASONING') return m.category === 'Reasoning';
+                        if (f === 'FINANCE') return m.category === 'Finance';
+                        if (f === 'FAST') return m.category === 'Fast';
+                        if (f === 'RESEARCH') return m.category === 'Research';
+                        if (f === 'VISION') return m.supports_vision || m.category === 'Vision';
+                        if (f === 'CODING') return m.category === 'Coding';
+                        if (f === 'TOOLS') return m.supports_tools;
+                        if (f === 'STRUCTURED') return (m as any).supports_structured_outputs !== false;
+                        return false;
+                      }).length;
+                      if (f !== 'ALL' && count === 0) return null;
+                      const active = activeFilter === f;
+                      return (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={() => setActiveFilter(f)}
+                          className={`px-2 py-1 rounded-full text-[10px] font-mono border cursor-pointer ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary border-border hover:bg-secondary/80'}`}
+                        >
+                          {f === 'STRUCTURED' ? 'Structured Outputs' : f === 'TOOLS' ? 'Tools' : f} {f !== 'ALL' ? `(${count})` : `(${catalog.models.length})`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>{catalog ? `${catalog.free_count} free / ${catalog.total_count} total` : 'Loading...'}{activeFilter !== 'ALL' ? ` • ${activeFilter} filtered: ${filteredModels.length}` : ''}</span>
                   {defaultModel && <span>Default: {defaultModel.name}</span>}
                 </div>
               </div>

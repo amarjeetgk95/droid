@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from app.prediction.features import feature_vector_for_model
 from app.prediction.ensemble import EnsembleModel
 
-HORIZON_MAP = {"1m":10, "5m":20, "15m":60, "1h":120}
+HORIZON_MAP = {"1m":10, "5m":20, "15m":60, "1h":120, "4h":240, "1D":1440, "1d":1440}
 
 def forecast_for_timeframe(features: dict, technical: dict, timeframe: str, symbol: str, asset_class: str, data_timestamp: str | None = None, fno_ctx: dict | None = None) -> dict:
     vec=feature_vector_for_model(features)

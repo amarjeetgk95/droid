@@ -6,6 +6,9 @@ from app.core.logging import setup_logging
 from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, futures, regime, strategy, ai, historical, backtest, paper, alerts, ml, fii_dii, crypto, instruments, chart_analysis
 from app.api import settings as settings_api
 from app.api import watchlists as watchlists_api
+from app.api import market_state as pipeline_api
+from app.api import dashboard as dashboard_api
+from app.api import benchmark as benchmark_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
@@ -109,6 +112,9 @@ def create_app() -> FastAPI:
     app.include_router(watchlists_api.router)
     app.include_router(instruments.router)
     app.include_router(chart_analysis.router)
+    app.include_router(pipeline_api.router)
+    app.include_router(dashboard_api.router)
+    app.include_router(benchmark_api.router)
     
     return app
 

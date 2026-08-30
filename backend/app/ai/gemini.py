@@ -22,6 +22,41 @@ class GeminiProvider(BaseLLMProvider):
     def provider_name(self) -> str:
         return "gemini"
 
+    async def list_models(self) -> list[dict]:
+        if not self.api_key:
+            raise ValueError("Gemini API key missing")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            r = await c.get(url)
+            if r.status_code != 200:
+                raise ValueError(f"Gemini list_models {r.status_code}: {r.text[:300]}")
+            return r.json().get("models", [])
+
+    async def get_model_info(self, model_id: str) -> dict:
+        if not self.api_key:
+            raise ValueError("Gemini API key missing")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}?key={self.api_key}"
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(url)
+            if r.status_code != 200:
+                return {"name": model_id, "id": model_id}
+            return r.json()
+
+    async def test_connection(self) -> dict:
+        try:
+            models = await self.list_models()
+            return {"success": True, "provider": "gemini", "model": self.model, "model_count": len(models)}
+        except Exception as e:
+            return {"success": False, "provider": "gemini", "error": str(e)[:300]}
+
+    async def analyze(self, market_state: dict, task: str) -> dict:
+        from app.ai.prompt_builder import build_system_prompt
+        system_prompt = build_system_prompt()
+        import json as _j
+        user_prompt = f"Task: {task}\nMarketState: {_j.dumps(market_state, default=str)}"
+        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
+        return insight.model_dump(mode="json")
+
     async def generate_analysis(
         self,
         symbol: str,

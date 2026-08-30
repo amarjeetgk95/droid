@@ -8,14 +8,13 @@ class MarketDataRouter:
         self.service = service or MarketService()
 
     async def get_candles(self, symbol: str, timeframe: str):
-        # validate instrument
+        if timeframe == "1d":
+            timeframe = "1D"
         cfg = get_by_symbol_exact(symbol.upper()) or get_instrument(symbol)
         if cfg and timeframe not in cfg.supported_timeframes:
             raise ValueError(f"Timeframe {timeframe} not supported for {symbol}")
         if timeframe not in TIMEFRAME_CONFIG:
             raise ValueError(f"Unsupported timeframe {timeframe}")
-        # delegate to service (which maps symbol to provider symbol)
-        # For crypto, pass through directly
         return await self.service.get_candles(symbol, timeframe)
 
     async def get_quote(self, symbol: str):

@@ -450,6 +450,7 @@ export interface OpenRouterModel {
   pricing: Record<string, unknown>;
   supports_tools: boolean;
   supports_vision: boolean;
+  supports_structured_outputs?: boolean;
   description: string;
   category: 'Finance' | 'Reasoning' | 'General' | 'Coding' | 'Vision' | 'Fast' | 'Research' | 'Unknown' | string;
   trading_rank: number;

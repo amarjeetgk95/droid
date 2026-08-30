@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from typing import Any
+
 from app.ai.base import BaseLLMProvider
 from app.models.ai import AIInsightResponse, MarketBias
 
@@ -9,6 +11,22 @@ class MockLLMProvider(BaseLLMProvider):
     @property
     def provider_name(self) -> str:
         return "mock_ai"
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        return [{"id": "mock-deterministic-v1", "name": "Mock Deterministic v1", "is_mock": True}]
+
+    async def get_model_info(self, model_id: str) -> dict[str, Any]:
+        return {"id": model_id, "is_mock": True, "supports_structured_outputs": True}
+
+    async def test_connection(self) -> dict[str, Any]:
+        return {"success": True, "provider": "mock_ai", "model": "mock-deterministic-v1", "is_mock": True}
+
+    async def analyze(self, market_state: dict, task: str) -> dict:
+        # Use generate_analysis with synthetic prompt
+        from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
+        # MarketState dict fallback; if missing fields use symbol only
+        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), build_system_prompt(), f"Task {task} MarketState {market_state}")
+        return insight.model_dump(mode="json")
 
     async def generate_analysis(
         self,

@@ -554,6 +554,37 @@ class ApiClient {
   async removeWatchlistItem(watchlistId: string, itemId: string) {
     return this.request<void>(`/api/v1/watchlists/${watchlistId}/items/${itemId}`, { method: 'DELETE' });
   }
+
+  // Pipeline & Safety Gates (§4, §6, §7, §22, §23, §25, §28, §40)
+  async validateForecast(p10: number, p50: number, p90: number, current_price?: number) {
+    return this.request<any>('/api/v1/pipeline/forecast/validate', { method: 'POST', body: JSON.stringify({ p10, p50, p90, current_price }) });
+  }
+  async captureMarketState(symbol: string = 'NIFTY') {
+    return this.request<any>(`/api/v1/pipeline/state/capture?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' });
+  }
+  async checkStaleness(payload: any) {
+    return this.request<any>('/api/v1/pipeline/staleness/check', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async calculatePricing(payload: any) {
+    return this.request<any>('/api/v1/pipeline/pricing/calculate', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async createExecutionSignal(symbol: string, side: string, quantity: number) {
+    return this.request<any>(`/api/v1/pipeline/execution/signal?symbol=${encodeURIComponent(symbol)}&side=${side}&quantity=${quantity}`, { method: 'POST' });
+  }
+  async listExecutionOrders() {
+    return this.request<any>('/api/v1/pipeline/execution/orders');
+  }
+  async transitionExecution(orderId: string, toState: string) {
+    return this.request<any>(`/api/v1/pipeline/execution/${encodeURIComponent(orderId)}/transition?to_state=${toState}`, { method: 'POST' });
+  }
+  async getDashboard(symbol: string = 'NIFTY') {
+    return this.request<any>(`/api/v1/dashboard/${encodeURIComponent(symbol)}`);
+  }
+
+  // Direct Providers testing
+  async testDirectProvider(provider: string, payload: any) {
+    return this.request<any>('/api/v1/ai/test', { method: 'POST', body: JSON.stringify({ provider, ...payload }) });
+  }
 }
 
 export const api = new ApiClient(API_BASE);

@@ -367,6 +367,16 @@ def normalize_model(raw: dict[str, Any]) -> dict[str, Any]:
         badges.append("FINANCE")
     if get_supports_vision(raw):
         badges.append("VISION")
+    # Capability-aware structured outputs (Ling etc. do NOT support)
+    try:
+        from app.ai.capability_registry import should_use_structured_outputs as _should_struct
+        supports_structured = _should_struct(model_id, raw)
+    except Exception:
+        supports_structured = True
+    if supports_structured:
+        badges.append("STRUCTURED")
+    else:
+        badges.append("PROMPTED_JSON")
 
     return {
         "id": model_id,
@@ -378,6 +388,7 @@ def normalize_model(raw: dict[str, Any]) -> dict[str, Any]:
         "pricing": pricing,
         "supports_tools": get_supports_tools(raw),
         "supports_vision": get_supports_vision(raw),
+        "supports_structured_outputs": supports_structured,
         "description": raw.get("description") or "",
         "category": category,
         "trading_rank": rank,

@@ -126,7 +126,9 @@ class MockProvider(MarketDataProvider):
             "5m": (timedelta(minutes=5), 75),
             "15m": (timedelta(minutes=15), 25),
             "1h": (timedelta(hours=1), 6),
-            "1D": (timedelta(days=1), 250),
+            "4h": (timedelta(hours=4), 40),
+            "1D": (timedelta(days=1), 90),
+            "1d": (timedelta(days=1), 90),
         }
         if timeframe not in tf_mapping:
             raise ValueError(f"Invalid timeframe: {timeframe}")

@@ -83,9 +83,15 @@ class MarketService:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[NormalizedCandle]:
-        valid_timeframes = ["1m", "5m", "15m", "1h", "1D"]
-        if timeframe not in valid_timeframes:
+        # Canonical 6-TF Chart Analysis + legacy aliases
+        valid_timeframes = ["1m", "5m", "15m", "1h", "4h", "1D", "1d", "30m", "1W"]
+        tf_norm = timeframe.strip()
+        # Normalize Daily case
+        if tf_norm == "1d":
+            tf_norm = "1D"
+        if tf_norm not in valid_timeframes and tf_norm not in ["1m","5m","15m","1h","4h","1D"]:
             raise ValueError(f"Invalid timeframe: {timeframe}. Must be one of {valid_timeframes}")
+        timeframe = tf_norm
         symbol_upper = symbol.upper().replace(" ", "")
         symbol_map = {
             "NIFTY": "NIFTY 50",

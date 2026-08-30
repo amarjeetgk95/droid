@@ -19,14 +19,43 @@ export interface QuantitativeSettings {
   slippagePct: number; // 0.05%
 }
 
+export type AIConnectionMode = 'OpenRouter' | 'Direct Provider' | 'Local Ollama';
+export type DirectProviderId = 'OpenAI' | 'Novita AI' | 'NVIDIA' | 'Google Gemini' | 'Custom OpenAI-Compatible';
+export type AIRoutingMode = 'Manual' | 'Task Optimized' | 'Best Available' | 'Cost Optimized';
+export type AITaskId = 'INTRADAY_ANALYSIS' | 'NEWS_ANALYSIS' | 'DEEP_RESEARCH' | 'MTF_SYNTHESIS' | 'CHART_EXPLANATION' | 'FINAL_REVIEW';
+
 export interface AISettings {
-  provider: 'gemini' | 'openrouter' | 'ollama' | 'mock_ai';
+  // Legacy provider (kept for backward compat) — maps to connectionMode
+  provider: 'gemini' | 'openrouter' | 'ollama' | 'mock_ai' | 'openai' | 'novita' | 'nvidia' | 'custom';
+  // §8 Three Connection Modes (primary)
+  connectionMode: AIConnectionMode;
+  directProvider: DirectProviderId;
+  routingMode: AIRoutingMode;
+  // Provider keys
   geminiApiKey: string;
   geminiModel: string;
   openRouterApiKey: string;
   openRouterModel: string;
   ollamaBaseUrl: string;
   ollamaModel: string;
+  // Direct provider keys (§11, §34)
+  openaiApiKey: string;
+  openaiModel: string;
+  novitaApiKey: string;
+  novitaModel: string;
+  nvidiaApiKey: string;
+  nvidiaModel: string;
+  customOpenaiApiKey: string;
+  customOpenaiBaseUrl: string;
+  customOpenaiModel: string;
+  // Task-specific model routing (§14)
+  taskModels: Record<AITaskId, string>;
+  // Direct-provider base URLs where applicable
+  openaiBaseUrl: string;
+  novitaBaseUrl: string;
+  nvidiaBaseUrl: string;
+  geminiBaseUrl: string;
+
   persona: 'INSTITUTIONAL' | 'MOMENTUM' | 'OPTION_SELLER';
   temperature: number;
   cacheTtlSeconds: number;
@@ -35,6 +64,9 @@ export interface AISettings {
   openRouterPricingFilter: 'FREE' | 'PAID' | 'ALL';
   openRouterSelectedModel: string; // 'auto' or model id
   openRouterAllowPaid: boolean;
+  // Fallback (§16)
+  fallbackEnabled: boolean;
+  fallbackOllamaModel: string;
 }
 
 export interface PaperTradingSettings {
@@ -121,12 +153,36 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   ai: {
     provider: 'gemini',
+    connectionMode: 'OpenRouter',
+    directProvider: 'OpenAI',
+    routingMode: 'Task Optimized',
     geminiApiKey: '',
     geminiModel: 'gemini-2.5-flash',
     openRouterApiKey: '',
     openRouterModel: 'anthropic/claude-3.7-sonnet',
     ollamaBaseUrl: 'http://localhost:11434',
     ollamaModel: 'deepseek-r1:8b',
+    openaiApiKey: '',
+    openaiModel: 'gpt-4o-mini',
+    novitaApiKey: '',
+    novitaModel: 'meta-llama/llama-3.3-70b-instruct',
+    nvidiaApiKey: '',
+    nvidiaModel: 'meta/llama-3.1-70b-instruct',
+    customOpenaiApiKey: '',
+    customOpenaiBaseUrl: '',
+    customOpenaiModel: 'custom-model',
+    taskModels: {
+      INTRADAY_ANALYSIS: 'auto',
+      NEWS_ANALYSIS: 'auto',
+      DEEP_RESEARCH: 'auto',
+      MTF_SYNTHESIS: 'auto',
+      CHART_EXPLANATION: 'auto',
+      FINAL_REVIEW: 'auto',
+    },
+    openaiBaseUrl: 'https://api.openai.com/v1',
+    novitaBaseUrl: 'https://api.novita.ai/v3/openai',
+    nvidiaBaseUrl: 'https://integrate.api.nvidia.com/v1',
+    geminiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     persona: 'INSTITUTIONAL',
     temperature: 0.2,
     cacheTtlSeconds: 60,
@@ -134,6 +190,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openRouterPricingFilter: 'FREE',
     openRouterSelectedModel: 'auto',
     openRouterAllowPaid: false,
+    fallbackEnabled: false,
+    fallbackOllamaModel: 'deepseek-r1:8b',
   },
   paper: {
     initialCapital: 1000000,
@@ -155,7 +213,7 @@ const LEGACY_DEV_CONFIG_KEY = 'droid_developer_api_config';
 
 const SECRET_FIELDS: Record<string, (keyof BrokerSettings | keyof AISettings)[]> = {
   broker: ['fyersSecret', 'binanceSecretKey', 'upstoxSecret'],
-  ai: ['geminiApiKey', 'openRouterApiKey'],
+  ai: ['geminiApiKey', 'openRouterApiKey', 'openaiApiKey', 'novitaApiKey', 'nvidiaApiKey', 'customOpenaiApiKey'],
 };
 
 /**
@@ -228,6 +286,30 @@ function migrateMockAI(settings: AppSettings): AppSettings {
   return settings;
 }
 
+function migrateConnectionMode(settings: AppSettings): AppSettings {
+  // Derive connectionMode from legacy provider if missing
+  if (!settings.ai.connectionMode) {
+    const p = (settings.ai.provider || '').toLowerCase();
+    if (p === 'openrouter') settings.ai.connectionMode = 'OpenRouter';
+    else if (p === 'ollama') settings.ai.connectionMode = 'Local Ollama';
+    else if (['openai', 'novita', 'nvidia', 'custom'].includes(p) || (settings.ai as any).directProvider) settings.ai.connectionMode = 'Direct Provider';
+    else settings.ai.connectionMode = 'OpenRouter';
+  }
+  // Ensure taskModels exists
+  if (!settings.ai.taskModels) {
+    settings.ai.taskModels = { ...DEFAULT_SETTINGS.ai.taskModels };
+  } else {
+    // Merge missing tasks
+    for (const k of Object.keys(DEFAULT_SETTINGS.ai.taskModels) as Array<keyof typeof DEFAULT_SETTINGS.ai.taskModels>) {
+      if (!(k in settings.ai.taskModels)) settings.ai.taskModels[k] = DEFAULT_SETTINGS.ai.taskModels[k];
+    }
+  }
+  // Ensure routingMode
+  if (!settings.ai.routingMode) settings.ai.routingMode = DEFAULT_SETTINGS.ai.routingMode;
+  if (!settings.ai.directProvider) settings.ai.directProvider = DEFAULT_SETTINGS.ai.directProvider;
+  return settings;
+}
+
 export function getStoredSettings(): AppSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
   try {
@@ -251,6 +333,7 @@ export function getStoredSettings(): AppSettings {
     settings = migrateLegacyDevConfig(settings);
     // Remove mock_ai provision entirely – migrate to gemini
     settings = migrateMockAI(settings);
+    settings = migrateConnectionMode(settings);
 
     return settings;
   } catch {
@@ -343,7 +426,9 @@ export function mergeAppSettingsFromSupabase(raw: unknown): AppSettings {
     paper: mergeSection(DEFAULT_SETTINGS.paper, parsed.paper),
     preferences: mergeSection(DEFAULT_SETTINGS.preferences, parsed.preferences),
   };
-  return migrateMockAI(merged);
+  let m = migrateMockAI(merged);
+  m = migrateConnectionMode(m);
+  return m;
 }
 
 /**

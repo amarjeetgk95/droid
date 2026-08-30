@@ -29,25 +29,56 @@ export const QuantitativeSettingsSchema = z.object({
 
 // --- AI Settings ---
 export const AISettingsSchema = z.object({
-  provider: z.enum(['gemini', 'openrouter', 'ollama']),
+  provider: z.enum(['gemini', 'openrouter', 'ollama', 'mock_ai', 'openai', 'novita', 'nvidia', 'custom']),
+  connectionMode: z.enum(['OpenRouter', 'Direct Provider', 'Local Ollama']).optional().default('OpenRouter'),
+  directProvider: z.enum(['OpenAI', 'Novita AI', 'NVIDIA', 'Google Gemini', 'Custom OpenAI-Compatible']).optional().default('OpenAI'),
+  routingMode: z.enum(['Manual', 'Task Optimized', 'Best Available', 'Cost Optimized']).optional().default('Task Optimized'),
   geminiApiKey: z.string().trim().max(500),
   geminiModel: z.string().trim().max(100),
   openRouterApiKey: z.string().trim().max(500),
   openRouterModel: z.string().trim().max(200),
   ollamaBaseUrl: z.string().trim().max(500),
   ollamaModel: z.string().trim().max(200),
+  // Direct providers
+  openaiApiKey: z.string().trim().max(500).optional().default(''),
+  openaiModel: z.string().trim().max(200).optional().default('gpt-4o-mini'),
+  novitaApiKey: z.string().trim().max(500).optional().default(''),
+  novitaModel: z.string().trim().max(200).optional().default('meta-llama/llama-3.3-70b-instruct'),
+  nvidiaApiKey: z.string().trim().max(500).optional().default(''),
+  nvidiaModel: z.string().trim().max(200).optional().default('meta/llama-3.1-70b-instruct'),
+  customOpenaiApiKey: z.string().trim().max(500).optional().default(''),
+  customOpenaiBaseUrl: z.string().trim().max(500).optional().default(''),
+  customOpenaiModel: z.string().trim().max(200).optional().default('custom-model'),
+  taskModels: z.record(z.string(), z.string()).optional(),
+  openaiBaseUrl: z.string().trim().max(500).optional().default('https://api.openai.com/v1'),
+  novitaBaseUrl: z.string().trim().max(500).optional().default('https://api.novita.ai/v3/openai'),
+  nvidiaBaseUrl: z.string().trim().max(500).optional().default('https://integrate.api.nvidia.com/v1'),
+  geminiBaseUrl: z.string().trim().max(500).optional().default('https://generativelanguage.googleapis.com/v1beta'),
   persona: z.enum(['INSTITUTIONAL', 'MOMENTUM', 'OPTION_SELLER']),
   temperature: z.coerce.number().min(0, 'Temperature must be ≥ 0').max(2, 'Temperature must be ≤ 2'),
   cacheTtlSeconds: z.coerce.number().int().min(0).max(3600, 'Cache TTL must be ≤ 3600s (1hr)'),
-}).superRefine((data, ctx) => {
-  if (data.provider === 'gemini') {
+  // Dynamic OpenRouter
+  openRouterFreeOnly: z.boolean().optional().default(true),
+  openRouterPricingFilter: z.enum(['FREE', 'PAID', 'ALL']).optional().default('FREE'),
+  openRouterSelectedModel: z.string().trim().max(300).optional().default('auto'),
+  openRouterAllowPaid: z.boolean().optional().default(false),
+  fallbackEnabled: z.boolean().optional().default(false),
+  fallbackOllamaModel: z.string().trim().max(200).optional().default('deepseek-r1:8b'),
+}).passthrough().superRefine((data: any, ctx: any) => {
+  // Legacy provider mapping to connectionMode for validation
+  const mode = data.connectionMode || (data.provider === 'openrouter' ? 'OpenRouter' : data.provider === 'ollama' ? 'Local Ollama' : data.provider === 'gemini' || data.provider === 'openai' || data.provider === 'novita' || data.provider === 'nvidia' || data.provider === 'custom' ? 'Direct Provider' : 'OpenRouter');
+  if (mode === 'Direct Provider') {
+    const dp = data.directProvider;
+    if (dp === 'Custom OpenAI-Compatible' && (!data.customOpenaiBaseUrl || !data.customOpenaiBaseUrl.trim())) {
+      // Custom base URL is required but not blocking save — handled as warning in UI, not hard fail
+    }
+  }
+  if (data.provider === 'gemini' || (mode === 'Direct Provider' && data.directProvider === 'Google Gemini')) {
     if (!data.geminiModel || data.geminiModel.trim() === '') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['geminiModel'], message: 'Gemini model is required when provider is Gemini' });
     }
-    // Prefix hints for Gemini/OpenRouter are shown as UI warnings, not blocking validation.
-    // Empty keys are allowed (user can save without configuring AI).
   }
-  if (data.provider === 'ollama') {
+  if (data.provider === 'ollama' || mode === 'Local Ollama') {
     if (!data.ollamaBaseUrl || data.ollamaBaseUrl.trim() === '') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaBaseUrl'], message: 'Ollama URL is required when provider is Ollama' });
     } else {
@@ -57,7 +88,6 @@ export const AISettingsSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaModel'], message: 'Ollama model is required when provider is Ollama' });
     }
   }
-  // mock_ai requires no additional fields
 });
 
 // --- Paper Trading Settings ---

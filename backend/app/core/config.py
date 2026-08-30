@@ -80,6 +80,43 @@ class Settings(BaseSettings):
     openrouter_model_cache_minutes: int = 10
     openrouter_default_model: str = "auto"
 
+    # Direct Provider Keys — §34
+    openai_api_key: str = ""
+    novita_api_key: str = ""
+    nvidia_api_key: str = ""
+    gemini_api_key: str = ""
+    custom_openai_api_key: str = ""
+    custom_openai_base_url: str = ""
+
+    # Direct Provider Models
+    openai_model: str = "gpt-4o-mini"
+    novita_model: str = "meta-llama/llama-3.3-70b-instruct"
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
+    custom_openai_model: str = "custom-model"
+
+    # Ollama — §12
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "deepseek-r1:8b"
+
+    # AI Configuration — §8 Three Connection Modes
+    ai_connection_mode: Literal["OpenRouter", "Direct Provider", "Local Ollama"] = "OpenRouter"
+    ai_direct_provider: Literal["OpenAI", "Novita AI", "NVIDIA", "Google Gemini", "Custom OpenAI-Compatible"] = "OpenAI"
+
+    # Task-Specific Routing — §14, §15
+    ai_routing_mode: Literal["Manual", "Task Optimized", "Best Available", "Cost Optimized"] = "Task Optimized"
+    ai_fallback_enabled: bool = False  # §16 OFF by default
+
+    # Risk & Pricing — §25, §26, §27
+    risk_min_rr: float = 1.5
+    risk_k_atr: float = 1.0
+    risk_max_ai_price_drift_atr: float = 0.5  # §23
+    risk_max_response_age_seconds: int = 30
+    risk_per_trade_pct: float = 1.0
+    max_position_size: int = 1000
+    max_exposure_pct: float = 20.0
+    max_spread: float = 0.5
+    max_slippage: float = 0.3
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
