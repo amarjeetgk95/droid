@@ -8,9 +8,9 @@ class Settings(BaseSettings):
     app_name: str = "Droid - F&O Market Analysis"
     
     # Server
-    backend_host: str = "127.0.0.1"
+    backend_host: str = "0.0.0.0"
     backend_port: int = 8000
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "https://fo-droid.web.app"
     
     # Auth
     auth_required: bool = False
@@ -32,13 +32,13 @@ class Settings(BaseSettings):
     # FYERS Settings (Phase 2)
     fyers_app_id: str = ""
     fyers_secret_key: str = ""
-    fyers_redirect_uri: str = "http://127.0.0.1:8000/api/v1/tokens/fyers/callback"
+    fyers_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback"
     fyers_access_token: str = ""
 
     # Upstox Settings (Phase 2)
     upstox_api_key: str = ""
     upstox_secret_key: str = ""
-    upstox_redirect_uri: str = "http://127.0.0.1:8000/api/v1/tokens/upstox/callback"
+    upstox_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback"
     upstox_access_token: str = ""
 
     # WebSocket & Reconnect Settings (Phase 2)

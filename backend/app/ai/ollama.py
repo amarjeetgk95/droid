@@ -14,7 +14,7 @@ class OllamaProvider(BaseLLMProvider):
 
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
+        base_url: str = "https://droid-backend-emeq.onrender.com",
         model: str = "deepseek-r1:latest",
     ):
         self.base_url = base_url
