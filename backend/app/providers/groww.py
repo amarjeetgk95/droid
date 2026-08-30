@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Literal
 from app.providers.base import MarketDataProvider
 from app.models.market import (
@@ -196,13 +196,15 @@ class GrowwProvider(MarketDataProvider):
         await self.rate_limiter.acquire()
         now = datetime.now(timezone.utc)
         count = 75 if timeframe == "5m" else 30
+        _tf_to_sec = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1D": 86400}
+        interval = _tf_to_sec.get(timeframe, 300)
         return [
             NormalizedCandle(
-                timestamp=now,
+                timestamp=now - timedelta(seconds=interval * i),
                 open=0.0, high=0.0, low=0.0, close=0.0,
                 volume=0, vwap=None,
             )
-            for _ in range(count)
+            for i in range(count)
         ]
 
     async def get_index_cards(self) -> list[IndexCard]:

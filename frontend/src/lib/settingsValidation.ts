@@ -7,31 +7,31 @@ import { z } from 'zod';
 // --- Broker Settings ---
 export const FyersCredentialsSchema = z.object({
   appId: z.string().trim().max(100),
-  secret: z.string().trim().max(500),
+  secret: z.string().trim().max(4096),
   redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
 });
 
 export const UpstoxCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(500),
-  secret: z.string().trim().max(500),
+  apiKey: z.string().trim().max(4096),
+  secret: z.string().trim().max(4096),
   redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
 });
 
 export const GrowwCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(500),
-  apiSecret: z.string().trim().max(500),
+  apiKey: z.string().trim().max(4096),
+  apiSecret: z.string().trim().max(4096),
 });
 
 export const KotakNeoCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(500),
-  apiSecret: z.string().trim().max(500),
+  apiKey: z.string().trim().max(4096),
+  apiSecret: z.string().trim().max(4096),
   mobileNumber: z.string().trim().max(15).regex(/^\+?\d{0,15}$/, 'Must be a valid mobile number').or(z.literal('')),
   mpin: z.string().trim().max(8).regex(/^\d{0,8}$/, 'MPIN must be up to 8 digits').or(z.literal('')),
 });
 
 export const BinanceCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(500),
-  apiSecret: z.string().trim().max(500),
+  apiKey: z.string().trim().max(4096),
+  apiSecret: z.string().trim().max(4096),
 });
 
 export const BrokerSettingsSchema = z.object({

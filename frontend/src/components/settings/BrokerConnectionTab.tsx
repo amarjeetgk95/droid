@@ -80,21 +80,26 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
         hasCreds,
       };
     }
+    const tokenConnected = tokenStatus?.is_token_valid === true;
     if (p === 'fyers') {
       const hasCreds = Boolean(settings.fyers.appId && settings.fyers.secret);
-      return { connected: false, label: hasCreds ? 'CREDENTIALS SAVED — AUTH REQUIRED' : 'NOT CONFIGURED', sub: hasCreds ? 'Click Force Refresh to authenticate' : 'Enter App ID + Secret', tone: hasCreds ? 'amber' as const : 'red' as const, hasCreds };
+      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
+      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter App ID + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'upstox') {
       const hasCreds = Boolean(settings.upstox.apiKey && settings.upstox.secret);
-      return { connected: false, label: hasCreds ? 'CREDENTIALS SAVED — AUTH REQUIRED' : 'NOT CONFIGURED', sub: hasCreds ? 'Click Force Refresh to authenticate' : 'Enter API Key + Secret', tone: hasCreds ? 'amber' as const : 'red' as const, hasCreds };
+      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
+      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'groww') {
       const hasCreds = Boolean(settings.groww.apiKey && settings.groww.apiSecret);
-      return { connected: false, label: hasCreds ? 'CREDENTIALS SAVED — AUTH REQUIRED' : 'NOT CONFIGURED', sub: hasCreds ? 'Click Force Refresh to authenticate' : 'Enter API Key + API Secret', tone: hasCreds ? 'amber' as const : 'red' as const, hasCreds };
+      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
+      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + API Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'kotak_neo') {
       const hasCreds = Boolean(settings.kotakNeo.apiKey && settings.kotakNeo.apiSecret && settings.kotakNeo.mpin);
-      return { connected: false, label: hasCreds ? 'CREDENTIALS SAVED — AUTH REQUIRED' : 'NOT CONFIGURED', sub: hasCreds ? 'Click Force Refresh to start a session' : 'Enter API Key + Secret + MPIN', tone: hasCreds ? 'amber' as const : 'red' as const, hasCreds };
+      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
+      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to start a session') : 'Enter API Key + Secret + MPIN', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     return { connected: false, label: 'UNKNOWN', sub: '', tone: 'red' as const, hasCreds: false };
   };
@@ -145,7 +150,7 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
 
   useEffect(() => {
     fetchTokenStatus();
-  }, [settings.provider, settings.apiType]);
+  }, [settings.provider, settings.apiType, tokenMsg]);
 
   const handleRefreshToken = async () => {
     setRefreshing(true);
