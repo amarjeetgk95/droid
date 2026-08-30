@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import time
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Header, Request
 from pydantic import BaseModel
 from app.services.ai_service import ai_service
 from app.services.openrouter_catalog import get_model_catalog, validate_model_or_raise, get_cache_status, clear_cache as clear_model_cache
@@ -64,8 +64,11 @@ async def generate_market_analysis(
     provider: str = Query(default="mock_ai", description="LLM provider: mock_ai | gemini | openrouter | ollama"),
     model: str | None = Query(default=None, description="OpenRouter model ID or auto (when provider=openrouter)"),
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    openrouter_api_key: str | None = Query(default=None, alias="openRouterApiKey", description="OpenRouter key from Settings (optional, overrides env)"),
 ):
-    """Generate grounded, structured AI market analysis. Strict – fails if provider not configured (no silent mock)."""
+    """Generate grounded, structured AI market analysis. Strict – fails if provider not configured (no silent mock). Settings-driven key (no hardcode)."""
+    effective_key = (openrouter_api_key or x_openrouter_key or "").strip() or None
     try:
         # If provider is openrouter and model specified, enforce free-only validation
         if provider.lower() == "openrouter" and model:
@@ -73,9 +76,13 @@ async def generate_market_analysis(
             effective_free_only = not allow_paid if allow_paid is not None else getattr(settings, "openrouter_free_only", True)
             # This will raise if paid model requested while free-only
             await validate_model_or_raise(model, free_only=effective_free_only)
-            insight = await ai_service.generate_market_analysis(symbol, provider, openrouter_model=model, allow_paid=allow_paid)
+            insight = await ai_service.generate_market_analysis(symbol, provider, openrouter_model=model, allow_paid=allow_paid, openrouter_api_key=effective_key)
         else:
-            insight = await ai_service.generate_market_analysis(symbol, provider)
+            # For openrouter without explicit model, still pass key so service can use it
+            if provider.lower() == "openrouter":
+                insight = await ai_service.generate_market_analysis(symbol, provider, openrouter_model=model, allow_paid=allow_paid, openrouter_api_key=effective_key)
+            else:
+                insight = await ai_service.generate_market_analysis(symbol, provider)
         return {
             "data": insight.model_dump(mode="json"),
             "error": None,
@@ -117,6 +124,11 @@ class AIModelAnalyzeRequest(BaseModel):
     symbol: str = "NIFTY"
     analysis_type: str | None = None  # multi_timeframe etc
     allow_paid: bool | None = None  # overrides free_only when explicitly enabled
+    openRouterApiKey: str | None = None  # Settings-driven; no hardcode. Priority > env
+    geminiApiKey: str | None = None
+    geminiModel: str | None = None
+    ollamaBaseUrl: str | None = None
+    ollamaModel: str | None = None
 
 
 async def _handle_models_list(
@@ -257,11 +269,15 @@ async def models_cache_status():
 
 
 @router.post("/analyze")
-async def analyze_with_model(payload: AIModelAnalyzeRequest = Body(...)):
+async def analyze_with_model(
+    payload: AIModelAnalyzeRequest = Body(...),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+):
     """
     AI inference with dynamic model validation.
-    Accepts selected model ID, validates against live catalog,
-    enforces FREE-only protection.
+    Settings-driven keys (no hardcode). Accepts selected model ID, validates against live catalog,
+    enforces FREE-only protection. Key priority: payload > header > env.
     """
     start = time.perf_counter()
     symbol = (payload.symbol or "NIFTY").strip()
@@ -274,26 +290,89 @@ async def analyze_with_model(payload: AIModelAnalyzeRequest = Body(...)):
     # Support old provider param as alias
     provider = payload.provider or "openrouter"
     analysis_type = payload.analysis_type or "multi_timeframe"
+    # Resolve keys — Settings-driven priority
+    effective_openrouter_key = (payload.openRouterApiKey or x_openrouter_key or "").strip() or None
+    effective_gemini_key = (payload.geminiApiKey or x_gemini_key or payload.geminiApiKey or "").strip() or None
 
     try:
-        # Validate model against catalog
-        validated = await validate_model_or_raise(model_id, free_only=free_only)
-        effective_model = validated["id"]
+        # Validate model against catalog — skip for non-openrouter providers
+        if provider.lower() not in ("gemini", "ollama", "mock_ai", "mock"):
+            validated = await validate_model_or_raise(model_id, free_only=free_only)
+            effective_model = validated["id"]
+        else:
+            # For gemini/ollama/mock, don't validate against OpenRouter catalog
+            effective_model = model_id
+            validated = None
 
         # Determine provider for ai_service
         # If model is openrouter model, provider is openrouter with specific model
         # Use openrouter provider
         # For backward compat, if provider is gemini/ollama, bypass catalog check and use that provider
         if provider.lower() in ("gemini", "ollama", "mock_ai", "mock"):
-            # Those providers have their own validation; allow through
-            insight = await ai_service.generate_market_analysis(symbol, provider_name=provider.lower())
+            # Those providers have their own validation; allow through — gemini key passed via payload/header if needed
+            # For gemini, we need to use test path? For analyze, we still use get_llm_provider but that ignores key.
+            # Instead create provider with key if supplied.
+            if provider.lower() == "gemini" and effective_gemini_key:
+                from app.ai.gemini import GeminiProvider
+                from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
+                from app.services.regime_service import regime_service
+                from app.services.futures_service import futures_service
+                from app.services.options_service import options_service
+                # Build prompts and call directly with keyed provider to respect Settings
+                regime = await regime_service.classify_market_regime(symbol)
+                futures = await futures_service.get_futures_overview(symbol)
+                try:
+                    chain = await options_service.get_option_chain_matrix(symbol)
+                    options_analytics = chain.analytics
+                    max_pain = getattr(chain, "max_pain", None)
+                    if max_pain is None and chain.analytics:
+                        try:
+                            max_pain = await options_service.calculate_max_pain(symbol)
+                        except Exception:
+                            max_pain = chain.analytics.max_pain_strike
+                    strikes = getattr(chain, "strikes", None)
+                except Exception:
+                    options_analytics = None
+                    max_pain = None
+                    strikes = None
+                system_prompt = build_system_prompt()
+                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+                insight = await GeminiProvider(api_key=effective_gemini_key, model=payload.geminiModel or "gemini-2.5-flash").generate_analysis(symbol, system_prompt, user_prompt)
+            elif provider.lower() == "ollama" and (payload.ollamaBaseUrl or payload.ollamaModel):
+                from app.ai.ollama import OllamaProvider
+                from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
+                from app.services.regime_service import regime_service
+                from app.services.futures_service import futures_service
+                from app.services.options_service import options_service
+                regime = await regime_service.classify_market_regime(symbol)
+                futures = await futures_service.get_futures_overview(symbol)
+                try:
+                    chain = await options_service.get_option_chain_matrix(symbol)
+                    options_analytics = chain.analytics
+                    max_pain = getattr(chain, "max_pain", None)
+                    if max_pain is None and chain.analytics:
+                        try:
+                            max_pain = await options_service.calculate_max_pain(symbol)
+                        except Exception:
+                            max_pain = chain.analytics.max_pain_strike
+                    strikes = getattr(chain, "strikes", None)
+                except Exception:
+                    options_analytics = None
+                    max_pain = None
+                    strikes = None
+                system_prompt = build_system_prompt()
+                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+                insight = await OllamaProvider(base_url=payload.ollamaBaseUrl, model=payload.ollamaModel or "deepseek-r1:8b").generate_analysis(symbol, system_prompt, user_prompt)
+            else:
+                insight = await ai_service.generate_market_analysis(symbol, provider_name=provider.lower())
         else:
-            # Use openrouter with validated model
+            # Use openrouter with validated model and Settings-driven key
             insight = await ai_service.generate_market_analysis(
                 symbol=symbol,
                 provider_name="openrouter",
                 openrouter_model=effective_model,
                 allow_paid=not free_only,
+                openrouter_api_key=effective_openrouter_key,
             )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -347,14 +426,21 @@ async def analyze_with_model(payload: AIModelAnalyzeRequest = Body(...)):
         raise HTTPException(status_code=500, detail=str(e)[:500])
 
 
-# Enhanced analyze/{symbol} with model validation
+# Enhanced analyze/{symbol} with model validation — also Settings-driven
 @router.post("/analyze/{symbol}/with-model")
 async def analyze_symbol_with_model(
     symbol: str,
     model: str = Query(default="auto", description="OpenRouter model ID or auto"),
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
+    payload: AIModelAnalyzeRequest | None = Body(default=None),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
 ):
-    """Variant with model query param for chart integration."""
+    """Variant with model query param for chart integration. Supports key via body or header."""
+    key = None
+    if payload and payload.openRouterApiKey:
+        key = payload.openRouterApiKey
+    elif x_openrouter_key:
+        key = x_openrouter_key
     return await analyze_with_model(
-        AIModelAnalyzeRequest(model=model, symbol=symbol, allow_paid=allow_paid)
+        AIModelAnalyzeRequest(model=model, symbol=symbol, allow_paid=allow_paid, openRouterApiKey=key)
     )

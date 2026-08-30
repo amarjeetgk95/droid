@@ -240,14 +240,21 @@ class ApiClient {
     return this.request<{ data: import('./types').ScannedStrategy[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/strategy/scanner?${query.toString()}`);
   }
 
-  // AI Market Analyst & Structured Insights (Phase 8)
-  async generateAIAnalysis(symbol: string, provider: string = 'mock_ai') {
-    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${provider}`, {
+  // AI Market Analyst & Structured Insights (Phase 8) — Settings-driven (no hardcode)
+  async generateAIAnalysis(symbol: string, provider: string = 'mock_ai', opts?: { openRouterApiKey?: string; geminiApiKey?: string; geminiModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
+    const headers: Record<string, string> = {};
+    if (opts?.openRouterApiKey) headers['X-OpenRouter-Key'] = opts.openRouterApiKey;
+    if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey;
+    // Pass via header + query fallback for backend that also accepts query
+    const qp = opts?.openRouterApiKey ? `&openRouterApiKey=${encodeURIComponent(opts.openRouterApiKey)}` : '';
+    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${provider}${qp}`, {
       method: 'POST',
+      headers,
+      body: opts?.geminiApiKey || opts?.geminiModel || opts?.ollamaBaseUrl ? JSON.stringify(opts) : undefined,
     });
   }
 
-  async generateAIAnalysisWithModel(payload: { symbol?: string; model?: string; provider?: string; analysis_type?: string; allow_paid?: boolean }) {
+  async generateAIAnalysisWithModel(payload: { symbol?: string; model?: string; provider?: string; analysis_type?: string; allow_paid?: boolean; openRouterApiKey?: string; geminiApiKey?: string; geminiModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
     return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta; model_used?: string; latency_ms?: number }>('/api/v1/ai/analyze', {
       method: 'POST',
       body: JSON.stringify(payload),

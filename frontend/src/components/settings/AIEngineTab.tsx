@@ -69,9 +69,9 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
       setTesting(false);
       return;
     }
-    if (settings.provider === 'openrouter') {
-      // Key is server-side; frontend key is optional. Don't block test if missing.
-      // Just warn but proceed — backend will use OPENROUTER_API_KEY env.
+    if (settings.provider === 'openrouter' && !settings.openRouterApiKey) {
+      // Settings-driven: warn but still allow test — backend may have env fallback.
+      // We proceed; backend will return clear error if no key in either place.
     }
     if (settings.provider === 'ollama') {
       if (!settings.ollamaBaseUrl) {
@@ -366,40 +366,48 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
           </div>
         )}
 
-        {/* 2B. OpenRouter Config — Dynamic Free-Model System */}
+        {/* 2B. OpenRouter Config — Settings-driven, no hardcode */}
         {settings.provider === 'openrouter' && (
           <div className="space-y-4">
-            {/* Server-side key notice + optional local key for testing */}
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs space-y-2">
-              <div className="flex items-center gap-2 font-semibold text-amber-700 dark:text-amber-400">
-                <Key className="w-3.5 h-3.5" />
-                OpenRouter API Key — Server-Side Only (Recommended)
+            <div className="bg-primary/5 border border-primary/20 rounded-lg p-3.5 text-xs space-y-3">
+              <div className="flex items-center gap-2 font-semibold text-foreground">
+                <Key className="w-3.5 h-3.5 text-primary" />
+                OpenRouter API Key — Managed in Settings
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 border border-emerald-500/20 font-mono">NO HARDCODE</span>
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                For production, set <code className="px-1 py-0.5 bg-secondary rounded font-mono">OPENROUTER_API_KEY</code> in backend <code>.env</code> — never expose in browser. Frontend key below is optional for local testing only and is never sent to the model catalog endpoint.
+                No <code className="px-1 py-0.5 bg-secondary rounded font-mono">.env</code> or frontend hardcode required. Enter your <code className="font-mono">sk-or-v1-...</code> key below, then <strong>Save Configuration</strong>. Key is stored in <code className="font-mono">localStorage</code> + Supabase <code className="font-mono">app_settings</code> and sent per-request via header/payload (priority over optional server env). Get a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai/keys</a> — free models have prompt=0 & completion=0.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-foreground block mb-1">
-                    Optional Local/Test Key (sk-or-...)
+                    OpenRouter API Key (sk-or-v1-...) <span className="text-destructive">*</span>
                   </label>
                   <div className="relative">
                     <input
                       type={showKey ? 'text' : 'password'}
-                      placeholder="sk-or-v1-... (leave empty to use server env)"
+                      placeholder="sk-or-v1-..."
                       value={settings.openRouterApiKey}
                       onChange={(e) => onChange({ openRouterApiKey: e.target.value })}
-                      className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground font-mono"
+                      className="w-full bg-card border border-border rounded-lg px-3 py-2.5 pr-10 text-xs text-foreground font-mono focus:border-primary focus:outline-none"
                     />
                     <button
                       type="button"
                       onClick={() => setShowKey(!showKey)}
-                      className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                      className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground cursor-pointer"
                     >
                       {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                   {getError('openRouterApiKey') && <span className="text-[11px] text-destructive mt-1 block">{getError('openRouterApiKey')}</span>}
+                  <div className="flex items-center gap-1 mt-1.5">
+                    {settings.openRouterApiKey ? (
+                      <span className="text-[11px] flex items-center gap-1 text-emerald-600"><CheckCircle2 className="w-3 h-3" /> Key set ({settings.openRouterApiKey.slice(0, 8)}...{settings.openRouterApiKey.slice(-4)}) — will be used for analysis</span>
+                    ) : (
+                      <span className="text-[11px] flex items-center gap-1 text-amber-600"><AlertCircle className="w-3 h-3" /> No key yet — add key and Save, then Run Live Test</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">Save persists to backend if logged in; otherwise localStorage. Backend fallback <code className="font-mono">OPENROUTER_API_KEY</code> env is optional.</p>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-foreground block mb-1">Legacy Hard-Coded Model (fallback)</label>
@@ -413,7 +421,7 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
                           onChange({ openRouterModel: e.target.value });
                         }
                       }}
-                      className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono cursor-pointer"
+                      className="flex-1 bg-card border border-border rounded-lg px-3 py-2.5 text-xs text-foreground font-mono cursor-pointer"
                     >
                       {SUPPORTED_OPENROUTER_MODELS.map((model) => (
                         <option key={model.id} value={model.id}>
@@ -425,7 +433,7 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
                     <button
                       type="button"
                       onClick={() => setIsCustomModel(!isCustomModel)}
-                      className="text-[11px] px-2 py-1 border border-border rounded-lg hover:bg-secondary cursor-pointer"
+                      className="text-[11px] px-2 py-1 border border-border rounded-lg hover:bg-secondary cursor-pointer bg-card"
                     >
                       {isCustomModel ? 'List' : 'Custom'}
                     </button>
@@ -436,7 +444,7 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
                       placeholder="e.g. meta-llama/llama-3.3-70b-instruct"
                       value={settings.openRouterModel}
                       onChange={(e) => onChange({ openRouterModel: e.target.value })}
-                      className="w-full mt-1 bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
+                      className="w-full mt-1 bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
                     />
                   )}
                   <span className="text-[11px] text-muted-foreground block">Used only if dynamic catalog unavailable. Dynamic selector below is primary.</span>
@@ -667,14 +675,17 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
           )}
         </div>
 
-        {/* Pre-flight warnings */}
+        {/* Pre-flight warnings — Settings-driven, no hardcode */}
         {!testing && !testResult && (
           <div className="space-y-1">
             {settings.provider === 'gemini' && !settings.geminiApiKey && (
-              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Gemini API key missing – test will fail.</div>
+              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Gemini API key missing – add in field above and Save.</div>
             )}
-            {settings.provider === 'openrouter' && (
-              <div className="text-[11px] text-blue-600 flex items-center gap-1">ℹ️ OpenRouter key is server-side (OPENROUTER_API_KEY). Frontend key optional; test will use server key if empty.</div>
+            {settings.provider === 'openrouter' && !settings.openRouterApiKey && (
+              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> OpenRouter key missing — enter sk-or-v1-... above and Save. Optional server env fallback if empty.</div>
+            )}
+            {settings.provider === 'openrouter' && settings.openRouterApiKey && (
+              <div className="text-[11px] text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Key present — Save if you just edited, then Run Live Test.</div>
             )}
             {settings.provider === 'ollama' && !settings.ollamaBaseUrl && (
               <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Ollama URL missing.</div>

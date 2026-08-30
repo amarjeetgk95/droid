@@ -156,7 +156,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           <div className="w-full bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 text-xs font-mono text-foreground">
             OpenRouter
           </div>
-          <span className="text-[11px] text-muted-foreground">Server-side key — never exposed to browser.</span>
+          <span className="text-[11px] text-muted-foreground">Key from Settings (sent per-request, no hardcode). Optional env fallback.</span>
         </div>
 
         {/* Model Mode */}

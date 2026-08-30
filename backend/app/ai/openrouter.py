@@ -20,9 +20,9 @@ class OpenRouterProvider(BaseLLMProvider):
 
     async def generate_analysis(self, symbol: str, system_prompt: str, user_prompt: str) -> AIInsightResponse:
         if not self.api_key:
-            raise ValueError("OpenRouter API key is missing. Add your sk-or-... key in backend .env OPENROUTER_API_KEY or Terminal Configuration -> AI Engine.")
+            raise ValueError("OpenRouter API key is missing. Go to Settings -> AI Engine -> OpenRouter and add your sk-or-v1-... key (from https://openrouter.ai/keys). No .env hardcode required - key is stored via Settings and sent per-request.")
         if not self.api_key.startswith("sk-or-"):
-            raise ValueError(f"OpenRouter API key looks invalid (must start with 'sk-or-'). Got: {self.api_key[:12]}...")
+            raise ValueError(f"OpenRouter API key looks invalid (must start with 'sk-or-'). Got: {self.api_key[:12]}... Check Settings -> AI Engine.")
 
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {

@@ -30,6 +30,7 @@ class AIService:
         openrouter_model: str | None = None,
         allow_paid: bool | None = None,
         analysis_type: str | None = None,
+        openrouter_api_key: str | None = None,
     ) -> AIInsightResponse:
         """Aggregate cross-phase metrics and generate structured AI report."""
         underlying = symbol.upper().replace(" 50", "")
@@ -71,8 +72,8 @@ class AIService:
         )
 
         # 5. Dispatch to LLM Provider (strict – no silent mock fallback)
-        # Handle openrouter dynamic model with free-only guard
-        if provider_name.lower() == "openrouter" and openrouter_model:
+        # Handle openrouter – Settings-driven (no hardcode). Supports per-request key from UI.
+        if provider_name.lower() == "openrouter":
             # Validate against catalog before inference (hard protection)
             from app.services.openrouter_catalog import validate_model_or_raise
             from app.core.config import settings as cfg
@@ -85,12 +86,13 @@ class AIService:
             else:
                 effective_free_only = not effective_allow_paid
 
-            # Validate (also handles auto resolution)
-            if openrouter_model.strip().lower() in ("auto", "auto — best free for trading"):
+            # Validate (also handles auto resolution) — default to auto if no model supplied
+            model_to_validate = (openrouter_model or "auto").strip()
+            if model_to_validate.lower() in ("auto", "auto — best free for trading", ""):
                 validated = await validate_model_or_raise("auto", free_only=effective_free_only)
                 effective_model = validated["id"]
             else:
-                validated = await validate_model_or_raise(openrouter_model, free_only=effective_free_only)
+                validated = await validate_model_or_raise(model_to_validate, free_only=effective_free_only)
                 effective_model = validated["id"]
 
             # Log inference attempt (no api key)
@@ -103,10 +105,13 @@ class AIService:
                 free_only=effective_free_only,
             )
 
-            # Create provider with specific model and server-side API key
+            # Create provider — Settings-driven key (no hardcode). Priority: request key > env fallback
             from app.ai.openrouter import OpenRouterProvider
             from app.core.config import settings as cfg2
-            api_key = getattr(cfg2, "openrouter_api_key", "") or getattr(cfg2, "OPENROUTER_API_KEY", "") or ""
+            # Priority: per-request key (from Settings UI) > server env
+            api_key = (openrouter_api_key or "").strip()
+            if not api_key:
+                api_key = (getattr(cfg2, "openrouter_api_key", "") or getattr(cfg2, "OPENROUTER_API_KEY", "") or "").strip()
             provider = OpenRouterProvider(api_key=api_key, model=effective_model)
             # Record token usage timing
             t0 = time.perf_counter()

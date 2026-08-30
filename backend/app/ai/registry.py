@@ -24,8 +24,8 @@ def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
     if p == "gemini":
         return GeminiProvider(api_key=kwargs.get("geminiApiKey") or kwargs.get("api_key"), model=kwargs.get("geminiModel") or kwargs.get("model"))
     if p == "openrouter":
-        # Fallback to server-side key if frontend key empty (server-side OPENROUTER_API_KEY is primary)
-        frontend_key = (kwargs.get("openRouterApiKey") or kwargs.get("api_key") or "").strip()
+        # Settings-driven key: frontend Settings UI is primary, env is fallback (no hardcode required)
+        frontend_key = (kwargs.get("openRouterApiKey") or kwargs.get("api_key") or kwargs.get("openRouter_api_key") or "").strip()
         if not frontend_key:
             try:
                 from app.core.config import settings as _cfg

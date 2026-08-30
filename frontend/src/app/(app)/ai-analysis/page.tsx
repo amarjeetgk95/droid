@@ -45,6 +45,17 @@ export default function AIAnalysisPage() {
     } catch {}
   };
 
+  // helper to get key from Settings — no hardcode, primary source is Settings UI
+  const getKeysForProvider = (prov: string) => {
+    try {
+      const s = getStoredSettings();
+      if (prov === 'openrouter') return { openRouterApiKey: s.ai.openRouterApiKey || undefined };
+      if (prov === 'gemini') return { geminiApiKey: s.ai.geminiApiKey || undefined, geminiModel: s.ai.geminiModel };
+      if (prov === 'ollama') return { ollamaBaseUrl: s.ai.ollamaBaseUrl, ollamaModel: s.ai.ollamaModel };
+    } catch {}
+    return {};
+  };
+
   // Initial load
   useEffect(() => {
     let isMounted = true;
@@ -59,7 +70,14 @@ export default function AIAnalysisPage() {
             provider: 'openrouter',
             analysis_type: 'multi_timeframe',
             allow_paid: allowPaid,
+            ...getKeysForProvider('openrouter'),
           });
+        } else if (selectedProvider === 'gemini') {
+          const k = getKeysForProvider('gemini');
+          res = await api.generateAIAnalysis(selectedSymbol, selectedProvider, k as any);
+        } else if (selectedProvider === 'ollama') {
+          const k = getKeysForProvider('ollama');
+          res = await api.generateAIAnalysis(selectedSymbol, selectedProvider, k as any);
         } else {
           res = await api.generateAIAnalysis(selectedSymbol, selectedProvider);
         }
@@ -93,14 +111,26 @@ export default function AIAnalysisPage() {
       try {
         let res: any;
         if (selectedProvider === 'openrouter') {
-          // validate not paid when freeOnly
+          // validate not paid when freeOnly — key comes from Settings (no hardcode)
           res = await api.generateAIAnalysisWithModel({
             symbol: selectedSymbol,
             model: selectedModel || 'auto',
             provider: 'openrouter',
             analysis_type: 'multi_timeframe',
             allow_paid: allowPaid,
+            ...getKeysForProvider('openrouter'),
           });
+        } else if (selectedProvider === 'gemini' || selectedProvider === 'ollama') {
+          const k = getKeysForProvider(selectedProvider);
+          res = await api.generateAIAnalysis(selectedSymbol, selectedProvider, k as any);
+          // fallback to model-aware endpoint if provider needs it
+          if (!res?.data && selectedProvider === 'gemini') {
+            res = await api.generateAIAnalysisWithModel({
+              symbol: selectedSymbol,
+              provider: 'gemini',
+              ...k,
+            });
+          }
         } else {
           res = await api.generateAIAnalysis(selectedSymbol, selectedProvider);
         }
