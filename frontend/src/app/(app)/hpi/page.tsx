@@ -168,7 +168,7 @@ export default function HpiPage() {
         onDelete={(sym) => setDeleteSymbol(sym)}
       />
 
-      <PatternAnalysisPanel universe={universe} refreshKey={refreshKey} />
+      <PatternAnalysisPanel universe={universe} selection={selection} report={report} refreshKey={refreshKey} />
 
       {audit.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4">
