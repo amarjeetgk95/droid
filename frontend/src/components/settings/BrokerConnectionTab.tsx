@@ -9,9 +9,11 @@ import { useMarketStream } from '@/hooks/useMarketStream';
 interface Props {
   settings: BrokerSettings;
   onChange: (updated: Partial<BrokerSettings>) => void;
+  errors?: { path: string; message: string }[];
 }
 
-export function BrokerConnectionTab({ settings, onChange }: Props) {
+export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) {
+  const getError = (field: string) => errors.find((e) => e.path === `broker.${field}`)?.message;
   const [tokenStatus, setTokenStatus] = useState<Record<string, any> | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
   const [refreshing, setRefreshing] = useState(false);

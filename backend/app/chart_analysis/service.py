@@ -41,7 +41,7 @@ async def get_candles_for(symbol: str, timeframe: str) -> list[dict]:
         })
     # If provider returns empty (e.g., mock may have no data for BTC), generate synthetic
     if not out:
-        # synthetic 100 candles around quote price
+        # synthetic 100 candles around quote price — timeframe-aware spacing, ends at now (≈LIVE)
         try:
             quote=await router.get_quote(symbol)
             price=quote.ltp
@@ -52,6 +52,9 @@ async def get_candles_for(symbol: str, timeframe: str) -> list[dict]:
         import random, datetime as dt
         base=price
         now=datetime.now(timezone.utc)
+        from app.market_data.timeframes import TIMEFRAME_CONFIG
+        tf_min = TIMEFRAME_CONFIG.get(timeframe, {}).get("minutes", 5)
+        spacing_sec = tf_min * 60
         for i in range(100):
             change=random.uniform(-price*0.005, price*0.005)
             o=base
@@ -59,7 +62,7 @@ async def get_candles_for(symbol: str, timeframe: str) -> list[dict]:
             h=max(o,c)+random.uniform(0, price*0.002)
             l=min(o,c)-random.uniform(0, price*0.002)
             v=random.randint(100000, 500000)
-            ts=(now.timestamp() - (100-i)*300) # 5m spacing
+            ts=(now.timestamp() - (100-i-1)*spacing_sec) # last candle at now
             out.append({"timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(), "open":round(o,2),"high":round(h,2),"low":round(l,2),"close":round(c,2),"volume":v,"vwap": (h+l+c)/3})
             base=c
     return out
@@ -85,6 +88,7 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
     forecasts={}
     features_map={}
     historical={}
+    candles_map={}
 
     now=datetime.now(timezone.utc)
     data_timestamp=now.isoformat()
@@ -99,6 +103,7 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
 
     for tf in tfs:
         candles=await get_candles_for(cfg.symbol, tf)
+        candles_map[tf]=candles
         # check cache
         cache_key_ts=candles[-1]["timestamp"] if candles else data_timestamp
         cached=await get_cached_analysis(cfg.symbol, tf, cache_key_ts)
@@ -110,7 +115,7 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         # features
         feat=build_features(candles, tech, fno_ctx, cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.__dict__, now)
         features_map[tf]=feat
-        fc=forecast_for_timeframe(feat, tech, tf, cfg.symbol, cfg.asset_class)
+        fc=forecast_for_timeframe(feat, tech, tf, cfg.symbol, cfg.asset_class, data_timestamp=candles[-1]["timestamp"] if candles else now.isoformat(), fno_ctx=fno_ctx)
         forecasts[tf]=fc
         historical[tf]=historical_similarity(feat, cfg.symbol, tf)
         # cache
@@ -178,4 +183,5 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         "fno": fno_ctx,
         "multi_timeframe": mtf,
         "features": features_map,
+        "candles": candles_map,
     }

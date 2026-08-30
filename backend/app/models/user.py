@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import Optional
+from typing import Optional, Any, Dict
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -46,6 +46,8 @@ class UserSettingsUpdate(BaseModel):
     preferred_ai_provider: Optional[str] = None
     preferred_ai_model: Optional[str] = None
     notification_enabled: Optional[bool] = None
+    # Full AppSettings JSON — RECTIFY: enable Supabase as primary store
+    app_settings: Optional[Dict[str, Any]] = None
 
 class UserSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -60,6 +62,7 @@ class UserSettingsResponse(BaseModel):
     preferred_ai_provider: str
     preferred_ai_model: Optional[str] = None
     notification_enabled: bool
+    app_settings: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

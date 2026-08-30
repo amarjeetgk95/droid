@@ -11,13 +11,11 @@ class TestOllamaProvider:
 
     @pytest.mark.asyncio
     async def test_fallback_when_server_offline(self):
-        # Point to an unreachable port to verify resilient fallback
+        # Strict mode: unreachable Ollama should raise ValueError with actionable message, not silent fallback
         offline_provider = OllamaProvider(base_url="http://localhost:65534")
-        analysis = await offline_provider.generate_analysis(
-            symbol="NIFTY",
-            system_prompt="Analyze market regime",
-            user_prompt="Provide forecast",
-        )
-        assert analysis.symbol == "NIFTY"
-        assert analysis.market_bias in ["BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"]
-        assert "fallback" in analysis.provider_used
+        with pytest.raises(ValueError, match="Ollama not reachable|connectivity check failed"):
+            await offline_provider.generate_analysis(
+                symbol="NIFTY",
+                system_prompt="Analyze market regime",
+                user_prompt="Provide forecast",
+            )

@@ -7,53 +7,45 @@ import { z } from 'zod';
 // --- Broker Settings ---
 export const BrokerSettingsSchema = z.object({
   provider: z.enum(['mock', 'fyers', 'upstox', 'binance']),
-  fyersAppId: z.string().max(100),
-  fyersSecret: z.string().max(500),
-  fyersRedirectUri: z.string().url('Invalid redirect URI').or(z.literal('')),
-  upstoxApiKey: z.string().max(500),
-  upstoxSecret: z.string().max(500),
-  upstoxRedirectUri: z.string().url('Invalid redirect URI').or(z.literal('')),
-  binanceApiKey: z.string().max(500),
-  binanceSecretKey: z.string().max(500),
+  fyersAppId: z.string().trim().max(100),
+  fyersSecret: z.string().trim().max(500),
+  fyersRedirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
+  upstoxApiKey: z.string().trim().max(500),
+  upstoxSecret: z.string().trim().max(500),
+  upstoxRedirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
+  binanceApiKey: z.string().trim().max(500),
+  binanceSecretKey: z.string().trim().max(500),
 });
 
 // --- Quantitative Settings ---
 export const QuantitativeSettingsSchema = z.object({
-  riskFreeRate: z.number().min(0, 'Rate must be ≥ 0').max(1, 'Rate must be ≤ 1 (100%)'),
+  riskFreeRate: z.coerce.number().min(0, 'Rate must be ≥ 0').max(1, 'Rate must be ≤ 1 (100%)'),
   timeConvention: z.enum(['ACT365', 'ACT360', 'TradingDays252']),
   defaultPricingModel: z.enum(['FUTURES_BLACK76', 'SPOT_BLACK_SCHOLES']),
   ivMethod: z.enum(['BRENT', 'NEWTON_RAPHSON']),
-  brokeragePerOrder: z.number().min(0).max(10000, 'Brokerage per order seems too high'),
-  slippagePct: z.number().min(0).max(10, 'Slippage above 10% is extreme'),
+  brokeragePerOrder: z.coerce.number().min(0).max(10000, 'Brokerage per order seems too high'),
+  slippagePct: z.coerce.number().min(0).max(10, 'Slippage above 10% is extreme'),
 });
 
 // --- AI Settings ---
 export const AISettingsSchema = z.object({
   provider: z.enum(['gemini', 'openrouter', 'ollama']),
-  geminiApiKey: z.string().max(500),
-  geminiModel: z.string().max(100),
-  openRouterApiKey: z.string().max(500),
-  openRouterModel: z.string().max(200),
-  ollamaBaseUrl: z.string().max(500),
-  ollamaModel: z.string().max(200),
+  geminiApiKey: z.string().trim().max(500),
+  geminiModel: z.string().trim().max(100),
+  openRouterApiKey: z.string().trim().max(500),
+  openRouterModel: z.string().trim().max(200),
+  ollamaBaseUrl: z.string().trim().max(500),
+  ollamaModel: z.string().trim().max(200),
   persona: z.enum(['INSTITUTIONAL', 'MOMENTUM', 'OPTION_SELLER']),
-  temperature: z.number().min(0, 'Temperature must be ≥ 0').max(2, 'Temperature must be ≤ 2'),
-  cacheTtlSeconds: z.number().int().min(0).max(3600, 'Cache TTL must be ≤ 3600s (1hr)'),
+  temperature: z.coerce.number().min(0, 'Temperature must be ≥ 0').max(2, 'Temperature must be ≤ 2'),
+  cacheTtlSeconds: z.coerce.number().int().min(0).max(3600, 'Cache TTL must be ≤ 3600s (1hr)'),
 }).superRefine((data, ctx) => {
   if (data.provider === 'gemini') {
     if (!data.geminiModel || data.geminiModel.trim() === '') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['geminiModel'], message: 'Gemini model is required when provider is Gemini' });
-    } else if (data.geminiModel.trim() !== '' && data.ollamaBaseUrl && !data.ollamaBaseUrl.startsWith('http') && data.provider === 'gemini') {
-      // no-op
     }
-    if (data.geminiApiKey !== '' && !data.geminiApiKey.startsWith('AIza')) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['geminiApiKey'], message: 'Gemini API keys typically start with "AIza"' });
-    }
-  }
-  if (data.provider === 'openrouter') {
-    if (data.openRouterApiKey !== '' && !data.openRouterApiKey.startsWith('sk-or-')) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['openRouterApiKey'], message: 'OpenRouter keys typically start with "sk-or-"' });
-    }
+    // Prefix hints for Gemini/OpenRouter are shown as UI warnings, not blocking validation.
+    // Empty keys are allowed (user can save without configuring AI).
   }
   if (data.provider === 'ollama') {
     if (!data.ollamaBaseUrl || data.ollamaBaseUrl.trim() === '') {
@@ -70,13 +62,13 @@ export const AISettingsSchema = z.object({
 
 // --- Paper Trading Settings ---
 export const PaperTradingSettingsSchema = z.object({
-  initialCapital: z.number().int().min(10000, 'Minimum capital is ₹10,000').max(100000000, 'Maximum capital is ₹10Cr'),
-  autoSquareOffTime: z.string().regex(
+  initialCapital: z.coerce.number().int().min(10000, 'Minimum capital is ₹10,000').max(100000000, 'Maximum capital is ₹10Cr'),
+  autoSquareOffTime: z.string().trim().regex(
     /^([01]\d|2[0-3]):([0-5]\d)$/,
     'Must be in HH:mm format (e.g., 15:20)'
   ),
-  maxCapitalPerTradePct: z.number().min(1, 'Min 1%').max(100, 'Max 100%'),
-  maxDailyDrawdownHaltPct: z.number().min(1, 'Min 1%').max(100, 'Max 100%'),
+  maxCapitalPerTradePct: z.coerce.number().min(1, 'Min 1%').max(100, 'Max 100%'),
+  maxDailyDrawdownHaltPct: z.coerce.number().min(1, 'Min 1%').max(100, 'Max 100%'),
   requireOrderConfirm: z.boolean(),
   allowOvernightPositions: z.boolean(),
 });
@@ -85,7 +77,7 @@ export const PaperTradingSettingsSchema = z.object({
 export const PreferencesSettingsSchema = z.object({
   theme: z.enum(['dark', 'light', 'system']),
   numberFormat: z.enum(['INDIAN', 'INTERNATIONAL']),
-  defaultIndexSymbol: z.string().min(1).max(50),
+  defaultIndexSymbol: z.string().trim().min(1).max(50),
 });
 
 // --- Full AppSettings ---

@@ -7,9 +7,11 @@ import { QuantitativeSettings } from '@/lib/settings';
 interface Props {
   settings: QuantitativeSettings;
   onChange: (updated: Partial<QuantitativeSettings>) => void;
+  errors?: { path: string; message: string }[];
 }
 
-export function QuantitativePricingTab({ settings, onChange }: Props) {
+export function QuantitativePricingTab({ settings, onChange, errors = [] }: Props) {
+  const getError = (field: string) => errors.find((e) => e.path === `quantitative.${field}`)?.message;
   // Live Cost Simulator — NSE statutory rates are fixed (auto-applied, not user-editable)
   const simulatedCost = useMemo(() => {
     const lotSize = 75;

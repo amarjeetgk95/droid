@@ -227,12 +227,14 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
 
   // --- Save ---
   async function save() {
-    // Validate before saving
+    // Validate before saving — show first error in toast for actionability
     const validation = validateSettings(settings);
     if (!validation.success) {
+      const first = validation.errors[0];
+      const detail = first ? `${first.path}: ${first.message}` : '';
       showMessage({
         type: 'error',
-        text: `Cannot save — ${validation.errors.length} validation error(s). Fix highlighted fields.`,
+        text: `Cannot save — ${validation.errors.length} validation error(s). ${detail} — fix highlighted fields.`,
       });
       return;
     }

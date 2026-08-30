@@ -91,6 +91,7 @@ function SettingsPageInner() {
           <AIEngineTab
             settings={settings.ai}
             onChange={updateAI}
+            errors={validationErrors}
           />
         );
       case 'broker':
@@ -98,6 +99,7 @@ function SettingsPageInner() {
           <BrokerConnectionTab
             settings={settings.broker}
             onChange={updateBroker}
+            errors={validationErrors}
           />
         );
       case 'quantitative':
@@ -105,6 +107,7 @@ function SettingsPageInner() {
           <QuantitativePricingTab
             settings={settings.quantitative}
             onChange={updateQuantitative}
+            errors={validationErrors}
           />
         );
       case 'paper':
@@ -112,6 +115,7 @@ function SettingsPageInner() {
           <PaperTradingRiskTab
             settings={settings.paper}
             onChange={updatePaper}
+            errors={validationErrors}
           />
         );
       case 'preferences':
@@ -122,6 +126,7 @@ function SettingsPageInner() {
             onChange={updatePreferences}
             onFullSettingsChange={replaceAllSettings}
             onResetAll={reset}
+            errors={validationErrors}
           />
         );
       default:
@@ -246,6 +251,33 @@ function SettingsPageInner() {
           );
         })}
       </div>
+
+      {/* Validation Summary — shown when there are errors so save blockage is actionable */}
+      {validationErrors.length > 0 && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-semibold text-destructive">
+            <AlertCircle className="w-4 h-4" />
+            <span>{validationErrors.length} validation issue{validationErrors.length > 1 ? 's' : ''} — click to jump to field</span>
+          </div>
+          <ul className="space-y-1">
+            {validationErrors.map((e) => {
+              const section = e.path.split('.')[0] as TabId;
+              return (
+                <li key={e.path}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(section)}
+                    className="text-xs text-left w-full px-2 py-1 rounded bg-card border border-border hover:border-destructive/30 text-destructive/90 hover:text-destructive font-mono flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="text-[10px] bg-destructive/15 px-1.5 py-0.5 rounded">{section}</span>
+                    <span className="truncate">{e.path}: {e.message}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* ================================================================= */}
       {/* Active Tab Content                                                  */}

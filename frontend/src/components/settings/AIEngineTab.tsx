@@ -28,9 +28,11 @@ import { api } from '@/lib/api';
 interface Props {
   settings: AISettings;
   onChange: (updated: Partial<AISettings>) => void;
+  errors?: { path: string; message: string }[];
 }
 
-export function AIEngineTab({ settings, onChange }: Props) {
+export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
+  const getError = (field: string) => errors.find((e) => e.path === `ai.${field}`)?.message;
   const [showKey, setShowKey] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -265,6 +267,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
                     {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {getError('geminiApiKey') && <span className="text-[11px] text-destructive mt-1 block">{getError('geminiApiKey')}</span>}
                 <span className="text-[11px] text-muted-foreground mt-1 block">
                   Get a free API key from{' '}
                   <a
@@ -324,6 +327,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
                     className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono focus:outline-hidden focus:border-primary"
                   />
                 )}
+                {getError('geminiModel') && <span className="text-[11px] text-destructive mt-1 block">{getError('geminiModel')}</span>}
               </div>
             </div>
 
@@ -374,6 +378,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
                     {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {getError('openRouterApiKey') && <span className="text-[11px] text-destructive mt-1 block">{getError('openRouterApiKey')}</span>}
                 <span className="text-[11px] text-muted-foreground mt-1 block">
                   Unified key for Claude, DeepSeek, GPT-4o, and Llama models.
                 </span>
@@ -461,6 +466,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
                   onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })}
                   className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
                 />
+                {getError('ollamaBaseUrl') && <span className="text-[11px] text-destructive mt-1 block">{getError('ollamaBaseUrl')}</span>}
                 <span className="text-[11px] text-muted-foreground mt-1 block">
                   Default local server port is 11434.
                 </span>
@@ -508,6 +514,7 @@ export function AIEngineTab({ settings, onChange }: Props) {
                     className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono focus:outline-hidden focus:border-primary"
                   />
                 )}
+                {getError('ollamaModel') && <span className="text-[11px] text-destructive mt-1 block">{getError('ollamaModel')}</span>}
               </div>
             </div>
 

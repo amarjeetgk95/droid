@@ -66,8 +66,23 @@ class SettingsRepository:
         if settings is None:
             return None
         for key, value in kwargs.items():
-            if value is not None and hasattr(settings, key):
-                setattr(settings, key, value)
+            if hasattr(settings, key):
+                # For app_settings JSONB: deep-merge instead of blind replace so PATCH is safe
+                if key == "app_settings" and isinstance(value, dict):
+                    existing = getattr(settings, "app_settings", None) or {}
+                    if isinstance(existing, dict) and existing:
+                        # shallow merge top-level keys; nested dicts merged one level deep
+                        merged = dict(existing)
+                        for k, v in value.items():
+                            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                                merged[k] = {**merged[k], **v}
+                            else:
+                                merged[k] = v
+                        setattr(settings, key, merged)
+                    else:
+                        setattr(settings, key, value)
+                elif value is not None:
+                    setattr(settings, key, value)
         await session.commit()
         await session.refresh(settings)
         return settings

@@ -9,9 +9,11 @@ import { PortfolioSummary } from '@/lib/types';
 interface Props {
   settings: PaperTradingSettings;
   onChange: (updated: Partial<PaperTradingSettings>) => void;
+  errors?: { path: string; message: string }[];
 }
 
-export function PaperTradingRiskTab({ settings, onChange }: Props) {
+export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) {
+  const getError = (field: string) => errors.find((e) => e.path === `paper.${field}`)?.message;
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -209,6 +211,26 @@ export function PaperTradingRiskTab({ settings, onChange }: Props) {
             </div>
             <span className="text-[10px] text-muted-foreground mt-1 block">
               Single trade exposure cap
+            </span>
+          </div>
+
+          <div>
+            <label className="font-semibold text-foreground block mb-1">
+              Max Daily Drawdown Halt (%)
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={settings.maxDailyDrawdownHaltPct}
+                onChange={(e) => onChange({ maxDailyDrawdownHaltPct: Number(e.target.value) || 10 })}
+                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
+              />
+              <span className="absolute right-3 top-2 text-muted-foreground">%</span>
+            </div>
+            <span className="text-[10px] text-muted-foreground mt-1 block">
+              Halt trading if daily loss exceeds this %
             </span>
           </div>
         </div>

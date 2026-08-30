@@ -37,7 +37,8 @@ class TestAuthEndpoints:
         r = client.get("/api/v1/auth/profile")
         assert r.status_code == 200
         data = r.json()
-        assert data["user_id"] == "dev-user"
+        # In dev mode auth_required=False, provider returns deterministic UUID for DB compatibility
+        assert data["user_id"] == "00000000-0000-0000-0000-000000000001"
         assert data["email"] == "dev@localhost"
         assert data["role"] == "admin"
 
@@ -68,22 +69,23 @@ class TestSettingsEndpoints:
     """Test settings API endpoints."""
 
     def test_get_settings_no_db(self, no_db_client: TestClient):
-        """GET settings should return 503 when DB not configured."""
+        """GET settings in dev mode should fallback to in-memory (200) when DB not configured."""
         r = no_db_client.get("/api/v1/settings")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
+        # In dev mode (auth_required=False) fallback to in-memory store yields 200, not 503
+        assert r.status_code == 200
+        assert "theme" in r.json()
 
     def test_create_settings_no_db(self, no_db_client: TestClient):
-        """POST settings should return 503 when DB not configured."""
+        """POST settings in dev mode should fallback to in-memory (200) when DB not configured."""
         r = no_db_client.post("/api/v1/settings", json={"theme": "dark"})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["theme"] == "dark"
 
     def test_update_settings_no_db(self, no_db_client: TestClient):
-        """PATCH settings should return 503 when DB not configured."""
+        """PATCH settings in dev mode should fallback to in-memory (200) when DB not configured."""
         r = no_db_client.patch("/api/v1/settings", json={"theme": "light"})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["theme"] == "light"
 
     def test_settings_requires_auth_in_production(self):
         """Settings endpoints should require auth when AUTH_REQUIRED=true."""

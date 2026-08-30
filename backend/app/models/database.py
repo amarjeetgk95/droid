@@ -46,6 +46,8 @@ class UserSettings(Base):
     preferred_ai_provider: Mapped[str] = mapped_column(Text, default="mock_ai")
     preferred_ai_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Full AppSettings blob — Supabase is source of truth (RECTIFY: was localStorage-only)
+    app_settings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

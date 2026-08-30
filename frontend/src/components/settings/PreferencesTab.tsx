@@ -10,9 +10,11 @@ interface Props {
   onChange: (updated: Partial<PreferencesSettings>) => void;
   onFullSettingsChange: (newFull: AppSettings) => void;
   onResetAll: () => void;
+  errors?: { path: string; message: string }[];
 }
 
-export function PreferencesTab({ settings, fullSettings, onChange, onFullSettingsChange, onResetAll }: Props) {
+export function PreferencesTab({ settings, fullSettings, onChange, onFullSettingsChange, onResetAll, errors = [] }: Props) {
+  const getError = (field: string) => errors.find((e) => e.path === `preferences.${field}`)?.message;
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [includeSecretsInExport, setIncludeSecretsInExport] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
