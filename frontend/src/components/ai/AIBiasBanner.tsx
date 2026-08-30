@@ -79,6 +79,7 @@ export function AIBiasBanner({
             className="bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
           >
             <option value="mock_ai">DROID Quant Engine (Mock LLM)</option>
+            <option value="openrouter">OpenRouter — Free Models</option>
             <option value="gemini">Google Gemini 2.0 Flash</option>
             <option value="ollama">Local Ollama (DeepSeek-R1 / Llama-3)</option>
           </select>

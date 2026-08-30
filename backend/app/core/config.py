@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     batch_write_flush_interval_ms: int = 500
     batch_write_max_size: int = 200
 
+    # OpenRouter AI Model Catalog Settings (Free-Model Dynamic System)
+    openrouter_api_key: str = ""
+    openrouter_free_only: bool = True
+    openrouter_model_cache_minutes: int = 10
+    openrouter_default_model: str = "auto"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

@@ -4,6 +4,15 @@ from app.core.config import settings
 
 def setup_logging():
     """Configure structured logging."""
+    # Ensure stdout can handle utf-8 (arrow, minus etc. in prompts) on Windows cp1252
+    try:
+        import sys
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

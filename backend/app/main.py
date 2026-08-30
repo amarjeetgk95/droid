@@ -97,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(regime.router)
     app.include_router(strategy.router)
     app.include_router(ai.router)
+    app.include_router(ai.compat_router)
     app.include_router(historical.router)
     app.include_router(backtest.router)
     app.include_router(paper.router)

@@ -27,6 +27,9 @@ class AIService:
         symbol: str = "NIFTY",
         provider_name: str = "mock_ai",
         user_id: Optional[UUID] = None,
+        openrouter_model: str | None = None,
+        allow_paid: bool | None = None,
+        analysis_type: str | None = None,
     ) -> AIInsightResponse:
         """Aggregate cross-phase metrics and generate structured AI report."""
         underlying = symbol.upper().replace(" 50", "")
@@ -68,8 +71,73 @@ class AIService:
         )
 
         # 5. Dispatch to LLM Provider (strict – no silent mock fallback)
-        provider = get_llm_provider(provider_name)
-        insight = await provider.generate_analysis(underlying, system_prompt, user_prompt)
+        # Handle openrouter dynamic model with free-only guard
+        if provider_name.lower() == "openrouter" and openrouter_model:
+            # Validate against catalog before inference (hard protection)
+            from app.services.openrouter_catalog import validate_model_or_raise
+            from app.core.config import settings as cfg
+            # Determine effective free_only
+            effective_allow_paid = allow_paid
+            if effective_allow_paid is None:
+                # use server default free_only
+                effective_free_only = getattr(cfg, "openrouter_free_only", True)
+                effective_allow_paid = not effective_free_only
+            else:
+                effective_free_only = not effective_allow_paid
+
+            # Validate (also handles auto resolution)
+            if openrouter_model.strip().lower() in ("auto", "auto — best free for trading"):
+                validated = await validate_model_or_raise("auto", free_only=effective_free_only)
+                effective_model = validated["id"]
+            else:
+                validated = await validate_model_or_raise(openrouter_model, free_only=effective_free_only)
+                effective_model = validated["id"]
+
+            # Log inference attempt (no api key)
+            logger.info(
+                "ai_inference_attempt",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                model_id=effective_model,
+                analysis_type=analysis_type or "multi_timeframe",
+                symbol=underlying,
+                free_only=effective_free_only,
+            )
+
+            # Create provider with specific model and server-side API key
+            from app.ai.openrouter import OpenRouterProvider
+            from app.core.config import settings as cfg2
+            api_key = getattr(cfg2, "openrouter_api_key", "") or getattr(cfg2, "OPENROUTER_API_KEY", "") or ""
+            provider = OpenRouterProvider(api_key=api_key, model=effective_model)
+            # Record token usage timing
+            t0 = time.perf_counter()
+            try:
+                insight = await provider.generate_analysis(underlying, system_prompt, user_prompt)
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                logger.info(
+                    "ai_inference_success",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    model_id=effective_model,
+                    analysis_type=analysis_type or "multi_timeframe",
+                    symbol=underlying,
+                    latency_ms=latency_ms,
+                    success=True,
+                )
+            except Exception as e:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                logger.warning(
+                    "ai_inference_failed",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    model_id=effective_model,
+                    analysis_type=analysis_type or "multi_timeframe",
+                    symbol=underlying,
+                    latency_ms=latency_ms,
+                    error=str(e)[:400],
+                    success=False,
+                )
+                raise
+        else:
+            provider = get_llm_provider(provider_name)
+            insight = await provider.generate_analysis(underlying, system_prompt, user_prompt)
 
         # 6. Save to In-Memory Cache
         if underlying not in self._history:

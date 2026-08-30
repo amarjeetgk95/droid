@@ -20,7 +20,7 @@ export interface QuantitativeSettings {
 }
 
 export interface AISettings {
-  provider: 'gemini' | 'openrouter' | 'ollama';
+  provider: 'gemini' | 'openrouter' | 'ollama' | 'mock_ai';
   geminiApiKey: string;
   geminiModel: string;
   openRouterApiKey: string;
@@ -30,6 +30,11 @@ export interface AISettings {
   persona: 'INSTITUTIONAL' | 'MOMENTUM' | 'OPTION_SELLER';
   temperature: number;
   cacheTtlSeconds: number;
+  // Dynamic OpenRouter Free-Model System
+  openRouterFreeOnly: boolean;
+  openRouterPricingFilter: 'FREE' | 'PAID' | 'ALL';
+  openRouterSelectedModel: string; // 'auto' or model id
+  openRouterAllowPaid: boolean;
 }
 
 export interface PaperTradingSettings {
@@ -125,6 +130,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     persona: 'INSTITUTIONAL',
     temperature: 0.2,
     cacheTtlSeconds: 60,
+    openRouterFreeOnly: true,
+    openRouterPricingFilter: 'FREE',
+    openRouterSelectedModel: 'auto',
+    openRouterAllowPaid: false,
   },
   paper: {
     initialCapital: 1000000,

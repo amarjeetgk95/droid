@@ -247,6 +247,13 @@ class ApiClient {
     });
   }
 
+  async generateAIAnalysisWithModel(payload: { symbol?: string; model?: string; provider?: string; analysis_type?: string; allow_paid?: boolean }) {
+    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta; model_used?: string; latency_ms?: number }>('/api/v1/ai/analyze', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async testAIProvider(payload: { provider: string; symbol?: string; geminiApiKey?: string; geminiModel?: string; openRouterApiKey?: string; openRouterModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
     return this.request<{ data: { success: boolean; provider: string; model: string; latency_ms: number; schema_valid: boolean; is_mock?: boolean; message?: string; error?: string; hint?: string; insight?: import('./types').AIInsightResponse }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/ai/test', {
       method: 'POST',
@@ -256,6 +263,30 @@ class ApiClient {
 
   async getAIHistory(symbol: string) {
     return this.request<{ data: import('./types').AIHistoryItem[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/history/${encodeURIComponent(symbol)}`);
+  }
+
+  // Dynamic OpenRouter Model Catalog (Free-Model-Only)
+  async getAIModels(params?: { free_only?: boolean; pricing?: string; refresh?: boolean }) {
+    const query = new URLSearchParams();
+    if (params?.free_only !== undefined) query.set('free_only', String(params.free_only));
+    if (params?.pricing) query.set('pricing', params.pricing);
+    if (params?.refresh) query.set('refresh', 'true');
+    const qs = query.toString();
+    return this.request<{ data: { provider: string; updated_at: string; free_only: boolean; pricing_filter: string; models: import('./types').OpenRouterModel[]; default_model: import('./types').OpenRouterModel | null; total_count: number; free_count: number; paid_count: number; using_cached: boolean; cache_error?: string; cache_age_seconds: number }; error: string | null; meta: import('./types').ApiMeta; using_cached?: boolean }>(`/api/v1/ai/models${qs ? `?${qs}` : ''}`);
+  }
+
+  async refreshAIModels() {
+    return this.request<{ data: { provider: string; updated_at: string; free_only: boolean; models: import('./types').OpenRouterModel[]; default_model: import('./types').OpenRouterModel | null; using_cached: boolean }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/models/refresh`, { method: 'POST' });
+  }
+
+  // Back-compat alias for spec: /api/ai/models
+  async getAIModelsCompat(params?: { free_only?: boolean; pricing?: string; refresh?: boolean }) {
+    const query = new URLSearchParams();
+    if (params?.free_only !== undefined) query.set('free_only', String(params.free_only));
+    if (params?.pricing) query.set('pricing', params.pricing);
+    if (params?.refresh) query.set('refresh', 'true');
+    const qs = query.toString();
+    return this.request<{ data: any; error: string | null; meta: import('./types').ApiMeta }>(`/api/ai/models${qs ? `?${qs}` : ''}`);
   }
 
   // Historical Intelligence & Pattern Recognition (Phase 9)

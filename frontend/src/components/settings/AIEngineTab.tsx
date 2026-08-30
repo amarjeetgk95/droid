@@ -24,6 +24,7 @@ import {
   SupportedModelOption,
 } from '@/lib/settings';
 import { api } from '@/lib/api';
+import { OpenRouterModelSelector } from './OpenRouterModelSelector';
 
 interface Props {
   settings: AISettings;
@@ -68,10 +69,9 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
       setTesting(false);
       return;
     }
-    if (settings.provider === 'openrouter' && !settings.openRouterApiKey) {
-      setTestResult({ success: false, message: 'OpenRouter API key missing. Paste your sk-or-… key above, then save.' });
-      setTesting(false);
-      return;
+    if (settings.provider === 'openrouter') {
+      // Key is server-side; frontend key is optional. Don't block test if missing.
+      // Just warn but proceed — backend will use OPENROUTER_API_KEY env.
     }
     if (settings.provider === 'ollama') {
       if (!settings.ollamaBaseUrl) {
@@ -124,13 +124,17 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     }
 
     try {
+      const effectiveOpenRouterModel =
+        settings.openRouterSelectedModel && settings.openRouterSelectedModel !== 'auto'
+          ? settings.openRouterSelectedModel
+          : settings.openRouterModel;
       const payload: any = {
         provider: settings.provider,
         symbol: 'NIFTY',
         geminiApiKey: settings.geminiApiKey,
         geminiModel: settings.geminiModel,
         openRouterApiKey: settings.openRouterApiKey,
-        openRouterModel: settings.openRouterModel,
+        openRouterModel: effectiveOpenRouterModel,
         ollamaBaseUrl: settings.ollamaBaseUrl,
         ollamaModel: settings.ollamaModel,
       };
@@ -353,102 +357,86 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
           </div>
         )}
 
-        {/* 2B. OpenRouter Config */}
+        {/* 2B. OpenRouter Config — Dynamic Free-Model System */}
         {settings.provider === 'openrouter' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* API Key */}
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  OpenRouter API Key
-                </label>
-                <div className="relative">
-                  <input
-                    type={showKey ? 'text' : 'password'}
-                    placeholder="sk-or-v1-..."
-                    value={settings.openRouterApiKey}
-                    onChange={(e) => onChange({ openRouterApiKey: e.target.value })}
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowKey(!showKey)}
-                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-                {getError('openRouterApiKey') && <span className="text-[11px] text-destructive mt-1 block">{getError('openRouterApiKey')}</span>}
-                <span className="text-[11px] text-muted-foreground mt-1 block">
-                  Unified key for Claude, DeepSeek, GPT-4o, and Llama models.
-                </span>
+            {/* Server-side key notice + optional local key for testing */}
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-semibold text-amber-700 dark:text-amber-400">
+                <Key className="w-3.5 h-3.5" />
+                OpenRouter API Key — Server-Side Only (Recommended)
               </div>
-
-              {/* Model Dropdown */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-foreground">
-                    Supported OpenRouter Model
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                For production, set <code className="px-1 py-0.5 bg-secondary rounded font-mono">OPENROUTER_API_KEY</code> in backend <code>.env</code> — never expose in browser. Frontend key below is optional for local testing only and is never sent to the model catalog endpoint.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Optional Local/Test Key (sk-or-...)
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setIsCustomModel(!isCustomModel)}
-                    className="text-[11px] text-primary hover:underline cursor-pointer"
-                  >
-                    {isCustomModel ? 'Select from list' : 'Custom Model'}
-                  </button>
+                  <div className="relative">
+                    <input
+                      type={showKey ? 'text' : 'password'}
+                      placeholder="sk-or-v1-... (leave empty to use server env)"
+                      value={settings.openRouterApiKey}
+                      onChange={(e) => onChange({ openRouterApiKey: e.target.value })}
+                      className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey(!showKey)}
+                      className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                    >
+                      {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {getError('openRouterApiKey') && <span className="text-[11px] text-destructive mt-1 block">{getError('openRouterApiKey')}</span>}
                 </div>
-
-                {!isCustomModel ? (
-                  <select
-                    value={settings.openRouterModel || 'anthropic/claude-3.7-sonnet'}
-                    onChange={(e) => {
-                      if (e.target.value === '__custom__') {
-                        setIsCustomModel(true);
-                      } else {
-                        onChange({ openRouterModel: e.target.value });
-                      }
-                    }}
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono cursor-pointer"
-                  >
-                    {SUPPORTED_OPENROUTER_MODELS.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name} — [{model.tag}]
-                      </option>
-                    ))}
-                    <option value="__custom__">⚙️ Other / Custom Model ID...</option>
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="e.g. meta-llama/llama-3.3-70b-instruct"
-                    value={settings.openRouterModel}
-                    onChange={(e) => onChange({ openRouterModel: e.target.value })}
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono focus:outline-hidden focus:border-primary"
-                  />
-                )}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-foreground block mb-1">Legacy Hard-Coded Model (fallback)</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={settings.openRouterModel || 'anthropic/claude-3.7-sonnet'}
+                      onChange={(e) => {
+                        if (e.target.value === '__custom__') {
+                          setIsCustomModel(true);
+                        } else {
+                          onChange({ openRouterModel: e.target.value });
+                        }
+                      }}
+                      className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono cursor-pointer"
+                    >
+                      {SUPPORTED_OPENROUTER_MODELS.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name} — [{model.tag}]
+                        </option>
+                      ))}
+                      <option value="__custom__">⚙️ Custom...</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomModel(!isCustomModel)}
+                      className="text-[11px] px-2 py-1 border border-border rounded-lg hover:bg-secondary cursor-pointer"
+                    >
+                      {isCustomModel ? 'List' : 'Custom'}
+                    </button>
+                  </div>
+                  {isCustomModel && (
+                    <input
+                      type="text"
+                      placeholder="e.g. meta-llama/llama-3.3-70b-instruct"
+                      value={settings.openRouterModel}
+                      onChange={(e) => onChange({ openRouterModel: e.target.value })}
+                      className="w-full mt-1 bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
+                    />
+                  )}
+                  <span className="text-[11px] text-muted-foreground block">Used only if dynamic catalog unavailable. Dynamic selector below is primary.</span>
+                </div>
               </div>
             </div>
 
-            {/* Model Info Card */}
-            {activeModelOption && (
-              <div className="bg-secondary/30 border border-border/60 rounded-xl p-3.5 flex items-start gap-3 text-xs">
-                <div className="bg-primary/10 text-primary p-2 rounded-lg shrink-0 mt-0.5">
-                  <Cpu className="w-4 h-4" />
-                </div>
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-foreground">{activeModelOption.name}</span>
-                    <span className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded font-mono font-medium">
-                      {activeModelOption.tag}
-                    </span>
-                  </div>
-                  <p className="text-muted-foreground text-[11px] leading-relaxed">
-                    {activeModelOption.description}
-                  </p>
-                </div>
-              </div>
-            )}
+            {/* Dynamic Selector — Primary */}
+            <OpenRouterModelSelector settings={settings} onChange={onChange} />
           </div>
         )}
 
@@ -627,7 +615,13 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
             <span className="text-muted-foreground">Provider:</span>
             <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground font-semibold">{settings.provider}</span>
             <span className="text-muted-foreground">Model:</span>
-            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground">{activeModelOption?.name || settings.geminiModel || settings.openRouterModel || settings.ollamaModel || '—'}</span>
+            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground">
+              {settings.provider === 'openrouter'
+                ? settings.openRouterSelectedModel === 'auto'
+                  ? `Auto — Best Free (${settings.openRouterModel})`
+                  : settings.openRouterSelectedModel || settings.openRouterModel
+                : activeModelOption?.name || settings.geminiModel || settings.openRouterModel || settings.ollamaModel || '—'}
+            </span>
           </div>
           <button
             type="button"
@@ -646,8 +640,8 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
             {settings.provider === 'gemini' && !settings.geminiApiKey && (
               <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Gemini API key missing – test will fail.</div>
             )}
-            {settings.provider === 'openrouter' && !settings.openRouterApiKey && (
-              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> OpenRouter key missing – test will fail.</div>
+            {settings.provider === 'openrouter' && (
+              <div className="text-[11px] text-blue-600 flex items-center gap-1">ℹ️ OpenRouter key is server-side (OPENROUTER_API_KEY). Frontend key optional; test will use server key if empty.</div>
             )}
             {settings.provider === 'ollama' && !settings.ollamaBaseUrl && (
               <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Ollama URL missing.</div>

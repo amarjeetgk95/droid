@@ -29,7 +29,7 @@ class GeminiProvider(BaseLLMProvider):
         user_prompt: str,
     ) -> AIInsightResponse:
         if not self.api_key:
-            raise ValueError("Gemini API key missing. Add your AIza... key in Terminal Configuration → AI Engine → Google Gemini.")
+            raise ValueError("Gemini API key missing. Add your AIza... key in Terminal Configuration -> AI Engine -> Google Gemini.")
         if not self.api_key.startswith("AIza"):
             raise ValueError(f"Gemini API key looks invalid (must start with 'AIza'). Got: {self.api_key[:12]}...")
         if not self.model:

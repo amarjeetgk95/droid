@@ -22,6 +22,10 @@ wheels/
 venv/
 ENV/
 
+# Node - allow frontend src lib despite Python lib/ rule
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # Node
 node_modules/
 .next/
