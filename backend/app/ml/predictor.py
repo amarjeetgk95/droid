@@ -58,39 +58,69 @@ class MLPredictor:
             term_structure=term_structure,
         )
 
-        # 3. Compute Linear & Non-Linear Gradient Decision Trees Ensemble Score
-        # Bullish tree weights
-        w_st = 0.25 * features.supertrend_signal
-        w_rsi = 0.20 * features.rsi_norm
-        w_pcr = 0.15 * features.pcr_oi_deviation
-        w_basis = 0.15 * (1.0 if features.futures_basis_pct > 0 else -1.0) * min(1.0, abs(features.futures_basis_pct) * 200)
-        w_ema = 0.15 * min(1.0, max(-1.0, features.price_above_ema20 * 100))
-        w_pivot = 0.10 * features.pivot_position
+        # 3. Try real XGBoost/LightGBM ensemble first
+        feature_vec = [
+            features.rsi_norm,
+            features.adx_strength,
+            features.supertrend_signal,
+            features.bollinger_pct_b,
+            features.pcr_oi_deviation,
+            features.max_pain_distance_pct,
+            features.futures_basis_pct,
+            features.price_above_ema20,
+            features.price_above_sma200,
+            features.pivot_position,
+        ]
+        ensemble_result = None
+        try:
+            from app.ml.trainer import ensemble_predict_proba
 
-        raw_directional_score = w_st + w_rsi + w_pcr + w_basis + w_ema + w_pivot  # -1.0 to +1.0
+            ensemble_result = ensemble_predict_proba(feature_vec)
+        except Exception as e:
+            logger.info("ml_ensemble_not_available", error=str(e))
 
-        # ADX trend strength factor
-        adx_factor = features.adx_strength  # 0 to 1.0
-
-        # Softmax-style probability distribution
-        # High ADX polarizes probabilities towards Bullish or Bearish; Low ADX elevates Neutral
-        if raw_directional_score > 0:
-            bullish_logit = 1.0 + (raw_directional_score * 2.5) * (0.5 + 0.5 * adx_factor)
-            bearish_logit = 1.0 - (raw_directional_score * 1.5)
-            neutral_logit = 1.0 + (1.0 - adx_factor) * 1.2
+        if ensemble_result is not None:
+            bearish_pct, neutral_pct, bullish_pct = ensemble_result
+            # Derive heuristic scores for downstream metrics
+            w_st = 0.25 * features.supertrend_signal
+            w_rsi = 0.20 * features.rsi_norm
+            w_pcr = 0.15 * features.pcr_oi_deviation
+            w_basis = 0.15 * (1.0 if features.futures_basis_pct > 0 else -1.0) * min(1.0, abs(features.futures_basis_pct) * 200)
+            w_ema = 0.15 * min(1.0, max(-1.0, features.price_above_ema20 * 100))
+            w_pivot = 0.10 * features.pivot_position
+            raw_directional_score = w_st + w_rsi + w_pcr + w_basis + w_ema + w_pivot
+            adx_factor = features.adx_strength
+            model_source = "xgboost_lightgbm_ensemble"
         else:
-            bullish_logit = 1.0 + (raw_directional_score * 1.5)
-            bearish_logit = 1.0 - (raw_directional_score * 2.5) * (0.5 + 0.5 * adx_factor)
-            neutral_logit = 1.0 + (1.0 - adx_factor) * 1.2
+            # Fallback: heuristic Gradient Decision Trees Ensemble Score
+            w_st = 0.25 * features.supertrend_signal
+            w_rsi = 0.20 * features.rsi_norm
+            w_pcr = 0.15 * features.pcr_oi_deviation
+            w_basis = 0.15 * (1.0 if features.futures_basis_pct > 0 else -1.0) * min(1.0, abs(features.futures_basis_pct) * 200)
+            w_ema = 0.15 * min(1.0, max(-1.0, features.price_above_ema20 * 100))
+            w_pivot = 0.10 * features.pivot_position
 
-        exp_bull = math.exp(max(-5.0, min(5.0, bullish_logit)))
-        exp_bear = math.exp(max(-5.0, min(5.0, bearish_logit)))
-        exp_neut = math.exp(max(-5.0, min(5.0, neutral_logit)))
-        total_exp = exp_bull + exp_bear + exp_neut
+            raw_directional_score = w_st + w_rsi + w_pcr + w_basis + w_ema + w_pivot  # -1.0 to +1.0
+            adx_factor = features.adx_strength  # 0 to 1.0
 
-        bullish_pct = round((exp_bull / total_exp) * 100.0, 1)
-        bearish_pct = round((exp_bear / total_exp) * 100.0, 1)
-        neutral_pct = round(100.0 - bullish_pct - bearish_pct, 1)
+            if raw_directional_score > 0:
+                bullish_logit = 1.0 + (raw_directional_score * 2.5) * (0.5 + 0.5 * adx_factor)
+                bearish_logit = 1.0 - (raw_directional_score * 1.5)
+                neutral_logit = 1.0 + (1.0 - adx_factor) * 1.2
+            else:
+                bullish_logit = 1.0 + (raw_directional_score * 1.5)
+                bearish_logit = 1.0 - (raw_directional_score * 2.5) * (0.5 + 0.5 * adx_factor)
+                neutral_logit = 1.0 + (1.0 - adx_factor) * 1.2
+
+            exp_bull = math.exp(max(-5.0, min(5.0, bullish_logit)))
+            exp_bear = math.exp(max(-5.0, min(5.0, bearish_logit)))
+            exp_neut = math.exp(max(-5.0, min(5.0, neutral_logit)))
+            total_exp = exp_bull + exp_bear + exp_neut
+
+            bullish_pct = round((exp_bull / total_exp) * 100.0, 1)
+            bearish_pct = round((exp_bear / total_exp) * 100.0, 1)
+            neutral_pct = round(100.0 - bullish_pct - bearish_pct, 1)
+            model_source = "heuristic_ensemble"
 
         # Trend Strength (0-100)
         trend_strength = round(min(100.0, max(5.0, (abs(raw_directional_score) * 60.0) + (adx_factor * 40.0))), 1)
@@ -146,6 +176,19 @@ class MLPredictor:
             ),
         ]
 
+        # Resolve model_version from artifacts meta if available
+        model_version = "XGBoost-LightGBM-Ensemble-v2.0" if model_source == "xgboost_lightgbm_ensemble" else "XGBoost-LightGBM-Ensemble-v1.0-heuristic"
+        try:
+            from app.ml.trainer import META_PATH
+
+            if META_PATH.exists():
+                import json
+
+                meta = json.loads(META_PATH.read_text())
+                model_version = meta.get("model_version", model_version)
+        except Exception:
+            pass
+
         response = MLPredictionResponse(
             symbol=underlying,
             timestamp=datetime.now(timezone.utc),
@@ -158,6 +201,7 @@ class MLPredictor:
             predicted_bias=predicted_bias,
             market_regime=market_regime,
             top_features=top_features,
+            model_version=model_version,
         )
 
         # Save to Supabase PostgreSQL database asynchronously

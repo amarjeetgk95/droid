@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy pyproject.toml
 COPY pyproject.toml .
 
-# Install dependencies
+# Install dependencies (with XGBoost/LightGBM ensemble)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir ".[ml]"
 
 # Copy application source code
 COPY app/ ./app/
