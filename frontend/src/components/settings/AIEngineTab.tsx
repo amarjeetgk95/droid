@@ -59,19 +59,101 @@ export function AIEngineTab({ settings, onChange }: Props) {
   const handleTestAI = async () => {
     setTesting(true);
     setTestResult(null);
+
+    // Pre-flight validation – honest, no silent mock
+    if (settings.provider === 'gemini' && !settings.geminiApiKey) {
+      setTestResult({ success: false, message: 'Gemini API key missing. Paste your AIza… key above, then save.' });
+      setTesting(false);
+      return;
+    }
+    if (settings.provider === 'openrouter' && !settings.openRouterApiKey) {
+      setTestResult({ success: false, message: 'OpenRouter API key missing. Paste your sk-or-… key above, then save.' });
+      setTesting(false);
+      return;
+    }
+    if (settings.provider === 'ollama') {
+      if (!settings.ollamaBaseUrl) {
+        setTestResult({ success: false, message: 'Ollama URL missing. Set your Ollama base URL (e.g. http://localhost:11434).' });
+        setTesting(false);
+        return;
+      }
+      // Direct browser check for Ollama – backend on Render cannot reach localhost
+      const isLocal = settings.ollamaBaseUrl.includes('localhost') || settings.ollamaBaseUrl.includes('127.0.0.1');
+      if (isLocal) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 4000);
+          const start = performance.now();
+          const r = await fetch(`${settings.ollamaBaseUrl.replace(/\/$/, '')}/api/tags`, { signal: ctrl.signal });
+          clearTimeout(t);
+          const latency = Math.round(performance.now() - start);
+          if (!r.ok) {
+            setTestResult({
+              success: false,
+              message: `Ollama not reachable at ${settings.ollamaBaseUrl} – HTTP ${r.status}. Is Ollama running? Run \`ollama serve\`.`,
+              latency,
+            } as any);
+            setTesting(false);
+            return;
+          }
+          const j = await r.json();
+          const models: string[] = (j.models || []).map((m: any) => m.name);
+          if (models.length > 0 && !models.some((m) => m.includes(settings.ollamaModel) || settings.ollamaModel.includes(m))) {
+            setTestResult({
+              success: false,
+              message: `Ollama is running at ${settings.ollamaBaseUrl} (latency ${latency}ms) but model '${settings.ollamaModel}' not found. Available: ${models.slice(0, 3).join(', ') || 'none'}. Run \`ollama pull ${settings.ollamaModel}\`.`,
+              latency,
+            } as any);
+            setTesting(false);
+            return;
+          }
+          // Local Ollama is reachable – now do full prompt test via backend (which will also try but we already proved connectivity)
+          // Fall through to backend test for full prompt + schema validation
+        } catch (e: any) {
+          const msg = e.name === 'AbortError' ? 'Timeout (4s)' : e.message;
+          setTestResult({
+            success: false,
+            message: `Ollama not reachable at ${settings.ollamaBaseUrl} – ${msg}. Is Ollama installed? Install from https://ollama.com, then \`ollama serve\` and \`ollama pull ${settings.ollamaModel}\`. Backend cannot test localhost directly; this browser check proves it.`,
+          });
+          setTesting(false);
+          return;
+        }
+      }
+    }
+
     try {
-      const res = await api.generateAIAnalysis('NIFTY', settings.provider);
+      const payload: any = {
+        provider: settings.provider,
+        symbol: 'NIFTY',
+        geminiApiKey: settings.geminiApiKey,
+        geminiModel: settings.geminiModel,
+        openRouterApiKey: settings.openRouterApiKey,
+        openRouterModel: settings.openRouterModel,
+        ollamaBaseUrl: settings.ollamaBaseUrl,
+        ollamaModel: settings.ollamaModel,
+      };
+      const start = performance.now();
+      const res: any = await api.testAIProvider(payload);
+      const clientLatency = Math.round(performance.now() - start);
+      const d = res.data;
+      // Backend already returns latency_ms and schema_valid
       setTestResult({
-        success: true,
-        message: `Successfully generated structured market intelligence using ${
-          res.data.provider_used || settings.provider
-        }!`,
-        data: res.data,
-      });
+        success: d.success,
+        message: d.success
+          ? d.message || `Success via ${d.provider}:${d.model} in ${d.latency_ms}ms (client ${clientLatency}ms). Schema valid.`
+          : d.error || 'Test failed',
+        data: d.insight,
+        latency: d.latency_ms,
+        clientLatency,
+        schemaValid: d.schema_valid,
+        isMock: d.is_mock,
+        hint: d.hint,
+        model: d.model,
+      } as any);
     } catch (err: any) {
       setTestResult({
         success: false,
-        message: err?.message || 'Failed to connect to AI provider',
+        message: err?.message || 'Test failed – see hint',
       });
     } finally {
       setTesting(false);
@@ -534,64 +616,107 @@ export function AIEngineTab({ settings, onChange }: Props) {
         </div>
       </div>
 
-      {/* 4. Connectivity & Model Prompt Test Card */}
+      {/* 4. Live Provider Verification – Strict, No Mock Fallback */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              Test AI Model & Prompt Pipeline
-            </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Execute an end-to-end prompt test against NIFTY to verify latency and schema validation.
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            Live Provider Verification
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 font-mono">NO MOCK FALLBACK</span>
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Runs a <strong>real</strong> end-to-end test with live NIFTY market context (regime + futures + options). Measures latency, validates JSON schema, and <strong>fails honestly</strong> if Ollama is not installed, API key is missing/invalid, or model is not pulled. No deterministic mock data is used for gemini/openrouter/ollama.
+          </p>
+          {settings.provider === 'mock_ai' && (
+            <p className="text-[11px] p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600">
+              Mock AI is offline & deterministic – it does not call any LLM. “Run Test” will only verify prompt building and schema (≈30ms). Switch to Gemini/OpenRouter/Ollama for a live test.
             </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-muted-foreground bg-secondary px-2.5 py-1 rounded-lg border border-border">
-              Model: <span className="text-foreground font-semibold">{activeModelOption?.name || settings.geminiModel || settings.openRouterModel || settings.ollamaModel}</span>
-            </span>
-
-            <button
-              type="button"
-              onClick={handleTestAI}
-              disabled={testing}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs"
-            >
-              <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-              <span>{testing ? 'Analyzing NIFTY...' : 'Run Test Analysis'}</span>
-            </button>
-          </div>
+          )}
+          {settings.provider === 'ollama' && (settings.ollamaBaseUrl.includes('localhost') || settings.ollamaBaseUrl.includes('127.0.0.1')) && (
+            <p className="text-[11px] p-2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-600">
+              Ollama is local – the test does a <strong>direct browser fetch</strong> to {settings.ollamaBaseUrl}/api/tags (Render cannot reach localhost). Ensure <code>ollama serve</code> is running and CORS is allowed.
+            </p>
+          )}
         </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border/50">
+          <div className="flex items-center gap-2 text-[11px] font-mono">
+            <span className="text-muted-foreground">Provider:</span>
+            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground font-semibold">{settings.provider}</span>
+            <span className="text-muted-foreground">Model:</span>
+            <span className="px-2 py-1 rounded bg-secondary border border-border text-foreground">{activeModelOption?.name || settings.geminiModel || settings.openRouterModel || settings.ollamaModel || '—'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleTestAI}
+            disabled={testing}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs self-start sm:self-auto"
+          >
+            <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+            <span>{testing ? 'Testing…' : settings.provider === 'mock_ai' ? 'Run Mock Test' : 'Run Live Test'}</span>
+          </button>
+        </div>
+
+        {/* Pre-flight warnings */}
+        {!testing && !testResult && (
+          <div className="space-y-1">
+            {settings.provider === 'gemini' && !settings.geminiApiKey && (
+              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Gemini API key missing – test will fail.</div>
+            )}
+            {settings.provider === 'openrouter' && !settings.openRouterApiKey && (
+              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> OpenRouter key missing – test will fail.</div>
+            )}
+            {settings.provider === 'ollama' && !settings.ollamaBaseUrl && (
+              <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Ollama URL missing.</div>
+            )}
+          </div>
+        )}
 
         {testResult && (
           <div
-            className={`p-3.5 rounded-lg text-xs space-y-2 ${
-              testResult.success
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                : 'bg-destructive/10 text-destructive border border-destructive/20'
+            className={`p-3.5 rounded-lg text-xs space-y-3 border ${
+              (testResult as any).success
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20'
+                : 'bg-destructive/10 text-destructive border-destructive/20'
             }`}
           >
-            <div className="flex items-center gap-2 font-semibold">
-              {testResult.success ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-              ) : (
-                <AlertCircle className="w-4 h-4 shrink-0" />
-              )}
-              <span>{testResult.message}</span>
+            <div className="flex items-start gap-2 font-semibold">
+              {(testResult as any).success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+              <span className="leading-relaxed flex-1">{(testResult as any).message}</span>
             </div>
-            {testResult.data && (
+
+            {/* Diagnostics grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+              <div className="bg-card/60 p-2 rounded border border-border">
+                <div className="text-muted-foreground">Latency</div>
+                <div className="font-semibold text-foreground">{(testResult as any).latency ?? (testResult as any).latency_ms ?? '—'} ms</div>
+                {(testResult as any).clientLatency && <div className="text-[10px] text-muted-foreground">client {(testResult as any).clientLatency}ms</div>}
+              </div>
+              <div className="bg-card/60 p-2 rounded border border-border">
+                <div className="text-muted-foreground">Schema</div>
+                <div className="font-semibold">{(testResult as any).schemaValid ? '✓ Valid' : (testResult as any).success ? '✓ Valid' : '✗ Failed'}</div>
+              </div>
+              <div className="bg-card/60 p-2 rounded border border-border">
+                <div className="text-muted-foreground">Provider</div>
+                <div className="font-semibold text-foreground truncate">{(testResult as any).model || settings.provider}</div>
+              </div>
+              <div className="bg-card/60 p-2 rounded border border-border">
+                <div className="text-muted-foreground">Mock?</div>
+                <div className="font-semibold">{(testResult as any).isMock ? 'Yes (offline)' : 'No – live'}</div>
+              </div>
+            </div>
+
+            {(testResult as any).hint && (
+              <div className="text-[11px] p-2 rounded bg-card/60 border border-border text-foreground leading-relaxed">
+                <strong>Hint:</strong> {(testResult as any).hint}
+              </div>
+            )}
+
+            {(testResult as any).data && (testResult as any).success && (
               <div className="bg-card/80 p-3 rounded border border-border text-foreground font-mono text-[11px] space-y-1">
-                <div>
-                  <strong>Bias:</strong> {testResult.data.market_bias} ({testResult.data.confidence}% confidence)
-                </div>
-                <div>
-                  <strong>Executive Summary:</strong> {testResult.data.executive_summary}
-                </div>
-                <div>
-                  <strong>Recommended Framework:</strong>{' '}
-                  {testResult.data.recommended_strategy_framework}
-                </div>
+                <div><strong>Bias:</strong> {(testResult as any).data.market_bias} ({(testResult as any).data.confidence}% confidence)</div>
+                <div><strong>Executive Summary:</strong> {(testResult as any).data.executive_summary}</div>
+                <div><strong>Framework:</strong> {(testResult as any).data.recommended_strategy_framework}</div>
               </div>
             )}
           </div>

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
+from pydantic import BaseModel
 from app.services.ai_service import ai_service
 from app.models.market import ApiMeta, DataStatus
 
@@ -14,12 +15,47 @@ def _make_meta() -> ApiMeta:
     )
 
 
+class AITestRequest(BaseModel):
+    provider: str = "mock_ai"
+    symbol: str = "NIFTY"
+    geminiApiKey: str | None = None
+    geminiModel: str | None = None
+    openRouterApiKey: str | None = None
+    openRouterModel: str | None = None
+    ollamaBaseUrl: str | None = None
+    ollamaModel: str | None = None
+
+
+@router.post("/test")
+async def test_ai_provider(payload: AITestRequest = Body(...)):
+    """Strict end-to-end test: validates connectivity, latency, and JSON schema. No mock fallback for real providers."""
+    try:
+        result = await ai_service.test_provider(
+            symbol=payload.symbol,
+            provider=payload.provider,
+            geminiApiKey=payload.geminiApiKey,
+            geminiModel=payload.geminiModel,
+            openRouterApiKey=payload.openRouterApiKey,
+            openRouterModel=payload.openRouterModel,
+            ollamaBaseUrl=payload.ollamaBaseUrl,
+            ollamaModel=payload.ollamaModel,
+        )
+        # Always return 200 with success flag, so frontend can show detailed diagnostics
+        return {
+            "data": result,
+            "error": None if result.get("success") else result.get("error"),
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/analyze/{symbol}")
 async def generate_market_analysis(
     symbol: str,
-    provider: str = Query(default="mock_ai", description="LLM provider: mock_ai | gemini"),
+    provider: str = Query(default="mock_ai", description="LLM provider: mock_ai | gemini | openrouter | ollama"),
 ):
-    """Generate grounded, structured AI market analysis across Options, Futures, and Technicals."""
+    """Generate grounded, structured AI market analysis. Strict – fails if provider not configured (no silent mock)."""
     try:
         insight = await ai_service.generate_market_analysis(symbol, provider)
         return {
@@ -27,6 +63,9 @@ async def generate_market_analysis(
             "error": None,
             "meta": _make_meta().model_dump(),
         }
+    except ValueError as e:
+        # Configuration / connectivity errors → 400 with clear message
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

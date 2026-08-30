@@ -10,10 +10,13 @@ logger = structlog.get_logger()
 
 
 class GeminiProvider(BaseLLMProvider):
-    """Google Gemini AI provider for real-time market analysis."""
+    """Google Gemini – strict, no mock fallback. Fails fast with clear errors."""
 
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or getattr(settings, "gemini_api_key", "")
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        # Keys are injected per-request from frontend settings; fallback to server env only if explicitly set
+        self.api_key = (api_key or "").strip() or getattr(settings, "gemini_api_key", "") or ""
+        self.api_key = self.api_key.strip()
+        self.model = (model or "gemini-2.0-flash").strip()
 
     @property
     def provider_name(self) -> str:
@@ -25,13 +28,16 @@ class GeminiProvider(BaseLLMProvider):
         system_prompt: str,
         user_prompt: str,
     ) -> AIInsightResponse:
-        """Call Gemini 2.0 / 1.5 Flash API with structured JSON output."""
         if not self.api_key:
-            logger.info("gemini_key_missing_falling_back_to_mock")
-            from app.ai.mock_ai import MockLLMProvider
-            return await MockLLMProvider().generate_analysis(symbol, system_prompt, user_prompt)
+            raise ValueError("Gemini API key missing. Add your AIza... key in Terminal Configuration → AI Engine → Google Gemini.")
+        if not self.api_key.startswith("AIza"):
+            raise ValueError(f"Gemini API key looks invalid (must start with 'AIza'). Got: {self.api_key[:12]}...")
+        if not self.model:
+            raise ValueError("Gemini model not selected.")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+        # Map friendly names to API model IDs if needed
+        model_id = self.model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={self.api_key}"
         payload = {
             "contents": [
                 {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}
@@ -43,17 +49,23 @@ class GeminiProvider(BaseLLMProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
-                    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    try:
+                        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    except (KeyError, IndexError) as e:
+                        raise ValueError(f"Gemini returned unexpected shape: {json.dumps(data)[:400]}")
                     parsed = json.loads(raw_text)
+                    # Validate required fields
+                    if "market_bias" not in parsed or "executive_summary" not in parsed:
+                        raise ValueError(f"Gemini JSON missing required fields. Got keys: {list(parsed.keys())}. Raw: {raw_text[:300]}")
                     return AIInsightResponse(
                         symbol=symbol,
                         timestamp=datetime.now(timezone.utc),
                         market_bias=parsed.get("market_bias", "NEUTRAL"),
-                        confidence=float(parsed.get("confidence", 85.0)),
+                        confidence=float(parsed.get("confidence", 80.0)),
                         executive_summary=parsed.get("executive_summary", ""),
                         options_interpretation=parsed.get("options_interpretation", ""),
                         futures_flow_analysis=parsed.get("futures_flow_analysis", ""),
@@ -61,13 +73,19 @@ class GeminiProvider(BaseLLMProvider):
                         recommended_strategy_framework=parsed.get("recommended_strategy_framework", ""),
                         risk_management_notes=parsed.get("risk_management_notes", ""),
                         disclaimer=parsed.get("disclaimer", "Quantitative analysis for research only."),
-                        provider_used="gemini",
+                        provider_used=f"gemini:{model_id}",
                     )
+                elif resp.status_code == 400:
+                    raise ValueError(f"Gemini 400 – bad request (check model name '{model_id}'): {resp.text[:400]}")
+                elif resp.status_code == 401:
+                    raise ValueError("Gemini 401 – invalid API key.")
+                elif resp.status_code == 403:
+                    raise ValueError("Gemini 403 – API not enabled or quota exceeded. Enable Generative Language API in Google Cloud.")
+                elif resp.status_code == 429:
+                    raise ValueError("Gemini 429 – rate limited / quota exhausted. Try again in 30s.")
                 else:
-                    logger.warning("gemini_api_error", status=resp.status_code, body=resp.text)
+                    raise ValueError(f"Gemini {resp.status_code}: {resp.text[:400]}")
+        except ValueError:
+            raise
         except Exception as e:
-            logger.warning("gemini_call_exception", error=str(e))
-
-        # Fallback to MockLLMProvider on any error or missing key
-        from app.ai.mock_ai import MockLLMProvider
-        return await MockLLMProvider().generate_analysis(symbol, system_prompt, user_prompt)
+            raise ValueError(f"Gemini request failed: {str(e)[:400]}")
