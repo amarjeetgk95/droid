@@ -1,0 +1,14 @@
+# Firebase App Hosting Configuration for Next.js 16
+kind: AppHostingYaml
+schemaVersion: v1
+runConfig:
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+env:
+  - variable: NODE_ENV
+    value: production
+  - variable: NEXT_PUBLIC_API_URL
+    value: https://droid-backend-emeq.onrender.com
