@@ -40,9 +40,9 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme)
 ) -> AuthUser | None:
     """Get the current authenticated user, or None in dev mode."""
-    # Development mode: auth not required
+    # Development mode: auth not required — use deterministic UUID so DB queries succeed
     if not settings.auth_required:
-        return AuthUser(user_id="dev-user", email="dev@localhost", role="admin")
+        return AuthUser(user_id="00000000-0000-0000-0000-000000000001", email="dev@localhost", role="admin")
     
     if credentials is None:
         raise HTTPException(
