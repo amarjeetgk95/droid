@@ -198,6 +198,20 @@ function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
   }
 }
 
+/**
+ * Merge a partial section onto its defaults, ignoring null/undefined values
+ * so legacy or partial stored data can never wipe out a default with null.
+ */
+function mergeSection<T>(defaults: T, incoming: unknown): T {
+  const source = (incoming && typeof incoming === 'object' ? incoming : {}) as Record<string, unknown>;
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === null || value === undefined) continue;
+    clean[key] = value;
+  }
+  return { ...(defaults as object), ...clean } as T;
+}
+
 function migrateMockAI(settings: AppSettings): AppSettings {
   if ((settings.ai as any).provider === 'mock_ai' || (settings.ai as any).provider === 'mock') {
     return { ...settings, ai: { ...settings.ai, provider: 'gemini' as const } };
@@ -216,11 +230,11 @@ export function getStoredSettings(): AppSettings {
     } else {
       const parsed = JSON.parse(raw);
       settings = {
-        broker: { ...DEFAULT_SETTINGS.broker, ...parsed.broker },
-        quantitative: { ...DEFAULT_SETTINGS.quantitative, ...parsed.quantitative },
-        ai: { ...DEFAULT_SETTINGS.ai, ...parsed.ai },
-        paper: { ...DEFAULT_SETTINGS.paper, ...parsed.paper },
-        preferences: { ...DEFAULT_SETTINGS.preferences, ...parsed.preferences },
+        broker: mergeSection(DEFAULT_SETTINGS.broker, parsed.broker),
+        quantitative: mergeSection(DEFAULT_SETTINGS.quantitative, parsed.quantitative),
+        ai: mergeSection(DEFAULT_SETTINGS.ai, parsed.ai),
+        paper: mergeSection(DEFAULT_SETTINGS.paper, parsed.paper),
+        preferences: mergeSection(DEFAULT_SETTINGS.preferences, parsed.preferences),
       };
     }
 
@@ -292,11 +306,11 @@ export function importSettingsJson(jsonStr: string): AppSettings {
 
   // Gracefully merge with defaults — even if imported JSON is partial
   const merged: AppSettings = {
-    broker: { ...DEFAULT_SETTINGS.broker, ...(parsed.broker || {}) },
-    quantitative: { ...DEFAULT_SETTINGS.quantitative, ...(parsed.quantitative || {}) },
-    ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai || {}) },
-    paper: { ...DEFAULT_SETTINGS.paper, ...(parsed.paper || {}) },
-    preferences: { ...DEFAULT_SETTINGS.preferences, ...(parsed.preferences || {}) },
+    broker: mergeSection(DEFAULT_SETTINGS.broker, parsed.broker),
+    quantitative: mergeSection(DEFAULT_SETTINGS.quantitative, parsed.quantitative),
+    ai: mergeSection(DEFAULT_SETTINGS.ai, parsed.ai),
+    paper: mergeSection(DEFAULT_SETTINGS.paper, parsed.paper),
+    preferences: mergeSection(DEFAULT_SETTINGS.preferences, parsed.preferences),
   };
 
   return merged;
@@ -314,11 +328,11 @@ export function mergeAppSettingsFromSupabase(raw: unknown): AppSettings {
   if (!raw || typeof raw !== 'object') return getStoredSettings();
   const parsed = raw as Partial<AppSettings>;
   const merged: AppSettings = {
-    broker: { ...DEFAULT_SETTINGS.broker, ...(parsed.broker || {}) },
-    quantitative: { ...DEFAULT_SETTINGS.quantitative, ...(parsed.quantitative || {}) },
-    ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai || {}) },
-    paper: { ...DEFAULT_SETTINGS.paper, ...(parsed.paper || {}) },
-    preferences: { ...DEFAULT_SETTINGS.preferences, ...(parsed.preferences || {}) },
+    broker: mergeSection(DEFAULT_SETTINGS.broker, parsed.broker),
+    quantitative: mergeSection(DEFAULT_SETTINGS.quantitative, parsed.quantitative),
+    ai: mergeSection(DEFAULT_SETTINGS.ai, parsed.ai),
+    paper: mergeSection(DEFAULT_SETTINGS.paper, parsed.paper),
+    preferences: mergeSection(DEFAULT_SETTINGS.preferences, parsed.preferences),
   };
   return migrateMockAI(merged);
 }
