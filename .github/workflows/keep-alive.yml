@@ -1,0 +1,22 @@
+name: Keep Render Alive (Singapore)
+
+on:
+  schedule:
+    # Every 10 minutes to prevent Render free 15m sleep (active during IST market hours 03:00-10:00 UTC = 08:30-15:30 IST)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health/live
+        run: |
+          curl -fsS https://droid-backend-emeq.onrender.com/health/live || echo "health/live failed"
+          curl -fsS https://droid-backend-emeq.onrender.com/health/ready || echo "health/ready failed"
+          echo "Ping done at $(date -u)"
+
+      - name: Ping market-data (warm cache)
+        run: |
+          curl -fsS https://droid-backend-emeq.onrender.com/api/v1/markets/quotes | head -c 200
+          echo ""
