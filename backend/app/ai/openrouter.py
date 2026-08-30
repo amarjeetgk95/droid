@@ -31,18 +31,25 @@ class OpenRouterProvider(BaseLLMProvider):
             "HTTP-Referer": "https://fo-droid.web.app",
             "X-Title": "DROID F&O Analysis",
         }
-        payload = {
+        # Some free models (e.g. Novita-routed ling-3.0-flash-fin:free) do NOT support response_format
+        # We try with json_object first, then fallback to plain prompt if provider returns INVALID_REQUEST_BODY structured-outputs
+        base_payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. No markdown, no extra text."},
                 {"role": "user", "content": user_prompt},
             ],
-            "response_format": {"type": "json_object"},
             "temperature": 0.2,
         }
+        payload_with_json = {**base_payload, "response_format": {"type": "json_object"}}
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Attempt 1: with structured-outputs
+                resp = await client.post(url, json=payload_with_json, headers=headers)
+                # Auto-fallback if model doesn't support structured-outputs (common on free/Novita models)
+                if resp.status_code == 400 and "structured-outputs" in resp.text:
+                    logger.warning("openrouter_structured_not_supported_fallback", model=self.model, error=resp.text[:300])
+                    resp = await client.post(url, json=base_payload, headers=headers)
                 if resp.status_code == 401:
                     raise ValueError("OpenRouter: 401 Unauthorized – API key invalid or expired. Check AI Engine settings.")
                 if resp.status_code == 402:
@@ -50,7 +57,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 if resp.status_code == 429:
                     raise ValueError("OpenRouter: 429 Rate Limited – too many requests. Try again in 30s.")
                 if resp.status_code != 200:
-                    raise ValueError(f"OpenRouter: {resp.status_code} – {resp.text[:300]}")
+                    raise ValueError(f"OpenRouter: {resp.status_code} – {resp.text[:600]}")
                 data = resp.json()
                 try:
                     content = data["choices"][0]["message"]["content"]
