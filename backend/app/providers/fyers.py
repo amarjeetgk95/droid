@@ -169,7 +169,7 @@ class FyersProvider(MarketDataProvider):
             session=MarketSession.OPEN if is_trading else MarketSession.CLOSED,
             market_time=now,
             is_trading_day=is_trading,
-            data_status=DataStatus.LIVE if not self.token_manager.is_token_expired() else DataStatus.DEGRADED,
+            data_status=DataStatus.LIVE if not self.token_manager.is_token_expired() else DataStatus.STALE,
             provider=self.provider_name,
         )
 
