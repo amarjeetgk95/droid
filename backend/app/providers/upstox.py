@@ -70,6 +70,14 @@ class UpstoxProvider(MarketDataProvider):
     def get_rate_limiter(self) -> TokenBucketRateLimiter:
         return self.rate_limiter
 
+    _DEMO_MAP: dict[str, dict] = {
+        "NIFTY 50": {"ltp": 24034.7, "open": 24117.55, "high": 24128.7, "low": 23993.6, "prev": 24175.65, "vol": 1450000, "oi": 450000},
+        "BANKNIFTY": {"ltp": 57348.95, "open": 57353.75, "high": 57576.25, "low": 57187.35, "prev": 57496.3, "vol": 980000, "oi": 320000},
+        "FINNIFTY": {"ltp": 26102.15, "open": 26204.4, "high": 26271.2, "low": 26052.25, "prev": 26286.5, "vol": 620000, "oi": 180000},
+        "SENSEX": {"ltp": 76826.23, "open": 77130.73, "high": 77177.27, "low": 76751.32, "prev": 77264.51, "vol": 410000, "oi": 90000},
+        "INDIA VIX": {"ltp": 11.2, "open": 10.68, "high": 11.44, "low": 10.68, "prev": 10.68, "vol": 0, "oi": None},
+    }
+
     async def get_quote(self, symbol: str) -> NormalizedQuote:
         await self.rate_limiter.acquire()
         try:
@@ -78,20 +86,24 @@ class UpstoxProvider(MarketDataProvider):
             token = ""
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
-
+        demo = self._DEMO_MAP.get(symbol, {"ltp": 24034.7, "open": 24117.0, "high": 24128.0, "low": 23993.0, "prev": 24175.0, "vol": 1450000, "oi": 450000})
+        ltp = demo["ltp"]
+        prev = demo["prev"]
+        change = round(ltp - prev, 2)
+        change_pct = round((change / prev * 100) if prev else 0.0, 2)
         return NormalizedQuote(
             symbol=symbol,
             display_name=symbol,
             timestamp=now,
-            ltp=25010.0,
-            open=24960.0,
-            high=25060.0,
-            low=24920.0,
-            previous_close=24900.0,
-            change=110.0,
-            change_percent=0.44,
-            volume=1400000,
-            open_interest=None if "VIX" in symbol else 420000,
+            ltp=ltp,
+            open=demo["open"],
+            high=demo["high"],
+            low=demo["low"],
+            previous_close=prev,
+            change=change,
+            change_percent=change_pct,
+            volume=demo["vol"],
+            open_interest=demo["oi"],
             status=DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO,
             provider=self.provider_name,
         )
@@ -109,23 +121,25 @@ class UpstoxProvider(MarketDataProvider):
     ) -> list[NormalizedCandle]:
         await self.rate_limiter.acquire()
         now = datetime.now(timezone.utc)
-        candles = []
         count = 75 if timeframe == "5m" else 30
-        curr = (start or now) - timedelta(minutes=5 * count)
-        base = 25000.0
-
+        _tf_to_sec = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1D": 86400}
+        interval = _tf_to_sec.get(timeframe, 300)
+        demo = self._DEMO_MAP.get(symbol, {"ltp": 24034.7})
+        base = demo["ltp"] or 24034.7
+        candles: list[NormalizedCandle] = []
+        curr = (start or now) - timedelta(seconds=interval * count)
         for i in range(count):
+            drift = ((i % 10) - 5) * base * 0.0003
+            o = base + drift
+            c = o + ((i % 7) - 3) * base * 0.0001
+            h = max(o, c) + base * 0.0004
+            l = min(o, c) - base * 0.0004
             candles.append(NormalizedCandle(
                 timestamp=curr,
-                open=base,
-                high=base + 12.0,
-                low=base - 8.0,
-                close=base + 4.0,
-                volume=9500,
-                vwap=base + 3.0,
+                open=round(o, 2), high=round(h, 2), low=round(l, 2), close=round(c, 2),
+                volume=8000 + (i % 5) * 1000, vwap=round((o + h + l + c) / 4, 2),
             ))
-            curr += timedelta(minutes=5)
-
+            curr += timedelta(seconds=interval)
         return candles
 
     async def get_index_cards(self) -> list[IndexCard]:

@@ -24,13 +24,14 @@ class SyntheticTickFeed:
     real providers' ticks (when they eventually stream) will simply intermix.
     """
 
-    # Base prices match GrowwProvider._DEMO_QUOTES for visual consistency
+    # Base prices calibrated to NSE/BSE live snapshot 31-Aug-2026 (NSE allIndices + BSE)
+    # Previous 51520 for BANKNIFTY was 5.8k low vs TradingView 57336.
     _BASES: dict[str, float] = {
-        "NIFTY 50": 24880.0,
-        "BANKNIFTY": 51520.0,
-        "FINNIFTY": 26310.0,
-        "SENSEX": 82250.0,
-        "INDIA VIX": 13.65,
+        "NIFTY 50": 24034.7,
+        "BANKNIFTY": 57348.95,
+        "FINNIFTY": 26102.15,
+        "SENSEX": 76826.23,
+        "INDIA VIX": 11.2,
     }
 
     _VOLUME_BASE: dict[str, int] = {
