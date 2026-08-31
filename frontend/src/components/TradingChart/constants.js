@@ -1,12 +1,12 @@
 export const COLORS = {
-  bg: '#131722',
-  grid: '#1e222d',
-  axis: '#2a2e39',
-  text: '#787b86',
+  bg: '#ffffff',
+  grid: '#f0f3fa',
+  axis: '#e0e3eb',
+  text: '#131722',
   up: '#26a69a',
   down: '#ef5350',
   line: '#2962ff',
-  cross: '#758696',
+  cross: '#9598a1',
 };
 
 export const PAD_R = 66; // price axis width

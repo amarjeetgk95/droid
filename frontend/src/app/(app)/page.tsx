@@ -51,10 +51,10 @@ export default function DashboardPage() {
         <FIIPositioningCard />
       </div>
 
-      {/* Main Chart + Right Sidebar (compact) */}
+      {/* Main Chart + Right Sidebar (compact) — TradingView white */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* Left: TradingView Chart — smaller height as requested */}
-        <div className="xl:col-span-8 bg-card rounded-lg border border-border overflow-hidden h-[420px] xl:h-[520px] flex flex-col shadow-sm">
+        {/* Left: TradingView Chart — smaller height, white shade */}
+        <div className="xl:col-span-8 bg-white rounded-lg border border-[#e0e3eb] overflow-hidden h-[420px] xl:h-[520px] flex flex-col shadow-sm">
           <DashboardTradingChart defaultSymbol="NIFTY 50" />
         </div>
 

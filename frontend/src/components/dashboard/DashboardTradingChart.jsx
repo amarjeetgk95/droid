@@ -106,7 +106,7 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
 
   return (
     <div
-      className={`tc-root h-full w-full flex flex-col bg-[#131722] text-[#d1d4dc] rounded-lg overflow-hidden border border-[#2a2e39] ${className}`}
+      className={`tc-root h-full w-full flex flex-col bg-white text-[#131722] rounded-lg overflow-hidden border border-[#e0e3eb] shadow-sm ${className}`}
       style={style}
     >
       <TopBar
@@ -122,30 +122,30 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
         changePct={changePct}
         onReset={reset}
       />
-      {/* Symbol selector for Indian market — extra row below TopBar for quick switching */}
-      <div className="flex items-center gap-1 px-2 py-1 bg-[#131722] border-b border-[#2a2e39] overflow-x-auto">
+      {/* Symbol selector for Indian market — TradingView-style */}
+      <div className="flex items-center gap-1 px-2 py-1.5 bg-white border-b border-[#e0e3eb] overflow-x-auto">
         {INDIAN_SYMBOLS.map((s) => (
           <button
             key={s}
             onClick={() => setSymbol(s)}
-            className={`px-3 py-1 rounded text-xs font-medium whitespace-nowrap ${symbol === s ? 'bg-[#2962ff] text-white' : 'bg-[#1e222d] text-[#b2b5be] hover:text-white'}`}
+            className={`px-3 py-1 rounded text-xs font-medium whitespace-nowrap border ${symbol === s ? 'bg-[#2962ff] text-white border-[#2962ff]' : 'bg-white text-[#6a6d78] border-[#e0e3eb] hover:bg-[#f0f3fa] hover:text-[#131722]'}`}
           >
             {s}
           </button>
         ))}
-        <span className="ml-auto text-[10px] text-[#5d606b] hidden sm:block">
+        <span className="ml-auto text-[10px] text-[#6a6d78] hidden sm:block">
           {loading ? 'Loading…' : error ? `Error: ${error}` : `${data.length} bars · ${VALUE_TO_LABEL[tf] || tf + 'm'}`}
         </span>
       </div>
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 bg-white">
         <SideTools />
-        <main className="flex-1 relative min-w-0 flex">
+        <main className="flex-1 relative min-w-0 flex bg-white">
           {loading ? (
-            <div className="flex-1 flex items-center justify-center bg-[#131722] text-[#5d606b] text-sm">Loading chart data…</div>
+            <div className="flex-1 flex items-center justify-center bg-white text-[#6a6d78] text-sm">Loading chart data…</div>
           ) : error ? (
-            <div className="flex-1 flex items-center justify-center bg-[#131722] text-[#ef5350] text-sm p-4 text-center">{error}</div>
+            <div className="flex-1 flex items-center justify-center bg-white text-[#ef5350] text-sm p-4 text-center">{error}</div>
           ) : data.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center bg-[#131722] text-[#5d606b] text-sm">No candle data</div>
+            <div className="flex-1 flex items-center justify-center bg-white text-[#6a6d78] text-sm">No candle data</div>
           ) : (
             <>
               <ChartCanvas
@@ -161,28 +161,28 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
               <Legend symbol={symbol} data={data} hoverIdx={hoverIdx ?? data.length - 1} tf={tf} />
               <div className="absolute right-[70px] bottom-[34px] flex flex-col gap-1">
                 <button
-                  className="w-7 h-7 rounded bg-[#1e222d] border border-[#2a2e39] text-[#b2b5be] hover:text-white text-sm"
+                  className="w-7 h-7 rounded bg-white border border-[#e0e3eb] text-[#6a6d78] hover:text-[#131722] hover:bg-[#f0f3fa] shadow-sm text-sm"
                   title="Fit all bars"
                   onClick={reset}
                 >
                   ⤢
                 </button>
                 <button
-                  className="w-7 h-7 rounded bg-[#1e222d] border border-[#2a2e39] text-[#b2b5be] hover:text-white text-sm"
+                  className="w-7 h-7 rounded bg-white border border-[#e0e3eb] text-[#6a6d78] hover:text-[#131722] hover:bg-[#f0f3fa] shadow-sm text-sm"
                   title="Zoom in (+)"
                   onClick={() => setView((v) => ({ ...v, count: Math.max(20, v.count * 0.8) }))}
                 >
                   +
                 </button>
                 <button
-                  className="w-7 h-7 rounded bg-[#1e222d] border border-[#2a2e39] text-[#b2b5be] hover:text-white text-sm"
+                  className="w-7 h-7 rounded bg-white border border-[#e0e3eb] text-[#6a6d78] hover:text-[#131722] hover:bg-[#f0f3fa] shadow-sm text-sm"
                   title="Zoom out (−)"
                   onClick={() => setView((v) => ({ ...v, count: Math.min(data.length, v.count * 1.25) }))}
                 >
                   −
                 </button>
               </div>
-              <div className="absolute left-3 bottom-[30px] text-[10px] text-[#5d606b] pointer-events-none">
+              <div className="absolute left-3 bottom-[30px] text-[10px] text-[#9598a1] pointer-events-none">
                 scroll = zoom · drag = pan · double-click = reset
               </div>
             </>

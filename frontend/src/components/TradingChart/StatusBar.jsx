@@ -30,7 +30,7 @@ export default function StatusBar({ data, view }) {
   }
 
   return (
-    <footer className="h-[26px] flex items-center px-3 gap-4 text-[11px] text-[#787b86] border-t border-[#2a2e39] shrink-0">
+    <footer className="h-[26px] flex items-center px-3 gap-4 text-[11px] text-[#6a6d78] border-t border-[#e0e3eb] bg-white shrink-0">
       <span>{clock}</span>
       <span>UTC</span>
       <span className="ml-auto">{rangeInfo || `${data.length} bars loaded · O/H/L/C`}</span>

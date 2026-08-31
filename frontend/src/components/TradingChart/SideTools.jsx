@@ -11,7 +11,7 @@ const TOOLS = [
 
 export default function SideTools({ onSelect }) {
   return (
-    <aside className="w-[46px] border-r border-[#2a2e39] flex flex-col items-center py-2 gap-1 shrink-0">
+    <aside className="w-[46px] border-r border-[#e0e3eb] bg-white flex flex-col items-center py-2 gap-1 shrink-0">
       {TOOLS.map(({ t, i }) => (
         <button key={t} className="tc-tool" title={t} onClick={() => onSelect?.(t)}>
           {i}

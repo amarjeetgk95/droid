@@ -13,7 +13,7 @@ function tag(ctx, x, y, text, bg, fg) {
   ctx.fillText(text, x + 8, y);
 }
 
-/* floating OHLC tooltip panel near the cursor */
+/* floating OHLC tooltip panel near the cursor — white TradingView style */
 function drawTooltip(ctx, d, mx, my, plotW) {
   const rowH = 16;
   const w = 150;
@@ -27,16 +27,20 @@ function drawTooltip(ctx, d, mx, my, plotW) {
   const delta = d.c - d.o;
   const dPct = (delta / d.o) * 100;
 
-  ctx.fillStyle = 'rgba(30,34,45,0.94)';
+  ctx.fillStyle = 'rgba(255,255,255,0.98)';
   ctx.fillRect(bx, by, w, h);
-  ctx.strokeStyle = COLORS.axis;
+  ctx.strokeStyle = '#e0e3eb';
+  ctx.lineWidth = 1;
   ctx.strokeRect(bx + 0.5, by + 0.5, w - 1, h - 1);
+  // subtle shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  ctx.fillRect(bx + 2, by + h - 1, w - 4, 2);
 
   ctx.font = '11px sans-serif';
   ctx.textBaseline = 'middle';
 
   // time header (centered)
-  ctx.fillStyle = '#b2b5be';
+  ctx.fillStyle = '#131722';
   ctx.textAlign = 'center';
   ctx.fillText(fmtFull(d.t), bx + w / 2, by + 8 + rowH / 2);
 
@@ -50,7 +54,7 @@ function drawTooltip(ctx, d, mx, my, plotW) {
   rows.forEach((r, i) => {
     const y = by + 8 + (i + 1) * rowH + rowH / 2;
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#787b86';
+    ctx.fillStyle = '#6a6d78';
     ctx.fillText(r.l, bx + 8, y);
     ctx.textAlign = 'right';
     ctx.fillStyle = r.c;
@@ -135,12 +139,12 @@ export default function ChartCanvas({
       ctx.fillText(fmtPrice(p, min, max), plotW.current + 8, y);
     });
 
-    /* hovered column highlight (drawn under the candles) */
+    /* hovered column highlight (drawn under the candles) — light theme */
     const m = mouseRef.current;
     let hoverIdx = data.length - 1;
     if (m.inside && m.x < plotW.current && m.y < plotH.current) {
       hoverIdx = Math.max(0, Math.min(data.length - 1, Math.round(view.start + (m.x - barW / 2) / barW)));
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fillStyle = 'rgba(0,0,0,0.04)';
       ctx.fillRect(xOf(hoverIdx) - barW / 2, priceTop, barW, priceBot - priceTop);
     }
 
@@ -222,11 +226,11 @@ export default function ChartCanvas({
       ctx.lineWidth = 1;
     }
 
-    /* symbol watermark */
+    /* symbol watermark — subtle on white */
     ctx.save();
-    ctx.globalAlpha = 0.05;
+    ctx.globalAlpha = 0.06;
     ctx.font = '700 40px -apple-system, sans-serif';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#131722';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     const wm = symbol;

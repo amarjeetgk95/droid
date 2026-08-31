@@ -18,18 +18,18 @@ export default function TopBar({
   const up = changePct >= 0;
 
   return (
-    <header className="h-[42px] flex items-center gap-1 px-2 border-b border-[#2a2e39] bg-[#131722] shrink-0 text-[#d1d4dc]">
-      <div className="flex items-center gap-2 pr-3 border-r border-[#2a2e39]">
-        <div className="w-7 h-7 rounded-full bg-[#f7931a] grid place-items-center text-[13px] font-bold text-black">
+    <header className="h-[42px] flex items-center gap-1 px-2 border-b border-[#e0e3eb] bg-white shrink-0 text-[#131722]">
+      <div className="flex items-center gap-2 pr-3 border-r border-[#e0e3eb]">
+        <div className="w-7 h-7 rounded-full bg-[#2962ff] grid place-items-center text-[13px] font-bold text-white">
           ₿
         </div>
         <div className="leading-tight">
-          <div className="text-[14px] font-semibold text-white">{symbol}</div>
-          <div className="text-[10px] text-[#787b86] -mt-[2px]">{exchangeLabel}</div>
+          <div className="text-[14px] font-semibold text-[#131722]">{symbol}</div>
+          <div className="text-[10px] text-[#6a6d78] -mt-[2px]">{exchangeLabel}</div>
         </div>
       </div>
 
-      <div className="flex items-center gap-[2px] px-2 border-r border-[#2a2e39]">
+      <div className="flex items-center gap-[2px] px-2 border-r border-[#e0e3eb]">
         {TIMEFRAMES.map(({ label, value }) => (
           <button
             key={value}
@@ -41,7 +41,7 @@ export default function TopBar({
         ))}
       </div>
 
-      <div className="flex items-center gap-[2px] px-2 border-r border-[#2a2e39]">
+      <div className="flex items-center gap-[2px] px-2 border-r border-[#e0e3eb]">
         {CHART_TYPES.map((t) => (
           <button
             key={t}
