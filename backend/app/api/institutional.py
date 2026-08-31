@@ -510,6 +510,19 @@ def await_data_health_proxy():
     # Build UI shape
     return {"data_health": out, "overall": out_overall, "generated_at_ms": now_ms}
 
+# ── Calls & Puts Intelligence (§12) ───────────────────────────────────
+@router.get("/calls-puts/{underlying}/full")
+async def calls_puts_full(underlying: str, expiry: str | None = None):
+    from app.institutional.options_intelligence import get_calls_puts_full
+    underlying = underlying.upper().replace(" 50", "").replace("NIFTY 50", "NIFTY")
+    if underlying.upper() in ("BTCUSD", "BTC", "BTCUSDT"):
+        underlying = "BTCUSD"
+    try:
+        data = await get_calls_puts_full(underlying, expiry)
+        return data
+    except Exception as e:
+        raise HTTPException(500, f"calls-puts failed for {underlying}: {e}")
+
 @router.get("/dashboard/signal-ttl/{signal_id}")
 def dashboard_signal_ttl(signal_id: str):
     sig = signal_fsm.get(signal_id)
