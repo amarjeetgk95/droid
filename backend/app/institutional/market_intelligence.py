@@ -190,7 +190,7 @@ class MarketIntelligenceEngine:
             oi_ch = oi_data.get("oi_change_pct", 0)
             if futures_price and spot_price:
                 basis_val = futures_price - spot_price
-                if oi_ch > 5 and basis_val > 0: fut_state = "LONG_BUILDUP"; add_evidence("POSITIONING", "futures long buildup", True, detail=f"OI {oi_ch:.1f}% basis {basis_val}")
+                if oi_ch > 5 and basis_val > 0: fut_state = "LONG_BUILDUP"; add_evidence("POSITIONING", "futures long buildup", detail=f"OI {oi_ch:.1f}% basis {basis_val}", is_supporting=True)
                 elif oi_ch > 5 and basis_val < 0: fut_state = "SHORT_BUILDUP"
                 elif oi_ch < -5: fut_state = "SHORT_COVERING_OR_LONG_UNWINDING"
 

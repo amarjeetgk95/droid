@@ -1,4 +1,4 @@
-import { LayoutDashboard, TrendingUp, BarChart3, Grid3X3, Target, Search, Brain, History, FileText, Bell, Star, Settings, Coins, LineChart, Database, Cpu } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, BarChart3, Grid3X3, Target, Search, Brain, History, FileText, Bell, Star, Settings, Coins, LineChart, Database, Cpu, Activity } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -7,6 +7,7 @@ export function Sidebar() {
 
   const links = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/market-intelligence', label: 'Market Intelligence', icon: Activity },
     { href: '/markets', label: 'Markets', icon: TrendingUp },
     { href: '/crypto', label: 'Crypto (Binance)', icon: Coins },
     { href: '/futures', label: 'Futures', icon: BarChart3 },

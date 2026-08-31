@@ -12,6 +12,7 @@ from app.api import benchmark as benchmark_api
 from app.api import hpi as hpi_api
 from app.api import algo as algo_api
 from app.api import institutional as institutional_api
+from app.api.institutional_mi_full import router_full as institutional_mi_full_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
@@ -144,6 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(benchmark_api.router)
     app.include_router(algo_api.router)
     app.include_router(institutional_api.router)
+    app.include_router(institutional_mi_full_api)
     
     return app
 
