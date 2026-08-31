@@ -7,7 +7,7 @@ import { AuthGuard } from '@/components/auth/AuthGuard';
 import { useMarketData } from '@/hooks/useMarketData';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { cards, health, marketStatus, loading: dataLoading } = useMarketData();
+  const { cards, health, marketStatus, loading: dataLoading, streamState } = useMarketData();
 
   return (
     <AuthGuard>
@@ -17,6 +17,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <TopHeader
             health={health}
             marketStatus={marketStatus}
+            streamState={streamState}
           />
           <MarketTicker cards={cards} loading={dataLoading} />
           <main className="flex-1 overflow-auto p-4">

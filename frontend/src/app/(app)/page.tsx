@@ -9,6 +9,8 @@ import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
 import { MarketOverview } from '@/components/dashboard/MarketOverview';
 import { QuickStats } from '@/components/dashboard/QuickStats';
 import { MarketHealth } from '@/components/dashboard/MarketHealth';
+import { MarketIntelligencePanel } from '@/components/institutional/MarketIntelligencePanel';
+import { DataHealthPanel } from '@/components/institutional/DataHealthPanel';
 
 export default function DashboardPage() {
   const { cards, breadth, health, marketStatus, loading, error, lastFetch } = useMarketData();
@@ -49,6 +51,17 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <MLPredictionCard symbol="NIFTY" />
         <FIIPositioningCard />
+      </div>
+
+      {/* Institutional Trading Intelligence Row — §71 Market Intelligence (§72 Data Health) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="lg:col-span-4"><MarketIntelligencePanel instrument="NIFTY" /></div>
+        <div className="lg:col-span-4"><DataHealthPanel /></div>
+        <div className="lg:col-span-4 bg-card border rounded-lg p-4">
+          <h3 className="font-bold text-sm tracking-widest uppercase mb-2">Signal & Execution</h3>
+          <p className="text-xs text-muted-foreground">TTL ≤5s for fast breakout • Atomic FSM CAS • Fail-closed • Auditable</p>
+          <p className="text-[11px] text-muted-foreground mt-2">Use institutional pipeline: POST /api/v1/institutional/pipeline/ingest</p>
+        </div>
       </div>
 
       {/* Main Chart + Right Sidebar (compact) — TradingView white */}

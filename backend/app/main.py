@@ -10,6 +10,8 @@ from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
 from app.api import benchmark as benchmark_api
 from app.api import hpi as hpi_api
+from app.api import algo as algo_api
+from app.api import institutional as institutional_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
@@ -60,9 +62,22 @@ async def lifespan(app: FastAPI):
     # Start Pattern Outcome Worker (Historical Intelligence v2)
     await pattern_outcome_worker.start()
 
+    # Start Institutional Telegram outbound queue
+    try:
+        from app.institutional.telegram import telegram_outbound_queue
+        await telegram_outbound_queue.start()
+        logger.info("telegram_queue_started")
+    except Exception as e:
+        logger.warning("telegram_queue_start_failed", error=str(e))
+
     yield
     
     # Shutdown in reverse order
+    try:
+        from app.institutional.telegram import telegram_outbound_queue
+        await telegram_outbound_queue.stop()
+    except Exception:
+        pass
     await pattern_outcome_worker.stop()
     await hpi_service.stop()
     await provider.stop_stream()
@@ -127,6 +142,8 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(benchmark_api.router)
+    app.include_router(algo_api.router)
+    app.include_router(institutional_api.router)
     
     return app
 

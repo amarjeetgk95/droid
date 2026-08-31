@@ -139,6 +139,18 @@ class Settings(BaseSettings):
     max_spread: float = 0.5
     max_slippage: float = 0.3
 
+    # Telegram — §55-63
+    telegram_bot_token: str = ""
+    telegram_bot_username: str = ""
+    telegram_secret_token: str = ""
+    telegram_rate_limit_per_second: float = 20.0
+    telegram_rate_limit_per_chat_per_second: float = 1.0
+
+    # Institutional — cross-market sync threshold
+    cross_market_sync_threshold_ms: int = 500
+    signal_ttl_ms: int = 5000
+    institutional_live_mode: bool = False  # §77 NO_MOCK — fail-closed if true and dependency missing
+
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog

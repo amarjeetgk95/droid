@@ -667,6 +667,43 @@ class ApiClient {
   async testDirectProvider(provider: string, payload: any) {
     return this.request<any>('/api/v1/ai/test', { method: 'POST', body: JSON.stringify({ provider, ...payload }) });
   }
+
+  // Institutional — Market Intelligence & Execution Platform §71-76
+  async getInstitutionalInstruments() {
+    return this.request<any>('/api/v1/institutional/instruments');
+  }
+  async getInstitutionalMI(payload: any) {
+    return this.request<any>('/api/v1/institutional/market-intelligence/evaluate', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async getInstitutionalBreakout(payload: any) {
+    return this.request<any>('/api/v1/institutional/breakout/evaluate', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async getInstitutionalHealth() {
+    return this.request<any>('/api/v1/institutional/health/data');
+  }
+  async getInstitutionalMIDashboard(instrument: string) {
+    return this.request<any>(`/api/v1/institutional/dashboard/market-intelligence?instrument_id=${encodeURIComponent(instrument)}`);
+  }
+  async getInstitutionalDataHealthDashboard() {
+    return this.request<any>('/api/v1/institutional/dashboard/data-health');
+  }
+  async institutionalPipelineIngest(event: any, mockAi?: any) {
+    const body: any = { ...event };
+    if (mockAi) body.mock_ai_response = mockAi;
+    // Actually endpoint is POST /pipeline/ingest with event body + query mock_ai_response
+    const qs = mockAi ? `?mock_ai_response=${encodeURIComponent(JSON.stringify(mockAi))}` : '';
+    // Use direct fetch to handle async; we fake via JSON body inclusion
+    return this.request<any>('/api/v1/institutional/pipeline/ingest', { method: 'POST', body: JSON.stringify(event) });
+  }
+  async institutionalIngestDirect(event: any) {
+    return this.request<any>('/api/v1/institutional/pipeline/ingest', { method: 'POST', body: JSON.stringify(event) });
+  }
+  async getInstitutionalSignal(signalId: string) {
+    return this.request<any>(`/api/v1/institutional/signals/${encodeURIComponent(signalId)}`);
+  }
+  async getInstitutionalAuditRecent(limit = 20) {
+    return this.request<any>(`/api/v1/institutional/audit/recent?limit=${limit}`);
+  }
 }
 
 export const api = new ApiClient(API_BASE);

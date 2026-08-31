@@ -1,4 +1,4 @@
-import { LayoutDashboard, TrendingUp, BarChart3, Grid3X3, Target, Search, Brain, History, FileText, Bell, Star, Settings, Coins, LineChart, Database } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, BarChart3, Grid3X3, Target, Search, Brain, History, FileText, Bell, Star, Settings, Coins, LineChart, Database, Cpu } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -12,12 +12,13 @@ export function Sidebar() {
     { href: '/futures', label: 'Futures', icon: BarChart3 },
     { href: '/options', label: 'Options', icon: Grid3X3 },
     { href: '/chart-analysis', label: 'Chart Forecast', icon: LineChart },
-    { href: '/hpi', label: 'Historical Intelligence', icon: Database },
+    { href: '/historical-intelligence', label: 'Historical Intelligence', icon: Database },
     { href: '/strategy', label: 'Strategy', icon: Target },
     { href: '/scanner', label: 'Scanner', icon: Search },
     { href: '/ai-analysis', label: 'AI Analysis', icon: Brain },
     { href: '/backtesting', label: 'Backtesting', icon: History },
     { href: '/paper-trading', label: 'Paper Trading', icon: FileText },
+    { href: '/algo-trading', label: 'Algo Trading', icon: Cpu },
     { href: '/alerts', label: 'Alerts', icon: Bell },
     { href: '/watchlist', label: 'Watchlist', icon: Star },
     { href: '/settings', label: 'Settings', icon: Settings },
@@ -25,7 +26,7 @@ export function Sidebar() {
 
   return (
     <aside className="w-64 border-r border-border bg-card flex flex-col hidden md:flex">
-      <div className="h-16 flex items-center px-4 border-b border-border">
+      <div className="h-14 flex items-center px-4 border-b border-border shrink-0">
         <h1 className="text-xl font-bold tracking-tight text-primary flex items-center gap-2">
           <span className="bg-primary text-primary-foreground p-1 rounded">D</span>
           DROID
