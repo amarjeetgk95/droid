@@ -20,28 +20,6 @@ function toBackendSymbol(symbol) {
 }
 
 /**
- * useRealCandleData — drop-in replacement for useCandleData that fetches
- * real OHLC from backend (NSE/Yahoo via provider) instead of synthetic genData.
- *
- * When `live` is true, it polls every 5s and merges the latest tick into the
- * last candle so the chart appears live even without a dedicated kline WS.
- */
-export function useRealCandleData(tf, live, { bars = 700 } = {}) {
-  const [data, setData] = useState([]);
-  const [error, setError] = useState(null);
-  const tfRef = useRef(tf);
-  const symbolRef = useRef(null);
-
-  // This hook is designed to be called from TradingChart which holds symbol via closure.
-  // Instead we expose a setter via a custom hook wrapper. For simplicity, we read symbol
-  // from a global ref set by the wrapper component.
-  // The wrapper will call useRealCandleData with symbol as an extra param via a closure.
-  // To keep API compatible, we actually expect the caller to pass symbol via `tf` hack:
-  // Instead, we create a separate hook `useRealCandleDataWithSymbol` below.
-  return data;
-}
-
-/**
  * Real hook with symbol param — use this from DashboardTradingChart wrapper.
  */
 export function useRealCandleDataWithSymbol(symbol, tf, live) {

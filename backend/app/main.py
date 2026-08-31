@@ -8,7 +8,6 @@ from app.api import settings as settings_api
 from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
-from app.api import benchmark as benchmark_api
 from app.api import hpi as hpi_api
 from app.api import algo as algo_api
 from app.api import institutional as institutional_api
@@ -142,7 +141,6 @@ def create_app() -> FastAPI:
     app.include_router(hpi_api.router)
     app.include_router(pipeline_api.router)
     app.include_router(dashboard_api.router)
-    app.include_router(benchmark_api.router)
     app.include_router(algo_api.router)
     app.include_router(institutional_api.router)
     app.include_router(institutional_mi_full_api)
