@@ -4,26 +4,11 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Activity, TrendingUp, TrendingDown, AlertTriangle, Shield, Clock, Database, BarChart3, Layers, Zap, Eye, ChevronDown, RefreshCw } from 'lucide-react';
 
 // Types mirroring backend authoritative objects
-type InstrumentId = 'NIFTY' | 'BANKNIFTY' | 'SENSEX' | 'BTCUSD' | 'CALLS_PUTS';
-const INSTRUMENTS: InstrumentId[] = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD', 'CALLS_PUTS'];
-const INSTRUMENT_LABELS: Record<InstrumentId, string> = { NIFTY: 'NIFTY', BANKNIFTY: 'BANKNIFTY', SENSEX: 'SENSEX', BTCUSD: 'BTCUSD', CALLS_PUTS: 'CALLS & PUTS' };
+type InstrumentId = 'NIFTY' | 'BANKNIFTY' | 'SENSEX' | 'BTCUSD' | 'BREAKOUT_SETUPS';
+const INSTRUMENTS: InstrumentId[] = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD', 'BREAKOUT_SETUPS'];
+const INSTRUMENT_LABELS: Record<InstrumentId, string> = { NIFTY: 'NIFTY', BANKNIFTY: 'BANKNIFTY', SENSEX: 'SENSEX', BTCUSD: 'BTCUSD', BREAKOUT_SETUPS: 'BREAKOUT SETUPS' };
 
 type SecondaryTab = 'overview' | 'price-action' | 'futures' | 'options' | 'volume' | 'levels' | 'volatility' | 'cross-market' | 'breakout' | '10-min' | 'continuation' | 'ai' | 'risk' | 'data-health' | 'audit';
-// Calls & Puts secondary
-type CallsPutsTab = 'overview' | 'live-chain' | 'positioning' | 'oi-delta' | 'flow' | 'iv-greeks' | 'expiry' | 'levels' | 'breakout' | 'ai' | 'health';
-const CALLS_PUTS_TABS: { id: CallsPutsTab; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'live-chain', label: 'Live Chain' },
-  { id: 'positioning', label: 'Positioning' },
-  { id: 'oi-delta', label: 'OI & ΔOI' },
-  { id: 'flow', label: 'Option Flow' },
-  { id: 'iv-greeks', label: 'IV / Greeks' },
-  { id: 'expiry', label: 'Expiry' },
-  { id: 'levels', label: 'Levels' },
-  { id: 'breakout', label: 'Breakout Confirmation' },
-  { id: 'ai', label: 'AI' },
-  { id: 'health', label: 'Data Health' },
-];
 
 interface FullMiResponse {
   instrument_id: string;
@@ -70,12 +55,9 @@ function Badge({ status }: { status: string }) {
 export default function MarketIntelligencePage() {
   const [selected, setSelected] = useState<InstrumentId>('NIFTY');
   const [secondary, setSecondary] = useState<SecondaryTab>('overview');
-  const [callsPutsTab, setCallsPutsTab] = useState<CallsPutsTab>('overview');
-  const [callsUnderlying, setCallsUnderlying] = useState<'NIFTY' | 'BANKNIFTY' | 'SENSEX'>('NIFTY');
-  const [callsExpiry, setCallsExpiry] = useState<string | null>(null);
-  const [callsData, setCallsData] = useState<any>(null);
-  const [callsLoading, setCallsLoading] = useState(false);
-  const [callsError, setCallsError] = useState<string | null>(null);
+  const [breakoutSignals, setBreakoutSignals] = useState<any[]>([]);
+  const [breakoutLoading, setBreakoutLoading] = useState(false);
+  const [breakoutFilter, setBreakoutFilter] = useState<'ALL' | InstrumentId>('ALL' as any);
   const [dataByInstrument, setDataByInstrument] = useState<Partial<Record<InstrumentId, FullMiResponse>>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [errorByInstrument, setErrorByInstrument] = useState<Partial<Record<InstrumentId, string>>>({});
@@ -85,7 +67,7 @@ export default function MarketIntelligencePage() {
   const cacheRef = useRef<Map<InstrumentId, FullMiResponse>>(new Map());
 
   const fetchFor = useCallback(async (iid: InstrumentId, showLoading = false) => {
-    if (iid === 'CALLS_PUTS') return; // handled separately
+    if (iid === 'BREAKOUT_SETUPS') return; // handled separately
     if (showLoading) setLoading(prev => ({ ...prev, [iid]: true }));
     try {
       const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
@@ -127,49 +109,40 @@ export default function MarketIntelligencePage() {
     }
   }, []);
 
-  const fetchCallsPuts = useCallback(async (underlying: string, expiry: string | null, showLoading = true) => {
-    if (showLoading) setCallsLoading(true);
-    setCallsError(null);
+  const fetchBreakoutSetups = useCallback(async (showLoading = true) => {
+    if (showLoading) setBreakoutLoading(true);
     try {
       const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
-      const qs = expiry ? `?expiry=${encodeURIComponent(expiry)}` : '';
-      const url = base ? `${base}/api/v1/institutional/calls-puts/${underlying}/full${qs}` : `/api/v1/institutional/calls-puts/${underlying}/full${qs}`;
+      const url = base ? `${base}/api/v1/institutional/signals/active` : `/api/v1/institutional/signals/active`;
       const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       const payload = json.data ?? json;
-      setCallsData(payload);
-      if (payload.expiries && payload.expiries.length && !expiry) {
-        // keep first expiry selected
-      }
-    } catch (e: any) {
-      setCallsError(e?.message || 'Failed to load calls & puts');
+      const signals = payload.signals || payload || [];
+      setBreakoutSignals(signals);
+    } catch {
+      // keep previous
     } finally {
-      setCallsLoading(false);
+      setBreakoutLoading(false);
     }
   }, []);
 
   // Initial + poll only selected instrument (live update without full refresh, only relevant instrument rerenders)
   useEffect(() => {
-    if (selected === 'CALLS_PUTS') {
-      fetchCallsPuts(callsUnderlying, callsExpiry, true);
-      const id = setInterval(() => fetchCallsPuts(callsUnderlying, callsExpiry, false), 7000);
+    if (selected === 'BREAKOUT_SETUPS') {
+      fetchBreakoutSetups(true);
+      const id = setInterval(() => fetchBreakoutSetups(false), 4000);
       return () => clearInterval(id);
     } else {
       fetchFor(selected, true);
       const id = setInterval(() => fetchFor(selected, false), 7000);
       return () => clearInterval(id);
     }
-  }, [selected, callsUnderlying, callsExpiry, fetchFor, fetchCallsPuts]);
-
-  // Also refetch calls & puts when underlying/expiry changes while tab active
-  useEffect(() => {
-    if (selected === 'CALLS_PUTS') fetchCallsPuts(callsUnderlying, callsExpiry, true);
-  }, [callsUnderlying, callsExpiry, selected, fetchCallsPuts]);
+  }, [selected, fetchFor, fetchBreakoutSetups]);
 
   // Pre-warm other instruments in background without blocking UI (cached)
   useEffect(() => {
-    INSTRUMENTS.filter(i => i !== selected && i !== 'CALLS_PUTS').forEach(i => {
+    INSTRUMENTS.filter(i => i !== selected && i !== 'BREAKOUT_SETUPS').forEach(i => {
       if (!cacheRef.current.has(i as InstrumentId)) fetchFor(i as InstrumentId, false);
     });
   }, [selected, fetchFor]);
@@ -200,16 +173,16 @@ export default function MarketIntelligencePage() {
           {INSTRUMENTS.map(iid => {
             const isActive = selected === iid;
             const label = INSTRUMENT_LABELS[iid];
-            const isCalls = iid === 'CALLS_PUTS';
+            const isBreakout = iid === 'BREAKOUT_SETUPS';
             return (
               <button
                 key={iid}
                 role="tab"
                 aria-selected={isActive}
-                onClick={() => { setSelected(iid); if (!isCalls) setSecondary('overview'); else setCallsPutsTab('overview'); }}
-                className={`px-3 sm:px-5 py-2.5 text-sm font-bold tracking-widest border-b-2 whitespace-nowrap transition-colors ${isActive ? 'border-primary text-foreground bg-secondary/50' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/30'} ${isCalls ? 'flex items-center gap-1.5' : ''}`}
+                onClick={() => { setSelected(iid); if (!isBreakout) setSecondary('overview'); }}
+                className={`px-3 sm:px-5 py-2.5 text-sm font-bold tracking-widest border-b-2 whitespace-nowrap transition-colors ${isActive ? 'border-primary text-foreground bg-secondary/50' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/30'} ${isBreakout ? 'flex items-center gap-1.5' : ''}`}
               >
-                {isCalls && <BarChart3 className="w-4 h-4" />}{label}
+                {isBreakout && <Zap className="w-4 h-4" />}{label}
               </button>
             );
           })}
@@ -599,184 +572,62 @@ export default function MarketIntelligencePage() {
         </div>
       )}
 
-      {/* CALLS & PUTS dedicated workspace */}
-      {selected === 'CALLS_PUTS' && (
+      {/* BREAKOUT SETUPS — populated exclusively by Market Intelligence Engine */}
+      {selected === 'BREAKOUT_SETUPS' && (
         <div className="space-y-4">
-          {callsLoading && !callsData && (
-            <div className="bg-card border rounded-lg p-8 animate-pulse space-y-3"><div className="h-6 bg-muted rounded w-40" /><div className="h-40 bg-muted rounded" /></div>
-          )}
-          {callsError && !callsData && (
-            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-6 text-sm">
-              <p className="font-semibold text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Failed to load Calls & Puts</p><p className="text-muted-foreground mt-1">{callsError}</p>
-            </div>
-          )}
-          {callsData && (
-            <div className="space-y-4">
-              {/* Underlying + Expiry selector */}
-              <div className="bg-card border rounded-lg p-3 flex flex-wrap gap-3 items-center justify-between">
-                <div className="flex gap-2 items-center">
-                  <span className="text-xs font-bold tracking-widest">Underlying:</span>
-                  {(['NIFTY','BANKNIFTY','SENSEX'] as const).map(u => (
-                    <button key={u} onClick={() => setCallsUnderlying(u)} className={`px-3 py-1 text-xs font-bold rounded border ${callsUnderlying === u ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary border-transparent'}`}>{u}</button>
+              {/* Signal Center header — explicit breakout center */}
+              <div className="bg-card border rounded-lg p-4">
+                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Zap className="w-4 h-4" /> Breakout Signals — Generated by Market Intelligence</h3>
+                <p className="text-[11px] text-muted-foreground mt-1">Market State → Breakout Developing? → Trigger → Pressure → False-Risk → 10m → Continuation → Options Confirm → AI → Risk — The Signals tab answers: <span className="font-bold text-foreground">Is there a breakout trade right now?</span></p>
+                <div className="flex gap-2 mt-3 flex-wrap">
+                  {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD'] as const).map(f => (
+                    <button key={f} onClick={() => setBreakoutFilter(f as any)} className={`px-3 py-1 text-xs font-bold rounded border ${breakoutFilter === f ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary border-transparent'}`}>{f}</button>
                   ))}
-                </div>
-                <div className="flex gap-2 items-center text-xs">
-                  <span className="font-bold">Expiry:</span>
-                  <select value={callsExpiry || callsData.expiry} onChange={e => setCallsExpiry(e.target.value)} className="bg-secondary border rounded px-2 py-1 text-xs">
-                    {(callsData.expiries || [callsData.expiry]).map((ex: string) => <option key={ex} value={ex}>{ex}</option>)}
-                  </select>
-                  <span className="text-muted-foreground">Spot {callsData.spot_formatted} • ATM {callsData.atm_strike} • {callsData.expiry}</span>
+                  <button onClick={() => fetchBreakoutSetups(true)} className="ml-auto text-xs flex items-center gap-1 px-2 py-1 border rounded hover:bg-secondary"><RefreshCw className="w-3 h-3" /> Refresh</button>
                 </div>
               </div>
 
-              {callsData.status === 'NOT_APPLICABLE' ? (
-                <div className="bg-secondary border rounded-lg p-6 text-sm text-muted-foreground">{callsData.reason}</div>
-              ) : (
-                <>
-                  {/* Calls & Puts secondary tabs */}
-                  <div className="bg-card border rounded-lg p-2 overflow-x-auto">
-                    <div className="flex gap-1 flex-wrap">
-                      {CALLS_PUTS_TABS.map(t => (
-                        <button key={t.id} onClick={() => setCallsPutsTab(t.id)} className={`px-2.5 py-1.5 text-xs font-medium rounded whitespace-nowrap border ${callsPutsTab === t.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary'}`}>{t.label}</button>
-                      ))}
+              {breakoutLoading && breakoutSignals.length === 0 && <div className="bg-card border rounded-lg p-8 animate-pulse"><div className="h-4 bg-muted rounded w-32 mb-2" /><div className="h-20 bg-muted rounded" /></div>}
+
+              {breakoutSignals.length === 0 && !breakoutLoading && <div className="bg-secondary border rounded-lg p-6 text-sm text-muted-foreground">No breakout setups right now — Market Intelligence sees NO_SETUP across all instruments. Supporting/conflicting evidence still available in instrument tabs.</div>}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {breakoutSignals.filter(s => breakoutFilter === 'ALL' || s.instrument_id === breakoutFilter).map(sig => (
+                  <div key={sig.signal_id} className={`border-2 rounded-lg p-4 space-y-2 ${sig.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : sig.status === 'TRIGGERED' ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/20' : sig.status.includes('POSSIBLE') ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/10' : sig.status === 'NO_SETUP' ? 'border-border bg-muted/30 opacity-75' : 'bg-card border-border'}`}>
+                    <div className="flex justify-between items-start">
+                      <div><div className="font-bold text-sm">{sig.display_name} <span className="font-mono text-xs text-muted-foreground">{sig.instrument_id}</span></div><div className="text-xs font-mono">{sig.price_formatted ? `Price ${sig.price_formatted}` : ''} • Session {sig.session} • {sig.data_health}</div></div>
+                      <Badge status={sig.status} />
                     </div>
+                    <div className="text-xs space-y-1">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Direction</span><span className={`font-bold ${sig.direction === 'BULLISH' ? 'text-emerald-600' : sig.direction === 'BEARISH' ? 'text-red-600' : ''}`}>{sig.direction}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Trigger Level</span><span className="font-mono font-bold">{sig.trigger_level || '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono">{sig.breakout_pressure} / 100</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">False-Breakout Risk</span><span className={`font-mono ${sig.false_breakout_risk > 60 ? 'text-red-600' : ''}`}>{sig.false_breakout_risk} / 100</span></div>
+                      <div className="border-t pt-2 mt-2 grid grid-cols-2 gap-2">
+                        <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">10-Minute</div><div className="flex justify-between text-xs mt-1"><span>{sig.short_horizon.direction}</span><Badge status={sig.short_horizon.status} /></div><div className="text-[11px] font-mono">{sig.short_horizon.confidence}% • {sig.short_horizon.entry_zone?.length ? sig.short_horizon.entry_zone.join('–') : '—'} → {sig.short_horizon.target_zone?.length ? sig.short_horizon.target_zone.join('–') : '—'}</div></div>
+                        <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">Continuation (&lt;2h)</div><div className="flex justify-between text-xs mt-1"><span>{sig.continuation.direction}</span><Badge status={sig.continuation.status} /></div><div className="text-[11px] font-mono">{sig.continuation.confidence}% • 119 min max • {sig.continuation.reason?.slice(0,30) || '—'}</div></div>
+                      </div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Options Confirmation</span><span className="font-medium text-xs">{sig.options_confirmation}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">AI Confirmation</span><span className="font-medium text-xs">{sig.ai_decision} {sig.ai_confidence}%</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Risk</span><span className={`font-bold text-xs ${sig.risk_status === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{sig.risk_status}</span></div>
+                      <div className="text-[11px] text-muted-foreground">TTL {sig.ttl_ms ? `${sig.ttl_ms/1000}s` : '—'} • Created {sig.created_at_utc ? new Date(sig.created_at_utc).toISOString().substring(11,19) + ' UTC' : '—'} • Expires {sig.expires_at_utc ? new Date(sig.expires_at_utc).toISOString().substring(11,19) + ' UTC' : '—'}</div>
+                      <div className="text-[11px]"><span className="text-emerald-600">✓ {sig.supporting?.join(' • ') || '—'}</span><br /><span className="text-amber-600">! {sig.conflicting?.join(' • ') || '—'}</span></div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('breakout'); window.scrollTo({top:0, behavior:'smooth'}); }} className="text-xs px-2 py-1 border rounded hover:bg-secondary">View in MI → {sig.instrument_id}</button>
+                      <button onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('ai'); }} className="text-xs px-2 py-1 border rounded hover:bg-secondary">AI Details</button>
+                    </div>
+                    {sig.status === 'NO_SETUP' && <p className="text-[11px] text-muted-foreground">No setup — not actionable. Check Levels/Volatility/Cross-Market for why.</p>}
+                    {sig.status === 'EXPIRED' && <p className="text-[11px] text-red-600">Signal expired — TTL exceeded before execution. Order NOT submitted.</p>}
                   </div>
-
-                  {(callsPutsTab === 'overview') && (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                      <div className="bg-card border rounded-lg p-4 space-y-2">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">Underlying & Expiry</h3>
-                        <div className="text-sm space-y-1">
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Underlying</span><span className="font-bold">{callsData.underlying}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Spot</span><span className="font-mono font-bold">{callsData.spot_formatted}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">ATM</span><span className="font-mono">{callsData.atm_strike}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Expiry</span><span className="font-mono text-xs">{callsData.expiry}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Max Pain</span><span className="font-mono">{callsData.analytics.max_pain}</span></div>
-                        </div>
-                      </div>
-                      <div className="bg-card border rounded-lg p-4 space-y-2">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">PCR & Pressure</h3>
-                        <div className="text-sm space-y-1">
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">OI PCR</span><span className="font-mono font-bold">{callsData.pcr_oi}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Volume PCR</span><span className="font-mono">{callsData.pcr_volume}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Call Pressure</span><span className="font-mono">{callsData.call_pressure}%</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Put Pressure</span><span className="font-mono">{callsData.put_pressure}%</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Call Resistance</span><span className="font-mono">{callsData.call_resistance ?? '—'}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground text-xs">Put Support</span><span className="font-mono">{callsData.put_support ?? '—'}</span></div>
-                        </div>
-                      </div>
-                      <div className="bg-card border rounded-lg p-4 space-y-2">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">Breakout Confirmation</h3>
-                        <div className={`text-sm font-bold ${callsData.breakout_confirmation.includes('BULLISH') ? 'text-emerald-600' : callsData.breakout_confirmation.includes('BEARISH') ? 'text-red-600' : ''}`}>{callsData.breakout_confirmation}</div>
-                        <p className="text-xs text-muted-foreground">Expiry health {callsData.expiry_health}/100 • {callsData.expiry_intel.recommendation} • {callsData.expiry_intel.time_to_expiry_hours}h to expiry</p>
-                        <p className="text-[11px] text-muted-foreground">IV {callsData.volatility.regime} • ATM IV {callsData.volatility.atm_iv}% • Skew {callsData.volatility.skew} • {callsData.volatility.smile}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {(callsPutsTab === 'live-chain' || callsPutsTab === 'overview') && (
-                    <div className="bg-card border rounded-lg p-3 overflow-x-auto">
-                      <h3 className="font-bold text-xs tracking-widest uppercase mb-2">Live Chain — LTP / Bid / Ask / Vol / OI / ΔOI / IV / Greeks (ATM highlighted)</h3>
-                      <table className="w-full text-xs font-mono">
-                        <thead><tr className="text-muted-foreground border-b"><th className="text-left p-1">Strike</th><th>Call LTP</th><th>Bid/Ask</th><th>Vol</th><th>OI</th><th>ΔOI</th><th>IV</th><th>Δ</th><th>Put LTP</th><th>Bid/Ask</th><th>Vol</th><th>OI</th><th>ΔOI</th><th>IV</th><th>Δ</th></tr></thead>
-                        <tbody>
-                          {callsData.chain.slice(0, 18).map((row: any) => (
-                            <tr key={row.strike} className={`border-b ${row.is_atm ? 'bg-amber-50 dark:bg-amber-950/20 font-bold' : row.call?.is_highlight || row.put?.is_highlight ? 'bg-secondary/40' : ''}`}>
-                              <td className={`p-1 ${row.is_atm ? 'text-amber-700' : ''}`}>{row.strike}{row.is_atm ? ' ATM' : ''}</td>
-                              <td className="text-right">{row.call?.ltp?.toFixed(2) ?? '—'}</td>
-                              <td className="text-right text-[11px]">{row.call ? `${row.call.bid?.toFixed(2) ?? '—'}/${row.call.ask?.toFixed(2) ?? '—'}` : '—'}</td>
-                              <td className="text-right">{row.call?.volume ?? '—'}</td>
-                              <td className="text-right">{row.call?.oi?.toLocaleString() ?? '—'}</td>
-                              <td className={`text-right ${row.call?.delta_oi > 0 ? 'text-emerald-600' : row.call?.delta_oi < 0 ? 'text-red-600' : ''}`}>{row.call?.delta_oi ?? '—'}</td>
-                              <td className="text-right">{row.call?.iv ?? '—'}</td>
-                              <td className="text-right">{row.call?.delta ?? '—'}</td>
-                              <td className="text-right">{row.put?.ltp?.toFixed(2) ?? '—'}</td>
-                              <td className="text-right text-[11px]">{row.put ? `${row.put.bid?.toFixed(2) ?? '—'}/${row.put.ask?.toFixed(2) ?? '—'}` : '—'}</td>
-                              <td className="text-right">{row.put?.volume ?? '—'}</td>
-                              <td className="text-right">{row.put?.oi?.toLocaleString() ?? '—'}</td>
-                              <td className={`text-right ${row.put?.delta_oi > 0 ? 'text-emerald-600' : row.put?.delta_oi < 0 ? 'text-red-600' : ''}`}>{row.put?.delta_oi ?? '—'}</td>
-                              <td className="text-right">{row.put?.iv ?? '—'}</td>
-                              <td className="text-right">{row.put?.delta ?? '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <p className="text-[11px] text-muted-foreground mt-2">ATM highlighted • Highest OI strikes bold • Never fabricated — missing chain shows —</p>
-                    </div>
-                  )}
-
-                  {(callsPutsTab === 'positioning' || callsPutsTab === 'oi-delta' || callsPutsTab === 'flow') && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      <div className="bg-card border rounded-lg p-4">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">Option Positioning (price+OI+volume+context)</h3>
-                        <div className="mt-2 max-h-64 overflow-auto space-y-1 text-xs font-mono">
-                          {callsData.positioning.slice(0, 12).map((p: any, i: number) => (
-                            <div key={i} className="flex justify-between border-b py-1"><span>{p.strike} {p.side}</span><span className={p.label.includes('LONG_BUILDUP') ? 'text-emerald-600' : p.label.includes('SHORT_BUILDUP') ? 'text-red-600' : 'text-muted-foreground'}>{p.label}</span><span>OI {p.oi.toLocaleString()}</span></div>
-                          ))}
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-2">Not OI alone — price change + OI change + volume + market context (§13)</p>
-                      </div>
-                      <div className="bg-card border rounded-lg p-4">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">Major Concentrations</h3>
-                        <div className="mt-2 text-xs space-y-1">
-                          <div>Highest Call OI: <span className="font-mono font-bold">{callsData.highest_call_oi.strike} ({callsData.highest_call_oi.oi.toLocaleString()})</span> → Call Resistance</div>
-                          <div>Highest Put OI: <span className="font-mono font-bold">{callsData.highest_put_oi.strike} ({callsData.highest_put_oi.oi.toLocaleString()})</span> → Put Support</div>
-                          <div className="mt-2 font-bold">Major ΔOI</div>
-                          {callsData.major_delta_oi.map((m: any) => <div key={`${m.strike}-${m.side}`} className="font-mono">{m.strike} {m.side} ΔOI {m.delta_oi > 0 ? '+' : ''}{m.delta_oi.toLocaleString()}</div>)}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {(callsPutsTab === 'iv-greeks' || callsPutsTab === 'overview') && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      <div className="bg-card border rounded-lg p-4">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">IV Surface & Skew</h3>
-                        <div className="mt-2 text-xs space-y-1">
-                          <div className="flex justify-between"><span>ATM IV</span><span className="font-mono font-bold">{callsData.volatility.atm_iv}%</span></div>
-                          <div className="flex justify-between"><span>OTM Call IV</span><span className="font-mono">{callsData.volatility.otm_call_iv ?? '—'}%</span></div>
-                          <div className="flex justify-between"><span>OTM Put IV</span><span className="font-mono">{callsData.volatility.otm_put_iv ?? '—'}%</span></div>
-                          <div className="flex justify-between"><span>Skew</span><span className="font-mono">{callsData.volatility.skew} ({callsData.volatility.smile})</span></div>
-                          <div className="flex justify-between"><span>IV Percentile</span><span className="font-mono">{callsData.volatility.iv_percentile}</span></div>
-                          <div className="flex justify-between"><span>Regime</span><span className={`font-bold ${callsData.volatility.regime === 'SHOCK' ? 'text-red-600' : ''}`}>{callsData.volatility.regime}</span></div>
-                          <p className="text-[11px] text-muted-foreground mt-2">{callsData.volatility.note}</p>
-                        </div>
-                      </div>
-                      <div className="bg-card border rounded-lg p-4">
-                        <h3 className="font-bold text-xs tracking-widest uppercase">Expiry Health</h3>
-                        <div className="mt-2 text-xs space-y-1">
-                          <div className="flex justify-between"><span>Time to expiry</span><span className="font-mono">{callsData.expiry_intel.time_to_expiry_hours}h ({callsData.expiry_intel.time_to_expiry_days}d)</span></div>
-                          <div className="flex justify-between"><span>Health Score</span><span className="font-mono font-bold">{callsData.expiry_intel.health_score}/100</span></div>
-                          <div className="flex justify-between"><span>Recommendation</span><span className="font-bold">{callsData.expiry_intel.recommendation}</span></div>
-                          <div className="flex justify-between"><span>Liquidity</span><span>{callsData.expiry_intel.liquidity} ({callsData.expiry_intel.spread_proxy} spread)</span></div>
-                          <div className="flex justify-between"><span>Gamma/Theta</span><span>{callsData.expiry_intel.gamma_sensitivity} / {callsData.expiry_intel.theta_sensitivity}</span></div>
-                          <p className="text-[11px] text-muted-foreground mt-2">10m: {callsData.expiry_intel.for_10m} • Continuation: {callsData.expiry_intel.for_continuation}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {(callsPutsTab === 'levels' || callsPutsTab === 'breakout') && (
-                    <div className="bg-card border rounded-lg p-4">
-                      <h3 className="font-bold text-xs tracking-widest uppercase">Breakout Confirmation (options-derived)</h3>
-                      <p className="text-sm mt-2 font-bold">{callsData.breakout_confirmation}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Major call resistance {callsData.call_resistance} • Put support {callsData.put_support} • PCR {callsData.pcr_oi} — these are option-derived evidence, not absolute support/resistance (§13)</p>
-                      <p className="text-[11px] text-muted-foreground mt-2">Evaluated alongside price structure / volume / VWAP / futures / cross-market (§16)</p>
-                    </div>
-                  )}
-                  {(callsPutsTab === 'health') && (
-                    <div className="bg-card border rounded-lg p-4 text-xs space-y-1">
-                      <div>Underlying {callsData.underlying} • Expiry {callsData.expiry} • Health {callsData.expiry_health}/100</div>
-                      <div>Chain rows: {callsData.chain.length} • Positioning entries: {callsData.positioning.length}</div>
-                      <div>Backend authoritative • No mock (§32) — missing shows —</div>
-                    </div>
-                  )}
-                </>
-              )}
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground text-center border-t pt-2">Populated exclusively by Market Intelligence → Breakout Engine → SignalCenter. Not a mesh — single writer, breakout calls are authoritative SignalEvents.</p>
+              <div className="bg-card border rounded-lg p-3 text-xs">
+                <span className="font-bold">CALLS & PUTS live data</span> still available via <span className="font-mono">GET /api/v1/institutional/calls-puts/NIFTY/full</span> and linked from each breakout card’s Options Confirmation. Full chain viewer at existing Options page — breakout tab shows confirming summary, not raw chain mesh.
+              </div>
             </div>
           )}
-        </div>
-      )}
     </div>
   );
 }
