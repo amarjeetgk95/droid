@@ -110,11 +110,13 @@ class FyersProvider(MarketDataProvider):
         ltp = demo["ltp"]
         prev = demo["prev"]
         if not is_open:
+            change = round(ltp - prev, 2) if prev else 0.0
+            change_pct = round((change / prev * 100) if prev else 0.0, 2)
             return NormalizedQuote(
                 symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=round(float(prev), 2), open=round(float(demo["open"]), 2), high=round(float(demo["high"]), 2), low=round(float(demo["low"]), 2),
-                previous_close=round(float(prev), 2), change=0.0, change_percent=0.0,
-                volume=0, open_interest=demo["oi"], status=DataStatus.CLOSED, provider=self.provider_name,
+                ltp=round(float(ltp), 2), open=round(float(demo["open"]), 2), high=round(float(demo["high"]), 2), low=round(float(demo["low"]), 2),
+                previous_close=round(float(prev), 2), change=change, change_percent=change_pct,
+                volume=demo["vol"], open_interest=demo["oi"], status=DataStatus.CLOSED, provider=self.provider_name,
             )
         change = round(ltp - prev, 2)
         change_pct = round((change / prev * 100) if prev else 0.0, 2)
