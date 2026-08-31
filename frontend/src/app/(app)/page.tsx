@@ -53,14 +53,19 @@ export default function DashboardPage() {
         <FIIPositioningCard />
       </div>
 
-      {/* Institutional Trading Intelligence Row — §71 Market Intelligence (§72 Data Health) */}
+      {/* Institutional Trading Intelligence Row — §71 Market Intelligence (§72 Data Health) — 4-asset universe */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-4"><MarketIntelligencePanel instrument="NIFTY" /></div>
+        <div className="lg:col-span-3"><MarketIntelligencePanel instrument="NIFTY" /></div>
+        <div className="lg:col-span-3"><MarketIntelligencePanel instrument="BANKNIFTY" /></div>
+        <div className="lg:col-span-3"><MarketIntelligencePanel instrument="SENSEX" /></div>
+        <div className="lg:col-span-3"><MarketIntelligencePanel instrument="BTCUSD" /></div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-4"><DataHealthPanel /></div>
-        <div className="lg:col-span-4 bg-card border rounded-lg p-4">
+        <div className="lg:col-span-8 bg-card border rounded-lg p-4">
           <h3 className="font-bold text-sm tracking-widest uppercase mb-2">Signal & Execution</h3>
-          <p className="text-xs text-muted-foreground">TTL ≤5s for fast breakout • Atomic FSM CAS • Fail-closed • Auditable</p>
-          <p className="text-[11px] text-muted-foreground mt-2">Use institutional pipeline: POST /api/v1/institutional/pipeline/ingest</p>
+          <p className="text-xs text-muted-foreground">TTL ≤5s for fast breakout • Atomic FSM CAS • Fail-closed • Auditable — 4 pipelines isolated: NIFTY | BANKNIFTY | SENSEX | BTCUSD (24/7)</p>
+          <p className="text-[11px] text-muted-foreground mt-2">Pipeline: POST /api/v1/institutional/pipeline/ingest — BTCUSD uses continuous CRYPTO pipeline, Indian indices use session-aware NSE pipeline</p>
         </div>
       </div>
 
