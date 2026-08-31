@@ -8,7 +8,6 @@ async def get_fno_context(symbol: str) -> dict:
     # Try to get real options/futures data via services, fallback to synthetic
     try:
         from app.services.options_service import options_service
-        from app.services.futures_service import futures_service
         from app.services.market_service import MarketService
         ms=MarketService()
         quote=await ms.get_quote(symbol)
@@ -24,22 +23,20 @@ async def get_fno_context(symbol: str) -> dict:
                 max_pain_val = mp_res.max_pain_strike if mp_res else analytics.max_pain_strike
             except Exception:
                 max_pain_val = analytics.max_pain_strike
-        # futures
-        fut = await futures_service.get_futures_overview(symbol)
-        ts=fut.term_structure if fut else None
-        near_basis = ts.contracts[0].basis if ts and ts.contracts else 0
-        near_basis_pct = ts.contracts[0].basis_percent if ts and ts.contracts else 0
-        near_oi = ts.contracts[0].open_interest if ts and ts.contracts else 0
-        near_oi_change_abs = ts.contracts[0].oi_change if ts and ts.contracts else 0
-        oi_change = ts.contracts[0].oi_change_percent if ts and ts.contracts else 0
-        near_volume = ts.contracts[0].volume if ts and ts.contracts else 0
-        near_days = ts.contracts[0].days_to_expiry if ts and ts.contracts else (analytics.time_to_expiry_days if analytics else 2)
-        near_fair_spread = ts.contracts[0].fair_value_spread if ts and ts.contracts else 0
-        total_fut_oi = fut.rollover.total_futures_oi if fut and fut.rollover else near_oi
-        rollover_pct = fut.rollover.rollover_percent if fut and fut.rollover else 0
-        rollover_avg = fut.rollover.three_month_avg_rollover if fut and fut.rollover else 72.5
-        rollover_pace = fut.rollover.rollover_pace if fut and fut.rollover else "IN_LINE"
-        rollover_cost = fut.rollover.rollover_spread if fut and fut.rollover else 0
+        # futures data unavailable (module removed)
+        near_basis = 0
+        near_basis_pct = 0
+        near_oi = 0
+        near_oi_change_abs = 0
+        oi_change = 0
+        near_volume = 0
+        near_days = analytics.time_to_expiry_days if analytics else 2
+        near_fair_spread = 0
+        total_fut_oi = near_oi
+        rollover_pct = 0
+        rollover_avg = 72.5
+        rollover_pace = "IN_LINE"
+        rollover_cost = 0
         # rollover near-expiry flag
         near_expiry_guard = near_days <= 3
 
@@ -96,8 +93,8 @@ async def get_fno_context(symbol: str) -> dict:
             "futures_volume": near_volume,
             "total_futures_oi": total_fut_oi,
             "futures_fair_spread": near_fair_spread,
-            "term_structure_curve": ts.curve_state if ts else "UNKNOWN",
-            "calendar_spread_next_near": ts.calendar_spread_next_near if ts else 0,
+            "term_structure_curve": "UNKNOWN",
+            "calendar_spread_next_near": 0,
             "rollover_percent": rollover_pct,
             "rollover_three_month_avg": rollover_avg,
             "rollover_pace": rollover_pace,
@@ -122,8 +119,8 @@ async def get_fno_context(symbol: str) -> dict:
             "atm_greeks": atm_greeks,
             "max_pain": max_pain_val,
             "distance_to_expiry_days": analytics.time_to_expiry_days if analytics else near_days,
-            "futures_positioning": fut.buildup.buildup_type if fut and fut.buildup else "UNKNOWN",
-            "buildup_strength": fut.buildup.strength if fut and fut.buildup else "UNKNOWN",
+            "futures_positioning": "UNKNOWN",
+            "buildup_strength": "UNKNOWN",
             # Data ingestion protocol §22
             "data_ingestion": {
                 "tick_level": "Unavailable",

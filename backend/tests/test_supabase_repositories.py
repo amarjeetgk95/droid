@@ -1,6 +1,5 @@
 """
 Tests for Supabase / PostgreSQL repositories:
-- AlertRepository
 - PaperTradingRepository
 - MLRepository
 - AIRepository
@@ -9,11 +8,9 @@ import pytest
 from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
-from app.repositories.alert_repository import AlertRepository
 from app.repositories.paper_repository import PaperTradingRepository
 from app.repositories.ml_repository import MLRepository
 from app.repositories.ai_repository import AIRepository
-from app.models.alert import AlertPayload
 from app.models.paper import VirtualOrder, VirtualPosition
 from app.models.ml import MLPredictionResponse, MLFeatureContribution
 from app.models.ai import AIInsightResponse
@@ -23,30 +20,6 @@ def create_mock_session():
     mock_session = AsyncMock()
     mock_session.add = MagicMock()
     return mock_session
-
-
-class TestAlertRepository:
-    """Test AlertRepository async database operations."""
-
-    @pytest.mark.asyncio
-    async def test_create_and_get_alert_rule(self):
-        mock_session = create_mock_session()
-        user_id = uuid4()
-        payload = AlertPayload(
-            name="Test NIFTY Alert",
-            symbol="NIFTY",
-            alert_type="PRICE_LEVEL",
-            condition="GREATER_THAN",
-            threshold=25500.0,
-            channel="IN_APP",
-        )
-
-        rule = await AlertRepository.create(mock_session, user_id, payload)
-        assert rule.name == "Test NIFTY Alert"
-        assert rule.symbol == "NIFTY"
-        assert rule.threshold == 25500.0
-        assert mock_session.add.called
-        assert mock_session.commit.called
 
 
 class TestPaperTradingRepository:

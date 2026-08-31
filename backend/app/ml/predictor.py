@@ -5,7 +5,6 @@ from app.models.ml import MLPredictionResponse, MLFeatureContribution
 from app.ml.feature_extractor import extract_ml_feature_vector, MLFeatures
 from app.services.regime_service import regime_service
 from app.services.options_service import options_service
-from app.services.futures_service import futures_service
 from app.services.market_service import MarketService
 from app.core.database import get_async_session_factory
 from app.repositories.ml_repository import MLRepository
@@ -32,19 +31,12 @@ class MLPredictor:
         key_levels = await regime_service.get_key_levels(underlying)
         vix_info = await regime_service.get_vix_regime()
 
-        # Options & Futures Context
+        # Options Context
         chain_data = None
         max_pain = None
-        term_structure = None
         try:
             chain_data = await options_service.get_option_chain_matrix(underlying)
             max_pain = chain_data.max_pain
-        except Exception:
-            pass
-
-        try:
-            fut_overview = await futures_service.get_futures_overview(underlying)
-            term_structure = fut_overview.term_structure
         except Exception:
             pass
 
@@ -55,7 +47,6 @@ class MLPredictor:
             key_levels=key_levels,
             options_analytics=chain_data.analytics if chain_data else None,
             max_pain=max_pain,
-            term_structure=term_structure,
         )
 
         # 3. Try real XGBoost/LightGBM ensemble first

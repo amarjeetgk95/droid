@@ -1,6 +1,6 @@
 import math
+from typing import Any
 from app.models.options import OptionsAnalytics, MaxPainResult
-from app.models.futures import FuturesOverview
 from app.models.regime import MarketRegimeOverview
 
 
@@ -56,7 +56,7 @@ Never fabricate missing ticks, candles, volume, order-book imbalance, or intrada
 def build_market_context_prompt(
     symbol: str,
     regime: MarketRegimeOverview,
-    futures: FuturesOverview,
+    futures: Any = None,
     options_analytics: OptionsAnalytics | None = None,
     max_pain: MaxPainResult | None = None,
     strikes: list | None = None,
@@ -67,7 +67,7 @@ def build_market_context_prompt(
     Greeks & IV regime pre-check, and data-ingestion quality fallback.
     Backward-compatible: `strikes` is optional; if omitted, key-strike/Greeks detail falls back to analytics totals.
     """
-    near_contract = futures.term_structure.contracts[0] if futures.term_structure.contracts else None
+    near_contract = futures.term_structure.contracts[0] if futures and futures.term_structure and futures.term_structure.contracts else None
     near_ltp = near_contract.ltp if near_contract else regime.spot_price
     near_basis = near_contract.basis if near_contract else 0.0
     near_basis_pct = near_contract.basis_percent if near_contract else 0.0
@@ -80,12 +80,12 @@ def build_market_context_prompt(
     near_fair_value = near_contract.fair_value if near_contract else near_ltp
     near_days_to_expiry = near_contract.days_to_expiry if near_contract else (options_analytics.time_to_expiry_days if options_analytics else 0.0)
     near_expiry_str = near_contract.expiry if near_contract else (options_analytics.expiry if options_analytics else "unknown")
-    calendar_spread = futures.term_structure.calendar_spread_next_near if futures.term_structure else 0.0
-    total_futures_oi = futures.rollover.total_futures_oi if futures.rollover else 0
-    rollover_pct = futures.rollover.rollover_percent if futures.rollover else 0.0
-    rollover_avg = futures.rollover.three_month_avg_rollover if futures.rollover else 72.5
-    rollover_pace = futures.rollover.rollover_pace if futures.rollover else "IN_LINE"
-    rollover_spread = futures.rollover.rollover_spread if futures.rollover else calendar_spread
+    calendar_spread = futures.term_structure.calendar_spread_next_near if futures and futures.term_structure else 0.0
+    total_futures_oi = futures.rollover.total_futures_oi if futures and futures.rollover else 0
+    rollover_pct = futures.rollover.rollover_percent if futures and futures.rollover else 0.0
+    rollover_avg = futures.rollover.three_month_avg_rollover if futures and futures.rollover else 72.5
+    rollover_pace = futures.rollover.rollover_pace if futures and futures.rollover else "IN_LINE"
+    rollover_spread = futures.rollover.rollover_spread if futures and futures.rollover else calendar_spread
 
     # Data ingestion classification (§22)
     # In this platform MockProvider delivers OHLCV (1m/5m/15m/1h) aggregated, but no raw tick/order-book.

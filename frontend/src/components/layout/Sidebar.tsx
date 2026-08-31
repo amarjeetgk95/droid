@@ -53,9 +53,7 @@ const GROUPS: NavGroup[] = [
     icon: Layers,
     defaultOpen: true,
     items: [
-      { href: '/futures', label: 'Futures' },
       { href: '/options', label: 'Options' },
-      { href: '/strategy', label: 'Strategy' },
     ],
   },
   {
@@ -64,8 +62,6 @@ const GROUPS: NavGroup[] = [
     icon: Search,
     defaultOpen: false,
     items: [
-      { href: '/scanner', label: 'Scanner' },
-      { href: '/backtesting', label: 'Backtesting' },
       { href: '/historical-intelligence', label: 'Historical Intel' },
     ],
   },
@@ -86,7 +82,6 @@ const GROUPS: NavGroup[] = [
     defaultOpen: false,
     items: [
       { href: '/watchlist', label: 'Watchlist' },
-      { href: '/alerts', label: 'Alerts' },
     ],
   },
 ];

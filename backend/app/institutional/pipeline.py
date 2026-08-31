@@ -30,6 +30,7 @@ from app.institutional.signal import create_signal, signal_fsm, check_ttl, check
 from app.institutional.decimal_types import D, normalize_price_to_tick, validate_quantity, compute_notional
 from app.institutional.portfolio_risk import institutional_portfolio_engine, PortfolioState
 from app.institutional.audit import audit_trail, AuditRecord
+from app.institutional.telegram_notifications import telegram_notification_queue
 
 logger = structlog.get_logger()
 
@@ -399,16 +400,59 @@ class InstitutionalPipeline:
             audit.risk_decision = {"result": risk_decision.result, "reason": risk_decision.reason, "checks": [{"name": c.name, "passed": c.passed, "reason": c.reason} for c in risk_decision.checks]}
             audit.portfolio_state_summary = {"gross": str(portfolio_state.total_gross_notional) if portfolio_state else "0"}
 
+            # ── §9 AI CONFIRMED event to Telegram (non-fatal) ──────────
+            try:
+                from app.institutional.telegram_notifications import SignalEvent as _SigEvent
+                await telegram_notification_queue.publish_signal_event(_SigEvent(
+                    event_type="AI_CONFIRMED",
+                    signal_id=sig.signal_id, instrument=instrument_id,
+                    candle_timeframe="5M", setup_type="BREAKOUT" if direction == "BULLISH" else "BREAKDOWN",
+                    direction=direction, status="CONFIRMED",
+                    ai_decision="CONFIRM", ai_status="CONFIRMED",
+                    ai_confidence=float(getattr(short_out, "confidence", 0) or 0),
+                ))
+            except Exception as _e:
+                logger.warning("telegram_ai_event_publish_failed", error=str(_e))
+
             if risk_decision.result == "REJECTED":
                 signal_fsm.transition(sig.signal_id, "RISK_REJECTED", now_ms=now_ms)
                 sig.risk_status = "REJECTED"
                 audit.final_state = "RISK_REJECTED"
                 audit_trail.append(audit)
+                # ── §20 RISK REJECTED notification (non-fatal, §35) ──
+                try:
+                    from app.institutional.telegram_notifications import SignalEvent as _SigEvent
+                    await telegram_notification_queue.publish_signal_event(_SigEvent(
+                        event_type="RISK_REJECTED",
+                        signal_id=sig.signal_id, instrument=instrument_id,
+                        candle_timeframe="5M", setup_type="BREAKOUT" if direction == "BULLISH" else "BREAKDOWN",
+                        direction=direction, status="RISK_REJECTED",
+                        risk_status="REJECTED", risk_reason=risk_decision.reason,
+                    ))
+                except Exception as _e:
+                    logger.warning("telegram_risk_event_publish_failed", error=str(_e))
                 return {"status": "RISK_REJECTED", "reason": risk_decision.reason, "signal": sig.to_dict(), "risk": audit.risk_decision, "audit_id": audit.audit_id}
 
             # Risk approved
             signal_fsm.transition(sig.signal_id, "RISK_APPROVED", now_ms=now_ms)
             sig.risk_status = "APPROVED"
+            # ── §20 RISK APPROVED notification (non-fatal, §35) ─────────
+            try:
+                from app.institutional.telegram_notifications import SignalEvent as _SigEvent
+                risk_checks = {c.name: ("PASS" if c.passed else "FAIL") for c in risk_decision.checks}
+                await telegram_notification_queue.publish_signal_event(_SigEvent(
+                    event_type="RISK_APPROVED",
+                    signal_id=sig.signal_id, instrument=instrument_id,
+                    candle_timeframe="5M", setup_type="BREAKOUT" if direction == "BULLISH" else "BREAKDOWN",
+                    direction=direction, status="RISK_APPROVED",
+                    risk_status="APPROVED",
+                    risk_portfolio=risk_checks.get("PORTFOLIO_RISK", "PASS"),
+                    risk_exposure="Within Limits",
+                    risk_margin=risk_checks.get("MARGIN", "PASS"),
+                    risk_correlation=risk_checks.get("CORRELATION", "PASS"),
+                ))
+            except Exception as _e:
+                logger.warning("telegram_risk_event_publish_failed", error=str(_e))
 
             # ── 15. DISTRIBUTED FSM ATOMICITY §47 ───────────────────
             ok_cas, err_cas = signal_fsm.cas_to_execution_pending(sig.signal_id, now_ms=now_ms)

@@ -11,6 +11,7 @@ import {
   AlertCircle,
   FileText,
   Palette,
+  Send,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { api } from '@/lib/api';
@@ -24,12 +25,13 @@ import { BrokerConnectionTab } from '@/components/settings/BrokerConnectionTab';
 import { QuantitativePricingTab } from '@/components/settings/QuantitativePricingTab';
 import { PaperTradingRiskTab } from '@/components/settings/PaperTradingRiskTab';
 import { PreferencesTab } from '@/components/settings/PreferencesTab';
+import { TelegramTab } from '@/components/settings/TelegramTab';
 
 // ============================================================================
 // Tab Configuration
 // ============================================================================
 
-type TabId = 'ai' | 'broker' | 'quantitative' | 'paper' | 'preferences';
+type TabId = 'ai' | 'broker' | 'quantitative' | 'paper' | 'preferences' | 'telegram';
 
 interface TabConfig {
   id: TabId;
@@ -44,6 +46,7 @@ const TABS: TabConfig[] = [
   { id: 'quantitative', label: 'Quantitative', icon: Sliders, description: 'Pricing models & cost engine' },
   { id: 'paper', label: 'Paper Trading', icon: FileText, description: 'Virtual capital & risk rules' },
   { id: 'preferences', label: 'Preferences', icon: Palette, description: 'Theme, format & backup' },
+  { id: 'telegram', label: 'Telegram', icon: Send, description: 'Signal notifications to your chat' },
 ];
 
 // ============================================================================
@@ -129,6 +132,8 @@ function SettingsPageInner() {
             errors={validationErrors}
           />
         );
+      case 'telegram':
+        return <TelegramTab />;
       default:
         return null;
     }

@@ -214,71 +214,6 @@ export interface MaxPainResult {
   payouts: number[];
 }
 
-export interface FuturesContractItem {
-  symbol: string;
-  instrument_token?: string | null;
-  expiry: string;
-  tenor: 'NEAR' | 'NEXT' | 'FAR';
-  ltp: number;
-  change: number;
-  change_percent: number;
-  open: number;
-  high: number;
-  low: number;
-  volume: number;
-  open_interest: number;
-  oi_change: number;
-  oi_change_percent: number;
-  basis: number;
-  basis_percent: number;
-  cost_of_carry_percent: number;
-  fair_value: number;
-  fair_value_spread: number;
-  days_to_expiry: number;
-}
-
-export interface TermStructureCurve {
-  underlying: string;
-  spot_price: number;
-  curve_state: 'CONTANGO' | 'BACKWARDATION' | 'FLAT';
-  contracts: FuturesContractItem[];
-  calendar_spread_next_near: number;
-  calendar_spread_far_next: number;
-}
-
-export interface OIBuildupItem {
-  symbol: string;
-  underlying: string;
-  ltp: number;
-  price_change: number;
-  price_change_percent: number;
-  open_interest: number;
-  oi_change: number;
-  oi_change_percent: number;
-  buildup_type: 'LONG_BUILDUP' | 'SHORT_BUILDUP' | 'LONG_UNWINDING' | 'SHORT_COVERING';
-  interpretation: string;
-  strength: 'STRONG' | 'MODERATE' | 'WEAK';
-}
-
-export interface RolloverMetrics {
-  underlying: string;
-  expiry: string;
-  rollover_percent: number;
-  rollover_spread: number;
-  three_month_avg_rollover: number;
-  rollover_pace: 'AHEAD' | 'IN_LINE' | 'BEHIND';
-  total_futures_oi: number;
-}
-
-export interface FuturesOverview {
-  underlying: string;
-  spot_price: number;
-  term_structure: TermStructureCurve;
-  buildup: OIBuildupItem;
-  rollover: RolloverMetrics;
-  all_tracked_buildups: OIBuildupItem[];
-}
-
 export interface TechnicalIndicators {
   rsi_14: number;
   adx_14: number;
@@ -346,74 +281,6 @@ export interface MarketRegimeOverview {
   indicators: TechnicalIndicators;
   key_levels: KeyLevelsModel;
   vix_regime: VixRegimeInfo;
-}
-
-export interface StrategyLegModel {
-  id: string;
-  option_type: 'CE' | 'PE';
-  side: 'BUY' | 'SELL';
-  strike: number;
-  quantity: number;
-  price: number;
-  iv: number;
-  expiry: string;
-  lot_size: number;
-}
-
-export interface StrategyPayload {
-  underlying: string;
-  legs: StrategyLegModel[];
-  spot_price?: number | null;
-  expiry?: string | null;
-}
-
-export interface PayoffPointModel {
-  spot_price: number;
-  expiry_pnl: number;
-  t0_pnl: number;
-}
-
-export interface StrategyPayoffResult {
-  underlying: string;
-  spot_price: number;
-  net_premium: number;
-  premium_type: 'DEBIT' | 'CREDIT';
-  max_profit?: number | null;
-  max_loss?: number | null;
-  breakevens: number[];
-  risk_reward_ratio?: number | null;
-  pop_percent: number;
-  net_delta: number;
-  net_gamma: number;
-  net_theta: number;
-  net_vega: number;
-  payoff_curve: PayoffPointModel[];
-  legs: StrategyLegModel[];
-}
-
-export interface StrategyTemplate {
-  id: string;
-  name: string;
-  category: 'DIRECTIONAL' | 'NON_DIRECTIONAL' | 'VOLATILITY' | 'ASYMMETRIC';
-  outlook: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'HIGH_VOLATILITY';
-  description: string;
-  legs_description: string[];
-}
-
-export interface ScannedStrategy {
-  id: string;
-  name: string;
-  underlying: string;
-  category: 'DIRECTIONAL' | 'NON_DIRECTIONAL' | 'VOLATILITY' | 'ASYMMETRIC';
-  outlook: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'HIGH_VOLATILITY';
-  net_premium: number;
-  premium_type: 'DEBIT' | 'CREDIT';
-  max_profit?: number | null;
-  max_loss?: number | null;
-  pop_percent: number;
-  risk_reward_ratio?: number | null;
-  breakevens: number[];
-  legs: StrategyLegModel[];
 }
 
 export interface AIInsightResponse {
@@ -585,67 +452,6 @@ export interface BacktestPayload {
   include_costs: boolean;
 }
 
-export interface BacktestTradeModel {
-  trade_id: string;
-  entry_date: string;
-  exit_date: string;
-  strategy_name: string;
-  underlying: string;
-  legs_description: string;
-  entry_price: number;
-  exit_price: number;
-  quantity: number;
-  gross_pnl: number;
-  total_charges: number;
-  net_pnl: number;
-  status: string;
-}
-
-export interface EquityPointModel {
-  timestamp: string;
-  equity: number;
-  drawdown_pct: number;
-  net_pnl: number;
-}
-
-export interface MonthlyPnlModel {
-  month_year: string;
-  net_pnl: number;
-  trades_count: number;
-  win_rate_pct: number;
-}
-
-export interface BacktestResult {
-  initial_capital: number;
-  final_equity: number;
-  total_net_pnl: number;
-  net_roi_percent: number;
-  total_trades: number;
-  winning_trades: number;
-  losing_trades: number;
-  win_rate_percent: number;
-  profit_factor: number;
-  sharpe_ratio: number;
-  sortino_ratio: number;
-  max_drawdown_amount: number;
-  max_drawdown_percent: number;
-  max_consecutive_wins: number;
-  max_consecutive_losses: number;
-  equity_curve: EquityPointModel[];
-  monthly_pnl: MonthlyPnlModel[];
-  trades: BacktestTradeModel[];
-}
-
-export interface BacktestPreset {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  default_underlying: string;
-  default_stop_loss_pct: number;
-  default_target_pct: number;
-}
-
 export interface OrderPayload {
   symbol: string;
   underlying: string;
@@ -703,52 +509,6 @@ export interface PortfolioSummary {
   total_unrealized_pnl: number;
   total_portfolio_pnl: number;
   open_positions_count: number;
-}
-
-export interface AlertPayload {
-  name: string;
-  symbol: string;
-  alert_type: 'PRICE_LEVEL' | 'PCR_THRESHOLD' | 'MAX_PAIN_SHIFT' | 'VOLATILITY_SQUEEZE' | 'SUPERTREND_FLIP' | 'OI_BUILDUP';
-  condition: 'GREATER_THAN' | 'LESS_THAN' | 'CROSSES_ABOVE' | 'CROSSES_BELOW' | 'EQUALS';
-  threshold: number;
-  channel?: 'IN_APP' | 'WEBHOOK' | 'TELEGRAM' | 'EMAIL';
-  webhook_url?: string | null;
-}
-
-export interface AlertRule {
-  id: string;
-  name: string;
-  symbol: string;
-  alert_type: 'PRICE_LEVEL' | 'PCR_THRESHOLD' | 'MAX_PAIN_SHIFT' | 'VOLATILITY_SQUEEZE' | 'SUPERTREND_FLIP' | 'OI_BUILDUP';
-  condition: 'GREATER_THAN' | 'LESS_THAN' | 'CROSSES_ABOVE' | 'CROSSES_BELOW' | 'EQUALS';
-  threshold: number;
-  channel: 'IN_APP' | 'WEBHOOK' | 'TELEGRAM' | 'EMAIL';
-  webhook_url?: string | null;
-  is_active: boolean;
-  last_triggered?: string | null;
-  created_at: string;
-}
-
-export interface AlertTriggerLog {
-  id: string;
-  alert_id: string;
-  alert_name: string;
-  symbol: string;
-  timestamp: string;
-  triggered_value: number;
-  threshold_value: number;
-  message: string;
-  channel_dispatched: string;
-}
-
-export interface SystemTelemetry {
-  status: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY';
-  uptime_seconds: number;
-  memory_usage_mb: number;
-  active_workers: Record<string, string>;
-  stream_latency_ms: number;
-  active_alert_rules_count: number;
-  total_alerts_triggered: number;
 }
 
 export interface MLFeatureContribution {
@@ -1162,3 +922,28 @@ export interface HpiAnalysis {
   note: string | null;
 }
 
+
+// ============================================================================
+// Telegram Integration
+// ============================================================================
+
+export interface TelegramPreferences {
+  events: Record<string, boolean>;
+  instruments: Record<string, boolean>;
+  timeframes: Record<string, boolean>;
+  breakout: boolean;
+  breakdown: boolean;
+}
+
+export interface TelegramAuditRecord {
+  notification_id: string;
+  signal_id: string;
+  event_type: string;
+  telegram_chat_id: string;
+  message_type: string;
+  created_at_utc: number;
+  sent_at_utc: number | null;
+  delivery_status: string;
+  attempt_count: number;
+  error: string | null;
+}

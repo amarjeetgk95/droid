@@ -5,7 +5,6 @@ from typing import Optional
 from uuid import UUID
 from app.models.ai import AIInsightResponse, AIHistoryItem
 from app.services.regime_service import regime_service
-from app.services.futures_service import futures_service
 from app.services.options_service import options_service
 from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
 from app.ai.registry import get_llm_provider, create_provider_for_test
@@ -38,10 +37,7 @@ class AIService:
         # 1. Fetch Regime & Key Levels (Phase 6)
         regime = await regime_service.classify_market_regime(underlying)
 
-        # 2. Fetch Futures & Rollover (Phase 5)
-        futures = await futures_service.get_futures_overview(underlying)
-
-        # 3. Fetch Options & Max Pain (Phase 4) — also retain strike rows for §8 detailed checklist (Key Strikes, Premiums, Greeks)
+        # 2. Fetch Options & Max Pain (Phase 4) — also retain strike rows for §8 detailed checklist (Key Strikes, Premiums, Greeks)
         options_analytics = None
         max_pain = None
         strikes = None
@@ -65,7 +61,6 @@ class AIService:
         user_prompt = build_market_context_prompt(
             symbol=underlying,
             regime=regime,
-            futures=futures,
             options_analytics=options_analytics,
             max_pain=max_pain,
             strikes=strikes,
@@ -205,7 +200,6 @@ class AIService:
         # Real providers – instantiate with supplied keys and do strict test
         underlying = symbol.upper().replace(" 50", "")
         regime = await regime_service.classify_market_regime(underlying)
-        futures = await futures_service.get_futures_overview(underlying)
         strikes = None
         try:
             chain = await options_service.get_option_chain_matrix(underlying)
@@ -222,7 +216,7 @@ class AIService:
             max_pain = None
             strikes = None
         system_prompt = build_system_prompt()
-        user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+        user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
 
         # Special handling for Ollama when base_url is localhost – backend on Render cannot reach user's laptop.
         # We still try, but will return a clear error indicating frontend must test Ollama directly.

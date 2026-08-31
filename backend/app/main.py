@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, futures, regime, strategy, ai, historical, backtest, paper, alerts, ml, fii_dii, crypto, instruments, chart_analysis
+from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, historical, paper, ml, fii_dii, crypto, instruments, chart_analysis
 from app.api import settings as settings_api
 from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
@@ -11,6 +11,7 @@ from app.api import dashboard as dashboard_api
 from app.api import hpi as hpi_api
 from app.api import algo as algo_api
 from app.api import institutional as institutional_api
+from app.api import telegram as telegram_api
 from app.api.institutional_mi_full import router_full as institutional_mi_full_api
 from app.api.institutional_signals import router_signals as institutional_signals_api
 from app.services.central_feed import central_feed
@@ -63,20 +64,35 @@ async def lifespan(app: FastAPI):
     # Start Pattern Outcome Worker (Historical Intelligence v2)
     await pattern_outcome_worker.start()
 
-    # Start Institutional Telegram outbound queue
+    # Start Institutional Telegram outbound queue (central rate-limited sender)
     try:
-        from app.institutional.telegram import telegram_outbound_queue
+        from app.institutional.telegram import telegram_outbound_queue, telegram_update_queue
         await telegram_outbound_queue.start()
+        await telegram_update_queue.start()
         logger.info("telegram_queue_started")
     except Exception as e:
         logger.warning("telegram_queue_start_failed", error=str(e))
+
+    # Start Telegram notification queue (signal events → notifications)
+    try:
+        from app.institutional.telegram_notifications import telegram_notification_queue
+        await telegram_notification_queue.start()
+        logger.info("telegram_notification_queue_started")
+    except Exception as e:
+        logger.warning("telegram_notification_queue_start_failed", error=str(e))
 
     yield
     
     # Shutdown in reverse order
     try:
-        from app.institutional.telegram import telegram_outbound_queue
+        from app.institutional.telegram import telegram_outbound_queue, telegram_update_queue
+        await telegram_update_queue.stop()
         await telegram_outbound_queue.stop()
+    except Exception:
+        pass
+    try:
+        from app.institutional.telegram_notifications import telegram_notification_queue
+        await telegram_notification_queue.stop()
     except Exception:
         pass
     await pattern_outcome_worker.stop()
@@ -123,15 +139,11 @@ def create_app() -> FastAPI:
     app.include_router(circuit_breaker.router)
     app.include_router(timeseries.router)
     app.include_router(options.router)
-    app.include_router(futures.router)
     app.include_router(regime.router)
-    app.include_router(strategy.router)
     app.include_router(ai.router)
     app.include_router(ai.compat_router)
     app.include_router(historical.router)
-    app.include_router(backtest.router)
     app.include_router(paper.router)
-    app.include_router(alerts.router)
     app.include_router(ml.router)
     app.include_router(fii_dii.router)
     app.include_router(crypto.router)
@@ -146,6 +158,7 @@ def create_app() -> FastAPI:
     app.include_router(institutional_signals_api)
     app.include_router(institutional_api.router)
     app.include_router(institutional_mi_full_api)
+    app.include_router(telegram_api.router)
     
     return app
 

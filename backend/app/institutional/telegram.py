@@ -77,10 +77,13 @@ telegram_rate_limiter = TelegramRateLimiter()
 class TelegramOutbound:
     chat_id: str
     text: str
-    parse_mode: str = "Markdown"
+    parse_mode: str = "Markdown"  # empty string → send as plain text
     reply_markup: dict | None = None
     attempt: int = 0
     created_at: float = field(default_factory=time.time)
+    # Optional delivery callback — used by the notification queue to track
+    # SENT / FAILED status (§32). Never blocks the central send loop.
+    on_complete: Any = None  # async callable(success: bool, error: str | None)
 
 
 class TelegramOutboundQueue:
@@ -123,6 +126,8 @@ class TelegramOutboundQueue:
                 continue
             try:
                 await self._send_via_httpx(msg)
+                if msg.on_complete is not None:
+                    await msg.on_complete(True, None)
             except Exception as e:
                 # Handle 429 if returned
                 if "429" in str(e):
@@ -130,8 +135,12 @@ class TelegramOutboundQueue:
                     msg.attempt += 1
                     if msg.attempt < 3:
                         await self._q.put(msg)
+                    elif msg.on_complete is not None:
+                        await msg.on_complete(False, str(e))
                 else:
                     logger.error("telegram_send_error", error=str(e), chat_id=msg.chat_id)
+                    if msg.on_complete is not None:
+                        await msg.on_complete(False, str(e))
 
     async def _send_via_httpx(self, msg: TelegramOutbound) -> None:
         """
@@ -155,8 +164,11 @@ class TelegramOutboundQueue:
             logger.info("telegram_send_no_token_mock", chat_id=msg.chat_id, text=msg.text[:100])
             return
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": msg.chat_id, "text": msg.text, "parse_mode": msg.parse_mode}
-        if msg.reply_markup: payload["reply_markup"] = msg.reply_markup
+        payload: dict[str, Any] = {"chat_id": msg.chat_id, "text": msg.text}
+        if msg.parse_mode:
+            payload["parse_mode"] = msg.parse_mode
+        if msg.reply_markup:
+            payload["reply_markup"] = msg.reply_markup
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 429:
@@ -254,6 +266,18 @@ class TelegramLinkManager:
         b = self._bindings.pop(user_id, None)
         if b: self._by_chat.pop(b["telegram_chat_id"], None)
 
+    def all_bindings(self) -> dict[str, dict]:
+        """Snapshot of all active bindings — used by the notification fan-out (§28)."""
+        return {
+            uid: b for uid, b in self._bindings.items() if b.get("status") == "ACTIVE"
+        }
+
+    def chat_for_user(self, user_id: str) -> str | None:
+        b = self._bindings.get(user_id)
+        if b and b.get("status") == "ACTIVE":
+            return b.get("telegram_chat_id")
+        return None
+
     def check_command_permission(self, telegram_chat_id: str, command: str) -> bool:
         ok, uid = self.is_authorized(telegram_chat_id)
         if not ok: return False
@@ -307,3 +331,143 @@ def format_live_order_alert(instrument: str, direction: str, entry: str, quantit
         f"Quantity: {quantity}\n"
         f"Stop: {stop}"
     )
+
+
+# ── setWebhook management (§6) ───────────────────────────────────────
+async def set_telegram_webhook(webhook_url: str) -> dict:
+    """
+    Configure Telegram's webhook with the secret token (§6).
+    Returns Telegram API response. Never returns the bot token.
+    """
+    import httpx  # local import — async HTTP only (§26)
+    from app.core.config import settings
+    token = settings.telegram_bot_token or ""
+    if not token:
+        return {"ok": False, "description": "TELEGRAM_BOT_TOKEN not configured"}
+    secret = webhook_secret()
+    params: dict[str, Any] = {"url": webhook_url}
+    if secret:
+        params["secret_token"] = secret
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        resp = await client.post(f"https://api.telegram.org/bot{token}/setWebhook", json=params)
+        data = resp.json()
+        # Never echo the token back
+        return {"ok": bool(data.get("ok")), "description": data.get("description", "")}
+
+
+def webhook_secret() -> str:
+    """Effective webhook secret — supports TELEGRAM_WEBHOOK_SECRET and legacy TELEGRAM_SECRET_TOKEN."""
+    from app.core.config import settings
+    return (
+        getattr(settings, "telegram_webhook_secret", "")
+        or settings.telegram_secret_token
+        or ""
+    )
+
+
+# ── Webhook update worker (§5/§7/§8) ────────────────────────────────
+class TelegramUpdateQueue:
+    """
+    Webhook only: receive → authenticate → validate → deduplicate → enqueue → 200.
+    This worker performs the actual (fast, non-trading) update handling:
+    /start <token> account linking and read-only command replies (§27).
+    AI requests, broker calls and heavy analysis are never executed here.
+    """
+    def __init__(self) -> None:
+        self._q: asyncio.Queue[dict] = asyncio.Queue()
+        self._worker_task: asyncio.Task | None = None
+        self._running = False
+
+    async def enqueue(self, update: dict) -> None:
+        await self._q.put(update)
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._worker_task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._worker_task:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _loop(self) -> None:
+        while self._running:
+            try:
+                update = await asyncio.wait_for(self._q.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+            try:
+                await self._handle(update)
+            except Exception as e:
+                logger.error("telegram_update_worker_error", error=str(e))
+
+    async def _handle(self, update: dict) -> None:
+        message = update.get("message") or update.get("edited_message") or {}
+        chat_id = str((message.get("chat") or {}).get("id", ""))
+        text = (message.get("text") or "").strip()
+        if not chat_id or not text.startswith("/"):
+            return
+        from app.institutional.telegram_templates import (
+            format_link_success, format_link_failure, format_status_reply,
+        )
+        from app.core.config import settings
+        bot_username = settings.telegram_bot_username or "your_bot"
+        environment = settings.app_env
+
+        parts = text.split(maxsplit=1)
+        command = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        # ── /start <token> — account linking (§5) ────────────────────
+        if command == "/start" and arg:
+            ok, info = telegram_link_manager.verify_and_bind(arg, chat_id)
+            if ok:
+                reply = format_link_success(bot_username)
+                logger.info("telegram_account_linked", chat_id=chat_id)
+            else:
+                reply = format_link_failure(info)
+            await telegram_outbound_queue.enqueue(TelegramOutbound(chat_id=chat_id, text=reply, parse_mode=""))
+            return
+        if command == "/start":
+            await telegram_outbound_queue.enqueue(TelegramOutbound(
+                chat_id=chat_id, text=format_link_failure("no link token provided"), parse_mode=""))
+            return
+
+        # ── §37 — every other command requires a linked, authorized chat ──
+        authorized, user_id = telegram_link_manager.is_authorized(chat_id)
+        if not authorized:
+            await telegram_outbound_queue.enqueue(TelegramOutbound(
+                chat_id=chat_id,
+                text=format_link_failure("this chat is not linked to a web-app account"),
+                parse_mode=""))
+            return
+        if not telegram_link_manager.check_command_permission(chat_id, command):
+            await telegram_outbound_queue.enqueue(TelegramOutbound(
+                chat_id=chat_id, text="⛔ Not authorized for this command.", parse_mode=""))
+            return
+
+        # ── Read-only commands (§27) ─────────────────────────────────
+        replies: dict[str, str] = {
+            "/status": format_status_reply(True, bot_username, environment),
+            "/market": "📈 MARKET\n\nOpen the web dashboard for live market intelligence.",
+            "/signal": "🎯 SIGNALS\n\nOpen the web dashboard → BREAKOUT SETUPS for the authoritative 1M/5M signals.",
+            "/positions": "📋 POSITIONS\n\nOpen the web dashboard for live positions.",
+            "/pnl": "💰 P&L\n\nOpen the web dashboard for live P&L.",
+            "/risk": "🛡 RISK\n\nOpen the web dashboard for live risk status.",
+            "/alerts": "🔔 ALERTS\n\nYou will receive 1M/5M breakout, AI, risk, execution and result alerts here.",
+            "/settings": "⚙ SETTINGS\n\nManage notification preferences in the web app → Settings → Telegram.",
+        }
+        reply = replies.get(command)
+        if reply:
+            await telegram_outbound_queue.enqueue(TelegramOutbound(chat_id=chat_id, text=reply, parse_mode=""))
+
+
+telegram_update_queue = TelegramUpdateQueue()

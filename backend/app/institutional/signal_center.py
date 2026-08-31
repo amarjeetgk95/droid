@@ -230,6 +230,48 @@ class SignalCenterService:
         except Exception:
             pass
 
+        # ── §9/§10 Publish SIGNAL EVENT to Telegram (after signal creation) ──
+        # The signal is authoritative here; Telegram is downstream and failures
+        # must never affect the Signal Engine (§35).
+        try:
+            from app.institutional.telegram_notifications import (
+                SignalEvent, should_publish_instrument_event,
+            )
+            event_type_map = {
+                "TRIGGERED": "SIGNAL_TRIGGERED",
+                "CONFIRMED": "SIGNAL_CONFIRMED",
+                "POSSIBLE_BREAKOUT": "POSSIBLE_SETUP",
+                "POSSIBLE_BREAKDOWN": "POSSIBLE_SETUP",
+                "EXPIRED": "SIGNAL_EXPIRED",
+                "INVALIDATED": "SIGNAL_INVALIDATED",
+            }
+            ev_type = event_type_map.get(status)
+            if ev_type and should_publish_instrument_event(iid, ev_type, min_interval_s=60.0):
+                horizon_min = getattr(short_out, "horizon_minutes", None) or 10
+                candle_tf = "1M" if int(horizon_min) <= 2 else "5M"
+                setup_type = "BREAKDOWN" if direction == "BEARISH" else "BREAKOUT"
+                tz = getattr(short_out, "target_zone", None) or {}
+                ev = SignalEvent(
+                    event_type=ev_type,
+                    signal_id=signal.signal_id,
+                    instrument=iid,
+                    candle_timeframe=candle_tf,
+                    setup_type=setup_type,
+                    direction=direction,
+                    status=status,
+                    trigger_level=float(breakout_level) if breakout_level is not None else None,
+                    current_price=float(spot) if spot is not None else None,
+                    stop_loss=float(short_out.stop_loss) if getattr(short_out, "stop_loss", None) else None,
+                    confidence=float(short_out.confidence) if getattr(short_out, "confidence", None) else None,
+                    breakout_pressure=breakout_pressure,
+                    false_breakout_risk=float(false_risk) if false_risk is not None else None,
+                    options_status="SUPPORTIVE" if "CONFIRMING" in (options_confirm or "") else (options_confirm or None),
+                    ai_status=(signal.ai or {}).get("status"),
+                )
+                await telegram_notification_queue.publish_signal_event(ev)
+        except Exception as e:  # §35 — Telegram failure is never a trading failure
+            logger.warning("signal_event_publish_failed", error=str(e))
+
         return {
             "signal_id": signal.signal_id,
             "instrument_id": iid,

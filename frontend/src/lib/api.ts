@@ -184,23 +184,6 @@ class ApiClient {
     return this.request<{ data: import('./types').MaxPainResult; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/options/${encodeURIComponent(symbol)}/max-pain${query}`);
   }
 
-  // Futures & Rollover Analytics (Phase 5)
-  async getFuturesOverview(symbol: string) {
-    return this.request<{ data: import('./types').FuturesOverview; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/futures/${encodeURIComponent(symbol)}/overview`);
-  }
-
-  async getFuturesTermStructure(symbol: string) {
-    return this.request<{ data: import('./types').TermStructureCurve; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/futures/${encodeURIComponent(symbol)}/term-structure`);
-  }
-
-  async getFuturesBuildup(symbol: string) {
-    return this.request<{ data: import('./types').OIBuildupItem; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/futures/${encodeURIComponent(symbol)}/buildup`);
-  }
-
-  async getFuturesRollover(symbol: string) {
-    return this.request<{ data: import('./types').RolloverMetrics; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/futures/${encodeURIComponent(symbol)}/rollover`);
-  }
-
   // Market Regime & Technical Analytics (Phase 6)
   async getRegimeOverview(symbol: string) {
     return this.request<{ data: import('./types').MarketRegimeOverview; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/regime/${encodeURIComponent(symbol)}/overview`);
@@ -216,31 +199,6 @@ class ApiClient {
 
   async getVixRegime() {
     return this.request<{ data: import('./types').VixRegimeInfo; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/regime/vix-status');
-  }
-
-  // Strategy Engine & Scanner (Phase 7)
-  async calculateStrategyPayoff(payload: import('./types').StrategyPayload) {
-    return this.request<{ data: import('./types').StrategyPayoffResult; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/strategy/payoff', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async getStrategyTemplates() {
-    return this.request<{ data: import('./types').StrategyTemplate[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/strategy/templates');
-  }
-
-  async buildStrategyTemplate(templateId: string, symbol: string = 'NIFTY') {
-    return this.request<{ data: import('./types').StrategyPayoffResult; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/strategy/build-template?template_id=${templateId}&symbol=${encodeURIComponent(symbol)}`, {
-      method: 'POST',
-    });
-  }
-
-  async scanMarketStrategies(outlook?: string, minPop: number = 35.0) {
-    const query = new URLSearchParams();
-    if (outlook) query.set('outlook', outlook);
-    query.set('min_pop', minPop.toString());
-    return this.request<{ data: import('./types').ScannedStrategy[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/strategy/scanner?${query.toString()}`);
   }
 
   // AI Market Analyst & Structured Insights (Phase 8) — Settings-driven (no hardcode)
@@ -358,22 +316,6 @@ class ApiClient {
     });
   }
 
-  // Quantitative Backtesting Engine (Phase 10)
-  async runBacktest(payload: import('./types').BacktestPayload) {
-    return this.request<{ data: import('./types').BacktestResult; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/backtest/run', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async getBacktestPresets() {
-    return this.request<{ data: import('./types').BacktestPreset[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/backtest/presets');
-  }
-
-  async getBacktestHistory() {
-    return this.request<{ data: import('./types').BacktestResult[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/backtest/history');
-  }
-
   // Paper Trading & Virtual Execution (Phase 11)
   async getPaperPortfolio() {
     return this.request<{ data: import('./types').PortfolioSummary; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/paper/portfolio');
@@ -417,44 +359,6 @@ class ApiClient {
     return this.request<{ data: import('./types').PortfolioSummary; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/paper/reset', {
       method: 'POST',
     });
-  }
-
-  // Real-Time Alerting Engine & System Telemetry (Phase 12)
-  async listAlerts() {
-    return this.request<{ data: import('./types').AlertRule[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/alerts');
-  }
-
-  async createAlert(payload: import('./types').AlertPayload) {
-    return this.request<{ data: import('./types').AlertRule; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/alerts', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async deleteAlert(alertId: string) {
-    return this.request<{ data: { alert_id: string; deleted: boolean }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/alerts/${encodeURIComponent(alertId)}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async toggleAlert(alertId: string) {
-    return this.request<{ data: import('./types').AlertRule; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/alerts/${encodeURIComponent(alertId)}/toggle`, {
-      method: 'POST',
-    });
-  }
-
-  async evaluateAlerts() {
-    return this.request<{ data: import('./types').AlertTriggerLog[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/alerts/evaluate', {
-      method: 'POST',
-    });
-  }
-
-  async getAlertHistory() {
-    return this.request<{ data: import('./types').AlertTriggerLog[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/alerts/history');
-  }
-
-  async getTelemetry() {
-    return this.request<{ data: import('./types').SystemTelemetry; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/alerts/telemetry');
   }
 
   // ML Prediction Engine
@@ -525,6 +429,55 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(settings),
     });
+  }
+
+  // ============================================================================
+  // Telegram Integration
+  // ============================================================================
+
+  async getTelegramStatus() {
+    return this.request<{
+      bot_configured: boolean;
+      bot_username: string | null;
+      webhook_configured: boolean;
+      binding: { linked: boolean; telegram_chat_id: string | null; linked_at: number | null; status: string };
+      environment: string;
+      queue_stats: Record<string, unknown>;
+    }>('/api/v1/telegram/status');
+  }
+
+  async generateTelegramLink() {
+    return this.request<{ url: string; ttl_seconds: number; bot_username: string }>(
+      '/api/v1/telegram/link/generate',
+      { method: 'POST' },
+    );
+  }
+
+  async revokeTelegramLink() {
+    return this.request<{ status: string }>('/api/v1/telegram/link/revoke', { method: 'POST' });
+  }
+
+  async getTelegramPreferences() {
+    return this.request<import('./types').TelegramPreferences>('/api/v1/telegram/preferences');
+  }
+
+  async updateTelegramPreferences(prefs: import('./types').TelegramPreferences) {
+    return this.request<import('./types').TelegramPreferences>('/api/v1/telegram/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(prefs),
+    });
+  }
+
+  async sendTelegramTestMessage() {
+    return this.request<{ status: string; notification_id: string }>('/api/v1/telegram/test', {
+      method: 'POST',
+    });
+  }
+
+  async getTelegramAudit(limit = 50) {
+    return this.request<{ records: Record<string, unknown>[] }>(
+      `/api/v1/telegram/audit?limit=${limit}`,
+    );
   }
 
   // Chart Forecast & Multi-Timeframe

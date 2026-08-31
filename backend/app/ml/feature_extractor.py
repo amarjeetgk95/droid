@@ -1,8 +1,7 @@
 import math
-from typing import NamedTuple
+from typing import NamedTuple, Any
 from app.models.regime import TechnicalIndicators, KeyLevelsModel
 from app.models.options import OptionsAnalytics, MaxPainResult
-from app.models.futures import TermStructureCurve
 
 
 class MLFeatures(NamedTuple):
@@ -24,7 +23,7 @@ def extract_ml_feature_vector(
     key_levels: KeyLevelsModel | None,
     options_analytics: OptionsAnalytics | None,
     max_pain: MaxPainResult | None,
-    term_structure: TermStructureCurve | None,
+    term_structure: Any | None = None,
 ) -> MLFeatures:
     """Extract normalized feature vector for quantitative ML prediction."""
     # 1. RSI Normalization (-1 to +1)

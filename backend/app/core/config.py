@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # Server
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
+    backend_public_url: str = ""  # public base URL used for Telegram setWebhook
     frontend_url: str = "https://fo-droid.web.app"
     
     # Auth
@@ -142,7 +143,8 @@ class Settings(BaseSettings):
     # Telegram — §55-63
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
-    telegram_secret_token: str = ""
+    telegram_secret_token: str = ""          # legacy name — prefer TELEGRAM_WEBHOOK_SECRET
+    telegram_webhook_secret: str = ""        # §6 X-Telegram-Bot-Api-Secret-Token
     telegram_rate_limit_per_second: float = 20.0
     telegram_rate_limit_per_chat_per_second: float = 1.0
 

@@ -316,11 +316,9 @@ async def analyze_with_model(
                 from app.ai.gemini import GeminiProvider
                 from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
                 from app.services.regime_service import regime_service
-                from app.services.futures_service import futures_service
                 from app.services.options_service import options_service
                 # Build prompts and call directly with keyed provider to respect Settings
                 regime = await regime_service.classify_market_regime(symbol)
-                futures = await futures_service.get_futures_overview(symbol)
                 try:
                     chain = await options_service.get_option_chain_matrix(symbol)
                     options_analytics = chain.analytics
@@ -342,10 +340,8 @@ async def analyze_with_model(
                 from app.ai.ollama import OllamaProvider
                 from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
                 from app.services.regime_service import regime_service
-                from app.services.futures_service import futures_service
                 from app.services.options_service import options_service
                 regime = await regime_service.classify_market_regime(symbol)
-                futures = await futures_service.get_futures_overview(symbol)
                 try:
                     chain = await options_service.get_option_chain_matrix(symbol)
                     options_analytics = chain.analytics
@@ -361,7 +357,7 @@ async def analyze_with_model(
                     max_pain = None
                     strikes = None
                 system_prompt = build_system_prompt()
-                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
                 insight = await OllamaProvider(base_url=payload.ollamaBaseUrl, model=payload.ollamaModel or "deepseek-r1:8b").generate_analysis(symbol, system_prompt, user_prompt)
             else:
                 insight = await ai_service.generate_market_analysis(symbol, provider_name=provider.lower())

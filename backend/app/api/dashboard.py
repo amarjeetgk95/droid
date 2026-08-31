@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query
 from app.models.market import ApiMeta, DataStatus
 from app.services.central_feed import central_feed
 from app.services.regime_service import regime_service
-from app.services.futures_service import futures_service
+from app.services.regime_service import regime_service
 from app.services.options_service import options_service
 from app.prediction.predictor import forecast_for_timeframe
 from app.prediction.features import build_features
@@ -81,12 +81,7 @@ async def get_dashboard(symbol: str):
         prob_up, prob_down = 0.52, 0.48
 
     # Futures/options quick
-    try:
-        futures = await futures_service.get_futures_overview(sym)
-        fno_available = True
-    except Exception:
-        futures = None
-        fno_available = False
+    fno_available = False
 
     # Paper positions for execution
     try:
@@ -112,7 +107,7 @@ async def get_dashboard(symbol: str):
             "market": {"symbol": sym, "current_price": current_price, "regime": regime_val, "atr": atr_val, "vwap": vwap},
             "mtf": mtf_placeholder,
             "quantitative": {"prob_up": prob_up, "prob_down": prob_down, "p10": p10, "p50": p50, "p90": p90},
-            "fno": {"available": fno_available, "futures": futures.model_dump(mode="json") if futures and hasattr(futures, "model_dump") else None},
+            "fno": {"available": fno_available, "futures": None},
             "risk": {
                 "buy_target": pricing_buy.target if pricing_buy else None,
                 "buy_invalidation": pricing_buy.invalidation if pricing_buy else None,
