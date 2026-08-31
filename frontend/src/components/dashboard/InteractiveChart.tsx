@@ -12,29 +12,44 @@ export function InteractiveChart() {
 
   const { candles, loading, error } = useCandles(symbol, timeframe);
 
+  // Create chart once container is mounted (after loading finishes).
+  // Previously chart was created while loading=true when container was not in DOM,
+  // so chartRef stayed null and the data effect never rendered — chart appeared blank.
   useEffect(() => {
+    if (loading || error) return;
     if (!chartContainerRef.current) return;
+    if (chartRef.current) return; // already created
+
+    const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
     const chart = createChart(chartContainerRef.current, {
-      layout: { background: { color: '#ffffff' }, textColor: '#71717a' },
-      grid: { vertLines: { color: '#f1f5f9' }, horzLines: { color: '#f1f5f9' } },
+      layout: { background: { color: isDark ? '#09090b' : '#ffffff' }, textColor: isDark ? '#a1a1aa' : '#71717a' },
+      grid: { vertLines: { color: isDark ? '#27272a' : '#f1f5f9' }, horzLines: { color: isDark ? '#27272a' : '#f1f5f9' } },
       width: chartContainerRef.current.clientWidth,
       height: 400,
       timeScale: { timeVisible: true, secondsVisible: false },
     });
     chartRef.current = chart;
 
+    const ro = new ResizeObserver(() => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    });
+    ro.observe(chartContainerRef.current);
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
       }
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      ro.disconnect();
       chart.remove();
+      chartRef.current = null;
     };
-  }, []);
+  }, [loading, error]);
 
   useEffect(() => {
     if (!chartRef.current || !candles.length) return;
@@ -49,14 +64,24 @@ export function InteractiveChart() {
       wickDownColor: '#ef4444',
     });
 
-    const candleData = candles.map(c => ({
-      time: Math.floor(new Date(c.timestamp).getTime() / 1000) as UTCTimestamp,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-    candlestickSeries.setData(candleData);
+    const candleData = candles
+      .map(c => ({
+        time: Math.floor(new Date(c.timestamp).getTime() / 1000) as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }))
+      .sort((a, b) => (a.time as number) - (b.time as number));
+    // De-duplicate timestamps (lightweight-charts requires strictly increasing time)
+    const seen = new Set<number>();
+    const deduped = candleData.filter(d => {
+      const t = d.time as number;
+      if (seen.has(t)) return false;
+      seen.add(t);
+      return true;
+    });
+    candlestickSeries.setData(deduped);
 
     // VWAP Line Series (blue)
     const vwapData = candles
@@ -119,13 +144,20 @@ export function InteractiveChart() {
         </div>
       </div>
       
-      {loading ? (
-        <div className="h-[400px] flex items-center justify-center text-muted-foreground animate-pulse">Loading chart data...</div>
-      ) : error ? (
-        <div className="h-[400px] flex items-center justify-center text-destructive">{error}</div>
-      ) : (
+      {/* Chart container is always mounted so createChart can measure width.
+          Loading/error overlays are positioned on top. */}
+      <div className="relative w-full h-[400px]">
         <div ref={chartContainerRef} className="w-full h-[400px]" />
-      )}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-card/80 text-muted-foreground animate-pulse text-sm">Loading chart data...</div>
+        )}
+        {error && !loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-card/80 text-destructive text-sm">{error}</div>
+        )}
+        {!loading && !error && candles.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center bg-card/80 text-muted-foreground text-sm">No candle data</div>
+        )}
+      </div>
     </div>
   );
 }

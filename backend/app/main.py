@@ -11,6 +11,7 @@ from app.api import dashboard as dashboard_api
 from app.api import benchmark as benchmark_api
 from app.api import hpi as hpi_api
 from app.services.central_feed import central_feed
+from app.services.synthetic_feed import synthetic_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
 from app.services.pattern_outcome_worker import pattern_outcome_worker
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
     await central_feed.start()
     provider = get_provider()
     await provider.start_stream()
+    # Synthetic tick feed restores realtime updates in DEMO mode (lost when mock was removed)
+    await synthetic_feed.start()
 
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()
@@ -65,6 +68,7 @@ async def lifespan(app: FastAPI):
     # Shutdown in reverse order
     await pattern_outcome_worker.stop()
     await hpi_service.stop()
+    await synthetic_feed.stop()
     await provider.stop_stream()
     await central_feed.stop()
     await snapshot_service.stop()
