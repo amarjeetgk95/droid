@@ -198,14 +198,16 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
 
     now=datetime.now(timezone.utc)
     data_timestamp=now.isoformat()
-    # data freshness: LIVE if provider recently updated, else STALE - for mock treat as LIVE
-    market_status="OPEN"
-    try:
-        status=await router.service.get_market_status()
-        # status may have session field
-        market_status=getattr(status, "session", "OPEN") or "OPEN"
-    except Exception:
-        pass
+    # market_status: crypto trades 24/7 — always OPEN (fixes "crypto show closed")
+    # Indian indices respect NSE hours via provider's market_status
+    if cfg.asset_class == "CRYPTO":
+        market_status = "OPEN"
+    else:
+        try:
+            status=await router.service.get_market_status()
+            market_status=getattr(status, "session", "OPEN") or "OPEN"
+        except Exception:
+            market_status="OPEN"
 
     unavailable_tfs: list[str] = []
     for tf in tfs:

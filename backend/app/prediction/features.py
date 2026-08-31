@@ -48,17 +48,30 @@ def build_features(candles: list[dict], technical: dict, fno: dict, instrument_m
     swing_low = technical.get("price_action",{}).get("swing_low", price)
     dist_support = (price - technical.get("support_resistance",{}).get("support", swing_low))
     dist_resistance = (technical.get("support_resistance",{}).get("resistance", swing_high) - price)
-    # F&O
+    # F&O — handle None gracefully (crypto or closed market may have available=True but walls None)
     if fno.get("available"):
-        futures_oi_change = fno.get("futures_oi_change",0)
-        basis = fno.get("basis",0)
-        pcr = fno.get("pcr",1.0)
-        call_wall = fno.get("call_wall", price)
-        put_wall = fno.get("put_wall", price)
-        atm_iv = fno.get("atm_iv", 15)
-        iv_change = 0  # placeholder
-        call_wall_dist = (call_wall - price)/price if price!=0 else 0
-        put_wall_dist = (price - put_wall)/price if price!=0 else 0
+        futures_oi_change = fno.get("futures_oi_change") if fno.get("futures_oi_change") is not None else 0
+        basis = fno.get("basis") if fno.get("basis") is not None else 0
+        pcr = fno.get("pcr") if fno.get("pcr") is not None else 1.0
+        call_wall = fno.get("call_wall")
+        put_wall = fno.get("put_wall")
+        atm_iv = fno.get("atm_iv") if fno.get("atm_iv") is not None else 15
+        iv_change = 0
+        # Crypto or stale F&O may have None walls — treat as 0 distance
+        if call_wall is None or price == 0:
+            call_wall_dist = 0
+        else:
+            try:
+                call_wall_dist = (float(call_wall) - price) / price
+            except Exception:
+                call_wall_dist = 0
+        if put_wall is None or price == 0:
+            put_wall_dist = 0
+        else:
+            try:
+                put_wall_dist = (price - float(put_wall)) / price
+            except Exception:
+                put_wall_dist = 0
     else:
         futures_oi_change = basis = pcr = call_wall_dist = put_wall_dist = None
         atm_iv = iv_change = None
