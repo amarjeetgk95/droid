@@ -51,21 +51,20 @@ export default function DashboardPage() {
         <FIIPositioningCard />
       </div>
 
-      {/* Main TradingView-style Chart (from Inc/TradingChart) */}
-      <div className="bg-card rounded-lg border border-border overflow-hidden h-[620px]">
-        <DashboardTradingChart defaultSymbol="NIFTY 50" />
-      </div>
+      {/* Main Chart + Right Sidebar (compact) */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Left: TradingView Chart — smaller height as requested */}
+        <div className="xl:col-span-8 bg-card rounded-lg border border-border overflow-hidden h-[420px] xl:h-[520px] flex flex-col shadow-sm">
+          <DashboardTradingChart defaultSymbol="NIFTY 50" />
+        </div>
 
-      {/* Bottom Grid: Overview + Breadth */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <MarketOverview marketStatus={marketStatus} health={health} loading={loading} />
-        <MarketBreadth data={breadth} loading={loading} />
-      </div>
-
-      {/* Bottom Grid: Stats + Health */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <QuickStats health={health} marketStatus={marketStatus} lastFetch={lastFetch} loading={loading} />
-        <MarketHealth health={health} loading={loading} />
+        {/* Right: Market Overview / Breadth / Stats / Health — stacked, scrollable */}
+        <div className="xl:col-span-4 flex flex-col gap-3 max-h-[520px] xl:overflow-y-auto xl:pr-1 custom-scrollbar">
+          <MarketOverview marketStatus={marketStatus} health={health} loading={loading} />
+          <MarketBreadth data={breadth} loading={loading} />
+          <QuickStats health={health} marketStatus={marketStatus} lastFetch={lastFetch} loading={loading} />
+          <MarketHealth health={health} loading={loading} />
+        </div>
       </div>
     </div>
   );
