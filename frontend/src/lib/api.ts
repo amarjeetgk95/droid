@@ -130,8 +130,11 @@ class ApiClient {
     return this.request<{ data: Record<string, unknown>; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/tokens/status');
   }
 
-  async refreshToken() {
-    return this.request<{ data: { refreshed: boolean; provider: string; has_token: boolean }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/tokens/refresh', { method: 'POST' });
+  async refreshToken(payload?: Record<string, unknown>) {
+    return this.request<{ data: { refreshed: boolean; provider: string; has_token: boolean }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/tokens/refresh', {
+      method: 'POST',
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
   }
 
   // Cache & Performance (Phase 3)

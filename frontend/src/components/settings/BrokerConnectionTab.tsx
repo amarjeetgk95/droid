@@ -25,6 +25,7 @@ import {
 import { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { useMarketStream } from '@/hooks/useMarketStream';
+import { useSettings } from '@/components/settings/SettingsProvider';
 
 interface Props {
   settings: BrokerSettings;
@@ -65,6 +66,17 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
   const [copiedRedirect, setCopiedRedirect] = useState(false);
 
   const { streamState, reconnectCount } = useMarketStream();
+
+  // Access full AppSettings from context so Force Refresh can hot-sync the
+  // *dirty* local settings to the backend even if user hasn't clicked Save.
+  // Falls back gracefully if rendered outside SettingsProvider (tests).
+  let fullSettings: any = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    fullSettings = (useSettings() as any)?.settings ?? null;
+  } catch {
+    fullSettings = null;
+  }
 
   const visibleProviders = settings.apiType === 'crypto' ? CRYPTO_PROVIDERS : INDIAN_PROVIDERS;
 
@@ -156,7 +168,17 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
     setRefreshing(true);
     setTokenMsg(null);
     try {
-       const res = await api.refreshToken();
+      // Hot-sync dirty local settings to backend so provider switch (e.g. fyers -> groww)
+      // is immediate even if user hasn't clicked "Save Configuration" yet.
+      // Fixes "Re-authentication required for fyers" when input is groww.
+      let payload: Record<string, unknown> | undefined = undefined;
+      if (fullSettings) {
+        payload = { app_settings: fullSettings };
+      } else {
+        // Fallback: minimal app_settings from current BrokerSettings prop
+        payload = { app_settings: { broker: settings } };
+      }
+      const res = await api.refreshToken(payload);
       if (res.data.refreshed) {
         setTokenMsg({
           type: 'success',
