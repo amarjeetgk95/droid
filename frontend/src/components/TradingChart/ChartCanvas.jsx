@@ -148,10 +148,11 @@ export default function ChartCanvas({
       ctx.fillRect(xOf(hoverIdx) - barW / 2, priceTop, barW, priceBot - priceTop);
     }
 
-    /* time grid (+ day separators when the view spans multiple days) */
+    /* time grid (+ day separators when the view spans multiple days) — IST */
     const tickEvery = Math.max(1, Math.round(view.count / 8));
     const spanDays = data[e - 1].t - data[s].t > 86400000;
-    const dayOf = (t) => new Date(t).getUTCDate();
+    const IST_OFFSET = 19800000;
+    const dayOf = (t) => new Date(t + IST_OFFSET).getUTCDate();
     ctx.textAlign = 'center';
     for (let i = s; i < e; i++) {
       const isTick = i % tickEvery === 0;

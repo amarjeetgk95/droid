@@ -36,20 +36,25 @@ export const fmtPrice = (p, min, max) => {
   });
 };
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+function toIST(ts) {
+  return new Date(ts + IST_OFFSET_MS);
+}
+
 export function fmtT(ts, tf) {
-  const d = new Date(ts);
+  const d = toIST(ts);
   const p = (n) => String(n).padStart(2, '0');
   if (tf >= 1440) return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()];
   return p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
 }
 
 export function fmtDay(ts) {
-  const d = new Date(ts);
+  const d = toIST(ts);
   return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()];
 }
 
 export function fmtFull(ts) {
-  const d = new Date(ts);
+  const d = toIST(ts);
   const p = (n) => String(n).padStart(2, '0');
   return (
     d.getUTCFullYear() +
@@ -60,7 +65,8 @@ export function fmtFull(ts) {
     ' ' +
     p(d.getUTCHours()) +
     ':' +
-    p(d.getUTCMinutes())
+    p(d.getUTCMinutes()) +
+    ' IST'
   );
 }
 
