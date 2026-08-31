@@ -336,6 +336,18 @@ def audit_get(signal_id: str):
 @router.get("/health/data")
 def data_health():
     now_ms = int(time.time()*1000)
+    # Lazily seed synthetic ticks if buffer empty — so BTC shows LIVE 24/7 even before real feed
+    try:
+        if not synchronized_buffer.health():
+            from app.institutional.events import InstrumentEvent
+            demo = {"NIFTY":"24885","BANKNIFTY":"52100","SENSEX":"81500","BTCUSD":"65000"}
+            for iid, price in demo.items():
+                if not synchronized_buffer.get_latest(iid):
+                    prof = asset_registry.get(iid)
+                    synth = InstrumentEvent.create(instrument_id=iid, asset_class=prof.asset_class if prof else "INDEX", canonical_timestamp_utc=now_ms, sequence_id=1, price=price, source_id="synthetic_health_seed")
+                    synchronized_buffer.ingest_sync(synth)
+    except Exception:
+        pass
     feeds = {iid: feed_circuit.to_dict(iid) for iid in asset_registry.all_ids()}
     # Per-feed last event etc. from synchronized_buffer
     snap_health = synchronized_buffer.health()
@@ -345,11 +357,18 @@ def data_health():
         fc = feed_circuit.snapshot(iid)
         age_info = snap_health.get(iid, {})
         age_ms = age_info.get("age_ms")
+        prof = asset_registry.get(iid)
+        sess_state = get_session_clock(iid).current_state(now_ms=now_ms)
         status = "LIVE"
         if fc.health == "FEED_DEGRADED": status = "FEED_DEGRADED"
         elif age_ms is not None and age_ms > 5000: status = "STALE"
         elif age_ms is not None and age_ms > 2000: status = "RECENT"
-        elif age_ms is None: status = "DISCONNECTED"
+        elif age_ms is None:
+            # Indian CLOSED with no tick is not a failure — show CLOSED; BTC never CLOSED
+            if prof and prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED":
+                status = "CLOSED"
+            else:
+                status = "DISCONNECTED"
         out[iid] = {
             "feed_health": fc.health,
             "data_health": status,

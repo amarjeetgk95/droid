@@ -21,8 +21,9 @@ export function DataHealthPanel() {
   }, []);
 
   const dot = (status: string) => {
-    if (status === 'LIVE') return 'bg-emerald-500';
+    if (status === 'LIVE') return 'bg-emerald-500 animate-pulse';
     if (status === 'RECENT') return 'bg-amber-400';
+    if (status === 'CLOSED') return 'bg-slate-400';
     if (status === 'STALE' || status === 'FEED_DEGRADED') return 'bg-red-600';
     return 'bg-gray-400';
   };

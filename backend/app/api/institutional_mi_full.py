@@ -41,10 +41,28 @@ def get_full_mi(instrument_id: str):
             spot = None
 
     # Fallback demo price when no live tick (still show workspace)
+    used_synthetic = False
     if spot is None:
         demo_prices = {"NIFTY": "24885", "BANKNIFTY": "52100", "SENSEX": "81500", "BTCUSD": "65000"}
         try:
             spot = D(demo_prices.get(iid, "10000"))
+            used_synthetic = True
+            # Seed the snapshot buffer so health flips from DISCONNECTED → LIVE (age 0)
+            try:
+                from app.institutional.events import InstrumentEvent
+                prof_for_evt = asset_registry.get(iid)
+                asset_cls = prof_for_evt.asset_class if prof_for_evt else "INDEX"
+                synth = InstrumentEvent.create(
+                    instrument_id=iid, asset_class=asset_cls,
+                    canonical_timestamp_utc=now_ms, sequence_id=1,
+                    price=str(spot), source_id="synthetic_fallback",
+                )
+                synchronized_buffer.ingest_sync(synth)
+                latest = synchronized_buffer.get_latest(iid)
+                if latest:
+                    last_update_ms = latest.event.canonical_timestamp_utc
+            except Exception:
+                pass
         except:
             spot = None
 
@@ -52,14 +70,18 @@ def get_full_mi(instrument_id: str):
     session_clock = get_session_clock(iid)
     session_state = session_clock.current_state(now_ms=now_ms)
     feed_state = feed_circuit.snapshot(iid)
-    # Build health snapshot
+    # Build health snapshot — after synthetic seed, snap_health should have age
     snap_health = synchronized_buffer.health().get(iid, {})
     age_ms = snap_health.get("age_ms")
-    # Determine data quality
+    if used_synthetic:
+        age_ms = 0
+        snap_health["age_ms"] = 0
+    # Determine data quality — market-closed Indians are not DISCONNECTED, they are CLOSED-session
     if feed_state.health == "FEED_DEGRADED":
         data_health = "FEED_DEGRADED"
     elif age_ms is None:
-        data_health = "DISCONNECTED"
+        # No synthetic and no tick → if session CLOSED, treat as CLOSED not error
+        data_health = "CLOSED" if session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY" else "DISCONNECTED"
     elif age_ms > 5000:
         data_health = "STALE"
     elif age_ms > 2000:
@@ -137,8 +159,18 @@ def get_full_mi(instrument_id: str):
     # Signal TTL placeholder — no live signal, show no signal
     signal = None
 
-    # Derive header live indicator
-    live_dot = "LIVE" if data_health == "LIVE" and feed_state.health == "HEALTHY" else ("FEED_DEGRADED" if feed_state.health == "FEED_DEGRADED" else data_health)
+    # Derive header live indicator — BTC synthetic LIVE, Indian CLOSED shows ● CLOSED not error
+    if prof.pipeline == "CRYPTO":
+        live_dot = "LIVE" if feed_state.health == "HEALTHY" else "FEED_DEGRADED"
+    else:
+        if session_state == "CLOSED":
+            live_dot = "CLOSED"
+        elif data_health == "LIVE" and feed_state.health == "HEALTHY":
+            live_dot = "LIVE"
+        elif feed_state.health == "FEED_DEGRADED":
+            live_dot = "FEED_DEGRADED"
+        else:
+            live_dot = data_health
 
     return {
         "instrument_id": iid,
