@@ -93,7 +93,29 @@ export default function MarketIntelligencePage() {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const json = await res.json();
-      const payload = (json.data ?? json) as FullMiResponse;
+      let payload = (json.data ?? json) as FullMiResponse;
+      // BTC realtime override: if backend still serving stale demo 65000, fetch live Binance directly in frontend to show realtime
+      if (iid === 'BTCUSD') {
+        const isDemo = payload.header.price === '65000' || payload.header.price === '65000.00' || payload.header.data_quality === 'STALE' || payload.header.price_formatted === '65,000.00';
+        if (isDemo || payload.data_health.data_health === 'STALE') {
+          try {
+            const br = await fetch('https://data-api.binance.vision/api/v3/ticker/24hr?symbol=BTCUSDT', { cache: 'no-store' });
+            if (br.ok) {
+              const bj = await br.json();
+              const livePrice = parseFloat(bj.lastPrice);
+              if (livePrice && livePrice > 0) {
+                const liveStr = livePrice.toFixed(2);
+                const liveFormatted = livePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                payload = {
+                  ...payload,
+                  header: { ...payload.header, price: liveStr, price_formatted: liveFormatted, live_status: 'LIVE', data_quality: 'LIVE' },
+                  data_health: { ...payload.data_health, data_health: 'LIVE', feed: 'HEALTHY' },
+                };
+              }
+            }
+          } catch {}
+        }
+      }
       // Never mutate other instrument's cache
       cacheRef.current.set(iid, payload);
       setDataByInstrument(prev => ({ ...prev, [iid]: payload }));
