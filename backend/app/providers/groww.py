@@ -266,6 +266,7 @@ class GrowwProvider(MarketDataProvider):
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
+        is_open = calendar_service.is_market_open_now()
         # Attempt live fetch (Groww if token else NSE public) — keeps TradingView alignment
         live = await self._fetch_live_quote(symbol, token or "")
         if live and live.get("ltp"):
@@ -279,16 +280,15 @@ class GrowwProvider(MarketDataProvider):
             oi = live.get("oi") if live.get("oi") is not None else demo["oi"]
             change = round(ltp - prev, 2) if prev else 0.0
             change_pct = round((change / prev * 100) if prev else 0.0, 2)
-            # LIVE only when we have a real Groww token, else DEMO but still accurate via NSE
-            status = DataStatus.LIVE if token and token != "mock-demo-token" and live.get("ltp") else DataStatus.DEMO
-            # If token was present but live came from NSE fallback, mark DEMO (accurate but not Groww-authenticated)
-            # We detect Groww success by checking live came from Groww payload vs NSE — for now LIVE only if token valid and NSE not sole source
-            # Simpler: LIVE if token valid, else DEMO
-            if token and token != "mock-demo-token":
-                # If live fetch succeeded via Groww, status LIVE; if via NSE, still LIVE is acceptable as real market
-                status = DataStatus.LIVE
-            else:
-                status = DataStatus.DEMO
+            if not is_open:
+                # Market closed: show previous close as flat, status CLOSED (no fake LIVE)
+                return NormalizedQuote(
+                    symbol=symbol, display_name=symbol, timestamp=now,
+                    ltp=round(float(prev), 2), open=round(float(open_p), 2), high=round(float(high_p), 2), low=round(float(low_p), 2),
+                    previous_close=round(float(prev), 2), change=0.0, change_percent=0.0,
+                    volume=0, open_interest=oi, status=DataStatus.CLOSED, provider=self.provider_name,
+                )
+            status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO
             return NormalizedQuote(
                 symbol=symbol,
                 display_name=symbol,
@@ -310,6 +310,13 @@ class GrowwProvider(MarketDataProvider):
         demo = self._demo_quote(symbol)
         ltp = demo["ltp"]
         prev = demo["prev"]
+        if not is_open:
+            return NormalizedQuote(
+                symbol=symbol, display_name=symbol, timestamp=now,
+                ltp=round(float(prev), 2), open=round(float(demo["open"]), 2), high=round(float(demo["high"]), 2), low=round(float(demo["low"]), 2),
+                previous_close=round(float(prev), 2), change=0.0, change_percent=0.0,
+                volume=0, open_interest=demo["oi"], status=DataStatus.CLOSED, provider=self.provider_name,
+            )
         change = round(ltp - prev, 2)
         change_pct = round((change / prev * 100) if prev else 0.0, 2)
         status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO
@@ -344,29 +351,30 @@ class GrowwProvider(MarketDataProvider):
         end: datetime | None = None,
     ) -> list[NormalizedCandle]:
         await self.rate_limiter.acquire()
-        now = datetime.now(timezone.utc)
-        count = 75 if timeframe == "5m" else 30
-        _tf_to_sec = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1D": 86400}
-        interval = _tf_to_sec.get(timeframe, 300)
+        # Prefer real historical candles (Yahoo/NSE) over synthetic
+        try:
+            from app.services.nse_service import fetch_nse_candles
+            count = 75 if timeframe == "5m" else 30
+            real = await fetch_nse_candles(symbol, timeframe, count)
+            if real:
+                return [
+                    NormalizedCandle(
+                        timestamp=r["timestamp"],
+                        open=r["open"], high=r["high"], low=r["low"], close=r["close"],
+                        volume=r["volume"], vwap=None,
+                    )
+                    for r in real
+                ]
+        except Exception as e:
+            logger.debug("groww_candles_real_fetch_failed", symbol=symbol, error=str(e)[:150])
+        # Real fetch failed: return flat previous-close (no synthetic walk — honest when market closed or data unavailable)
         demo = self._demo_quote(symbol)
-        base = demo["ltp"] or 25000.0
-        # Generate realistic OHLC walk anchored to demo LTP so charts render
-        candles: list[NormalizedCandle] = []
-        curr = (start or now) - timedelta(seconds=interval * count)
-        for i in range(count):
-            # small deterministic walk: +/- 0.15% drift
-            drift = ((i % 10) - 5) * base * 0.0003
-            o = base + drift
-            c = o + ((i % 7) - 3) * base * 0.0001
-            h = max(o, c) + base * 0.0004
-            l = min(o, c) - base * 0.0004
-            candles.append(NormalizedCandle(
-                timestamp=curr,
-                open=round(o, 2), high=round(h, 2), low=round(l, 2), close=round(c, 2),
-                volume=8000 + (i % 5) * 1000, vwap=round((o + h + l + c) / 4, 2),
-            ))
-            curr += timedelta(seconds=interval)
-        return candles
+        now = datetime.now(timezone.utc)
+        # Always return flat previous-close candles when real data unavailable — no fake walk
+        return [
+            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+            NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+        ]
 
     async def get_index_cards(self) -> list[IndexCard]:
         quotes = await self.get_quotes()
@@ -394,10 +402,14 @@ class GrowwProvider(MarketDataProvider):
     async def get_market_status(self) -> MarketStatusResponse:
         now = datetime.now(timezone.utc)
         is_trading = calendar_service.is_trading_day(now.date())
+        is_open = calendar_service.is_market_open_now()
+        if not is_open:
+            return MarketStatusResponse(
+                session=MarketSession.CLOSED, market_time=now, is_trading_day=is_trading,
+                data_status=DataStatus.CLOSED, provider=self.provider_name,
+            )
         return MarketStatusResponse(
-            session=MarketSession.OPEN if is_trading else MarketSession.CLOSED,
-            market_time=now,
-            is_trading_day=is_trading,
+            session=MarketSession.OPEN, market_time=now, is_trading_day=is_trading,
             data_status=DataStatus.LIVE if self._has_valid_credentials() else DataStatus.DISCONNECTED,
             provider=self.provider_name,
         )

@@ -185,5 +185,16 @@ class ExchangeCalendarService:
             curr -= timedelta(days=1)
         return curr
 
+    def is_market_open_now(self) -> bool:
+        """Check if NSE is currently in trading hours (IST 9:15-15:30 on trading day)."""
+        now_ist = datetime.now(IST)
+        today = now_ist.date()
+        if not self.is_trading_day(today):
+            return False
+        info = self.get_session_info(today)
+        if not info.market_open or not info.market_close:
+            return False
+        return info.market_open <= now_ist <= info.market_close
+
 
 calendar_service = ExchangeCalendarService()

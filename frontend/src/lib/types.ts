@@ -1,5 +1,5 @@
-// Data status values
-export type DataStatus = 'LIVE' | 'STALE' | 'DEMO' | 'DISCONNECTED' | 'ERROR';
+// Data status values — CLOSED added for honest market-closed state (no fake LIVE)
+export type DataStatus = 'LIVE' | 'STALE' | 'DEMO' | 'DISCONNECTED' | 'ERROR' | 'CLOSED';
 export type MarketSession = 'PRE_OPEN' | 'OPEN' | 'CLOSED' | 'POST_CLOSE';
 export type Sentiment = 'VERY_BEARISH' | 'BEARISH' | 'NEUTRAL' | 'BULLISH' | 'VERY_BULLISH';
 

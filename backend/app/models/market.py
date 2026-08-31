@@ -10,6 +10,7 @@ class DataStatus(str, Enum):
     DEMO = "DEMO"
     DISCONNECTED = "DISCONNECTED"
     ERROR = "ERROR"
+    CLOSED = "CLOSED"
 
 
 class MarketSession(str, Enum):
