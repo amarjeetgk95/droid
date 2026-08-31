@@ -7,9 +7,12 @@ export function DataHealthPanel() {
     let cancelled = false;
     async function fetchH() {
       try {
-        const res = await fetch('/api/v1/institutional/health/data');
+        const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+        const url = base ? `${base}/api/v1/institutional/health/data` : '/api/v1/institutional/health/data';
+        const res = await fetch(url);
         const j = await res.json();
-        if (!cancelled) setData(j);
+        const payload = j.data ?? j;
+        if (!cancelled) setData(payload);
       } catch { if (!cancelled) setData(null); }
     }
     fetchH();
