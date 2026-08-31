@@ -22,7 +22,7 @@ from app.institutional.decimal_types import D
 router_full = APIRouter(prefix="/api/v1/institutional", tags=["institutional-mi"])
 
 @router_full.get("/market-intelligence/{instrument_id}/full")
-def get_full_mi(instrument_id: str):
+async def get_full_mi(instrument_id: str):
     prof = asset_registry.get(instrument_id)
     if not prof:
         raise HTTPException(404, f"instrument {instrument_id} not found")
@@ -40,31 +40,77 @@ def get_full_mi(instrument_id: str):
         except:
             spot = None
 
-    # Fallback demo price when no live tick (still show workspace)
+    # Fallback demo price when no live tick (still show workspace) — for BTC try LIVE Binance first
     used_synthetic = False
+    is_synthetic_fallback = False
     if spot is None:
-        demo_prices = {"NIFTY": "24885", "BANKNIFTY": "52100", "SENSEX": "81500", "BTCUSD": "65000"}
-        try:
-            spot = D(demo_prices.get(iid, "10000"))
-            used_synthetic = True
-            # Seed the snapshot buffer so health flips from DISCONNECTED → LIVE (age 0)
+        # BTC: fetch LIVE from Binance (no mock fallback in live mode — but allow DEMO fallback with explicit status)
+        if iid == "BTCUSD":
             try:
-                from app.institutional.events import InstrumentEvent
-                prof_for_evt = asset_registry.get(iid)
-                asset_cls = prof_for_evt.asset_class if prof_for_evt else "INDEX"
-                synth = InstrumentEvent.create(
-                    instrument_id=iid, asset_class=asset_cls,
-                    canonical_timestamp_utc=now_ms, sequence_id=1,
-                    price=str(spot), source_id="synthetic_fallback",
-                )
-                synchronized_buffer.ingest_sync(synth)
-                latest = synchronized_buffer.get_latest(iid)
-                if latest:
-                    last_update_ms = latest.event.canonical_timestamp_utc
+                from app.services.binance_service import binance_service
+                ticker = await binance_service.get_ticker("BTCUSDT")
+                # Use LIVE only if status is LIVE (real Binance), not DEMO fallback
+                if ticker and ticker.status.value == "LIVE" and ticker.price and ticker.price > 0:
+                    spot = D(str(ticker.price))
+                    last_update_ms = int(ticker.last_updated.timestamp() * 1000) if ticker.last_updated else now_ms
+                    # Seed buffer as LIVE Binance tick
+                    try:
+                        from app.institutional.events import InstrumentEvent
+                        synth = InstrumentEvent.create(
+                            instrument_id=iid, asset_class="CRYPTO",
+                            canonical_timestamp_utc=last_update_ms, sequence_id=int(time.time()*1000) % 1000000,
+                            price=str(spot), source_id="binance_live",
+                        )
+                        synchronized_buffer.ingest_sync(synth)
+                        latest = synchronized_buffer.get_latest(iid)
+                    except Exception:
+                        pass
+                else:
+                    raise ValueError("binance not LIVE")
             except Exception:
-                pass
-        except:
-            spot = None
+                # Explicit DEMO fallback when Binance unavailable — mark as synthetic so UI shows DEMO badge
+                demo_prices = {"BTCUSD": "65000"}
+                try:
+                    spot = D(demo_prices.get(iid, "65000"))
+                    used_synthetic = True
+                    is_synthetic_fallback = True
+                    try:
+                        from app.institutional.events import InstrumentEvent
+                        synth = InstrumentEvent.create(
+                            instrument_id=iid, asset_class="CRYPTO",
+                            canonical_timestamp_utc=now_ms, sequence_id=1,
+                            price=str(spot), source_id="synthetic_fallback",
+                        )
+                        synchronized_buffer.ingest_sync(synth)
+                        latest = synchronized_buffer.get_latest(iid)
+                        if latest:
+                            last_update_ms = latest.event.canonical_timestamp_utc
+                    except Exception:
+                        pass
+                except:
+                    spot = None
+        if spot is None and iid != "BTCUSD":
+            demo_prices = {"NIFTY": "24885", "BANKNIFTY": "52100", "SENSEX": "81500"}
+            try:
+                spot = D(demo_prices.get(iid, "10000"))
+                used_synthetic = True
+                try:
+                    from app.institutional.events import InstrumentEvent
+                    prof_for_evt = asset_registry.get(iid)
+                    asset_cls = prof_for_evt.asset_class if prof_for_evt else "INDEX"
+                    synth = InstrumentEvent.create(
+                        instrument_id=iid, asset_class=asset_cls,
+                        canonical_timestamp_utc=now_ms, sequence_id=1,
+                        price=str(spot), source_id="synthetic_fallback",
+                    )
+                    synchronized_buffer.ingest_sync(synth)
+                    latest = synchronized_buffer.get_latest(iid)
+                    if latest:
+                        last_update_ms = latest.event.canonical_timestamp_utc
+                except Exception:
+                    pass
+            except:
+                spot = None
 
     # Session / health
     session_clock = get_session_clock(iid)
@@ -159,9 +205,15 @@ def get_full_mi(instrument_id: str):
     # Signal TTL placeholder — no live signal, show no signal
     signal = None
 
-    # Derive header live indicator — BTC synthetic LIVE, Indian CLOSED shows ● CLOSED not error
+    # Derive header live indicator — BTC live vs DEMO, Indian CLOSED shows ● CLOSED not error
+    btc_demo = (iid == "BTCUSD" and 'is_synthetic_fallback' in locals() and is_synthetic_fallback)
     if prof.pipeline == "CRYPTO":
-        live_dot = "LIVE" if feed_state.health == "HEALTHY" else "FEED_DEGRADED"
+        if btc_demo:
+            live_dot = "DEMO"
+        elif feed_state.health == "FEED_DEGRADED":
+            live_dot = "FEED_DEGRADED"
+        else:
+            live_dot = "LIVE"
     else:
         if session_state == "CLOSED":
             live_dot = "CLOSED"
