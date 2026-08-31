@@ -2,7 +2,7 @@
 
 import { useMarketData } from '@/hooks/useMarketData';
 import { MarketCard } from '@/components/dashboard/MarketCard';
-import { InteractiveChart } from '@/components/dashboard/InteractiveChart';
+import DashboardTradingChart from '@/components/dashboard/DashboardTradingChart';
 import { MLPredictionCard } from '@/components/dashboard/MLPredictionCard';
 import { FIIPositioningCard } from '@/components/dashboard/FIIPositioningCard';
 import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
@@ -51,9 +51,9 @@ export default function DashboardPage() {
         <FIIPositioningCard />
       </div>
 
-      {/* Main Chart */}
-      <div className="bg-card rounded-lg border border-border p-4">
-        <InteractiveChart />
+      {/* Main TradingView-style Chart (from Inc/TradingChart) */}
+      <div className="bg-card rounded-lg border border-border overflow-hidden h-[620px]">
+        <DashboardTradingChart defaultSymbol="NIFTY 50" />
       </div>
 
       {/* Bottom Grid: Overview + Breadth */}
