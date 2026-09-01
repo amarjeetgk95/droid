@@ -210,29 +210,64 @@ class GrowwProvider(MarketDataProvider):
             "x-client-platform": "growwapi-python-client",
             "x-client-platform-version": "1.5.0",
         }
-        # For indices, try Feed cache first (Groww has no REST quote for indices, only Feed)
-        if symbol in getattr(self, "_index_feed_map", {}) and getattr(self, "_feed_instance", None) is not None:
+        # For indices, Feed is primary licensed source — try Feed cache first before REST
+        # Groww REST /live-data/quote often 404 for indices (NIFTY is not a CASH trading_symbol)
+        is_index = symbol in getattr(self, "_index_feed_map", {})
+        if is_index:
+            # Try Feed cache if available (populated by NATS after ~1s)
+            if getattr(self, "_feed_instance", None) is not None:
+                try:
+                    data = self._feed_instance.get_index_value()  # type: ignore
+                    rev = self._reverse_index_token_map()
+                    for exch, seg_map in (data or {}).items():
+                        for seg, tok_map in (seg_map or {}).items():
+                            for tok, payload in (tok_map or {}).items():
+                                if rev.get(str(tok)) == symbol and isinstance(payload, dict) and payload.get("value") is not None:
+                                    return {
+                                        "ltp": float(payload["value"]),
+                                        "open": None,
+                                        "high": None,
+                                        "low": None,
+                                        "prev": None,
+                                        "volume": 0,
+                                        "oi": None,
+                                    }
+                except Exception:
+                    pass
+            # Fallback for indices: try Groww LTP bulk endpoint (sometimes supports indices)
             try:
-                data = self._feed_instance.get_index_value()  # type: ignore
-                rev = self._reverse_index_token_map()
-                for exch, seg_map in (data or {}).items():
-                    for seg, tok_map in (seg_map or {}).items():
-                        for tok, payload in (tok_map or {}).items():
-                            if rev.get(str(tok)) == symbol and isinstance(payload, dict) and payload.get("value") is not None:
-                                return {
-                                    "ltp": float(payload["value"]),
-                                    "open": None,
-                                    "high": None,
-                                    "low": None,
-                                    "prev": None,
-                                    "volume": 0,
-                                    "oi": None,
-                                }
+                import httpx as _httpx2
+                async with _httpx2.AsyncClient(timeout=5.0) as _client:
+                    # LTP endpoint: GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY
+                    # Try common index symbol encodings
+                    idx_map = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
+                    ltp_sym = idx_map.get(symbol, f"NSE_{trading_symbol}")
+                    ltp_url = f"{self.API_BASE}/live-data/ltp"
+                    ltp_params = {"segment": "CASH", "exchange_symbols": ltp_sym}
+                    ltp_resp = await _client.get(ltp_url, params=ltp_params, headers=headers)
+                    if ltp_resp.status_code == 200:
+                        lj = ltp_resp.json()
+                        payload = lj.get("payload") or lj
+                        # payload shape: {ltp: {NSE: {CASH: {NIFTY: {ltp: ...}}}}} or {NSE_NIFTY: {ltp: ...}}
+                        def _find_ltp(obj):
+                            if isinstance(obj, dict):
+                                if "ltp" in obj and isinstance(obj["ltp"], (int, float)):
+                                    return float(obj["ltp"])
+                                if "last_price" in obj:
+                                    return float(obj["last_price"])
+                                for v in obj.values():
+                                    r = _find_ltp(v)
+                                    if r is not None:
+                                        return r
+                            return None
+                        _ltp_val = _find_ltp(payload)
+                        if _ltp_val and _ltp_val > 0:
+                            return {"ltp": float(_ltp_val), "open": None, "high": None, "low": None, "prev": None, "volume": 0, "oi": None}
             except Exception:
                 pass
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Groww live-data/quote — single licensed source
+                # Groww live-data/quote — licensed source for non-index (or fallback)
                 url = f"{self.API_BASE}/live-data/quote"
                 params = {"exchange": exchange, "segment": cfg.get("segment", "CASH"), "trading_symbol": trading_symbol}
                 resp = await client.get(url, params=params, headers=headers)

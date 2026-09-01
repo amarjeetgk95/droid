@@ -50,6 +50,26 @@ async def lifespan(app: FastAPI):
     if snapshot:
         logger.info("warm_start_restored", snapshot_time=snapshot.timestamp.isoformat())
 
+    # Load persisted broker config from DB (so Groww token survives restart/Re-deploy)
+    # Fixes FastAPI singleton staying fyers DEMO with zero after you saved Groww in Settings UI
+    try:
+        from app.core.database import get_async_session_factory
+        from app.core.broker_runtime import apply_app_settings
+        from app.providers.registry import reset_provider
+        factory = get_async_session_factory()
+        if factory is not None:
+            async with factory() as _sess:
+                from sqlalchemy import text as _text
+                _res = await _sess.execute(_text("SELECT app_settings FROM user_settings WHERE app_settings IS NOT NULL ORDER BY updated_at DESC LIMIT 1"))
+                _row = _res.first()
+                if _row and _row[0]:
+                    _changed = apply_app_settings(_row[0])
+                    if _changed:
+                        reset_provider()
+                        logger.info("startup_broker_config_loaded_from_db", provider=_row[0].get("broker", {}).get("provider") if isinstance(_row[0], dict) else "unknown")
+    except Exception as _e:
+        logger.warning("startup_broker_config_load_failed", error=str(_e)[:200])
+
     # Start Micro-Batch Write Pipeline & Snapshot Persistence Worker
     await write_pipeline.start()
     await snapshot_service.start()
