@@ -142,16 +142,30 @@ class GrowwProvider(MarketDataProvider):
         """Refresh callback (registered on the token manager). Fetches a fresh
         Groww access token via the checksum/TOTP flow and persists it.
 
-        Has a 30-second rate-limit guard so the streaming poller doesn't
-        trigger auth storms if Groww returns 401 transiently. Explicit
-        one-shot callers (Settings save, diagnostics) should use
-        :meth:`ensure_access_token` instead, which bypasses the guard.
+        Has a 30-second rate-limit guard that ONLY blocks when the previous
+        attempt FAILED. Successful refreshes don't block subsequent attempts
+        (the streaming poller can re-fetch after expiry freely). This avoids
+        the bug where a single failed attempt locks out the poller for 30s
+        even after a successful manual token fetch in the interim.
+
+        Explicit one-shot callers (Settings save, diagnostics) should use
+        :meth:`ensure_access_token` instead, which bypasses the guard entirely.
         """
         import time as _time
         now = _time.time()
-        if now - self._last_auth_attempt < 30:
-            raise RuntimeError(f"Groww token refresh skipped: rate-limit guard (last attempt {int(now - self._last_auth_attempt)}s ago, cooldown 30s)")
+        # Only block if the previous attempt FAILED (last_auth_error is set).
+        # If the last attempt succeeded, last_auth_error is None and we proceed.
+        if (
+            self._last_auth_error is not None
+            and (now - self._last_auth_attempt) < 30
+        ):
+            raise RuntimeError(
+                f"Groww token refresh skipped: rate-limit guard after previous failure "
+                f"({int(now - self._last_auth_attempt)}s ago, cooldown 30s) — last error: {self._last_auth_error}"
+            )
         self._last_auth_attempt = now
+        # Clear stale error so next attempt can proceed even within the cooldown
+        self._last_auth_error = None
         token = await self.ensure_access_token()
         if not token:
             last_err = getattr(self, "_last_auth_error", "unknown error")
@@ -220,26 +234,12 @@ class GrowwProvider(MarketDataProvider):
                     }
             except Exception:
                 pass
-            # For indices: try the dedicated LTP bulk endpoint first (fast, returns
-            # last traded price after hours). exchange_symbols format is "EXCHANGE_SYMBOL"
-            # joined by comma (per Groww docs), e.g. "NSE_NIFTY,BSE_SENSEX".
-            ltp_sym = INDEX_EXCHANGE_SYMBOLS.get(symbol, f"{exchange}_{trading_symbol}")
-            try:
-                ltp_map = await self.service.get_ltp_bulk(token, segment, [ltp_sym])
-                ltp_val = ltp_map.get(ltp_sym)
-                if ltp_val:
-                    logger.debug("groww_ltp_parsed", symbol=symbol, exchange_symbol=ltp_sym, ltp=ltp_val)
-                    return {
-                        "ltp": float(ltp_val),
-                        "open": None,
-                        "high": None,
-                        "low": None,
-                        "prev": None,
-                        "volume": 0,
-                        "oi": None,
-                    }
-            except Exception as e:
-                logger.debug("groww_ltp_failed", symbol=symbol, error=str(e)[:200])
+            # For indices: the /v1/live-data/ltp bulk endpoint docs only show
+            # stock examples and in practice returns an EMPTY payload for
+            # "NSE_NIFTY" / "BSE_SENSEX" even with a valid token. The full
+            # /v1/live-data/quote endpoint with trading_symbol=NIFTY is the
+            # documented path for indices, so we go straight there.
+            logger.debug("groww_using_quote_for_index", symbol=symbol, reason="ltp_bulk_unsupported_for_indices")
 
         # Full quote endpoint — works for both indices and stocks, returns full OHLC.
         try:

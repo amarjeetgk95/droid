@@ -93,26 +93,42 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
             "meta": _make_meta().model_dump(),
         }
 
-    # We have a token — try a real Groww API call to verify it actually works
+    # We have a token — try both LTP bulk and full quote endpoints to verify
+    # which one Groww actually supports for indices. The LTP bulk docs only
+    # show stock examples; the full quote endpoint uses trading_symbol=NIFTY
+    # which is the documented path for indices.
     try:
         from app.services.groww_service import INDEX_EXCHANGE_SYMBOLS
-        # Use LTP bulk endpoint (works for indices after hours too)
+        # Try full quote endpoint first (the documented path for indices)
+        full_quote = await provider.service.get_quote(
+            token, "NSE", "CASH", "NIFTY",
+        )
+        # Also try LTP bulk for comparison
         ltp_map = await provider.service.get_ltp_bulk(
             token, "CASH", [INDEX_EXCHANGE_SYMBOLS["NIFTY 50"]]
         )
         ltp_val = ltp_map.get(INDEX_EXCHANGE_SYMBOLS["NIFTY 50"])
+
         return {
             "data": {
                 "provider": "groww",
                 "token_prefix": token[:12] + "...",
+                "quote_call": {
+                    "endpoint": "GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY",
+                    "response_normalized": full_quote,
+                    "ok": full_quote is not None and full_quote.get("ltp", 0) > 0,
+                },
                 "ltp_call": {
                     "endpoint": "GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY",
-                    "response_payload": {"NSE_NIFTY": ltp_val} if ltp_val is not None else ltp_map,
+                    "response_payload": ltp_map,
                     "ok": ltp_val is not None and ltp_val > 0,
                 },
                 "diagnostics": diag,
             },
-            "error": None if ltp_val else "Groww returned no LTP for NIFTY 50 (token valid but data empty?)",
+            "error": (
+                None if (full_quote and full_quote.get("ltp", 0) > 0)
+                else "Both endpoints returned no data for NIFTY 50 — check token scopes/daily approval"
+            ),
             "meta": _make_meta().model_dump(),
         }
     except Exception as e:
@@ -122,7 +138,7 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
                 "token_prefix": token[:12] + "...",
                 "diagnostics": diag,
             },
-            "error": f"token fetched but live-data/ltp call failed: {str(e)[:200]}",
+            "error": f"token fetched but live-data calls failed: {str(e)[:200]}",
             "meta": _make_meta().model_dump(),
         }
 
