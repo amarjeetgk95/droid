@@ -6,7 +6,7 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Search, Bell, Clock3, Command } from 'lucide-react';
+import { Activity, Search, Bell, Clock3, Command, Menu } from 'lucide-react';
 
 // Route label map for breadcrumb
 const ROUTE_LABELS: Record<string, string> = {
@@ -116,10 +116,12 @@ export function TopHeader({
   health,
   marketStatus,
   streamState,
+  onMenuClick,
 }: {
   health: MarketHealthStatus | null;
   marketStatus: MarketStatusResponse | null;
   streamState: StreamConnectionState;
+  onMenuClick?: () => void;
 }) {
   const pathname = usePathname();
   const [showHealthModal, setShowHealthModal] = useState(false);
@@ -169,6 +171,16 @@ export function TopHeader({
       <header className="sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-card/80 backdrop-blur-md supports-[backdrop-filter]:bg-card/60 flex items-center justify-between gap-2 px-3 sm:px-4">
         {/* LEFT — Clock + Context */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
+          {onMenuClick && (
+            <button
+              type="button"
+              onClick={onMenuClick}
+              aria-label="Open navigation"
+              className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          )}
           {/* Clock block */}
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="flex items-center gap-2">
