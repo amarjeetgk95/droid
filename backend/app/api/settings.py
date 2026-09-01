@@ -53,6 +53,11 @@ async def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
     stream so MARKET_TICKS resumes immediately on provider swap (e.g. Fyers ->
     Groww). Without this, reset_provider() drops the singleton but the new
     provider's start_stream() is never called, leaving the WS tick stream at 0.
+
+    For Groww, also eagerly fetch an access token from the new API key/secret
+    so the first quote doesn't wait for the lazy token refresh. This catches
+    invalid credentials immediately (e.g. wrong secret) and surfaces the
+    Groww error response in the Settings UI instead of "OFFLINE/0".
     """
     if res is None:
         return
@@ -72,6 +77,30 @@ async def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
     # ingested ticks into central_feed.
     try:
         provider = get_provider()
+        # For Groww, eagerly exchange API key + secret for an access token so
+        # the first /quote doesn't have to wait for the lazy refresh callback
+        # (which has a 30s rate-limit guard). Surfaces credential errors to
+        # the user via the diagnostics endpoint instead of "OFFLINE/0".
+        if getattr(provider, "provider_name", None) == "groww":
+            ensure_fn = getattr(provider, "ensure_access_token", None)
+            if callable(ensure_fn):
+                try:
+                    token = await ensure_fn()
+                    if token:
+                        logger.info(
+                            "settings_groww_token_prefetched",
+                            key_prefix=token[:8] + "...",
+                        )
+                    else:
+                        logger.warning(
+                            "settings_groww_token_prefetch_failed",
+                            error=getattr(provider, "_last_auth_error", "unknown"),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "settings_groww_token_prefetch_error",
+                        error=str(e)[:200],
+                    )
         await provider.start_stream()
         logger.info(
             "settings_provider_stream_restarted",

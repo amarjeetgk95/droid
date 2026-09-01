@@ -32,6 +32,101 @@ async def get_token_status():
     }
 
 
+@router.post("/diagnostics")
+async def run_token_diagnostics(payload: dict | None = Body(default=None)):
+    """Run a live Groww API call with the saved credentials and return the
+    actual response — useful when the dashboard shows OFFLINE/0 and you want
+    to know whether it's a token problem, an endpoint problem, or something
+    else.
+
+    For Groww specifically, this:
+      1. Eagerly fetches a fresh access token (bypasses the 30s rate-limit
+         guard used by the streaming refresh callback).
+      2. Calls /v1/live-data/quote for NIFTY 50 with that token.
+      3. Returns the raw Groww response so the caller can see exactly what
+         Groww returned (or why it failed).
+
+    For other providers, falls back to a generic refresh test.
+    """
+    provider = get_provider()
+    token_mgr = provider.get_token_manager()
+    diag = token_mgr.get_diagnostics()
+
+    if provider.provider_name != "groww":
+        # Generic path — just attempt refresh and return
+        try:
+            info = await token_mgr._refresh_callback() if token_mgr._refresh_callback else None
+            return {
+                "data": {
+                    "provider": provider.provider_name,
+                    "refreshed": bool(info),
+                    "diagnostics": diag,
+                },
+                "error": None,
+                "meta": _make_meta().model_dump(),
+            }
+        except Exception as e:
+            return {
+                "data": {"provider": provider.provider_name, "diagnostics": diag, "refreshed": False},
+                "error": str(e),
+                "meta": _make_meta().model_dump(),
+            }
+
+    # Groww-specific: fetch fresh token, then call /live-data/quote
+    ensure_fn = getattr(provider, "ensure_access_token", None)
+    if not callable(ensure_fn):
+        return {
+            "data": {"provider": "groww", "diagnostics": diag},
+            "error": "Groww provider does not expose ensure_access_token",
+            "meta": _make_meta().model_dump(),
+        }
+
+    token = await ensure_fn()
+    if not token:
+        return {
+            "data": {
+                "provider": "groww",
+                "diagnostics": diag,
+                "auth_error": getattr(provider, "_last_auth_error", "unknown"),
+            },
+            "error": getattr(provider, "_last_auth_error", "failed to fetch Groww access token"),
+            "meta": _make_meta().model_dump(),
+        }
+
+    # We have a token — try a real Groww API call to verify it actually works
+    try:
+        from app.services.groww_service import INDEX_EXCHANGE_SYMBOLS
+        # Use LTP bulk endpoint (works for indices after hours too)
+        ltp_map = await provider.service.get_ltp_bulk(
+            token, "CASH", [INDEX_EXCHANGE_SYMBOLS["NIFTY 50"]]
+        )
+        ltp_val = ltp_map.get(INDEX_EXCHANGE_SYMBOLS["NIFTY 50"])
+        return {
+            "data": {
+                "provider": "groww",
+                "token_prefix": token[:12] + "...",
+                "ltp_call": {
+                    "endpoint": "GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY",
+                    "response_payload": {"NSE_NIFTY": ltp_val} if ltp_val is not None else ltp_map,
+                    "ok": ltp_val is not None and ltp_val > 0,
+                },
+                "diagnostics": diag,
+            },
+            "error": None if ltp_val else "Groww returned no LTP for NIFTY 50 (token valid but data empty?)",
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        return {
+            "data": {
+                "provider": "groww",
+                "token_prefix": token[:12] + "...",
+                "diagnostics": diag,
+            },
+            "error": f"token fetched but live-data/ltp call failed: {str(e)[:200]}",
+            "meta": _make_meta().model_dump(),
+        }
+
+
 @router.post("/refresh")
 async def refresh_token(payload: dict | None = Body(default=None)):
     """Trigger a manual token refresh / broker re-authentication.

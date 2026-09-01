@@ -1,7 +1,4 @@
 import asyncio
-import hashlib
-import hmac
-import time
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 from app.providers.base import MarketDataProvider
@@ -15,6 +12,7 @@ from app.core.config import settings
 from app.core.token_manager import TokenManager, ConnectionState, TokenInfo
 from app.core.rate_limiter import TokenBucketRateLimiter
 from app.services.calendar_service import calendar_service
+from app.services.groww_service import GrowwService, GrowwServiceError, INDEX_EXCHANGE_SYMBOLS
 import structlog
 
 logger = structlog.get_logger()
@@ -22,6 +20,10 @@ logger = structlog.get_logger()
 
 class GrowwProvider(MarketDataProvider):
     """Groww Open API Market Data Provider Adapter.
+
+    Mirrors :class:`app.providers.binance_provider.BinanceProvider` architecture:
+    HTTP calls are delegated to :class:`app.services.groww_service.GrowwService`,
+    this provider handles caching, streaming, and provider-singleton lifecycle.
 
     Auth: API Key + API Secret (checksum flow) or API Key + TOTP.
     Access token is short-lived (~1 day) and requires daily re-approval via the
@@ -42,6 +44,13 @@ class GrowwProvider(MarketDataProvider):
         self.api_key = api_key or settings.groww_api_key
         self.api_secret = api_secret or settings.groww_api_secret
         self.auth_mode = auth_mode or settings.groww_auth_mode
+
+        # Service layer — all licensed HTTP calls go through here.
+        self.service = GrowwService(
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            auth_mode=self.auth_mode,
+        )
 
         self.token_manager = TokenManager(
             provider=self.PROVIDER_ID,
@@ -70,6 +79,7 @@ class GrowwProvider(MarketDataProvider):
         self._feed_thread: object | None = None
         self._feed_instance: object | None = None
         self._last_auth_attempt: float = 0
+        self._last_auth_error: str | None = None
         # Groww Feed index tokens (see growwapi instrument.csv) — used by GrowwFeed NATS stream
         # When Feed is available, indices use subscribe_index_value; else 1s REST poller covers all.
         self._index_feed_map: dict[str, dict] = {
@@ -99,89 +109,66 @@ class GrowwProvider(MarketDataProvider):
     def get_rate_limiter(self) -> TokenBucketRateLimiter:
         return self.rate_limiter
 
-    def _generate_checksum(self, timestamp: str) -> str:
-        """SHA256(secret + timestamp) as per Groww spec."""
-        return hashlib.sha256((self.api_secret + timestamp).encode("utf-8")).hexdigest()
-
-    async def _fetch_access_token(self) -> str | None:
-        """Obtain a short-lived access token using the configured auth mode."""
-        if not self.api_key or not self.api_secret:
-            logger.warning("groww_token_missing_creds", has_key=bool(self.api_key), has_secret=bool(self.api_secret))
-            self._last_auth_error = "missing API key or secret"
-            return None
-
-        import httpx
-        timestamp = str(int(time.time()))
-        url = f"{self.API_BASE}{self.AUTH_ENDPOINT}"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        if self.auth_mode == "checksum":
-            checksum = self._generate_checksum(timestamp)
-            payload = {"key_type": "approval", "checksum": checksum, "timestamp": timestamp}
-        else:  # totp
-            logger.warning("groww_token_totp_mode_requires_runtime_totp", auth_mode=self.auth_mode)
-            self._last_auth_error = "TOTP auth mode requires runtime TOTP code"
-            return None
-
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    token = data.get("token") or data.get("access_token")
-                    if token:
-                        return token
-                    self._last_auth_error = f"HTTP 200 but no token in response: {resp.text[:200]}"
-                else:
-                    self._last_auth_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        except httpx.ConnectError as e:
-            self._last_auth_error = f"connection error: {str(e)[:200]}"
-            logger.error("groww_token_connect_error", error=str(e)[:300])
-        except httpx.TimeoutException as e:
-            self._last_auth_error = f"timeout: {str(e)[:200]}"
-            logger.error("groww_token_timeout", error=str(e)[:300])
-        except Exception as e:
-            self._last_auth_error = f"exception: {type(e).__name__}: {str(e)[:200]}"
-            logger.error("groww_token_exception", error=str(e)[:500], error_type=type(e).__name__)
-        return None
-
     def _has_valid_credentials(self) -> bool:
-        return bool(self.token_manager.token_info and self.token_manager.token_info.access_token)
+        """Has either (a) raw API key+secret to fetch a token, or (b) a valid
+        cached access token. Used by health/status checks to distinguish
+        "never configured" from "configured and working"."""
+        return bool(self.api_key and self.api_secret) or bool(
+            self.token_manager.token_info and self.token_manager.token_info.access_token
+        )
+
+    async def ensure_access_token(self) -> str | None:
+        """Public helper: ensure we have a valid access token, fetching one
+        via the checksum flow if needed. Returns the token string or None.
+
+        Unlike :meth:`_refresh_callback`, this method is callable directly
+        from Settings-save and diagnostics flows without the 30-second rate
+        limit guard (the guard exists to prevent refresh storms during
+        streaming, not for explicit one-shot requests).
+        """
+        if self.token_manager.token_info and self.token_manager.token_info.access_token and not self.token_manager.is_token_expired():
+            return self.token_manager.token_info.access_token
+        try:
+            token = await self.service.fetch_access_token()
+        except GrowwServiceError as e:
+            self._last_auth_error = str(e)
+            logger.warning("groww_token_fetch_failed", error=str(e)[:300])
+            return None
+        self._last_auth_error = None
+        self.token_manager.set_token(TokenInfo(access_token=token, provider=self.PROVIDER_ID))
+        return token
 
     async def _refresh_callback(self) -> TokenInfo:
         """Refresh callback (registered on the token manager). Fetches a fresh
-        Groww access token via the checksum/TOTP flow and persists it."""
+        Groww access token via the checksum/TOTP flow and persists it.
+
+        Has a 30-second rate-limit guard so the streaming poller doesn't
+        trigger auth storms if Groww returns 401 transiently. Explicit
+        one-shot callers (Settings save, diagnostics) should use
+        :meth:`ensure_access_token` instead, which bypasses the guard.
+        """
         import time as _time
         now = _time.time()
         if now - self._last_auth_attempt < 30:
             raise RuntimeError(f"Groww token refresh skipped: rate-limit guard (last attempt {int(now - self._last_auth_attempt)}s ago, cooldown 30s)")
         self._last_auth_attempt = now
-        token = await self._fetch_access_token()
+        token = await self.ensure_access_token()
         if not token:
             last_err = getattr(self, "_last_auth_error", "unknown error")
             raise RuntimeError(f"Groww token refresh failed: {last_err}")
-        info = TokenInfo(access_token=token, provider=self.PROVIDER_ID)
-        self.token_manager.set_token(info)
-        return info
+        return self.token_manager.token_info
 
     async def _fetch_live_quote(self, symbol: str, token: str) -> dict | None:
         """PURE Groww quote fetch — no Yahoo/NSE fallback.
 
-        Uses ONLY Groww licensed REST endpoints (growwapi):
-          - GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY
-              Returns {status, payload: {last_price, day_change, day_change_perc, ohlc,
-              high_trade_range, low_trade_range, volume, open_interest, ...}}
-              Note: payload.ohlc is a STRING like "{open: 1, high: 2, low: 3, close: 4}"
-              (Groww quirk — not actually JSON). We parse it.
-          - GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY,BSE_SENSEX
-              Returns {status, payload: {NSE_NIFTY: 24113.7, BSE_SENSEX: 76944.2}}
-        Both endpoints return real data after market close (last traded price + OHLC).
-        If token is missing/invalid, returns None (caller shows honest OFFLINE).
+        All HTTP calls go through :class:`GrowwService`, which encapsulates
+        response parsing (Groww's payload.ohlc is a STRING, not a dict, and
+        the LTP bulk endpoint returns flat ``{EXCHANGE_SYMBOL: ltp}`` maps).
+
+        Both endpoints return real data after market close (last traded price +
+        OHLC for /quote, LTP for /ltp). If token is missing/invalid, returns
+        None and the caller surfaces honest OFFLINE/0.
         """
-        import httpx
         cfg = self.symbol_map.get(symbol)
         if not cfg:
             return None
@@ -191,133 +178,6 @@ class GrowwProvider(MarketDataProvider):
         exchange = cfg.get("exchange", "NSE")
         trading_symbol = cfg.get("trading_symbol", symbol.replace(" ", ""))
         segment = cfg.get("segment", "CASH")
-        import uuid
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "X-API-VERSION": "1.0",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "x-request-id": str(uuid.uuid4()),
-            "x-client-id": "growwapi",
-            "x-client-platform": "growwapi-python-client",
-            "x-client-platform-version": "1.5.0",
-        }
-
-        def _parse_ohlc_string(ohlc_val):
-            """Groww's payload.ohlc is a STRING like '{open: 149.50,high: 150.50,low: 148.50,close: 149.50}'.
-            Parse it into a dict {open, high, low, close}. Returns None if unparseable.
-            """
-            if isinstance(ohlc_val, dict):
-                return ohlc_val
-            if not isinstance(ohlc_val, str):
-                return None
-            result = {}
-            # Strip leading/trailing braces and split on commas
-            inner = ohlc_val.strip().strip("{}").strip()
-            for part in inner.split(","):
-                if ":" not in part:
-                    continue
-                k, _, v = part.partition(":")
-                k = k.strip()
-                v = v.strip()
-                try:
-                    result[k] = float(v)
-                except (ValueError, TypeError):
-                    continue
-            return result if result else None
-
-        def _normalize_quote_payload(payload: dict, source: str) -> dict | None:
-            """Normalize a Groww quote payload (from /live-data/quote) to our internal dict.
-            payload shape: {last_price, day_change, day_change_perc, ohlc (string),
-                            high_trade_range, low_trade_range, volume, open_interest, ...}
-            """
-            if not isinstance(payload, dict):
-                return None
-            # last_price is the LTP — ALWAYS the source of truth
-            ltp = payload.get("last_price")
-            if ltp is None:
-                ltp = payload.get("ltp")
-            if ltp is None or float(ltp) <= 0:
-                return None
-            ltp = float(ltp)
-
-            # OHLC: parse the string form Groww returns (or dict if SDK normalizes)
-            ohlc = _parse_ohlc_string(payload.get("ohlc"))
-            open_p = None
-            high_p = None
-            low_p = None
-            prev_p = None
-            if ohlc:
-                open_p = ohlc.get("open")
-                high_p = ohlc.get("high")
-                low_p = ohlc.get("low")
-                prev_p = ohlc.get("close")  # previous_close = ohlc.close
-
-            # Prefer high_trade_range/low_trade_range (these are reliable at root)
-            htr = payload.get("high_trade_range")
-            ltr = payload.get("low_trade_range")
-            if htr is not None:
-                high_p = float(htr)
-            if ltr is not None:
-                low_p = float(ltr)
-
-            vol = payload.get("volume")
-            try:
-                vol = int(vol) if vol is not None else 0
-            except (ValueError, TypeError):
-                vol = 0
-
-            oi_val = payload.get("open_interest")
-            try:
-                oi = int(oi_val) if oi_val is not None else None
-            except (ValueError, TypeError):
-                oi = None
-
-            logger.debug(
-                "groww_quote_parsed",
-                source=source,
-                symbol=symbol,
-                ltp=ltp,
-                open=open_p, high=high_p, low=low_p, prev=prev_p,
-                volume=vol, oi=oi,
-            )
-            return {
-                "ltp": ltp,
-                "open": float(open_p) if open_p is not None else None,
-                "high": float(high_p) if high_p is not None else None,
-                "low": float(low_p) if low_p is not None else None,
-                "prev": float(prev_p) if prev_p is not None else None,
-                "volume": vol,
-                "oi": oi,
-            }
-
-        def _normalize_ltp_payload(payload: dict, exchange_symbol: str) -> dict | None:
-            """Normalize a Groww LTP bulk payload to our internal dict.
-            payload shape: {NSE_NIFTY: 24113.7, BSE_SENSEX: 76944.2}
-            """
-            if not isinstance(payload, dict):
-                return None
-            # Look up the exchange_symbol key DIRECTLY (avoid recursive search which
-            # could pick up unrelated floats like day_change elsewhere).
-            ltp_val = payload.get(exchange_symbol)
-            if ltp_val is None:
-                return None
-            try:
-                ltp = float(ltp_val)
-            except (ValueError, TypeError):
-                return None
-            if ltp <= 0:
-                return None
-            logger.debug("groww_ltp_parsed", symbol=symbol, exchange_symbol=exchange_symbol, ltp=ltp)
-            return {
-                "ltp": ltp,
-                "open": None,
-                "high": None,
-                "low": None,
-                "prev": None,
-                "volume": 0,
-                "oi": None,
-            }
 
         # For indices, Feed is primary licensed source — try Feed cache first before REST
         is_index = symbol in getattr(self, "_index_feed_map", {})
@@ -363,72 +223,40 @@ class GrowwProvider(MarketDataProvider):
             # For indices: try the dedicated LTP bulk endpoint first (fast, returns
             # last traded price after hours). exchange_symbols format is "EXCHANGE_SYMBOL"
             # joined by comma (per Groww docs), e.g. "NSE_NIFTY,BSE_SENSEX".
+            ltp_sym = INDEX_EXCHANGE_SYMBOLS.get(symbol, f"{exchange}_{trading_symbol}")
             try:
-                idx_map = {
-                    "NIFTY 50": "NSE_NIFTY",
-                    "BANKNIFTY": "NSE_BANKNIFTY",
-                    "FINNIFTY": "NSE_FINNIFTY",
-                    "SENSEX": "BSE_SENSEX",
-                    "INDIA VIX": "NSE_INDIAVIX",
-                }
-                ltp_sym = idx_map.get(symbol, f"{exchange}_{trading_symbol}")
-                async with httpx.AsyncClient(timeout=2.5) as _client:
-                    ltp_url = f"{self.API_BASE}/live-data/ltp"
-                    ltp_resp = await _client.get(
-                        ltp_url,
-                        params={"segment": segment, "exchange_symbols": ltp_sym},
-                        headers=headers,
-                    )
-                    if ltp_resp.status_code == 200:
-                        lj = ltp_resp.json()
-                        if lj.get("status") == "SUCCESS":
-                            norm = _normalize_ltp_payload(lj.get("payload") or {}, ltp_sym)
-                            if norm:
-                                return norm
-                    else:
-                        logger.debug(
-                            "groww_ltp_http_non200",
-                            symbol=symbol,
-                            status=ltp_resp.status_code,
-                            body=ltp_resp.text[:200],
-                        )
+                ltp_map = await self.service.get_ltp_bulk(token, segment, [ltp_sym])
+                ltp_val = ltp_map.get(ltp_sym)
+                if ltp_val:
+                    logger.debug("groww_ltp_parsed", symbol=symbol, exchange_symbol=ltp_sym, ltp=ltp_val)
+                    return {
+                        "ltp": float(ltp_val),
+                        "open": None,
+                        "high": None,
+                        "low": None,
+                        "prev": None,
+                        "volume": 0,
+                        "oi": None,
+                    }
             except Exception as e:
                 logger.debug("groww_ltp_failed", symbol=symbol, error=str(e)[:200])
 
         # Full quote endpoint — works for both indices and stocks, returns full OHLC.
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                url = f"{self.API_BASE}/live-data/quote"
-                params = {"exchange": exchange, "segment": segment, "trading_symbol": trading_symbol}
-                resp = await client.get(url, params=params, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("status") != "SUCCESS":
-                        logger.debug(
-                            "groww_quote_status_not_success",
-                            symbol=symbol,
-                            status=data.get("status"),
-                            payload=data,
-                        )
-                        return None
-                    payload = data.get("payload") or data
-                    norm = _normalize_quote_payload(payload, source="live-data/quote")
-                    if norm:
-                        return norm
-                    # Some payloads nest the quote under a 'quote' key
-                    if isinstance(payload, dict):
-                        quote = payload.get("quote")
-                        if isinstance(quote, dict):
-                            norm = _normalize_quote_payload(quote, source="live-data/quote.quote")
-                            if norm:
-                                return norm
-                else:
-                    logger.debug(
-                        "groww_quote_http_non200",
-                        symbol=symbol,
-                        status=resp.status_code,
-                        body=resp.text[:200],
-                    )
+            norm = await self.service.get_quote(token, exchange, segment, trading_symbol)
+            if norm:
+                logger.debug(
+                    "groww_quote_parsed",
+                    symbol=symbol,
+                    ltp=norm.get("ltp"),
+                    open=norm.get("open"),
+                    high=norm.get("high"),
+                    low=norm.get("low"),
+                    prev=norm.get("prev"),
+                    volume=norm.get("volume"),
+                    oi=norm.get("oi"),
+                )
+                return norm
         except Exception as e:
             logger.debug("groww_live_quote_failed", symbol=symbol, error=str(e)[:200])
         return None
