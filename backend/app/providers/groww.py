@@ -10,6 +10,7 @@ from app.models.market import (
     IndexCard, MarketHealthStatus, MarketStatusResponse,
     MarketBreadthData, DataStatus, MarketSession,
 )
+from app.models.contracts import TickEvent, EventPriority
 from app.core.config import settings
 from app.core.token_manager import TokenManager, ConnectionState, TokenInfo
 from app.core.rate_limiter import TokenBucketRateLimiter
@@ -65,7 +66,19 @@ class GrowwProvider(MarketDataProvider):
         self.token_manager.register_refresh_callback(self._refresh_callback)
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
+        self._poll_task: asyncio.Task | None = None
+        self._feed_thread: object | None = None
+        self._feed_instance: object | None = None
         self._last_auth_attempt: float = 0
+        # Groww Feed index tokens (see growwapi instrument.csv) — used by GrowwFeed NATS stream
+        # When Feed is available, indices use subscribe_index_value; else 1s REST poller covers all.
+        self._index_feed_map: dict[str, dict] = {
+            "NIFTY 50": {"exchange": "NSE", "segment": "CASH", "exchange_token": "NIFTY"},
+            "BANKNIFTY": {"exchange": "NSE", "segment": "CASH", "exchange_token": "BANKNIFTY"},
+            "FINNIFTY": {"exchange": "NSE", "segment": "CASH", "exchange_token": "FINNIFTY"},
+            "SENSEX": {"exchange": "BSE", "segment": "CASH", "exchange_token": "1"},
+            "INDIA VIX": {"exchange": "NSE", "segment": "CASH", "exchange_token": "INDIAVIX"},
+        }
 
         # Groww uses its own symbol map; these are the canonical trading symbols.
         self.symbol_map = {
@@ -462,16 +475,282 @@ class GrowwProvider(MarketDataProvider):
         await self.rate_limiter.acquire()
         return []
 
+    # ------------------------------------------------------------------ #
+    # Real-time streaming — legal, licensed via Groww API
+    # ------------------------------------------------------------------ #
+    def _reverse_index_token_map(self) -> dict[str, str]:
+        """Reverse map exchange_token -> canonical symbol for Feed callbacks."""
+        rev: dict[str, str] = {}
+        for sym, cfg in self._index_feed_map.items():
+            rev[cfg["exchange_token"]] = sym
+        # Aliases for VIX variations
+        rev["INDIA VIX"] = "INDIA VIX"
+        return rev
+
+    async def _poller_loop(self) -> None:
+        """1-second poller that fetches Groww REST (or NSE) and pushes to central_feed.
+
+        This is the legal fast-path: when Groww token is present we use Groww's
+        licensed REST endpoint (GET /v1/live-data/quote with Bearer token).
+        When token is missing we fall back to NSE public scrape (1s cache).
+        Poller drives sub-second frontend updates via central_feed -> ws/market-feed
+        -> useMarketStream -> displayedCards, matching TradingView tick feel.
+        """
+        from app.services.central_feed import central_feed as _cf
+
+        logger.info("groww_poller_loop_started", interval_s=1.0)
+        consecutive_errors = 0
+        while self._stream_running:
+            try:
+                try:
+                    token = await self.token_manager.get_valid_token()
+                except Exception:
+                    token = ""
+                token_str = token or ""
+                # Fetch all symbols concurrently
+                tasks = [self._fetch_live_quote(sym, token_str) for sym in self.symbol_map.keys()]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                now = datetime.now(timezone.utc)
+                ingested = 0
+                for sym, live in zip(self.symbol_map.keys(), results):
+                    if isinstance(live, Exception):
+                        continue
+                    if not live or not live.get("ltp"):
+                        continue
+                    try:
+                        # Build TickEvent
+                        ltp = float(live["ltp"])
+                        if ltp <= 0:
+                            continue
+                        tick = TickEvent(
+                            timestamp=now,
+                            symbol=sym,
+                            instrument_token=self.symbol_map.get(sym, {}).get("trading_symbol", sym),
+                            ltp=ltp,
+                            open=float(live.get("open")) if live.get("open") else None,
+                            high=float(live.get("high")) if live.get("high") else None,
+                            low=float(live.get("low")) if live.get("low") else None,
+                            close=float(live.get("prev") or ltp),
+                            volume=int(live.get("volume") or 0),
+                            open_interest=int(live.get("oi")) if live.get("oi") is not None else None,
+                            provider=self.PROVIDER_ID,
+                            priority=EventPriority.HIGH,
+                        )
+                        ok = await _cf.ingest_tick(tick)
+                        if ok:
+                            ingested += 1
+                    except Exception as e:
+                        logger.debug("groww_poller_tick_build_failed", symbol=sym, error=str(e)[:120])
+                if ingested:
+                    consecutive_errors = 0
+                    logger.debug("groww_poller_ingested", count=ingested)
+                else:
+                    consecutive_errors += 1
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning("groww_poller_error", error=str(e)[:200], consecutive=consecutive_errors)
+                if consecutive_errors > 10:
+                    await asyncio.sleep(5)
+                    consecutive_errors = 0
+            # 1.0s cadence — aligns with TradingView for Indian indices
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                break
+        logger.info("groww_poller_loop_stopped")
+
+    def _try_start_groww_feed(self) -> None:
+        """Attempt to start GrowwFeed NATS streaming in a daemon thread.
+
+        Groww's official Feed (growwapi) uses NATS under the hood and calls
+        on_data_received callbacks from a NATS thread. We bridge those
+        callbacks into asyncio via run_coroutine_threadsafe -> central_feed.ingest_tick.
+        If growwapi is not installed or token is missing/invalid, this is a no-op
+        and the 1s poller already provides near-realtime data.
+        """
+        # Only attempt if token looks valid
+        token_info = self.token_manager.token_info
+        token = token_info.access_token if token_info else None
+        if not token or token in ("", "dummy", "mock-demo-token"):
+            logger.info("groww_feed_skipped_no_token", reason="poller will provide data via NSE/Groww REST")
+            return
+        try:
+            from growwapi import GrowwAPI, GrowwFeed  # type: ignore
+        except ImportError as e:
+            logger.warning("groww_feed_no_sdk", error=str(e)[:150], hint="pip install growwapi; using poller only")
+            return
+
+        import threading
+
+        def _feed_runner():
+            try:
+                groww_client = GrowwAPI(token)  # type: ignore
+                feed = GrowwFeed(groww_client)  # type: ignore
+                self._feed_instance = feed
+                loop = asyncio.get_event_loop()
+                # Fallback if no running loop (thread has no loop)
+                try:
+                    aio_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # Capture the main loop from the provider's poller task
+                    aio_loop = None
+                    try:
+                        import concurrent.futures
+                        # will be set later; try to get from asyncio._get_running_loop if available
+                    except Exception:
+                        pass
+                    # Use the loop that started the stream task if possible
+                    if self._poll_task:
+                        try:
+                            aio_loop = self._poll_task.get_loop()
+                        except Exception:
+                            aio_loop = None
+                # Use current event loop if available, otherwise try to get via asyncio.all_tasks
+                if aio_loop is None:
+                    try:
+                        aio_loop = asyncio.get_event_loop()
+                    except Exception:
+                        aio_loop = None
+
+                rev_map = self._reverse_index_token_map()
+
+                def _ingest_index_value():
+                    try:
+                        data = feed.get_index_value()  # type: ignore
+                        # data shape: {"NSE": {"CASH": {"NIFTY": {"value":..., "tsInMillis":...}}}}
+                        if not isinstance(data, dict):
+                            return
+                        for exch, seg_map in data.items():
+                            if not isinstance(seg_map, dict):
+                                continue
+                            for seg, token_map in seg_map.items():
+                                if not isinstance(token_map, dict):
+                                    continue
+                                for exch_tok, payload in token_map.items():
+                                    sym = rev_map.get(str(exch_tok)) or rev_map.get(str(exch_tok).upper())
+                                    if not sym:
+                                        continue
+                                    if not isinstance(payload, dict):
+                                        continue
+                                    val = payload.get("value")
+                                    ts_ms = payload.get("tsInMillis")
+                                    if val is None:
+                                        continue
+                                    try:
+                                        ts = datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=timezone.utc) if ts_ms else datetime.now(timezone.utc)
+                                    except Exception:
+                                        ts = datetime.now(timezone.utc)
+                                    tick = TickEvent(
+                                        timestamp=ts,
+                                        symbol=sym,
+                                        instrument_token=str(exch_tok),
+                                        ltp=float(val),
+                                        close=float(val),
+                                        provider=self.PROVIDER_ID,
+                                        priority=EventPriority.HIGH,
+                                    )
+                                    # Bridge to asyncio loop thread-safely
+                                    target_loop = aio_loop
+                                    if target_loop is None:
+                                        try:
+                                            target_loop = asyncio.get_event_loop()
+                                        except Exception:
+                                            continue
+                                    try:
+                                        from app.services.central_feed import central_feed as _cf2
+                                        fut = asyncio.run_coroutine_threadsafe(_cf2.ingest_tick(tick), target_loop)
+                                        # don't block callback; just schedule
+                                        _ = fut
+                                    except Exception as e:
+                                        logger.debug("groww_feed_ingest_bridge_failed", error=str(e)[:100])
+                    except Exception as e:
+                        logger.debug("groww_feed_get_index_value_failed", error=str(e)[:120])
+
+                def on_data_received(meta):  # type: ignore
+                    # meta contains feed_type etc; dispatch to appropriate getter
+                    try:
+                        ft = meta.get("feed_type") if isinstance(meta, dict) else None
+                        # Indices come via get_index_value; ltp via get_ltp
+                        if ft == "index_value" or True:  # always try index first (indices)
+                            _ingest_index_value()
+                        # Also try ltp for stocks/FNO if subscribed
+                        try:
+                            # optional: also ingest LTP for tradable tokens
+                            pass
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        logger.debug("groww_feed_on_data_error", error=str(e)[:120])
+
+                # Subscribe to index values (NIFTY, BANKNIFTY, etc.) — uses NATS
+                instruments = []
+                for cfg in self._index_feed_map.values():
+                    instruments.append({"exchange": cfg["exchange"], "segment": cfg["segment"], "exchange_token": cfg["exchange_token"]})
+                logger.info("groww_feed_subscribing", instruments=instruments)
+                try:
+                    feed.subscribe_index_value(instruments, on_data_received=on_data_received)  # type: ignore
+                except Exception as e:
+                    logger.warning("groww_feed_subscribe_failed", error=str(e)[:200])
+                    return
+                # Blocking consume — runs until unsubscribe/disconnect
+                logger.info("groww_feed_consume_started")
+                try:
+                    feed.consume()  # type: ignore  # blocking NATS loop
+                except Exception as e:
+                    logger.warning("groww_feed_consume_ended", error=str(e)[:200])
+            except Exception as e:
+                logger.warning("groww_feed_thread_failed", error=str(e)[:300])
+
+        t = threading.Thread(target=_feed_runner, name="groww-feed-nats", daemon=True)
+        t.start()
+        self._feed_thread = t
+        logger.info("groww_feed_thread_started")
+
     async def start_stream(self) -> None:
         if self._stream_running:
             return
         self._stream_running = True
         self.token_manager.set_state(ConnectionState.CONNECTED)
-        logger.info("groww_stream_started")
+        logger.info("groww_stream_started", mode="poller+feed")
+        # Start 1s poller (always) — provides TradingView-like ticks via licensed REST
+        self._poll_task = asyncio.create_task(self._poller_loop())
+        # Attempt NATS Feed in background thread (true push, <200ms) if growwapi + token available
+        try:
+            self._try_start_groww_feed()
+        except Exception as e:
+            logger.warning("groww_feed_start_failed_fallback_to_poller", error=str(e)[:200])
+        # Keep legacy task handle for compatibility
+        self._stream_task = self._poll_task
 
     async def stop_stream(self) -> None:
         self._stream_running = False
         self.token_manager.set_state(ConnectionState.DISCONNECTED)
-        if self._stream_task:
-            self._stream_task.cancel()
+        for task in (self._poll_task, self._stream_task):
+            if task:
+                try:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                except Exception:
+                    pass
+        self._poll_task = None
+        self._stream_task = None
+        # Unsubscribe GrowwFeed if running
+        if self._feed_instance is not None:
+            try:
+                # Unsubscribe all index tokens
+                instruments = []
+                for cfg in self._index_feed_map.values():
+                    instruments.append({"exchange": cfg["exchange"], "segment": cfg["segment"], "exchange_token": cfg["exchange_token"]})
+                try:
+                    self._feed_instance.unsubscribe_index_value(instruments)  # type: ignore
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self._feed_instance = None
         logger.info("groww_stream_stopped")

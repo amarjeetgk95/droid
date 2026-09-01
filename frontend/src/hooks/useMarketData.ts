@@ -6,7 +6,7 @@ import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResp
 
 import { useMarketStream } from './useMarketStream';
 
-export function useMarketData(refreshInterval = 30000) {
+export function useMarketData(refreshInterval = 5000) {
   const [cards, setCards] = useState<IndexCard[]>([]);
   const [breadth, setBreadth] = useState<MarketBreadthData | null>(null);
   const [health, setHealth] = useState<MarketHealthStatus | null>(null);

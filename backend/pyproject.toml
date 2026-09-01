@@ -21,6 +21,8 @@ dependencies = [
     "asyncpg>=0.30.0",
     "alembic>=1.13.0",
     "psycopg[binary]>=3.2.0",
+    "growwapi>=1.5.0",
+    "nats-py>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -55,11 +55,13 @@ class FyersProvider(MarketDataProvider):
 
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
+        self._poll_task: asyncio.Task | None = None
 
         self.symbol_map = {
             "NIFTY 50": "NSE:NIFTY50-INDEX",
             "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
             "FINNIFTY": "NSE:FINNIFTY-INDEX",
+            "SENSEX": "BSE:SENSEX-INDEX",
             "INDIA VIX": "NSE:INDIAVIX-INDEX",
         }
 
@@ -252,16 +254,72 @@ class FyersProvider(MarketDataProvider):
         await self.rate_limiter.acquire()
         return []
 
+    async def _poller_loop(self) -> None:
+        """1s NSE poller -> central_feed (legal fallback when no FYERS WS)."""
+        from app.services.central_feed import central_feed as _cf
+        logger.info("fyers_poller_loop_started", interval_s=1.0)
+        while self._stream_running:
+            try:
+                # Reuse NSE fetch (1s cache) for all symbols concurrently
+                from app.services.nse_service import fetch_nse_quote
+                tasks = [fetch_nse_quote(sym) for sym in self.symbol_map.keys()]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                now = datetime.now(timezone.utc)
+                for sym, res in zip(self.symbol_map.keys(), results):
+                    if isinstance(res, Exception) or not res or not res.get("ltp"):
+                        continue
+                    try:
+                        ltp = float(res["ltp"])
+                        if ltp <= 0:
+                            continue
+                        tick = TickEvent(
+                            timestamp=now,
+                            symbol=sym,
+                            instrument_token=self.symbol_map.get(sym, sym),
+                            ltp=ltp,
+                            open=float(res.get("open")) if res.get("open") else None,
+                            high=float(res.get("high")) if res.get("high") else None,
+                            low=float(res.get("low")) if res.get("low") else None,
+                            close=float(res.get("prev") or ltp),
+                            volume=0,
+                            provider=self.PROVIDER_ID,
+                            priority=EventPriority.HIGH,
+                        )
+                        await _cf.ingest_tick(tick)
+                    except Exception:
+                        continue
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("fyers_poller_error", error=str(e)[:150])
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                break
+        logger.info("fyers_poller_loop_stopped")
+
     async def start_stream(self) -> None:
         if self._stream_running:
             return
         self._stream_running = True
         self.token_manager.set_state(ConnectionState.CONNECTED)
-        logger.info("fyers_stream_started")
+        logger.info("fyers_stream_started", mode="poller")
+        self._poll_task = asyncio.create_task(self._poller_loop())
+        self._stream_task = self._poll_task
 
     async def stop_stream(self) -> None:
         self._stream_running = False
         self.token_manager.set_state(ConnectionState.DISCONNECTED)
-        if self._stream_task:
-            self._stream_task.cancel()
+        for t in (self._poll_task, self._stream_task):
+            if t:
+                try:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                except Exception:
+                    pass
+        self._poll_task = None
+        self._stream_task = None
         logger.info("fyers_stream_stopped")

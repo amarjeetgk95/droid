@@ -4,9 +4,11 @@ import structlog
 
 logger = structlog.get_logger()
 
-# NSE allIndices cache (short-lived)
+# NSE allIndices cache (short-lived) - 1.0s for near-realtime parity with TradingView
+# Legal note: this is NSE public website scrape (not licensed feed). When Groww API
+# token is configured, GrowwProvider bypasses this and uses Groww's licensed REST/Feed.
 _cache: dict = {"data": None, "ts": 0.0}
-CACHE_TTL_SECONDS = 10.0
+CACHE_TTL_SECONDS = 1.0
 
 async def fetch_nse_quote(symbol: str) -> dict | None:
     """Fetch real NSE/BSE quote via public APIs (no broker auth). Returns TradingView-aligned dict or None.

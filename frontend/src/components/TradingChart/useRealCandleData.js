@@ -122,7 +122,7 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
           return prev;
         });
       } catch {}
-    }, 5000);
+    }, 2000);
     return () => clearInterval(interval);
   }, [symbol, tf, live]);
 
