@@ -631,6 +631,25 @@ class ApiClient {
     return this.request<any>(`/api/v1/dashboard/${encodeURIComponent(symbol)}`);
   }
 
+  async getDashboardSummary() {
+    return this.request<{
+      data: {
+        cards: any[];
+        breadth: any;
+        health: any;
+        market_status: any;
+        ml_prediction: any;
+        fii_dii: any;
+        regime_overview: any;
+        errors: Record<string, string>;
+        degraded: boolean;
+        generated_at: string;
+      };
+      error: string | null;
+      meta: import('./types').ApiMeta;
+    }>('/api/v1/dashboard/summary');
+  }
+
   // Historical Pattern Intelligence (HPI) — user-controlled derivative & historical data
   async getHpiUniverse() {
     return this.request<{ data: import('./types').HpiUniverse; error: string | null; meta: any }>('/api/v1/hpi/universe');

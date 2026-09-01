@@ -26,8 +26,9 @@ export function MarketOverview({ marketStatus, health, loading }: { marketStatus
       </div>
 
       <div className="p-3 border border-border rounded-lg mt-auto">
-        <p className="text-sm text-muted-foreground mb-1">Market Regime</p>
-        <p className="font-medium text-foreground">Coming in Phase 6</p>
+        <p className="text-sm text-muted-foreground mb-1">Provider</p>
+        <p className="font-medium text-foreground">{safeStr(health.provider)}</p>
+        <p className="text-xs text-muted-foreground mt-1">Latency: {health.latency_ms !== null && health.latency_ms !== undefined ? `${health.latency_ms.toFixed(0)}ms` : 'N/A'}</p>
       </div>
     </div>
   );

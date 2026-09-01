@@ -27,6 +27,7 @@ from app.models.market import ApiMeta, DataStatus
 from app.services.regime_service import regime_service
 from app.chart_analysis.service import analyze_instrument
 from app.services.paper_service import paper_service
+from app.services.market_service import MarketService
 
 logger = structlog.get_logger(__name__)
 
@@ -289,4 +290,127 @@ async def get_dashboard(symbol: str):
         "meta": _meta(degraded=data.degraded).model_dump(),
     }
     _cache[sym] = (now, data)
+    return response
+
+
+class DashboardSummary(BaseModel):
+    cards: list[dict[str, Any]] = []
+    breadth: dict[str, Any] | None = None
+    health: dict[str, Any] | None = None
+    market_status: dict[str, Any] | None = None
+    ml_prediction: dict[str, Any] | None = None
+    fii_dii: dict[str, Any] | None = None
+    regime_overview: dict[str, Any] | None = None
+    errors: dict[str, str] = {}
+    degraded: bool = False
+    generated_at: str
+
+
+SUMMARY_CACHE_TTL = 5.0
+_summary_cache: dict[str, tuple[float, DashboardSummary]] = {}
+
+
+def _make_summary_meta(degraded: bool) -> ApiMeta:
+    return ApiMeta(
+        provider="dashboard_summary",
+        timestamp=datetime.now(timezone.utc),
+        status=DataStatus.OFFLINE if degraded else DataStatus.LIVE,
+    )
+
+
+@router.get("/summary")
+async def get_dashboard_summary():
+    cached = _summary_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < SUMMARY_CACHE_TTL:
+        return {
+            "data": cached[1].model_dump(),
+            "error": None,
+            "meta": _make_summary_meta(cached[1].degraded).model_dump(),
+        }
+
+    errors: dict[str, str] = {}
+    service = MarketService()
+
+    cards: list[dict[str, Any]] = []
+    breadth_dict: dict[str, Any] | None = None
+    health_dict: dict[str, Any] | None = None
+    status_dict: dict[str, Any] | None = None
+    ml_dict: dict[str, Any] | None = None
+    fii_dict: dict[str, Any] | None = None
+    regime_dict: dict[str, Any] | None = None
+
+    try:
+        index_cards = await service.get_index_cards()
+        cards = [c.model_dump(mode="json") for c in index_cards]
+    except Exception:
+        logger.exception("dashboard_summary.cards_failed")
+        errors["cards"] = "Index cards unavailable"
+
+    try:
+        breadth = await service.get_market_breadth()
+        breadth_dict = breadth.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.breadth_failed")
+        errors["breadth"] = "Market breadth unavailable"
+
+    try:
+        health = await service.get_health()
+        health_dict = health.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.health_failed")
+        errors["health"] = "Market health unavailable"
+
+    try:
+        status = await service.get_market_status()
+        status_dict = status.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.status_failed")
+        errors["status"] = "Market status unavailable"
+
+    try:
+        from app.ml.predictor import ml_predictor
+
+        ml_pred = await ml_predictor.predict_probabilities("NIFTY")
+        ml_dict = ml_pred.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.ml_failed")
+        errors["ml"] = "ML prediction unavailable"
+
+    try:
+        from app.services.fii_dii_service import fii_dii_service
+
+        fii_overview = await fii_dii_service.get_fii_dii_overview()
+        fii_dict = fii_overview.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.fii_dii_failed")
+        errors["fii_dii"] = "FII/DII data unavailable"
+
+    try:
+        regime = await regime_service.classify_market_regime("NIFTY")
+        regime_dict = regime.model_dump(mode="json")
+    except Exception:
+        logger.exception("dashboard_summary.regime_failed")
+        errors["regime"] = "Regime classification unavailable"
+
+    data = DashboardSummary(
+        cards=cards,
+        breadth=breadth_dict,
+        health=health_dict,
+        market_status=status_dict,
+        ml_prediction=ml_dict,
+        fii_dii=fii_dict,
+        regime_overview=regime_dict,
+        errors=errors,
+        degraded=bool(errors),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    response = {
+        "data": data.model_dump(),
+        "error": None,
+        "meta": _make_summary_meta(data.degraded).model_dump(),
+    }
+
+    _summary_cache["default"] = (now, data)
     return response

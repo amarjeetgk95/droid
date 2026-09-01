@@ -8,6 +8,9 @@ import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
 import { MarketOverview } from '@/components/dashboard/MarketOverview';
 import { QuickStats } from '@/components/dashboard/QuickStats';
 import { MarketHealth } from '@/components/dashboard/MarketHealth';
+import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
+import type { MarketRegimeOverview } from '@/lib/types';
 
 // Lazy-load heavy below-fold panels — reduces initial JS + defers 6 extra API calls until visible
 const MLPredictionCard = dynamic(() => import('@/components/dashboard/MLPredictionCard').then(m => m.MLPredictionCard), { ssr: false, loading: () => <div className="bg-card border rounded-xl p-4 h-64 animate-pulse" /> });
@@ -25,10 +28,32 @@ function SectionError({ message }: { message: string }) {
 }
 
 export default function DashboardPage() {
-  const { cards, breadth, health, marketStatus, loading, error, errors, lastFetch, refetch } = useMarketDataContext();
+  const { cards, breadth, health, marketStatus, loading, error, errors, lastFetch, refetch } = useMarketDataContext({ useSummaryEndpoint: true });
+  const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
+  const [regimeLoading, setRegimeLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchRegime = async () => {
+      try {
+        const res = await api.getRegimeOverview('NIFTY');
+        if (!isMounted) return;
+        setRegimeOverview(res.data);
+      } catch {
+        if (!isMounted) return;
+      } finally {
+        if (isMounted) setRegimeLoading(false);
+      }
+    };
+    fetchRegime();
+    const interval = setInterval(fetchRegime, 30000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   if (error && !cards.length && !breadth && !health && !marketStatus) {
-    // Everything failed — provide a retry path.
     return (
       <div className="flex items-center justify-center h-64 text-destructive bg-card rounded border border-destructive/20">
         <div className="text-center">
@@ -51,7 +76,6 @@ export default function DashboardPage() {
       {/* Market Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {loading && !cards.length ? (
-          // Skeleton loaders
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="bg-card rounded-lg border border-border p-4 h-48 animate-pulse">
               <div className="h-4 bg-muted rounded w-24 mb-3" />
@@ -90,9 +114,28 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-4"><ErrorBoundary label="DataHealthPanel"><DataHealthPanel /></ErrorBoundary></div>
         <div className="lg:col-span-8 bg-card border rounded-lg p-4">
-          <h3 className="font-bold text-sm tracking-widest uppercase mb-2">Signal & Execution</h3>
-          <p className="text-xs text-muted-foreground">TTL ≤5s for fast breakout • Atomic FSM CAS • Fail-closed • Auditable — 4 pipelines isolated: NIFTY | BANKNIFTY | SENSEX | BTCUSD (24/7)</p>
-          <p className="text-[11px] text-muted-foreground mt-2">Pipeline: POST /api/v1/institutional/pipeline/ingest — BTCUSD uses continuous CRYPTO pipeline, Indian indices use session-aware NSE pipeline</p>
+          <h3 className="font-bold text-sm tracking-widest uppercase mb-2">Market Regime</h3>
+          {regimeLoading ? (
+            <div className="animate-pulse space-y-2">
+              <div className="h-4 bg-muted rounded w-3/4" />
+              <div className="h-4 bg-muted rounded w-1/2" />
+            </div>
+          ) : regimeOverview ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-foreground">{regimeOverview.summary_headline}</p>
+              <p className="text-xs text-muted-foreground">{regimeOverview.institutional_rationale}</p>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">
+                  {regimeOverview.regime_state.replace(/_/g, ' ')}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  Confidence: {regimeOverview.confidence_score.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Regime classification unavailable</p>
+          )}
         </div>
       </div>
 

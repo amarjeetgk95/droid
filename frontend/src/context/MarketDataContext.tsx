@@ -35,7 +35,7 @@ const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, 
 
 const errMessage = (err: unknown) => (err instanceof Error ? err.message : 'Failed to fetch market data');
 
-export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH_MS }: { children: ReactNode; refreshInterval?: number }) {
+export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH_MS, useSummaryEndpoint = false }: { children: ReactNode; refreshInterval?: number; useSummaryEndpoint?: boolean }) {
   const [cards, setCards] = useState<IndexCard[]>([]);
   const [breadth, setBreadth] = useState<MarketBreadthData | null>(null);
   const [health, setHealth] = useState<MarketHealthStatus | null>(null);
@@ -50,38 +50,63 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
 
   // Single implementation shared by polling, visibility refresh and refetch().
   const fetchData = useCallback(async () => {
-    // Single-flight guard — never stack overlapping polls.
     if (inFlightRef.current) return;
     if (typeof document !== 'undefined' && document.hidden) return;
     inFlightRef.current = true;
     try {
-      // allSettled: one failing endpoint must not blank the whole dashboard.
-      const [cardsRes, breadthRes, healthRes, statusRes] = await Promise.allSettled([
-        api.getIndexCards(),
-        api.getMarketBreadth(),
-        api.getMarketHealth(),
-        api.getMarketStatus(),
-      ]);
-      if (!mountedRef.current) return;
+      if (useSummaryEndpoint) {
+        let summaryData: any = null;
+        try {
+          const summaryRes = await api.getDashboardSummary();
+          summaryData = summaryRes.data;
+        } catch (err) {
+          // summaryData stays null, errors populated below
+        }
+        if (!mountedRef.current) return;
 
-      const nextErrors: SectionErrors = {
-        cards: cardsRes.status === 'rejected' ? errMessage(cardsRes.reason) : null,
-        breadth: breadthRes.status === 'rejected' ? errMessage(breadthRes.reason) : null,
-        health: healthRes.status === 'rejected' ? errMessage(healthRes.reason) : null,
-        marketStatus: statusRes.status === 'rejected' ? errMessage(statusRes.reason) : null,
-      };
+        const errors: SectionErrors = {
+          cards: summaryData?.errors?.cards ?? null,
+          breadth: summaryData?.errors?.breadth ?? null,
+          health: summaryData?.errors?.health ?? null,
+          marketStatus: summaryData?.errors?.status ?? null,
+        };
 
-      if (cardsRes.status === 'fulfilled') setCards(cardsRes.value.data);
-      if (breadthRes.status === 'fulfilled') setBreadth(breadthRes.value.data);
-      if (healthRes.status === 'fulfilled') setHealth(healthRes.value);
-      if (statusRes.status === 'fulfilled') setMarketStatus(statusRes.value.data);
-      setErrors(nextErrors);
-      setLastFetch(new Date());
+        if (summaryData) {
+          if (summaryData.cards && mountedRef.current) setCards(summaryData.cards as IndexCard[]);
+          if (summaryData.breadth && mountedRef.current) setBreadth(summaryData.breadth as MarketBreadthData);
+          if (summaryData.health && mountedRef.current) setHealth(summaryData.health as MarketHealthStatus);
+          if (summaryData.market_status && mountedRef.current) setMarketStatus(summaryData.market_status as MarketStatusResponse);
+        }
+        setErrors(errors);
+        setLastFetch(new Date());
+      } else {
+        const [cardsRes, breadthRes, healthRes, statusRes] = await Promise.allSettled([
+          api.getIndexCards(),
+          api.getMarketBreadth(),
+          api.getMarketHealth(),
+          api.getMarketStatus(),
+        ]);
+        if (!mountedRef.current) return;
+
+        const nextErrors: SectionErrors = {
+          cards: cardsRes.status === 'rejected' ? errMessage(cardsRes.reason) : null,
+          breadth: breadthRes.status === 'rejected' ? errMessage(breadthRes.reason) : null,
+          health: healthRes.status === 'rejected' ? errMessage(healthRes.reason) : null,
+          marketStatus: statusRes.status === 'rejected' ? errMessage(statusRes.reason) : null,
+        };
+
+        if (cardsRes.status === 'fulfilled') setCards(cardsRes.value.data);
+        if (breadthRes.status === 'fulfilled') setBreadth(breadthRes.value.data);
+        if (healthRes.status === 'fulfilled') setHealth(healthRes.value);
+        if (statusRes.status === 'fulfilled') setMarketStatus(statusRes.value.data);
+        setErrors(nextErrors);
+        setLastFetch(new Date());
+      }
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [useSummaryEndpoint]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -161,7 +186,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
 }
 
-export function useMarketDataContext() {
+export function useMarketDataContext(options?: { useSummaryEndpoint?: boolean }) {
   const ctx = useContext(MarketDataContext);
   if (!ctx) throw new Error('useMarketDataContext must be used within MarketDataProvider');
   return ctx;
