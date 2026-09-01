@@ -20,7 +20,7 @@ from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
 from app.services.pattern_outcome_worker import pattern_outcome_worker
 from app.hpi.service import hpi_service
-from app.providers.registry import get_provider
+from app.providers.registry import get_provider, suppress_autostart
 import structlog
 
 
@@ -82,8 +82,12 @@ async def lifespan(app: FastAPI):
 
     # Start Central Market Data Feed & Upstream Provider Stream (real ticks only; no synthetic)
     await central_feed.start()
-    provider = get_provider()
-    await provider.start_stream()
+    # Suppress registry auto-start while we explicitly start the stream, to
+    # avoid a race where the background auto-start task stop+restarts the
+    # provider concurrently with this explicit start.
+    with suppress_autostart():
+        provider = get_provider()
+        await provider.start_stream()
 
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()

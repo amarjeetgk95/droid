@@ -4,7 +4,7 @@ from app.core.config import settings as app_settings
 from app.core.database import get_db_session
 from app.models.user import UserSettingsResponse, UserSettingsUpdate
 from app.services.user_service import SettingsService
-from app.providers.registry import reset_provider
+from app.providers.registry import reset_provider, get_provider, stop_previous_provider_stream
 from app.core.broker_runtime import apply_app_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -45,9 +45,15 @@ def _is_dev_mode() -> bool:
     return not app_settings.auth_required
 
 
-def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
+async def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
     """After persisting settings, refresh the runtime broker config so saved
-    credentials / provider selection take effect without a backend restart."""
+    credentials / provider selection take effect without a backend restart.
+
+    Also stop the previous provider's stream and start the new provider's
+    stream so MARKET_TICKS resumes immediately on provider swap (e.g. Fyers ->
+    Groww). Without this, reset_provider() drops the singleton but the new
+    provider's start_stream() is never called, leaving the WS tick stream at 0.
+    """
     if res is None:
         return
     try:
@@ -55,8 +61,27 @@ def _reconfigure_provider(res: UserSettingsResponse | None) -> None:
     except Exception as e:
         logger.warning("broker_config_reconfigure_failed", error=str(e)[:200])
         return
+    # Stop the previous provider's stream BEFORE swapping, so its background
+    # task doesn't keep producing ticks for the discarded instance.
+    await stop_previous_provider_stream()
     # Force the provider singleton to rebuild from the new config on next access.
     reset_provider()
+    # Explicitly instantiate + start the new provider's stream. This is the
+    # critical step that was missing — saving Groww creds used to create the
+    # GrowwProvider but never call start_stream(), so the licensed feed never
+    # ingested ticks into central_feed.
+    try:
+        provider = get_provider()
+        await provider.start_stream()
+        logger.info(
+            "settings_provider_stream_restarted",
+            provider=provider.provider_name,
+        )
+    except Exception as e:
+        logger.warning(
+            "settings_provider_stream_start_failed",
+            error=str(e)[:200],
+        )
 
 async def _get_settings_dev_fallback(user: AuthUser, session: AsyncSession | None, data: UserSettingsUpdate | None = None):
     # Try DB first, fall back to in-memory on any DB error (FK, UUID, connection)
@@ -124,7 +149,7 @@ async def create_settings(
     """Create or replace the authenticated user's settings."""
     if _is_dev_mode():
         settings = await _get_settings_dev_fallback(user, session, data)
-        _reconfigure_provider(settings)
+        await _reconfigure_provider(settings)
         return settings
     if session is None:
         raise HTTPException(
@@ -141,7 +166,7 @@ async def create_settings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create settings"
         )
-    _reconfigure_provider(settings)
+    await _reconfigure_provider(settings)
     return settings
 
 
@@ -154,7 +179,7 @@ async def update_settings(
     """Partially update the authenticated user's settings."""
     if _is_dev_mode():
         settings = await _get_settings_dev_fallback(user, session, data)
-        _reconfigure_provider(settings)
+        await _reconfigure_provider(settings)
         return settings
     if session is None:
         raise HTTPException(
@@ -171,5 +196,5 @@ async def update_settings(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Settings not found"
         )
-    _reconfigure_provider(settings)
+    await _reconfigure_provider(settings)
     return settings

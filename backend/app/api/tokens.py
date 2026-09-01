@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Body
-from app.providers.registry import get_provider, reset_provider
+from app.providers.registry import get_provider, reset_provider, stop_previous_provider_stream
 from app.core.broker_runtime import apply_app_settings
 from app.core.token_manager import ConnectionState
 from app.models.market import ApiMeta, DataStatus
@@ -57,12 +57,23 @@ async def refresh_token(payload: dict | None = Body(default=None)):
         if isinstance(incoming_app, dict) and incoming_app:
             try:
                 apply_app_settings(incoming_app)
+                # Stop the previous provider's stream before swapping so its
+                # background task doesn't keep producing ticks for the discarded
+                # instance.
+                await stop_previous_provider_stream()
                 reset_provider()
                 logger.info("token_refresh_hot_sync", provider=incoming_app.get("broker", {}).get("provider"))
             except Exception as e:
                 logger.warning("token_refresh_hot_sync_failed", error=str(e)[:200])
 
     provider = get_provider()
+    # Ensure the (possibly newly created) provider's stream is running so
+    # MARKET_TICKS resumes immediately after a provider swap (e.g. Fyers -> Groww).
+    try:
+        if not getattr(provider, "_stream_running", False):
+            await provider.start_stream()
+    except Exception as e:
+        logger.warning("token_refresh_start_stream_failed", error=str(e)[:200])
     token_mgr = provider.get_token_manager()
 
     if token_mgr._refresh_callback is not None:
