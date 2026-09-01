@@ -170,10 +170,16 @@ class GrowwProvider(MarketDataProvider):
     async def _fetch_live_quote(self, symbol: str, token: str) -> dict | None:
         """PURE Groww quote fetch — no Yahoo/NSE fallback.
 
-        Uses ONLY Groww live-data/quote ( licensed ):
-        GET https://api.groww.in/v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY
-        If token is missing/invalid, returns None (caller will surface DEMO, not third-party scrape).
-        You integrated Groww exactly to avoid Yahoo/NSE — this honors that.
+        Uses ONLY Groww licensed REST endpoints (growwapi):
+          - GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY
+              Returns {status, payload: {last_price, day_change, day_change_perc, ohlc,
+              high_trade_range, low_trade_range, volume, open_interest, ...}}
+              Note: payload.ohlc is a STRING like "{open: 1, high: 2, low: 3, close: 4}"
+              (Groww quirk — not actually JSON). We parse it.
+          - GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY,BSE_SENSEX
+              Returns {status, payload: {NSE_NIFTY: 24113.7, BSE_SENSEX: 76944.2}}
+        Both endpoints return real data after market close (last traded price + OHLC).
+        If token is missing/invalid, returns None (caller shows honest OFFLINE).
         """
         import httpx
         cfg = self.symbol_map.get(symbol)
@@ -184,6 +190,7 @@ class GrowwProvider(MarketDataProvider):
             return None
         exchange = cfg.get("exchange", "NSE")
         trading_symbol = cfg.get("trading_symbol", symbol.replace(" ", ""))
+        segment = cfg.get("segment", "CASH")
         import uuid
         headers = {
             "Authorization": f"Bearer {token}",
@@ -195,6 +202,123 @@ class GrowwProvider(MarketDataProvider):
             "x-client-platform": "growwapi-python-client",
             "x-client-platform-version": "1.5.0",
         }
+
+        def _parse_ohlc_string(ohlc_val):
+            """Groww's payload.ohlc is a STRING like '{open: 149.50,high: 150.50,low: 148.50,close: 149.50}'.
+            Parse it into a dict {open, high, low, close}. Returns None if unparseable.
+            """
+            if isinstance(ohlc_val, dict):
+                return ohlc_val
+            if not isinstance(ohlc_val, str):
+                return None
+            result = {}
+            # Strip leading/trailing braces and split on commas
+            inner = ohlc_val.strip().strip("{}").strip()
+            for part in inner.split(","):
+                if ":" not in part:
+                    continue
+                k, _, v = part.partition(":")
+                k = k.strip()
+                v = v.strip()
+                try:
+                    result[k] = float(v)
+                except (ValueError, TypeError):
+                    continue
+            return result if result else None
+
+        def _normalize_quote_payload(payload: dict, source: str) -> dict | None:
+            """Normalize a Groww quote payload (from /live-data/quote) to our internal dict.
+            payload shape: {last_price, day_change, day_change_perc, ohlc (string),
+                            high_trade_range, low_trade_range, volume, open_interest, ...}
+            """
+            if not isinstance(payload, dict):
+                return None
+            # last_price is the LTP — ALWAYS the source of truth
+            ltp = payload.get("last_price")
+            if ltp is None:
+                ltp = payload.get("ltp")
+            if ltp is None or float(ltp) <= 0:
+                return None
+            ltp = float(ltp)
+
+            # OHLC: parse the string form Groww returns (or dict if SDK normalizes)
+            ohlc = _parse_ohlc_string(payload.get("ohlc"))
+            open_p = None
+            high_p = None
+            low_p = None
+            prev_p = None
+            if ohlc:
+                open_p = ohlc.get("open")
+                high_p = ohlc.get("high")
+                low_p = ohlc.get("low")
+                prev_p = ohlc.get("close")  # previous_close = ohlc.close
+
+            # Prefer high_trade_range/low_trade_range (these are reliable at root)
+            htr = payload.get("high_trade_range")
+            ltr = payload.get("low_trade_range")
+            if htr is not None:
+                high_p = float(htr)
+            if ltr is not None:
+                low_p = float(ltr)
+
+            vol = payload.get("volume")
+            try:
+                vol = int(vol) if vol is not None else 0
+            except (ValueError, TypeError):
+                vol = 0
+
+            oi_val = payload.get("open_interest")
+            try:
+                oi = int(oi_val) if oi_val is not None else None
+            except (ValueError, TypeError):
+                oi = None
+
+            logger.debug(
+                "groww_quote_parsed",
+                source=source,
+                symbol=symbol,
+                ltp=ltp,
+                open=open_p, high=high_p, low=low_p, prev=prev_p,
+                volume=vol, oi=oi,
+            )
+            return {
+                "ltp": ltp,
+                "open": float(open_p) if open_p is not None else None,
+                "high": float(high_p) if high_p is not None else None,
+                "low": float(low_p) if low_p is not None else None,
+                "prev": float(prev_p) if prev_p is not None else None,
+                "volume": vol,
+                "oi": oi,
+            }
+
+        def _normalize_ltp_payload(payload: dict, exchange_symbol: str) -> dict | None:
+            """Normalize a Groww LTP bulk payload to our internal dict.
+            payload shape: {NSE_NIFTY: 24113.7, BSE_SENSEX: 76944.2}
+            """
+            if not isinstance(payload, dict):
+                return None
+            # Look up the exchange_symbol key DIRECTLY (avoid recursive search which
+            # could pick up unrelated floats like day_change elsewhere).
+            ltp_val = payload.get(exchange_symbol)
+            if ltp_val is None:
+                return None
+            try:
+                ltp = float(ltp_val)
+            except (ValueError, TypeError):
+                return None
+            if ltp <= 0:
+                return None
+            logger.debug("groww_ltp_parsed", symbol=symbol, exchange_symbol=exchange_symbol, ltp=ltp)
+            return {
+                "ltp": ltp,
+                "open": None,
+                "high": None,
+                "low": None,
+                "prev": None,
+                "volume": 0,
+                "oi": None,
+            }
+
         # For indices, Feed is primary licensed source — try Feed cache first before REST
         is_index = symbol in getattr(self, "_index_feed_map", {})
         if is_index:
@@ -207,15 +331,17 @@ class GrowwProvider(MarketDataProvider):
                         for seg, tok_map in (seg_map or {}).items():
                             for tok, payload in (tok_map or {}).items():
                                 if rev.get(str(tok)) == symbol and isinstance(payload, dict) and payload.get("value") is not None:
-                                    return {
-                                        "ltp": float(payload["value"]),
-                                        "open": None,
-                                        "high": None,
-                                        "low": None,
-                                        "prev": None,
-                                        "volume": 0,
-                                        "oi": None,
-                                    }
+                                    feed_val = float(payload["value"])
+                                    if feed_val > 0:
+                                        return {
+                                            "ltp": feed_val,
+                                            "open": None,
+                                            "high": None,
+                                            "low": None,
+                                            "prev": None,
+                                            "volume": 0,
+                                            "oi": None,
+                                        }
                 except Exception:
                     pass
             # Fast path: check central_feed cache BEFORE slow REST (if poller already has tick, return instantly — avoids 5s REST timeout per index)
@@ -223,85 +349,86 @@ class GrowwProvider(MarketDataProvider):
                 from app.services.central_feed import central_feed as _cf_fast
                 _fast = _cf_fast.get_latest_tick(symbol)
                 if _fast and _fast.ltp > 0:
-                    return {"ltp": float(_fast.ltp), "open": float(_fast.open) if _fast.open else None, "high": float(_fast.high) if _fast.high else None, "low": float(_fast.low) if _fast.low else None, "prev": float(_fast.close) if _fast.close else None, "volume": int(_fast.volume) if _fast.volume else 0, "oi": _fast.open_interest}
+                    return {
+                        "ltp": float(_fast.ltp),
+                        "open": float(_fast.open) if _fast.open else None,
+                        "high": float(_fast.high) if _fast.high else None,
+                        "low": float(_fast.low) if _fast.low else None,
+                        "prev": float(_fast.close) if _fast.close else None,
+                        "volume": int(_fast.volume) if _fast.volume else 0,
+                        "oi": _fast.open_interest,
+                    }
             except Exception:
                 pass
-            # Fallback for indices: try Groww LTP bulk endpoint via async REST only (SDK sync calls removed — they blocked event loop; async REST + feed cache is sufficient)
+            # For indices: try the dedicated LTP bulk endpoint first (fast, returns
+            # last traded price after hours). exchange_symbols format is "EXCHANGE_SYMBOL"
+            # joined by comma (per Groww docs), e.g. "NSE_NIFTY,BSE_SENSEX".
             try:
-                import httpx as _httpx2
-                async with _httpx2.AsyncClient(timeout=2.0) as _client:
-                    idx_map = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
-                    ltp_sym = idx_map.get(symbol, f"NSE_{trading_symbol}")
+                idx_map = {
+                    "NIFTY 50": "NSE_NIFTY",
+                    "BANKNIFTY": "NSE_BANKNIFTY",
+                    "FINNIFTY": "NSE_FINNIFTY",
+                    "SENSEX": "BSE_SENSEX",
+                    "INDIA VIX": "NSE_INDIAVIX",
+                }
+                ltp_sym = idx_map.get(symbol, f"{exchange}_{trading_symbol}")
+                async with httpx.AsyncClient(timeout=2.5) as _client:
                     ltp_url = f"{self.API_BASE}/live-data/ltp"
-                    ltp_params = {"segment": "CASH", "exchange_symbols": ltp_sym}
-                    ltp_resp = await _client.get(ltp_url, params=ltp_params, headers=headers)
+                    ltp_resp = await _client.get(
+                        ltp_url,
+                        params={"segment": segment, "exchange_symbols": ltp_sym},
+                        headers=headers,
+                    )
                     if ltp_resp.status_code == 200:
                         lj = ltp_resp.json()
-                        payload = lj.get("payload") or lj
-                        def _find_ltp(obj):
-                            if isinstance(obj, dict):
-                                if "ltp" in obj and isinstance(obj["ltp"], (int, float)):
-                                    return float(obj["ltp"])
-                                if "last_price" in obj:
-                                    return float(obj["last_price"])
-                                for v in obj.values():
-                                    r = _find_ltp(v)
-                                    if r is not None:
-                                        return r
-                            return None
-                        _ltp_val = _find_ltp(payload)
-                        if _ltp_val and _ltp_val > 0:
-                            return {"ltp": float(_ltp_val), "open": None, "high": None, "low": None, "prev": None, "volume": 0, "oi": None}
-            except Exception:
-                pass
+                        if lj.get("status") == "SUCCESS":
+                            norm = _normalize_ltp_payload(lj.get("payload") or {}, ltp_sym)
+                            if norm:
+                                return norm
+                    else:
+                        logger.debug(
+                            "groww_ltp_http_non200",
+                            symbol=symbol,
+                            status=ltp_resp.status_code,
+                            body=ltp_resp.text[:200],
+                        )
+            except Exception as e:
+                logger.debug("groww_ltp_failed", symbol=symbol, error=str(e)[:200])
+
+        # Full quote endpoint — works for both indices and stocks, returns full OHLC.
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                # Groww live-data/quote — licensed source for non-index (or fallback)
+            async with httpx.AsyncClient(timeout=3.0) as client:
                 url = f"{self.API_BASE}/live-data/quote"
-                params = {"exchange": exchange, "segment": cfg.get("segment", "CASH"), "trading_symbol": trading_symbol}
+                params = {"exchange": exchange, "segment": segment, "trading_symbol": trading_symbol}
                 resp = await client.get(url, params=params, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
+                    if data.get("status") != "SUCCESS":
+                        logger.debug(
+                            "groww_quote_status_not_success",
+                            symbol=symbol,
+                            status=data.get("status"),
+                            payload=data,
+                        )
+                        return None
                     payload = data.get("payload") or data
-                    # Groww returns {last_price, ohlc_open, high_trade_range, low_trade_range, previous_close, volume, open_interest}
-                    if isinstance(payload, dict) and ("last_price" in payload or "ltp" in payload):
-                        return {
-                            "ltp": float(payload.get("last_price") or payload.get("ltp") or 0),
-                            "open": float(payload.get("ohlc_open") or 0) or None,
-                            "high": float(payload.get("high_trade_range") or payload.get("high") or 0) or None,
-                            "low": float(payload.get("low_trade_range") or payload.get("low") or 0) or None,
-                            "prev": float(payload.get("previous_close") or payload.get("close") or 0) or None,
-                            "volume": int(payload.get("volume") or 0),
-                            "oi": int(payload.get("open_interest") or 0) if payload.get("open_interest") is not None else None,
-                        }
-                    # Some payloads nest under 'quote'
-                    quote = payload.get("quote") if isinstance(payload, dict) else None
-                    if isinstance(quote, dict) and ("last_price" in quote or "ltp" in quote):
-                        return {
-                            "ltp": float(quote.get("last_price") or quote.get("ltp") or 0),
-                            "open": float(quote.get("ohlc_open") or 0) or None,
-                            "high": float(quote.get("high_trade_range") or quote.get("high") or 0) or None,
-                            "low": float(quote.get("low_trade_range") or quote.get("low") or 0) or None,
-                            "prev": float(quote.get("previous_close") or quote.get("close") or 0) or None,
-                            "volume": int(quote.get("volume") or 0),
-                            "oi": int(quote.get("open_interest") or 0) if quote.get("open_interest") is not None else None,
-                        }
-                    # Alternative bulk quote shape: {payload: {NSE_NIFTY: {...}}}
-                    # Try to find any dict with last_price inside payload values
+                    norm = _normalize_quote_payload(payload, source="live-data/quote")
+                    if norm:
+                        return norm
+                    # Some payloads nest the quote under a 'quote' key
                     if isinstance(payload, dict):
-                        for v in payload.values():
-                            if isinstance(v, dict) and ("last_price" in v or "ltp" in v):
-                                return {
-                                    "ltp": float(v.get("last_price") or v.get("ltp") or 0),
-                                    "open": float(v.get("ohlc_open") or 0) or None,
-                                    "high": float(v.get("high_trade_range") or v.get("high") or 0) or None,
-                                    "low": float(v.get("low_trade_range") or v.get("low") or 0) or None,
-                                    "prev": float(v.get("previous_close") or v.get("close") or 0) or None,
-                                    "volume": int(v.get("volume") or 0),
-                                    "oi": int(v.get("open_interest") or 0) if v.get("open_interest") is not None else None,
-                                }
+                        quote = payload.get("quote")
+                        if isinstance(quote, dict):
+                            norm = _normalize_quote_payload(quote, source="live-data/quote.quote")
+                            if norm:
+                                return norm
                 else:
-                    logger.debug("groww_quote_http_non200", symbol=symbol, status=resp.status_code, body=resp.text[:200])
+                    logger.debug(
+                        "groww_quote_http_non200",
+                        symbol=symbol,
+                        status=resp.status_code,
+                        body=resp.text[:200],
+                    )
         except Exception as e:
             logger.debug("groww_live_quote_failed", symbol=symbol, error=str(e)[:200])
         return None
@@ -396,50 +523,9 @@ class GrowwProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # Last-traded-price fallback (Binance-style: always return real data when possible).
-        # When the Groww licensed feed is unavailable (no token / closed hours) AND the market
-        # is closed (or we have no valid token), use NSE public allIndices snapshot to surface
-        # the real last-traded price instead of zeros. This is NOT mock data — it's NSE's
-        # official previousClose/last for the index. Only applies when there are no live ticks
-        # to show; during market hours with no token we still return OFFLINE (can't fake realtime).
-        if not is_open or not (token and token != "mock-demo-token"):
-            try:
-                from app.services.nse_service import fetch_nse_quote as _nse_last
-                import asyncio as _aio_last
-                real = await _aio_last.wait_for(_nse_last(symbol), timeout=2.0)
-            except Exception:
-                real = None
-            if real and real.get("ltp"):
-                ltp = float(real["ltp"])
-                open_p = float(real.get("open") or ltp)
-                high_p = float(real.get("high") or ltp)
-                low_p = float(real.get("low") or ltp)
-                prev = float(real.get("prev") or 0.0)
-                change = round(ltp - prev, 2) if prev else 0.0
-                change_pct = round((change / prev * 100) if prev else 0.0, 2)
-                # Status reflects actual state: CLOSED when market is closed,
-                # OFFLINE only if market is open but we couldn't get live data.
-                status = DataStatus.CLOSED if not is_open else DataStatus.OFFLINE
-                logger.debug(
-                    "groww_last_traded_price_fallback",
-                    symbol=symbol,
-                    ltp=ltp,
-                    market_open=is_open,
-                    has_token=bool(token and token != "mock-demo-token"),
-                )
-                return NormalizedQuote(
-                    symbol=symbol, display_name=symbol, timestamp=now,
-                    ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
-                    previous_close=round(prev, 2), change=change, change_percent=change_pct,
-                    volume=0, open_interest=None, status=status, provider=self.provider_name,
-                )
-
-        # No live data, no cached tick, no NSE last-close — honest OFFLINE/0.
-        # This is the only path that returns zero; it triggers when:
-        #   - Market is OPEN
-        #   - Groww licensed feed returned nothing
-        #   - No cached tick
-        #   - NSE public also returned nothing (e.g. network blocked)
+        # Groww licensed feed returned nothing and no cached tick — show honest OFFLINE.
+        # NO mock/demo and NO NSE/Yahoo fallback: realtime comes only from the Groww feed,
+        # so an invalid/expired token surfaces as OFFLINE (not fake prices).
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -769,23 +855,9 @@ class GrowwProvider(MarketDataProvider):
                     if isinstance(live, Exception):
                         live = None
                     if not live or not live.get("ltp"):
-                        # Groww licensed feed empty — try last-traded-price fallback for
-                        # closed markets / no-token so MARKET_TICKS carries the real NSE
-                        # last-close and the dashboard cards show non-zero. During open
-                        # market with no token we still skip (can't fake live ticks).
-                        _is_open = calendar_service.is_market_open_now()
-                        if not _is_open or not token_str or token_str == "mock-demo-token":
-                            try:
-                                from app.services.nse_service import fetch_nse_quote as _nse_poller
-                                real = await asyncio.wait_for(_nse_poller(sym), timeout=2.0)
-                            except Exception:
-                                real = None
-                            if real and real.get("ltp"):
-                                live = real
-                            else:
-                                continue
-                        else:
-                            continue
+                        # Groww licensed feed empty — do NOT inject mock/NSE. Leave the tick
+                        # absent so REST/WS show honest OFFLINE (invalid token / feed down).
+                        continue
                     try:
                         # Build TickEvent
                         ltp = float(live["ltp"])
