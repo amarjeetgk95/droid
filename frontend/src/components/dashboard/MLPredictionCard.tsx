@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { MLPredictionResponse } from '@/lib/types';
 import { Cpu, TrendingUp, TrendingDown, ShieldCheck } from 'lucide-react';
+import { safeNum, safeStr } from '@/lib/utils';
 
 export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
   const [prediction, setPrediction] = useState<MLPredictionResponse | null>(null);
@@ -30,12 +31,20 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
     };
 
     loadPrediction();
-    const interval = setInterval(() => { if (!document.hidden) loadPrediction(); }, 30000);
+    // Chained timeout with jitter so clients don't sync up their 30s polls.
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      timeout = setTimeout(() => {
+        if (!document.hidden) loadPrediction();
+        schedule();
+      }, 30000 * (0.8 + Math.random() * 0.4));
+    };
+    schedule();
     const onVis = () => { if (!document.hidden) loadPrediction(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [symbol]);
@@ -51,11 +60,34 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
   }
 
   if (error || !prediction) {
-    return null;
+    // Compact error state — never silently collapse the layout.
+    return (
+      <div className="bg-card border border-destructive/30 rounded-xl p-4 h-64 flex flex-col items-center justify-center gap-2">
+        <Cpu className="w-6 h-6 text-destructive" />
+        <p className="text-sm font-semibold text-foreground">ML Prediction unavailable</p>
+        <p className="text-xs text-muted-foreground text-center max-w-xs">{error ?? 'No prediction data'}</p>
+        <button
+          onClick={() => {
+            setLoading(true);
+            api.getMLPrediction(symbol)
+              .then(res => { setPrediction(res.data); setError(null); })
+              .catch(err => setError(err instanceof Error ? err.message : 'Failed to fetch ML prediction'))
+              .finally(() => setLoading(false));
+          }}
+          className="text-xs px-3 py-1 rounded-md bg-secondary hover:bg-secondary/80 text-foreground transition-colors cursor-pointer"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   const isBullish = prediction.predicted_bias === 'BULLISH';
   const isBearish = prediction.predicted_bias === 'BEARISH';
+
+  const bullishPct = Number(prediction.bullish_pct) || 0;
+  const neutralPct = Number(prediction.neutral_pct) || 0;
+  const bearishPct = Number(prediction.bearish_pct) || 0;
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
@@ -83,10 +115,10 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
                 : 'bg-secondary text-muted-foreground border-border'
             }`}
           >
-            {prediction.predicted_bias}
+            {safeStr(prediction.predicted_bias)}
           </span>
           <span className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3 text-primary" /> {prediction.confidence_score}% Conf.
+            <ShieldCheck className="w-3 h-3 text-primary" /> {safeNum(prediction.confidence_score, '—', 0)}% Conf.
           </span>
         </div>
       </div>
@@ -95,11 +127,11 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
       <div className="space-y-1">
         <div className="flex justify-between text-[10px] font-bold">
           <span className="text-emerald-400 flex items-center gap-1">
-            <TrendingUp className="w-3 h-3" /> Bullish {prediction.bullish_pct}%
+            <TrendingUp className="w-3 h-3" /> Bullish {safeNum(bullishPct, '—', 0)}%
           </span>
-          <span className="text-muted-foreground">Neutral {prediction.neutral_pct}%</span>
+          <span className="text-muted-foreground">Neutral {safeNum(neutralPct, '—', 0)}%</span>
           <span className="text-rose-400 flex items-center gap-1">
-            <TrendingDown className="w-3 h-3" /> Bearish {prediction.bearish_pct}%
+            <TrendingDown className="w-3 h-3" /> Bearish {safeNum(bearishPct, '—', 0)}%
           </span>
         </div>
 
@@ -124,19 +156,19 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
         <div className="p-1.5 rounded-lg bg-secondary/50">
           <div className="text-[10px] text-muted-foreground">Trend Strength</div>
           <div className="text-xs font-mono font-bold text-foreground mt-0.5">
-            {prediction.trend_strength} / 100
+            {safeNum(prediction.trend_strength, '—', 0)} / 100
           </div>
         </div>
         <div className="p-1.5 rounded-lg bg-secondary/50">
           <div className="text-[10px] text-muted-foreground">Regime State</div>
           <div className="text-[10px] font-bold text-primary truncate mt-0.5">
-            {prediction.market_regime.replace('_', ' ')}
+            {safeStr(prediction.market_regime, '—').replace('_', ' ')}
           </div>
         </div>
         <div className="p-1.5 rounded-lg bg-secondary/50">
           <div className="text-[10px] text-muted-foreground">Top Factor</div>
           <div className="text-[10px] font-semibold text-foreground truncate mt-0.5">
-            {prediction.top_features[0]?.feature_name || 'Supertrend'}
+            {prediction.top_features?.[0]?.feature_name || 'Supertrend'}
           </div>
         </div>
       </div>

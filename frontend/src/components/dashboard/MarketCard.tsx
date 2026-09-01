@@ -1,7 +1,9 @@
 import { IndexCard } from '@/lib/types';
 import { DataStatus } from '../common/DataStatus';
+import { safeNum, safeInt } from '@/lib/utils';
 
 function formatNumber(num: number) {
+  if (!Number.isFinite(num)) return '—';
   if (num >= 10000000) return (num / 10000000).toFixed(2) + 'Cr';
   if (num >= 100000) return (num / 100000).toFixed(2) + 'L';
   if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
@@ -10,15 +12,18 @@ function formatNumber(num: number) {
 
 function Sparkline({ data, isPositive }: { data: number[]; isPositive: boolean }) {
   if (!data || data.length < 2) return null;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
+  // Reject non-finite values instead of producing NaN path points.
+  const clean = data.filter((v) => Number.isFinite(v));
+  if (clean.length < 2) return null;
+  const min = Math.min(...clean);
+  const max = Math.max(...clean);
+  const range = max - min || 1; // min !== max here (filtered finite, len>=2) but keep safe
   const width = 80;
   const height = 28;
 
-  const points = data
+  const points = clean
     .map((val, idx) => {
-      const x = (idx / (data.length - 1)) * width;
+      const x = (idx / (clean.length - 1)) * width;
       const y = height - ((val - min) / range) * (height - 4) - 2;
       return `${x},${y}`;
     })
@@ -41,24 +46,24 @@ function Sparkline({ data, isPositive }: { data: number[]; isPositive: boolean }
 }
 
 export function MarketCard({ card }: { card: IndexCard }) {
-  const isPos = card.change >= 0;
+  const isPos = (card.change ?? 0) >= 0;
 
   return (
     <div className="bg-card rounded-lg border border-border p-4 flex flex-col justify-between hover:border-border/80 transition-colors">
       <div className="flex justify-between items-start mb-2">
-        <h3 className="font-bold text-foreground">{card.display_name}</h3>
+        <h3 className="font-bold text-foreground">{card.display_name || card.symbol}</h3>
         <DataStatus status={card.status} />
       </div>
       
       <div className="my-2 flex items-center justify-between">
         <div>
           <div className="text-2xl font-black tabular-nums tracking-tight">
-            {card.ltp.toFixed(2)}
+            {safeNum(card.ltp)}
           </div>
           <div className={`text-xs font-semibold flex items-center gap-1 mt-0.5 ${isPos ? 'text-success' : 'text-danger'}`}>
             <span>{isPos ? '▲' : '▼'}</span>
-            <span>{Math.abs(card.change).toFixed(2)}</span>
-            <span>({Math.abs(card.change_percent).toFixed(2)}%)</span>
+            <span>{safeNum(card.change)}</span>
+            <span>({safeNum(card.change_percent)}%)</span>
           </div>
         </div>
         <div className="opacity-90">
@@ -67,12 +72,12 @@ export function MarketCard({ card }: { card: IndexCard }) {
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-        <div className="flex justify-between"><span>O:</span><span className="text-foreground tabular-nums">{card.open.toFixed(2)}</span></div>
-        <div className="flex justify-between"><span>H:</span><span className="text-foreground tabular-nums">{card.high.toFixed(2)}</span></div>
-        <div className="flex justify-between"><span>L:</span><span className="text-foreground tabular-nums">{card.low.toFixed(2)}</span></div>
-        <div className="flex justify-between"><span>C:</span><span className="text-foreground tabular-nums">{card.previous_close.toFixed(2)}</span></div>
-        <div className="flex justify-between mt-1 pt-1 border-t border-border"><span>Vol:</span><span className="text-foreground tabular-nums">{formatNumber(card.volume)}</span></div>
-        <div className="flex justify-between mt-1 pt-1 border-t border-border"><span>OI:</span><span className="text-foreground tabular-nums">{card.open_interest !== null ? formatNumber(card.open_interest) : 'N/A'}</span></div>
+        <div className="flex justify-between"><span>O:</span><span className="text-foreground tabular-nums">{safeNum(card.open)}</span></div>
+        <div className="flex justify-between"><span>H:</span><span className="text-foreground tabular-nums">{safeNum(card.high)}</span></div>
+        <div className="flex justify-between"><span>L:</span><span className="text-foreground tabular-nums">{safeNum(card.low)}</span></div>
+        <div className="flex justify-between"><span>C:</span><span className="text-foreground tabular-nums">{safeNum(card.previous_close)}</span></div>
+        <div className="flex justify-between mt-1 pt-1 border-t border-border"><span>Vol:</span><span className="text-foreground tabular-nums">{safeInt(card.volume)}</span></div>
+        <div className="flex justify-between mt-1 pt-1 border-t border-border"><span>OI:</span><span className="text-foreground tabular-nums">{card.open_interest !== null && card.open_interest !== undefined ? formatNumber(card.open_interest) : 'N/A'}</span></div>
       </div>
     </div>
   );

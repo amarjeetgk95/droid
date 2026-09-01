@@ -1,5 +1,6 @@
 import { MarketStatusResponse, MarketHealthStatus } from '@/lib/types';
 import { DataStatus } from '../common/DataStatus';
+import { safeStr, safeTime } from '@/lib/utils';
 
 export function MarketOverview({ marketStatus, health, loading }: { marketStatus: MarketStatusResponse | null; health: MarketHealthStatus | null; loading: boolean }) {
   if (loading || !marketStatus || !health) {
@@ -16,11 +17,11 @@ export function MarketOverview({ marketStatus, health, loading }: { marketStatus
       <div className="grid grid-cols-2 gap-4">
         <div className="p-3 bg-secondary rounded-lg">
           <p className="text-sm text-muted-foreground">Session</p>
-          <p className="text-lg font-bold mt-1">{marketStatus.session.replace('_', ' ')}</p>
+          <p className="text-lg font-bold mt-1">{safeStr(marketStatus.session).replace('_', ' ')}</p>
         </div>
         <div className="p-3 bg-secondary rounded-lg">
           <p className="text-sm text-muted-foreground">Market Time</p>
-          <p className="text-lg font-bold mt-1">{new Date(marketStatus.market_time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}</p>
+          <p className="text-lg font-bold mt-1">{safeTime(marketStatus.market_time)}</p>
         </div>
       </div>
 

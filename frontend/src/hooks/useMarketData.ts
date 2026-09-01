@@ -1,113 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResponse, NormalizedCandle } from '@/lib/types';
+import type { NormalizedCandle } from '@/lib/types';
 
-import { useMarketStream } from './useMarketStream';
+import { useMarketDataContext } from '@/context/MarketDataContext';
 
-export function useMarketData(refreshInterval = 15000) {
-  const [cards, setCards] = useState<IndexCard[]>([]);
-  const [breadth, setBreadth] = useState<MarketBreadthData | null>(null);
-  const [health, setHealth] = useState<MarketHealthStatus | null>(null);
-  const [marketStatus, setMarketStatus] = useState<MarketStatusResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastFetch, setLastFetch] = useState<Date | null>(null);
-
-  const { latestTicks, streamState } = useMarketStream();
-
-  const fetchData = useCallback(async () => {
-    try {
-      const [cardsRes, breadthRes, healthRes, statusRes] = await Promise.all([
-        api.getIndexCards(),
-        api.getMarketBreadth(),
-        api.getMarketHealth(),
-        api.getMarketStatus(),
-      ]);
-      setCards(cardsRes.data);
-      setBreadth(breadthRes.data);
-      setHealth(healthRes);
-      setMarketStatus(statusRes.data);
-      setError(null);
-      setLastFetch(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch market data');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const run = async () => {
-      if (!isMounted) return;
-      if (typeof document !== 'undefined' && document.hidden) return;
-      try {
-        const [cardsRes, breadthRes, healthRes, statusRes] = await Promise.all([
-          api.getIndexCards(),
-          api.getMarketBreadth(),
-          api.getMarketHealth(),
-          api.getMarketStatus(),
-        ]);
-        if (!isMounted) return;
-        setCards(cardsRes.data);
-        setBreadth(breadthRes.data);
-        setHealth(healthRes);
-        setMarketStatus(statusRes.data);
-        setError(null);
-        setLastFetch(new Date());
-      } catch (err) {
-        if (!isMounted) return;
-        setError(err instanceof Error ? err.message : 'Failed to fetch market data');
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    run();
-    const interval = setInterval(run, refreshInterval);
-    const onVis = () => { if (!document.hidden) run(); };
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [refreshInterval]);
-
-  // Merge live ticks into cards using useMemo — when live tick exists, force status LIVE (no DEMO/OFFLINE)
-  const displayedCards = useMemo(() => {
-    if (!latestTicks || Object.keys(latestTicks).length === 0) return cards;
-
-    return cards.map((card) => {
-      const tick = latestTicks[card.symbol];
-      if (!tick) return card;
-
-      const newLtp = tick.ltp;
-      const change = newLtp - card.previous_close;
-      const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
-      const sparkline = [...card.sparkline];
-      if (sparkline.length > 0) {
-        sparkline[sparkline.length - 1] = newLtp;
-      }
-
-      return {
-        ...card,
-        ltp: newLtp,
-        change: Number(change.toFixed(2)),
-        change_percent: Number(changePercent.toFixed(2)),
-        sparkline,
-        volume: tick.volume || card.volume,
-        open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
-        status: 'LIVE',
-        provider: tick.provider || card.provider,
-      };
-    });
-  }, [cards, latestTicks]);
-
-  return { cards: displayedCards, breadth, health, marketStatus, loading, error, lastFetch, streamState, refetch: fetchData };
+/**
+ * Back-compat wrapper — the implementation lives in MarketDataContext so there
+ * is exactly ONE polling loop for the whole app (the previous duplicate copy
+ * here caused drift and double-fetching).
+ */
+export function useMarketData() {
+  return useMarketDataContext();
 }
 
 export function useCandles(symbol: string, timeframe: string) {

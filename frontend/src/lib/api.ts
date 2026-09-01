@@ -1,4 +1,10 @@
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
+// Local dev defaults to the local backend; production falls back to the hosted one.
+const DEFAULT_API_URL =
+  typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:8000'
+    : 'https://droid-backend-emeq.onrender.com';
+
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/+$/, '');
 
 class ApiClient {
   private baseUrl: string;
@@ -25,19 +31,34 @@ class ApiClient {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.baseUrl}${cleanPath}`;
 
+    // Hard timeout — a hung backend must not leak stacked polling requests.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
     let response: Response;
     try {
       response = await fetch(url, {
         ...options,
         headers,
+        signal: options?.signal ?? controller.signal,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error(`Request to ${this.baseUrl} timed out after 10s.`);
+      }
       throw new Error(`Cannot reach backend at ${this.baseUrl}. Make sure the backend server is running.`);
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     const contentType = response.headers.get('content-type') || '';
 
     if (!response.ok) {
+      // Global 401 signal — lets AuthProvider/logout listeners react instead of
+      // silent infinite 401 polling loops.
+      if (response.status === 401 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { url } }));
+      }
       if (contentType.includes('application/json')) {
         const error = await response.json().catch(() => ({ detail: response.statusText }));
         throw new Error(error.detail || `API Error ${response.status}: ${response.statusText}`);
@@ -62,8 +83,9 @@ class ApiClient {
     return this.request<{ data: import('./types').NormalizedQuote; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/markets/${encodeURIComponent(symbol)}/quote`);
   }
 
-  async getCandles(symbol: string, timeframe: string = '5m') {
-    return this.request<{ data: import('./types').NormalizedCandle[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/markets/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}`);
+  async getCandles(symbol: string, timeframe: string = '5m', limit?: number) {
+    const qs = limit && limit > 0 ? `&limit=${Math.round(limit)}` : '';
+    return this.request<{ data: import('./types').NormalizedCandle[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/markets/${encodeURIComponent(symbol)}/candles?timeframe=${timeframe}${qs}`);
   }
 
   async getIndexCards() {

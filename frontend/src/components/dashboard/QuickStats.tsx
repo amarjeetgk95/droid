@@ -1,5 +1,6 @@
 import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { formatDistanceToNow } from 'date-fns';
+import { safeInt, safeStr } from '@/lib/utils';
 
 export function QuickStats({ health, marketStatus, lastFetch, loading }: { health: MarketHealthStatus | null; marketStatus: MarketStatusResponse | null; lastFetch: Date | null; loading: boolean }) {
   if (loading || !health || !marketStatus) {
@@ -12,15 +13,15 @@ export function QuickStats({ health, marketStatus, lastFetch, loading }: { healt
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div>
           <p className="text-sm text-muted-foreground">Active Instruments</p>
-          <p className="text-xl font-bold tabular-nums mt-1">{health.active_instruments}</p>
+          <p className="text-xl font-bold tabular-nums mt-1">{safeInt(health.active_instruments)}</p>
         </div>
         <div>
           <p className="text-sm text-muted-foreground">Data Age</p>
-          <p className="text-xl font-bold tabular-nums mt-1">{health.data_age_seconds !== null ? `${health.data_age_seconds}s` : 'N/A'}</p>
+          <p className="text-xl font-bold tabular-nums mt-1">{health.data_age_seconds !== null && health.data_age_seconds !== undefined ? `${health.data_age_seconds}s` : 'N/A'}</p>
         </div>
         <div>
           <p className="text-sm text-muted-foreground">Provider</p>
-          <p className="text-xl font-bold mt-1">{health.provider}</p>
+          <p className="text-xl font-bold mt-1">{safeStr(health.provider)}</p>
         </div>
         <div>
           <p className="text-sm text-muted-foreground">Last Updated</p>

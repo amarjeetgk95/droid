@@ -15,6 +15,7 @@ const TF_LABEL_TO_VALUE = {
   '5m': 5,
   '15m': 15,
   '1h': 60,
+  '4h': 240,
   '1D': 1440,
 };
 
@@ -46,52 +47,80 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
 
   const { data, loading, error } = useRealCandleDataWithSymbol(symbol, tf, live);
 
-  // Keep viewport pinned to latest bars as new data streams
+  // Keep viewport pinned to latest bars as new data streams — this is a
+  // deliberate external-data sync (not a render-time computation).
   useEffect(() => {
     if (!data.length) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setView((v) => {
       const end = v.start + v.count;
       if (end >= data.length - 2) {
-        return { ...v, start: Math.max(0, data.length - v.count + 8) };
+        return clampView({ ...v, start: Math.max(0, data.length - v.count + 8) });
       }
       return v;
     });
+  }, [data.length, clampView]);
+
+  // ---- Viewport helpers ----------------------------------------------------
+  const clampView = useCallback((v, dataLen = data.length) => {
+    const count = Math.min(Math.max(1, Math.round(v.count)), Math.max(1, dataLen));
+    const start = Math.min(Math.max(0, Math.round(v.start)), Math.max(0, dataLen - count));
+    return { start, count };
   }, [data.length]);
 
   const lastPrice = data.length ? data[data.length - 1].c : 0;
-  const changePct =
-    data.length > 1
-      ? ((data[data.length - 1].c - data[Math.max(0, data.length - 25)].c) / data[Math.max(0, data.length - 25)].c) * 100
-      : 0;
+  // Change vs the first bar of the current trading day — NOT a fixed 25-bar
+  // window, which is meaningless across timeframes (25 bars ≈ 25 days on 1D).
+  const changePct = (() => {
+    if (data.length < 2) return 0;
+    const last = data[data.length - 1].c;
+    const lastT = data[data.length - 1].t;
+    const dayStart = new Date(lastT).setHours(0, 0, 0, 0);
+    const sessionOpen = data.find((d) => d.t >= dayStart)?.c ?? data[0].c;
+    const base = Number.isFinite(sessionOpen) && sessionOpen > 0 ? sessionOpen : data[0].c;
+    return base > 0 ? ((last - base) / base) * 100 : 0;
+  })();
 
   const reset = useCallback(() => {
-    setView({ count: Math.min(140, data.length || 120), start: Math.max(0, (data.length || 120) - 140 + 8) });
-  }, [data.length]);
+    setView((prev) => clampView({
+      ...prev,
+      count: Math.min(140, data.length || 120),
+      start: Math.max(0, (data.length || 120) - 140 + 8),
+    }));
+  }, [clampView, data.length]);
 
   useEffect(() => {
-    if (data.length && view.count === 120 && view.start === 0) reset();
+    if (data.length && view.count === 120 && view.start === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      reset();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.length]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — ignore when the user is typing in an input/textarea.
   useEffect(() => {
     const onKey = (ev) => {
+      const t = ev.target;
+      if (t instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (t && t.isContentEditable) return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
       const k = ev.key;
-      if (k === '+' || k === '=') {
-        setView((v) => ({ ...v, count: Math.max(20, v.count * 0.8) }));
-      } else if (k === '-' || k === '_') {
-        setView((v) => ({ ...v, count: Math.min(data.length || 140, v.count * 1.25) }));
-      } else if (k === 'ArrowLeft') {
-        setView((v) => ({ ...v, start: v.start - 3 }));
-      } else if (k === 'ArrowRight') {
-        setView((v) => ({ ...v, start: v.start + 3 }));
-      } else if (k.toLowerCase() === 'r') {
+      if (k.toLowerCase() === 'r') {
         reset();
+        return;
       }
+      setView((v) => {
+        if (k === '+' || k === '=') return clampView({ ...v, count: v.count * 0.8 });
+        if (k === '-' || k === '_') return clampView({ ...v, count: v.count * 1.25 });
+        if (k === 'ArrowLeft') return clampView({ ...v, start: v.start - 3 });
+        if (k === 'ArrowRight') return clampView({ ...v, start: v.start + 3 });
+        return v;
+      });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [data.length, reset]);
+  }, [clampView, reset]);
 
   const onHover = useCallback((i) => setHoverIdx((prev) => (prev === i ? prev : i)), []);
 
@@ -170,14 +199,14 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
                 <button
                   className="w-7 h-7 rounded bg-white border border-[#e0e3eb] text-[#6a6d78] hover:text-[#131722] hover:bg-[#f0f3fa] shadow-sm text-sm"
                   title="Zoom in (+)"
-                  onClick={() => setView((v) => ({ ...v, count: Math.max(20, v.count * 0.8) }))}
+                  onClick={() => setView((v) => clampView({ ...v, count: v.count * 0.8 }))}
                 >
                   +
                 </button>
                 <button
                   className="w-7 h-7 rounded bg-white border border-[#e0e3eb] text-[#6a6d78] hover:text-[#131722] hover:bg-[#f0f3fa] shadow-sm text-sm"
                   title="Zoom out (−)"
-                  onClick={() => setView((v) => ({ ...v, count: Math.min(data.length, v.count * 1.25) }))}
+                  onClick={() => setView((v) => clampView({ ...v, count: v.count * 1.25 }))}
                 >
                   −
                 </button>

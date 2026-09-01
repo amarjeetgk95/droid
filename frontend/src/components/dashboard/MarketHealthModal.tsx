@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MarketHealthStatus } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { api } from '@/lib/api';
 import { X, Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw } from 'lucide-react';
+import { safeStr } from '@/lib/utils';
 
 export function MarketHealthModal({
   isOpen,
@@ -25,6 +26,9 @@ export function MarketHealthModal({
     if (!isOpen) return;
 
     let isMounted = true;
+    let delay = 3000;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
     const fetchTelemetry = async () => {
       try {
         const [cRes, pRes] = await Promise.all([
@@ -34,18 +38,40 @@ export function MarketHealthModal({
         if (!isMounted) return;
         setCacheStats(cRes.data);
         setPipelineStats(pRes.data);
+        delay = 3000; // bounce back to normal cadence on success
       } catch {
-        // Ignore background telemetry errors
+        // Back-off polling while the backend is failing — don't hammer it every 3s.
+        delay = Math.min(30000, delay * 2);
+      } finally {
+        if (!isMounted) return;
+        timeout = setTimeout(fetchTelemetry, delay + Math.random() * 500);
       }
     };
 
     fetchTelemetry();
-    const interval = setInterval(fetchTelemetry, 3000);
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
     };
   }, [isOpen]);
+
+  // Escape-to-close + body scroll lock + focus the dialog root on open.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialogRef.current?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen, onClose]);
 
   const handleResetCircuitBreaker = async () => {
     setActionLoading(true);
@@ -74,8 +100,19 @@ export function MarketHealthModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-      <div className="bg-card border border-border rounded-xl w-full max-w-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="High-Frequency & Ingestion Telemetry"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-card border border-border rounded-xl w-full max-w-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border bg-muted/40">
           <div className="flex items-center gap-2">
@@ -98,7 +135,7 @@ export function MarketHealthModal({
               <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
                 <Server className="w-3.5 h-3.5 text-primary" /> Provider
               </span>
-               <p className="font-bold text-foreground capitalize">{health?.provider || 'Fyers'}</p>
+               <p className="font-bold text-foreground capitalize">{safeStr(health?.provider, '—')}</p>
               <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-mono">
                 {health?.mode || 'OFFLINE'}
               </span>

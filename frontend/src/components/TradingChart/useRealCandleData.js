@@ -28,6 +28,8 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
   const [error, setError] = useState(null);
   const tfRef = useRef(tf);
   const symbolRef = useRef(symbol);
+  const loadingRef = useRef(true);
+  const pollInFlightRef = useRef(false);
 
   useEffect(() => {
     tfRef.current = tf;
@@ -41,6 +43,7 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
 
     async function fetchCandles() {
       try {
+        loadingRef.current = true;
         setLoading(true);
         setError(null);
         const res = await api.getCandles(backendSymbol, backendTf);
@@ -67,6 +70,7 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
         if (!cancelled) setError(e.message || 'Failed to load candles');
       } finally {
         if (!cancelled) setLoading(false);
+        loadingRef.current = false;
       }
     }
 
@@ -74,14 +78,22 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
     return () => { cancelled = true; };
   }, [symbol, tf]);
 
-  // Live polling: every 5s refetch last candle and merge, or use tick if available
+  // Live polling: every 2s refresh the tail of the series and merge.
   useEffect(() => {
     if (!live) return undefined;
     const backendTf = TF_TO_BACKEND[tf] || '5m';
     const backendSymbol = toBackendSymbol(symbol);
+    // Skip polls while the initial load is in flight — avoids a duplicate
+    // full-history request on mount/symbol change.
     const interval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (loadingRef.current) return;
+      // Single-flight: never stack poll requests.
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
       try {
-        const res = await api.getCandles(backendSymbol, backendTf);
+        // Poll only the tail of the series, not the full history every tick.
+        const res = await api.getCandles(backendSymbol, backendTf, 2);
         const raw = res.data || [];
         if (!raw.length) return;
         const mapped = raw.map((c) => ({
@@ -95,7 +107,6 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
         mapped.sort((a, b) => a.t - b.t);
         setData((prev) => {
           if (!prev.length) return mapped;
-          // If new data has newer timestamps, replace
           const lastPrev = prev[prev.length - 1]?.t;
           const lastNew = mapped[mapped.length - 1]?.t;
           if (lastNew && lastPrev && lastNew > lastPrev) {
@@ -107,8 +118,10 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
               return next;
             }
           }
-          // Otherwise just update last candle's close/high/low
-          if (mapped.length) {
+          // Update the last candle ONLY if the polled data covers it — when the
+          // market closes, the newest polled candle can be OLDER than the local
+          // last bar; overwriting then would corrupt the chart with stale data.
+          if (mapped.length && lastPrev && lastNew && lastNew >= lastPrev) {
             const latest = mapped[mapped.length - 1];
             const next = prev.slice();
             const last = { ...next[next.length - 1] };
@@ -121,7 +134,9 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
           }
           return prev;
         });
-      } catch {}
+      } catch {} finally {
+        pollInFlightRef.current = false;
+      }
     }, 2000);
     return () => clearInterval(interval);
   }, [symbol, tf, live]);
