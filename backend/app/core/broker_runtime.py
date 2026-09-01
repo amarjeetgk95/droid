@@ -68,13 +68,52 @@ _active: Optional[BrokerConfig] = None
 def _env_config() -> BrokerConfig:
     """Build a config from static env-driven settings (fallback / startup)."""
     from app.core.config import settings as cfg
+    import os
 
     provider = cfg.market_data_provider
     if cfg.api_type == "crypto" and provider != "binance":
         provider = "binance"
     elif cfg.api_type != "crypto" and provider not in _PROVIDER_CRED_KEYS:
         provider = "fyers"
-    return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials={})
+
+    # Auto-select Groww when Groww creds are present but provider is still default fyers
+    # You said you added valid Groww token but saw fyers DEMO 57348 — this was the root cause:
+    # MARKET_DATA_PROVIDER default is fyers, so even with GROWW_API_KEY set it stayed fyers.
+    # Now if Groww creds exist and Fyers creds don't, automatically use Groww (unless MARKET_DATA_PROVIDER explicitly set).
+    if cfg.api_type != "crypto":
+        has_groww = bool(cfg.groww_api_key or cfg.groww_api_secret or cfg.groww_access_token)
+        has_fyers = bool(cfg.fyers_app_id or cfg.fyers_secret_key or cfg.fyers_access_token)
+        if has_groww and not has_fyers and provider == "fyers" and not os.getenv("MARKET_DATA_PROVIDER"):
+            provider = "groww"
+            logger.info("broker_auto_select_groww", reason="groww creds present, fyers empty, MARKET_DATA_PROVIDER not set — switching to groww per your token")
+
+        # Also if provider env was explicitly groww, honor it; if groww creds injected via Render env but provider not updated, switch
+        if has_groww and provider != "groww" and provider in ("fyers", "upstox", "kotak_neo"):
+            # If groww token is present in env, prefer groww over fyers default
+            # Only auto-switch if fyers has no valid token (avoids breaking fyers users who also set groww)
+            if not has_fyers:
+                provider = "groww"
+
+    # Populate credentials from env so provider starts LIVE without needing Settings UI save
+    creds: Dict[str, Any] = {}
+    if provider == "groww":
+        if cfg.groww_api_key:
+            creds["api_key"] = cfg.groww_api_key
+        if cfg.groww_api_secret:
+            creds["api_secret"] = cfg.groww_api_secret
+        if cfg.groww_access_token:
+            creds["access_token"] = cfg.groww_access_token
+        if cfg.groww_auth_mode:
+            creds["auth_mode"] = cfg.groww_auth_mode
+    elif provider == "fyers":
+        if cfg.fyers_app_id:
+            creds["app_id"] = cfg.fyers_app_id
+        if cfg.fyers_secret_key:
+            creds["secret_key"] = cfg.fyers_secret_key
+        if cfg.fyers_access_token:
+            creds["access_token"] = cfg.fyers_access_token
+
+    return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
 
 
 def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
