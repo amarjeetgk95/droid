@@ -167,21 +167,6 @@ class GrowwProvider(MarketDataProvider):
         self.token_manager.set_token(info)
         return info
 
-    # Demo fallback prices — calibrated to NSE/BSE live snapshot 31-Aug-2026
-    # (previous hardcoded 51520 for BANKNIFTY was 5.8k low vs TradingView 57336).
-    # These are used when live Groww REST fetch is unavailable or token missing.
-    # Values sourced from NSE allIndices + BSE SENSEX (Yahoo) on 28-Aug-2026.
-    _DEMO_QUOTES: dict[str, dict] = {
-        "NIFTY 50":  {"ltp": 24034.7, "open": 24117.55, "high": 24128.7, "low": 23993.6, "prev": 24175.65, "volume": 1450000, "oi": 450000},
-        "BANKNIFTY": {"ltp": 57348.95,"open": 57353.75, "high": 57576.25,"low": 57187.35,"prev": 57496.3,  "volume": 980000, "oi": 320000},
-        "FINNIFTY":  {"ltp": 26102.15,"open": 26204.4,  "high": 26271.2, "low": 26052.25,"prev": 26286.5,  "volume": 620000, "oi": 180000},
-        "SENSEX":    {"ltp": 76826.23,"open": 77130.73,"high": 77177.27,"low": 76751.32,"prev": 77264.51, "volume": 410000, "oi": 90000},
-        "INDIA VIX": {"ltp": 11.2,    "open": 10.68,   "high": 11.44,   "low": 10.68,   "prev": 10.68,   "volume": 0,       "oi": None},
-    }
-
-    def _demo_quote(self, symbol: str) -> dict:
-        return self._DEMO_QUOTES.get(symbol, {"ltp": 24034.7, "open": 24117.0, "high": 24128.0, "low": 23993.0, "prev": 24175.0, "volume": 1000000, "oi": 300000})
-
     async def _fetch_live_quote(self, symbol: str, token: str) -> dict | None:
         """PURE Groww quote fetch — no Yahoo/NSE fallback.
 
@@ -411,48 +396,9 @@ class GrowwProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # Groww licensed live unavailable and no cached tick — fall back to real NSE/BSE
-        # public data (same as FyersProvider) so connected Groww shows LIVE real prices,
-        # matching the non-connected experience instead of zeroes or OFFLINE demo.
-        try:
-            from app.services.nse_service import fetch_nse_quote
-            import asyncio as _aio_nse
-            real = await _aio_nse.wait_for(fetch_nse_quote(symbol), timeout=2.0)
-        except Exception:
-            real = None
-        if real and real.get("ltp"):
-            ltp = float(real["ltp"])
-            open_p = float(real.get("open") or ltp)
-            high_p = float(real.get("high") or ltp)
-            low_p = float(real.get("low") or ltp)
-            prev = float(real.get("prev") or 0.0)
-            change = round(ltp - prev, 2) if prev else 0.0
-            change_pct = round((change / prev * 100) if prev else 0.0, 2)
-            status = DataStatus.CLOSED if not is_open else DataStatus.LIVE
-            return NormalizedQuote(
-                symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
-                previous_close=round(prev, 2), change=change, change_percent=change_pct,
-                volume=0, open_interest=None, status=status, provider=self.provider_name,
-            )
-
-        # Pre-broker UX: when no live data at all, still show calibrated demo (no zeroes)
-        demo = self._DEMO_QUOTES.get(symbol, {})
-        if demo:
-            ltp = float(demo.get("ltp", 0))
-            prev = float(demo.get("prev", 0))
-            change = round(ltp - prev, 2) if prev else 0.0
-            change_pct = round((change / prev * 100) if prev else 0.0, 2)
-            return NormalizedQuote(
-                symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=ltp, open=float(demo.get("open", ltp)),
-                high=float(demo.get("high", ltp)), low=float(demo.get("low", ltp)),
-                previous_close=prev, change=change, change_percent=change_pct,
-                volume=int(demo.get("volume", 0)),
-                open_interest=demo.get("oi"),
-                status=DataStatus.OFFLINE,
-                provider=self.provider_name,
-            )
+        # Groww licensed feed returned nothing and no cached tick — show honest OFFLINE.
+        # NO mock/demo and NO NSE/Yahoo fallback: realtime comes only from the Groww feed,
+        # so an invalid/expired token surfaces as OFFLINE (not fake prices).
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -782,15 +728,9 @@ class GrowwProvider(MarketDataProvider):
                     if isinstance(live, Exception):
                         live = None
                     if not live or not live.get("ltp"):
-                        # Groww licensed fetch empty — fall back to real NSE/BSE public data so
-                        # the WebSocket stream still pushes live prices (matches REST + connected UX)
-                        try:
-                            from app.services.nse_service import fetch_nse_quote as _nseq
-                            live = await asyncio.wait_for(_nseq(sym), timeout=2.0)
-                        except Exception:
-                            live = None
-                        if not live or not live.get("ltp"):
-                            continue
+                        # Groww licensed feed empty — do NOT inject mock/NSE. Leave the tick
+                        # absent so REST/WS show honest OFFLINE (invalid token / feed down).
+                        continue
                     try:
                         # Build TickEvent
                         ltp = float(live["ltp"])
