@@ -320,28 +320,10 @@ async def analyze_with_model(
                 # Build prompts and call directly with keyed provider to respect Settings
                 regime = await regime_service.classify_market_regime(symbol)
                 try:
-                    chain = await options_service.get_option_chain_matrix(symbol)
-                    options_analytics = chain.analytics
-                    max_pain = getattr(chain, "max_pain", None)
-                    if max_pain is None and chain.analytics:
-                        try:
-                            max_pain = await options_service.calculate_max_pain(symbol)
-                        except Exception:
-                            max_pain = chain.analytics.max_pain_strike
-                    strikes = getattr(chain, "strikes", None)
+                    from app.services.ai_service import _fetch_futures_safe as _ffs_gem
+                    futures_gem = await _ffs_gem(symbol)
                 except Exception:
-                    options_analytics = None
-                    max_pain = None
-                    strikes = None
-                system_prompt = build_system_prompt()
-                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
-                insight = await GeminiProvider(api_key=effective_gemini_key, model=payload.geminiModel or "gemini-2.5-flash").generate_analysis(symbol, system_prompt, user_prompt)
-            elif provider.lower() == "ollama" and (payload.ollamaBaseUrl or payload.ollamaModel):
-                from app.ai.ollama import OllamaProvider
-                from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
-                from app.services.regime_service import regime_service
-                from app.services.options_service import options_service
-                regime = await regime_service.classify_market_regime(symbol)
+                    futures_gem = None
                 try:
                     chain = await options_service.get_option_chain_matrix(symbol)
                     options_analytics = chain.analytics
@@ -357,7 +339,35 @@ async def analyze_with_model(
                     max_pain = None
                     strikes = None
                 system_prompt = build_system_prompt()
-                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures_gem, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+                insight = await GeminiProvider(api_key=effective_gemini_key, model=payload.geminiModel or "gemini-2.5-flash").generate_analysis(symbol, system_prompt, user_prompt)
+            elif provider.lower() == "ollama" and (payload.ollamaBaseUrl or payload.ollamaModel):
+                from app.ai.ollama import OllamaProvider
+                from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
+                from app.services.regime_service import regime_service
+                from app.services.options_service import options_service
+                regime = await regime_service.classify_market_regime(symbol)
+                try:
+                    from app.services.ai_service import _fetch_futures_safe as _ffs_oll
+                    futures_oll = await _ffs_oll(symbol)
+                except Exception:
+                    futures_oll = None
+                try:
+                    chain = await options_service.get_option_chain_matrix(symbol)
+                    options_analytics = chain.analytics
+                    max_pain = getattr(chain, "max_pain", None)
+                    if max_pain is None and chain.analytics:
+                        try:
+                            max_pain = await options_service.calculate_max_pain(symbol)
+                        except Exception:
+                            max_pain = chain.analytics.max_pain_strike
+                    strikes = getattr(chain, "strikes", None)
+                except Exception:
+                    options_analytics = None
+                    max_pain = None
+                    strikes = None
+                system_prompt = build_system_prompt()
+                user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures_oll, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
                 insight = await OllamaProvider(base_url=payload.ollamaBaseUrl, model=payload.ollamaModel or "deepseek-r1:8b").generate_analysis(symbol, system_prompt, user_prompt)
             else:
                 insight = await ai_service.generate_market_analysis(symbol, provider_name=provider.lower())

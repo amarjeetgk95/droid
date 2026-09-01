@@ -67,7 +67,7 @@ def build_market_context_prompt(
     Greeks & IV regime pre-check, and data-ingestion quality fallback.
     Backward-compatible: `strikes` is optional; if omitted, key-strike/Greeks detail falls back to analytics totals.
     """
-    near_contract = futures.term_structure.contracts[0] if futures and futures.term_structure and futures.term_structure.contracts else None
+    near_contract = futures.term_structure.contracts[0] if futures and getattr(futures, "term_structure", None) and getattr(futures.term_structure, "contracts", None) else None
     near_ltp = near_contract.ltp if near_contract else regime.spot_price
     near_basis = near_contract.basis if near_contract else 0.0
     near_basis_pct = near_contract.basis_percent if near_contract else 0.0
@@ -80,12 +80,20 @@ def build_market_context_prompt(
     near_fair_value = near_contract.fair_value if near_contract else near_ltp
     near_days_to_expiry = near_contract.days_to_expiry if near_contract else (options_analytics.time_to_expiry_days if options_analytics else 0.0)
     near_expiry_str = near_contract.expiry if near_contract else (options_analytics.expiry if options_analytics else "unknown")
-    calendar_spread = futures.term_structure.calendar_spread_next_near if futures and futures.term_structure else 0.0
-    total_futures_oi = futures.rollover.total_futures_oi if futures and futures.rollover else 0
-    rollover_pct = futures.rollover.rollover_percent if futures and futures.rollover else 0.0
-    rollover_avg = futures.rollover.three_month_avg_rollover if futures and futures.rollover else 72.5
-    rollover_pace = futures.rollover.rollover_pace if futures and futures.rollover else "IN_LINE"
-    rollover_spread = futures.rollover.rollover_spread if futures and futures.rollover else calendar_spread
+    calendar_spread = futures.term_structure.calendar_spread_next_near if futures and getattr(futures, "term_structure", None) else 0.0
+    total_futures_oi = futures.rollover.total_futures_oi if futures and getattr(futures, "rollover", None) else 0
+    rollover_pct = futures.rollover.rollover_percent if futures and getattr(futures, "rollover", None) else 0.0
+    rollover_avg = futures.rollover.three_month_avg_rollover if futures and getattr(futures, "rollover", None) else 72.5
+    rollover_pace = futures.rollover.rollover_pace if futures and getattr(futures, "rollover", None) else "IN_LINE"
+    rollover_spread = futures.rollover.rollover_spread if futures and getattr(futures, "rollover", None) else calendar_spread
+    # Safe fallbacks for term-structure curve and buildup (prevent NoneType.term_structure crash when futures is None)
+    _curve_state = futures.term_structure.curve_state if futures and getattr(futures, "term_structure", None) else "UNKNOWN"
+    _far_spread = futures.term_structure.calendar_spread_far_next if futures and getattr(futures, "term_structure", None) else 0.0
+    _buildup_type = futures.buildup.buildup_type if futures and getattr(futures, "buildup", None) else "UNKNOWN"
+    _buildup_interp = futures.buildup.interpretation if futures and getattr(futures, "buildup", None) else "Futures buildup data unavailable — futures snapshot missing"
+    _buildup_strength = futures.buildup.strength if futures and getattr(futures, "buildup", None) else "UNKNOWN"
+    _buildup_price_chg = futures.buildup.price_change_percent if futures and getattr(futures, "buildup", None) else 0.0
+    _buildup_oi_chg = futures.buildup.oi_change_percent if futures and getattr(futures, "buildup", None) else 0.0
 
     # Data ingestion classification (§22)
     # In this platform MockProvider delivers OHLCV (1m/5m/15m/1h) aggregated, but no raw tick/order-book.
@@ -145,11 +153,11 @@ def build_market_context_prompt(
         f"- Futures Basis: ₹{near_basis} ({near_basis_pct}%) [Futures − Spot]",
         f"- Fair Value (Cost-of-Carry): ₹{near_fair_value} | Fair-Value Spread (LTP − Fair): ₹{near_fair_spread}",
         f"- Annualized Cost of Carry (CoC): {near_coc}%",
-        f"- Term Structure Curve: {futures.term_structure.curve_state} (Calendar Spread Next−Near: ₹{calendar_spread}, Far−Next: ₹{futures.term_structure.calendar_spread_far_next if futures.term_structure else 0.0})",
+        f"- Term Structure Curve: {_curve_state} (Calendar Spread Next−Near: ₹{calendar_spread}, Far−Next: ₹{_far_spread})",
         f"- Open Interest (Near): {near_oi:,} contracts (Δ: {near_oi_change:+,} | {near_oi_change_pct:+.2f}%)",
         f"- Volume (Near): {near_volume:,} contracts",
         f"- Total Futures OI (All tenors): {total_futures_oi:,}",
-        f"- OI Buildup Classification (4-Quadrant): {futures.buildup.buildup_type} — {futures.buildup.interpretation} (Strength: {futures.buildup.strength}, Price Δ: {futures.buildup.price_change_percent}%, OI Δ: {futures.buildup.oi_change_percent}%)",
+        f"- OI Buildup Classification (4-Quadrant): {_buildup_type} — {_buildup_interp} (Strength: {_buildup_strength}, Price Δ: {_buildup_price_chg}%, OI Δ: {_buildup_oi_chg}%)",
         f"- Rollover %: {rollover_pct}% (vs 3-Month Avg {rollover_avg}%, Pace: {rollover_pace})",
         f"- Rollover Cost (Next−Near Spread): ₹{rollover_spread}",
         f"- Previous Expiry Rollover Behavior: Benchmark {rollover_avg}% (no persistent expiry-to-expiry history yet in Mock; use benchmark for deviation context)",
