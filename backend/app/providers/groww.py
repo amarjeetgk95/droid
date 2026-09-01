@@ -411,7 +411,24 @@ class GrowwProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # Pure Groww: if live not available and no cached tick, show ZERO Offline
+        # Groww live unavailable and no cached tick — use calibrated demo quotes
+        # (matches pre-broker UX where dashboard shows realistic data, not zeroes)
+        demo = self._DEMO_QUOTES.get(symbol, {})
+        if demo:
+            ltp = float(demo.get("ltp", 0))
+            prev = float(demo.get("prev", 0))
+            change = round(ltp - prev, 2) if prev else 0.0
+            change_pct = round((change / prev * 100) if prev else 0.0, 2)
+            return NormalizedQuote(
+                symbol=symbol, display_name=symbol, timestamp=now,
+                ltp=ltp, open=float(demo.get("open", ltp)),
+                high=float(demo.get("high", ltp)), low=float(demo.get("low", ltp)),
+                previous_close=prev, change=change, change_percent=change_pct,
+                volume=int(demo.get("volume", 0)),
+                open_interest=demo.get("oi"),
+                status=DataStatus.OFFLINE,
+                provider=self.provider_name,
+            )
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -741,7 +758,11 @@ class GrowwProvider(MarketDataProvider):
                     if isinstance(live, Exception):
                         continue
                     if not live or not live.get("ltp"):
-                        continue
+                        # No live data (missing/invalid token or REST down) — fall back to demo so
+                        # dashboard/WS still show realistic numbers instead of zeroes (matches pre-broker UX)
+                        live = self._DEMO_QUOTES.get(sym)
+                        if not live or not live.get("ltp"):
+                            continue
                     try:
                         # Build TickEvent
                         ltp = float(live["ltp"])
