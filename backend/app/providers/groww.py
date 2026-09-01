@@ -411,8 +411,32 @@ class GrowwProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # Groww live unavailable and no cached tick — use calibrated demo quotes
-        # (matches pre-broker UX where dashboard shows realistic data, not zeroes)
+        # Groww licensed live unavailable and no cached tick — fall back to real NSE/BSE
+        # public data (same as FyersProvider) so connected Groww shows LIVE real prices,
+        # matching the non-connected experience instead of zeroes or OFFLINE demo.
+        try:
+            from app.services.nse_service import fetch_nse_quote
+            import asyncio as _aio_nse
+            real = await _aio_nse.wait_for(fetch_nse_quote(symbol), timeout=2.0)
+        except Exception:
+            real = None
+        if real and real.get("ltp"):
+            ltp = float(real["ltp"])
+            open_p = float(real.get("open") or ltp)
+            high_p = float(real.get("high") or ltp)
+            low_p = float(real.get("low") or ltp)
+            prev = float(real.get("prev") or 0.0)
+            change = round(ltp - prev, 2) if prev else 0.0
+            change_pct = round((change / prev * 100) if prev else 0.0, 2)
+            status = DataStatus.CLOSED if not is_open else DataStatus.LIVE
+            return NormalizedQuote(
+                symbol=symbol, display_name=symbol, timestamp=now,
+                ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
+                previous_close=round(prev, 2), change=change, change_percent=change_pct,
+                volume=0, open_interest=None, status=status, provider=self.provider_name,
+            )
+
+        # Pre-broker UX: when no live data at all, still show calibrated demo (no zeroes)
         demo = self._DEMO_QUOTES.get(symbol, {})
         if demo:
             ltp = float(demo.get("ltp", 0))
@@ -756,11 +780,15 @@ class GrowwProvider(MarketDataProvider):
                 ingested = 0
                 for sym, live in zip(self.symbol_map.keys(), results):
                     if isinstance(live, Exception):
-                        continue
+                        live = None
                     if not live or not live.get("ltp"):
-                        # No live data (missing/invalid token or REST down) — fall back to demo so
-                        # dashboard/WS still show realistic numbers instead of zeroes (matches pre-broker UX)
-                        live = self._DEMO_QUOTES.get(sym)
+                        # Groww licensed fetch empty — fall back to real NSE/BSE public data so
+                        # the WebSocket stream still pushes live prices (matches REST + connected UX)
+                        try:
+                            from app.services.nse_service import fetch_nse_quote as _nseq
+                            live = await asyncio.wait_for(_nseq(sym), timeout=2.0)
+                        except Exception:
+                            live = None
                         if not live or not live.get("ltp"):
                             continue
                     try:
