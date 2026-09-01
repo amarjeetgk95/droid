@@ -99,15 +99,34 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
     # which is the documented path for indices.
     try:
         from app.services.groww_service import INDEX_EXCHANGE_SYMBOLS
-        # Try full quote endpoint first (the documented path for indices)
-        full_quote = await provider.service.get_quote(
+        # Full quote endpoint with the raw body so we can see exactly what
+        # Groww said (including FAILURE status messages, error codes, etc.)
+        norm_quote, raw_quote, status_quote = await provider.service._get_quote_with_raw(
             token, "NSE", "CASH", "NIFTY",
         )
-        # Also try LTP bulk for comparison
-        ltp_map = await provider.service.get_ltp_bulk(
+        # LTP bulk endpoint with raw body
+        raw_ltp = None
+        status_ltp = None
+        async_call = provider.service.get_ltp_bulk(
             token, "CASH", [INDEX_EXCHANGE_SYMBOLS["NIFTY 50"]]
         )
-        ltp_val = ltp_map.get(INDEX_EXCHANGE_SYMBOLS["NIFTY 50"])
+        ltp_map = await async_call
+        # Re-fetch the raw ltp response for diagnostics
+        import httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=provider.service.DEFAULT_TIMEOUT_SECONDS) as _c:
+                _r = await _c.get(
+                    f"{provider.service.API_BASE}{provider.service.LTP_ENDPOINT}",
+                    params={"segment": "CASH", "exchange_symbols": INDEX_EXCHANGE_SYMBOLS["NIFTY 50"]},
+                    headers=provider.service._build_headers(token),
+                )
+                status_ltp = _r.status_code
+                try:
+                    raw_ltp = _r.json()
+                except Exception:
+                    raw_ltp = (_r.text or "")[:500]
+        except Exception as e:
+            raw_ltp = {"error": str(e)}
 
         return {
             "data": {
@@ -115,19 +134,23 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
                 "token_prefix": token[:12] + "...",
                 "quote_call": {
                     "endpoint": "GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY",
-                    "response_normalized": full_quote,
-                    "ok": full_quote is not None and full_quote.get("ltp", 0) > 0,
+                    "http_status": status_quote,
+                    "response_normalized": norm_quote,
+                    "response_raw": raw_quote,
+                    "ok": norm_quote is not None and norm_quote.get("ltp", 0) > 0,
                 },
                 "ltp_call": {
                     "endpoint": "GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY",
+                    "http_status": status_ltp,
                     "response_payload": ltp_map,
-                    "ok": ltp_val is not None and ltp_val > 0,
+                    "response_raw": raw_ltp,
+                    "ok": ltp_map.get(INDEX_EXCHANGE_SYMBOLS["NIFTY 50"]) is not None,
                 },
                 "diagnostics": diag,
             },
             "error": (
-                None if (full_quote and full_quote.get("ltp", 0) > 0)
-                else "Both endpoints returned no data for NIFTY 50 — check token scopes/daily approval"
+                None if (norm_quote and norm_quote.get("ltp", 0) > 0)
+                else "Both endpoints returned no usable data — check raw_quote/raw_ltp for Groww error"
             ),
             "meta": _make_meta().model_dump(),
         }

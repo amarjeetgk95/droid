@@ -187,45 +187,59 @@ class GrowwService:
         None if Groww returns an error / empty payload. The Groww response
         includes a STRING-form ``ohlc`` field (their quirk) — we parse it.
         """
+        result, _, _ = await self._get_quote_with_raw(access_token, exchange, segment, trading_symbol)
+        return result
+
+    async def _get_quote_with_raw(
+        self, access_token, exchange, segment, trading_symbol
+    ) -> tuple[dict | None, dict | None, int | None]:
+        """Like :meth:`get_quote` but also returns the raw Groww response body
+        and HTTP status code — used by the diagnostics endpoint so we can see
+        exactly what Groww returned (vs what the parser normalized)."""
         url = f"{self.API_BASE}{self.QUOTE_ENDPOINT}"
         params = {
             "exchange": exchange,
             "segment": segment,
             "trading_symbol": trading_symbol,
         }
+        raw_body = None
+        status = None
         async with httpx.AsyncClient(timeout=self.DEFAULT_TIMEOUT_SECONDS) as client:
             try:
                 resp = await client.get(url, params=params, headers=self._build_headers(access_token))
             except Exception as e:
                 logger.debug("groww_quote_request_failed", symbol=trading_symbol, error=str(e)[:200])
-                return None
-        if resp.status_code != 200:
+                return None, {"error": str(e)}, None
+            status = resp.status_code
+            raw_body = (resp.text or "")[:500]
+        if status != 200:
             logger.debug(
                 "groww_quote_http_non200",
                 symbol=trading_symbol,
-                status=resp.status_code,
-                body=(resp.text or "")[:200],
+                status=status,
+                body=raw_body,
             )
-            return None
+            return None, raw_body, status
         try:
             data = resp.json()
         except Exception as e:
             logger.debug("groww_quote_json_failed", symbol=trading_symbol, error=str(e)[:200])
-            return None
+            return None, {"error": f"json parse: {e}", "raw": raw_body}, status
         if data.get("status") != "SUCCESS":
             logger.debug(
                 "groww_quote_status_not_success",
                 symbol=trading_symbol,
                 status=data.get("status"),
+                payload=data,
             )
-            return None
+            return None, data, status
         payload = data.get("payload") or data
         # Some responses wrap the quote dict under payload.quote
         if isinstance(payload, dict) and "last_price" not in payload and "ltp" not in payload:
             inner = payload.get("quote")
             if isinstance(inner, dict):
                 payload = inner
-        return _normalize_quote_payload(payload)
+        return _normalize_quote_payload(payload), data, status
 
     # ---------- Live Data: LTP bulk ----------
 
