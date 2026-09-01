@@ -14,6 +14,7 @@ from app.api import institutional as institutional_api
 from app.api import telegram as telegram_api
 from app.api.institutional_mi_full import router_full as institutional_mi_full_api
 from app.api.institutional_signals import router_signals as institutional_signals_api
+from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
@@ -156,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_api.router)
     app.include_router(algo_api.router)
     app.include_router(institutional_signals_api)
+    app.include_router(signals_api)
     app.include_router(institutional_api.router)
     app.include_router(institutional_mi_full_api)
     app.include_router(telegram_api.router)

@@ -15,6 +15,8 @@ import {
   History,
   Bot,
   BarChart3,
+  Zap,
+  Radio,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -63,6 +65,15 @@ export const NAV_GROUPS: NavGroup[] = [
     defaultOpen: true,
     items: [
       { href: '/options', label: 'Options', icon: Layers, description: 'Chain & IV' },
+    ],
+  },
+  {
+    id: 'signals',
+    label: 'Signals',
+    icon: Zap,
+    defaultOpen: true,
+    items: [
+      { href: '/signals', label: 'Signal Center', icon: Radio, description: 'Generate & dispatch' },
     ],
   },
   {

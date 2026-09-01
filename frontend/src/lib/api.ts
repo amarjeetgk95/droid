@@ -702,6 +702,37 @@ class ApiClient {
   async getInstitutionalAuditRecent(limit = 20) {
     return this.request<any>(`/api/v1/institutional/audit/recent?limit=${limit}`);
   }
+
+  // Unified Signals Facade — dedicated Signal Generation module
+  async getSignalsActive(params?: { instrument?: string; status?: string; engine?: string }) {
+    const qs = new URLSearchParams();
+    if (params?.instrument) qs.set('instrument', params.instrument);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.engine) qs.set('engine', params.engine);
+    const q = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<{ signals: any[]; count: number; generated_at_ms: number }>(`/api/v1/signals/active${q}`);
+  }
+  async getSignalsHistory(limit = 20) {
+    return this.request<{ records: any[] }>(`/api/v1/signals/history?limit=${limit}`);
+  }
+  async getSignal(signalId: string) {
+    return this.request<any>(`/api/v1/signals/${encodeURIComponent(signalId)}`);
+  }
+  async getSignalEngines() {
+    return this.request<{ engines: any[] }>(`/api/v1/signals/engines`);
+  }
+  async generateSignal(payload: Record<string, any>) {
+    return this.request<{ signal: any; signal_obj: any; telegram: { enqueued: number; notification_ids: string[]; skipped_reason?: string | null }; is_expired: boolean; ttl_remaining_ms: number }>(
+      `/api/v1/signals/generate`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+  async previewSignal(payload: Record<string, any>) {
+    return this.request<{ preview: string; event: any; event_type: string; instrument: string }>(`/api/v1/signals/preview`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
 }
 
 export const api = new ApiClient(API_BASE);
