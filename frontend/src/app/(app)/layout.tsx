@@ -5,12 +5,12 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopHeader } from '@/components/layout/TopHeader';
 import { MarketTicker } from '@/components/layout/MarketTicker';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-import { useMarketData } from '@/hooks/useMarketData';
+import { MarketDataProvider, useMarketDataContext } from '@/context/MarketDataContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { cards, health, marketStatus, loading: dataLoading, streamState } = useMarketData();
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
+  const { cards, health, marketStatus, loading: dataLoading, streamState } = useMarketDataContext();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -28,8 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthGuard>
-      <div className="flex h-screen bg-background text-foreground overflow-hidden">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden">
         <Sidebar collapsed={collapsed} onCollapsedChange={handleCollapsedChange} mobileOpen={mobileOpen} onMobileOpenChange={setMobileOpen} />
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <TopHeader
@@ -44,6 +43,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </div>
-    </AuthGuard>
+  );
+}
+
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <MarketDataProvider>
+      <AuthGuard>
+        <AppLayoutInner>{children}</AppLayoutInner>
+      </AuthGuard>
+    </MarketDataProvider>
   );
 }

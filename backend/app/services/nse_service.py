@@ -21,12 +21,12 @@ async def fetch_nse_quote(symbol: str) -> dict | None:
     now = time.time()
     # Try NSE
     try:
-        async with httpx.AsyncClient(timeout=5.0, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}) as client:
+        async with httpx.AsyncClient(timeout=2.5, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}) as client:
             # Check cache
             if _cache["data"] and now - _cache["ts"] < CACHE_TTL_SECONDS:
                 j = _cache["data"]
             else:
-                resp = await client.get("https://www.nseindia.com/api/allIndices", headers={"User-Agent": "Mozilla/5.0"}, timeout=5.0)
+                resp = await client.get("https://www.nseindia.com/api/allIndices", headers={"User-Agent": "Mozilla/5.0"}, timeout=2.5)
                 if resp.status_code == 200:
                     j = resp.json()
                     _cache["data"] = j
@@ -49,7 +49,7 @@ async def fetch_nse_quote(symbol: str) -> dict | None:
             # SENSEX via Yahoo BSE
             if symbol == "SENSEX":
                 try:
-                    yahoo_resp = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/%5EBSESN?interval=1d&range=1d", headers={"User-Agent": "Mozilla/5.0"}, timeout=5.0)
+                    yahoo_resp = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/%5EBSESN?interval=1d&range=1d", headers={"User-Agent": "Mozilla/5.0"}, timeout=2.5)
                     if yahoo_resp.status_code == 200:
                         yj = yahoo_resp.json()
                         meta = yj.get("chart", {}).get("result", [{}])[0].get("meta", {})

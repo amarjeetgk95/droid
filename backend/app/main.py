@@ -51,22 +51,28 @@ async def lifespan(app: FastAPI):
         logger.info("warm_start_restored", snapshot_time=snapshot.timestamp.isoformat())
 
     # Load persisted broker config from DB (so Groww token survives restart/Re-deploy)
-    # Fixes FastAPI singleton staying fyers DEMO with zero after you saved Groww in Settings UI
+    # Non-blocking with 3s timeout — previously blocked lifespan for 10s+ when DB cold (caused slow load)
     try:
+        import asyncio as _aio
         from app.core.database import get_async_session_factory
         from app.core.broker_runtime import apply_app_settings
         from app.providers.registry import reset_provider
         factory = get_async_session_factory()
         if factory is not None:
-            async with factory() as _sess:
-                from sqlalchemy import text as _text
-                _res = await _sess.execute(_text("SELECT app_settings FROM user_settings WHERE app_settings IS NOT NULL ORDER BY updated_at DESC LIMIT 1"))
-                _row = _res.first()
-                if _row and _row[0]:
-                    _changed = apply_app_settings(_row[0])
-                    if _changed:
-                        reset_provider()
-                        logger.info("startup_broker_config_loaded_from_db", provider=_row[0].get("broker", {}).get("provider") if isinstance(_row[0], dict) else "unknown")
+            async def _load_broker():
+                async with factory() as _sess:
+                    from sqlalchemy import text as _text
+                    _res = await _sess.execute(_text("SELECT app_settings FROM user_settings WHERE app_settings IS NOT NULL ORDER BY updated_at DESC LIMIT 1"))
+                    _row = _res.first()
+                    if _row and _row[0]:
+                        _changed = apply_app_settings(_row[0])
+                        if _changed:
+                            reset_provider()
+                            logger.info("startup_broker_config_loaded_from_db", provider=_row[0].get("broker", {}).get("provider") if isinstance(_row[0], dict) else "unknown")
+            try:
+                await _aio.wait_for(_load_broker(), timeout=3.0)
+            except _aio.TimeoutError:
+                logger.warning("startup_broker_config_load_timeout", hint="DB slow — continuing with env config")
     except Exception as _e:
         logger.warning("startup_broker_config_load_failed", error=str(_e)[:200])
 

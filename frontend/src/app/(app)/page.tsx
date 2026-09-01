@@ -1,18 +1,21 @@
 'use client';
 
-import { useMarketData } from '@/hooks/useMarketData';
+import dynamic from 'next/dynamic';
+import { useMarketDataContext } from '@/context/MarketDataContext';
 import { MarketCard } from '@/components/dashboard/MarketCard';
-import { MLPredictionCard } from '@/components/dashboard/MLPredictionCard';
-import { FIIPositioningCard } from '@/components/dashboard/FIIPositioningCard';
 import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
 import { MarketOverview } from '@/components/dashboard/MarketOverview';
 import { QuickStats } from '@/components/dashboard/QuickStats';
 import { MarketHealth } from '@/components/dashboard/MarketHealth';
-import { MarketIntelligencePanel } from '@/components/institutional/MarketIntelligencePanel';
-import { DataHealthPanel } from '@/components/institutional/DataHealthPanel';
+
+// Lazy-load heavy below-fold panels — reduces initial JS + defers 6 extra API calls until visible
+const MLPredictionCard = dynamic(() => import('@/components/dashboard/MLPredictionCard').then(m => m.MLPredictionCard), { ssr: false, loading: () => <div className="bg-card border rounded-xl p-4 h-64 animate-pulse" /> });
+const FIIPositioningCard = dynamic(() => import('@/components/dashboard/FIIPositioningCard').then(m => m.FIIPositioningCard), { ssr: false, loading: () => <div className="bg-card border rounded-xl p-4 h-64 animate-pulse" /> });
+const MarketIntelligencePanel = dynamic(() => import('@/components/institutional/MarketIntelligencePanel').then(m => m.MarketIntelligencePanel), { ssr: false, loading: () => <div className="bg-card border rounded p-4 h-80 animate-pulse">Loading Market Intelligence…</div> });
+const DataHealthPanel = dynamic(() => import('@/components/institutional/DataHealthPanel').then(m => m.DataHealthPanel), { ssr: false, loading: () => <div className="bg-card border rounded p-4 h-40 animate-pulse" /> });
 
 export default function DashboardPage() {
-  const { cards, breadth, health, marketStatus, loading, error, lastFetch } = useMarketData();
+  const { cards, breadth, health, marketStatus, loading, error, lastFetch } = useMarketDataContext();
 
   if (error) {
     return (

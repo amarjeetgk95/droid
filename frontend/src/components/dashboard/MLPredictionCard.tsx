@@ -30,10 +30,13 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
     };
 
     loadPrediction();
-    const interval = setInterval(loadPrediction, 5000);
+    const interval = setInterval(() => { if (!document.hidden) loadPrediction(); }, 30000);
+    const onVis = () => { if (!document.hidden) loadPrediction(); };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [symbol]);
 

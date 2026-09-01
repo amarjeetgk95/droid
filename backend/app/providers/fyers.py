@@ -95,21 +95,30 @@ class FyersProvider(MarketDataProvider):
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
-        # Only attempt live fetch if token valid; otherwise show zero Offline (no DEMO)
-        if not token or token == "mock-demo-token" or self.token_manager.is_token_expired():
-            return NormalizedQuote(
-                symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=0.0, open=0.0, high=0.0, low=0.0,
-                previous_close=0.0, change=0.0, change_percent=0.0,
-                volume=0, open_interest=None,
-                status=DataStatus.OFFLINE, provider=self.provider_name,
-            )
+        # Fast path: serve from central_feed cache (poller ingests NSE every 1s even without token) — fixes OFFLINE zero when HEALTHY
+        try:
+            from app.services.central_feed import central_feed as _cf_fast
+            _cached = _cf_fast.get_latest_tick(symbol)
+            if _cached and _cached.ltp > 0:
+                _ltp = float(_cached.ltp)
+                _open = float(_cached.open) if _cached.open else _ltp
+                _high = float(_cached.high) if _cached.high else _ltp
+                _low = float(_cached.low) if _cached.low else _ltp
+                _prev = float(_cached.close) if _cached.close else 0.0
+                _change = round(_ltp - _prev, 2) if _prev else 0.0
+                _change_pct = round((_change / _prev * 100) if _prev else 0.0, 2)
+                is_open = calendar_service.is_market_open_now()
+                return NormalizedQuote(symbol=symbol, display_name=symbol, timestamp=_cached.timestamp, ltp=round(_ltp,2), open=round(_open,2), high=round(_high,2), low=round(_low,2), previous_close=round(_prev,2), change=_change, change_percent=_change_pct, volume=int(_cached.volume) if _cached.volume else 0, open_interest=_cached.open_interest, status=DataStatus.CLOSED if not is_open else DataStatus.LIVE, provider=self.provider_name)
+        except Exception:
+            pass
 
-        # Token valid — try real NSE as proxy for FYERS live (until FYERS WS is wired)
+        # Try real NSE as proxy for FYERS live (even without token — poller fallback)
         real = None
         try:
             from app.services.nse_service import fetch_nse_quote
-            real = await fetch_nse_quote(symbol)
+            # 2s timeout wrapper — was unbounded (caused 5s hang per symbol)
+            import asyncio as _aio2
+            real = await _aio2.wait_for(fetch_nse_quote(symbol), timeout=2.0)
         except Exception:
             pass
         if real and real.get("ltp"):
@@ -165,7 +174,7 @@ class FyersProvider(MarketDataProvider):
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
         targets = symbols or list(self.symbol_map.keys())
-        return [await self.get_quote(s) for s in targets]
+        return list(await asyncio.gather(*[self.get_quote(s) for s in targets]))
 
     async def get_candles(
         self,

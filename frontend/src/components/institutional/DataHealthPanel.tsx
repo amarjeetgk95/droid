@@ -16,8 +16,10 @@ export function DataHealthPanel() {
       } catch { if (!cancelled) setData(null); }
     }
     fetchH();
-    const id = setInterval(fetchH, 5000);
-    return () => { cancelled = true; clearInterval(id); };
+    const id = setInterval(() => { if (!document.hidden && !cancelled) fetchH(); }, 30000);
+    const onVis = () => { if (!document.hidden && !cancelled) fetchH(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, []);
 
   const dot = (status: string) => {

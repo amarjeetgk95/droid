@@ -30,10 +30,13 @@ export function FIIPositioningCard() {
     };
 
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(() => { if (!document.hidden) loadData(); }, 60000);
+    const onVis = () => { if (!document.hidden) loadData(); };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
 

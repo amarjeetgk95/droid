@@ -233,61 +233,18 @@ class GrowwProvider(MarketDataProvider):
                                     }
                 except Exception:
                     pass
-            # Fallback for indices: try Groww SDK get_quote/get_ltp with multiple symbol variants (more reliable than raw REST)
+            # Fast path: check central_feed cache BEFORE slow REST (if poller already has tick, return instantly — avoids 5s REST timeout per index)
             try:
-                from growwapi import GrowwAPI as _GrowwAPI  # type: ignore
-                _api = _GrowwAPI(token)  # type: ignore
-                for _sym in [trading_symbol, symbol, symbol.replace(" ", ""), "NIFTY" if symbol=="NIFTY 50" else None, "BANKNIFTY" if symbol=="BANKNIFTY" else None]:
-                    if not _sym:
-                        continue
-                    try:
-                        _resp = _api.get_quote(trading_symbol=_sym, exchange=exchange, segment="CASH")  # type: ignore
-                        _payload = _resp.get("payload") or _resp if isinstance(_resp, dict) else _resp
-                        if isinstance(_payload, dict) and ("last_price" in _payload or "ltp" in _payload):
-                            return {
-                                "ltp": float(_payload.get("last_price") or _payload.get("ltp") or 0),
-                                "open": float(_payload.get("ohlc_open") or 0) or None,
-                                "high": float(_payload.get("high_trade_range") or _payload.get("high") or 0) or None,
-                                "low": float(_payload.get("low_trade_range") or _payload.get("low") or 0) or None,
-                                "prev": float(_payload.get("previous_close") or _payload.get("close") or 0) or None,
-                                "volume": int(_payload.get("volume") or 0),
-                                "oi": int(_payload.get("open_interest") or 0) if _payload.get("open_interest") is not None else None,
-                            }
-                    except Exception:
-                        continue
+                from app.services.central_feed import central_feed as _cf_fast
+                _fast = _cf_fast.get_latest_tick(symbol)
+                if _fast and _fast.ltp > 0:
+                    return {"ltp": float(_fast.ltp), "open": float(_fast.open) if _fast.open else None, "high": float(_fast.high) if _fast.high else None, "low": float(_fast.low) if _fast.low else None, "prev": float(_fast.close) if _fast.close else None, "volume": int(_fast.volume) if _fast.volume else 0, "oi": _fast.open_interest}
             except Exception:
                 pass
-            # Also try LTP bulk endpoint via SDK
-            try:
-                from growwapi import GrowwAPI as _GrowwAPI2  # type: ignore
-                _api2 = _GrowwAPI2(token)  # type: ignore
-                idx_map2 = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
-                ltp_sym2 = idx_map2.get(symbol, f"NSE_{trading_symbol}")
-                try:
-                    _ltp_resp = _api2.get_ltp(exchange_trading_symbols=(ltp_sym2,), segment="CASH")  # type: ignore
-                    _payload2 = _ltp_resp.get("payload") or _ltp_resp if isinstance(_ltp_resp, dict) else _ltp_resp
-                    def _find_ltp2(obj):
-                        if isinstance(obj, dict):
-                            if "ltp" in obj and isinstance(obj["ltp"], (int, float)):
-                                return float(obj["ltp"])
-                            if "last_price" in obj:
-                                return float(obj["last_price"])
-                            for v in obj.values():
-                                r = _find_ltp2(v)
-                                if r is not None:
-                                    return r
-                        return None
-                    _ltp_val2 = _find_ltp2(_payload2)
-                    if _ltp_val2 and _ltp_val2 > 0:
-                        return {"ltp": float(_ltp_val2), "open": None, "high": None, "low": None, "prev": None, "volume": 0, "oi": None}
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            # Fallback for indices: try Groww LTP bulk endpoint via raw REST (sometimes supports indices)
+            # Fallback for indices: try Groww LTP bulk endpoint via async REST only (SDK sync calls removed — they blocked event loop; async REST + feed cache is sufficient)
             try:
                 import httpx as _httpx2
-                async with _httpx2.AsyncClient(timeout=5.0) as _client:
+                async with _httpx2.AsyncClient(timeout=2.0) as _client:
                     idx_map = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
                     ltp_sym = idx_map.get(symbol, f"NSE_{trading_symbol}")
                     ltp_url = f"{self.API_BASE}/live-data/ltp"
@@ -313,7 +270,7 @@ class GrowwProvider(MarketDataProvider):
             except Exception:
                 pass
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=2.0) as client:
                 # Groww live-data/quote — licensed source for non-index (or fallback)
                 url = f"{self.API_BASE}/live-data/quote"
                 params = {"exchange": exchange, "segment": cfg.get("segment", "CASH"), "trading_symbol": trading_symbol}
@@ -374,6 +331,23 @@ class GrowwProvider(MarketDataProvider):
         self.token_manager.record_message()
 
         is_open = calendar_service.is_market_open_now()
+        # Fast path: serve from central_feed cache first (no REST) — poller already ingested tick every 1s
+        try:
+            from app.services.central_feed import central_feed as _cf_fast2
+            _cached_fast = _cf_fast2.get_latest_tick(symbol)
+            if _cached_fast and _cached_fast.ltp > 0:
+                _ltp = float(_cached_fast.ltp)
+                _open = float(_cached_fast.open) if _cached_fast.open else _ltp
+                _high = float(_cached_fast.high) if _cached_fast.high else _ltp
+                _low = float(_cached_fast.low) if _cached_fast.low else _ltp
+                _prev = float(_cached_fast.close) if _cached_fast.close else 0.0
+                _change = round(_ltp - _prev, 2) if _prev else 0.0
+                _change_pct = round((_change / _prev * 100) if _prev else 0.0, 2)
+                if not is_open:
+                    return NormalizedQuote(symbol=symbol, display_name=symbol, timestamp=_cached_fast.timestamp, ltp=round(_ltp,2), open=round(_open,2), high=round(_high,2), low=round(_low,2), previous_close=round(_prev,2), change=_change, change_percent=_change_pct, volume=int(_cached_fast.volume) if _cached_fast.volume else 0, open_interest=_cached_fast.open_interest, status=DataStatus.CLOSED, provider=self.provider_name)
+                return NormalizedQuote(symbol=symbol, display_name=symbol, timestamp=_cached_fast.timestamp, ltp=round(_ltp,2), open=round(_open,2), high=round(_high,2), low=round(_low,2), previous_close=round(_prev,2), change=_change, change_percent=_change_pct, volume=int(_cached_fast.volume) if _cached_fast.volume else 0, open_interest=_cached_fast.open_interest, status=DataStatus.LIVE, provider=self.provider_name)
+        except Exception:
+            pass
         # Pure Groww live fetch — no DEMO fallback for fields
         live = await self._fetch_live_quote(symbol, token or "")
         if live and live.get("ltp"):
@@ -449,7 +423,8 @@ class GrowwProvider(MarketDataProvider):
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
         targets = symbols or list(self.symbol_map.keys())
-        return [await self.get_quote(s) for s in targets]
+        # Parallel gather — was sequential (5× serial REST = 25s worst); now 5× concurrent ~2s worst
+        return list(await asyncio.gather(*[self.get_quote(s) for s in targets]))
 
     async def get_candles(
         self,
