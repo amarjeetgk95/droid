@@ -85,58 +85,63 @@ class FyersProvider(MarketDataProvider):
     }
 
     async def get_quote(self, symbol: str) -> NormalizedQuote:
-        """Fetch quote from FYERS API and normalize."""
+        """Fetch quote from FYERS API and normalize — zero if no live broker data."""
         await self.rate_limiter.acquire()
         try:
             token = await self.token_manager.get_valid_token()
         except RuntimeError:
             token = ""
 
-        fyers_sym = self.symbol_map.get(symbol, symbol)
-        
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
-        # Try real NSE public when possible (keeps TradingView alignment without token)
+        # Only attempt live fetch if token valid; otherwise show zero (no DEMO stale)
+        if not token or token == "mock-demo-token" or self.token_manager.is_token_expired():
+            return NormalizedQuote(
+                symbol=symbol, display_name=symbol, timestamp=now,
+                ltp=0.0, open=0.0, high=0.0, low=0.0,
+                previous_close=0.0, change=0.0, change_percent=0.0,
+                volume=0, open_interest=None,
+                status=DataStatus.DISCONNECTED, provider=self.provider_name,
+            )
+
+        # Token valid — try real NSE as proxy for FYERS live (until FYERS WS is wired)
         real = None
         try:
             from app.services.nse_service import fetch_nse_quote
             real = await fetch_nse_quote(symbol)
         except Exception:
             pass
-        demo = self._DEMO_MAP.get(symbol, {"ltp": 24034.7, "open": 24117.0, "high": 24128.0, "low": 23993.0, "prev": 24175.0, "vol": 1450000, "oi": 450000})
         if real and real.get("ltp"):
-            demo = {"ltp": real["ltp"], "open": real["open"] or demo["open"], "high": real["high"] or demo["high"], "low": real["low"] or demo["low"], "prev": real["prev"] or demo["prev"], "vol": demo["vol"], "oi": demo["oi"]}
-
-        is_open = calendar_service.is_market_open_now()
-        ltp = demo["ltp"]
-        prev = demo["prev"]
-        if not is_open:
+            ltp = float(real["ltp"])
+            open_p = float(real.get("open") or ltp)
+            high_p = float(real.get("high") or ltp)
+            low_p = float(real.get("low") or ltp)
+            prev = float(real.get("prev") or 0.0)
+            is_open = calendar_service.is_market_open_now()
             change = round(ltp - prev, 2) if prev else 0.0
             change_pct = round((change / prev * 100) if prev else 0.0, 2)
+            if not is_open:
+                return NormalizedQuote(
+                    symbol=symbol, display_name=symbol, timestamp=now,
+                    ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
+                    previous_close=round(prev, 2), change=change, change_percent=change_pct,
+                    volume=0, open_interest=None, status=DataStatus.CLOSED, provider=self.provider_name,
+                )
             return NormalizedQuote(
                 symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=round(float(ltp), 2), open=round(float(demo["open"]), 2), high=round(float(demo["high"]), 2), low=round(float(demo["low"]), 2),
-                previous_close=round(float(prev), 2), change=change, change_percent=change_pct,
-                volume=demo["vol"], open_interest=demo["oi"], status=DataStatus.CLOSED, provider=self.provider_name,
+                ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
+                previous_close=round(prev, 2), change=change, change_percent=change_pct,
+                volume=0, open_interest=None, status=DataStatus.LIVE, provider=self.provider_name,
             )
-        change = round(ltp - prev, 2)
-        change_pct = round((change / prev * 100) if prev else 0.0, 2)
+
+        # Token valid but real fetch failed — still zero (no DEMO)
         return NormalizedQuote(
-            symbol=symbol,
-            display_name=symbol,
-            timestamp=now,
-            ltp=ltp,
-            open=demo["open"],
-            high=demo["high"],
-            low=demo["low"],
-            previous_close=prev,
-            change=change,
-            change_percent=change_pct,
-            volume=demo["vol"],
-            open_interest=demo["oi"],
-            status=DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO,
-            provider=self.provider_name,
+            symbol=symbol, display_name=symbol, timestamp=now,
+            ltp=0.0, open=0.0, high=0.0, low=0.0,
+            previous_close=0.0, change=0.0, change_percent=0.0,
+            volume=0, open_interest=None,
+            status=DataStatus.DISCONNECTED, provider=self.provider_name,
         )
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
@@ -152,6 +157,16 @@ class FyersProvider(MarketDataProvider):
     ) -> list[NormalizedCandle]:
         await self.rate_limiter.acquire()
         try:
+            token = await self.token_manager.get_valid_token()
+        except RuntimeError:
+            token = ""
+        if not token or token == "mock-demo-token" or self.token_manager.is_token_expired():
+            now = datetime.now(timezone.utc)
+            return [
+                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+                NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+            ]
+        try:
             from app.services.nse_service import fetch_nse_candles
             count = 75 if timeframe == "5m" else 30
             real = await fetch_nse_candles(symbol, timeframe, count)
@@ -162,11 +177,10 @@ class FyersProvider(MarketDataProvider):
                 ]
         except Exception as e:
             logger.debug("fyers_candles_real_fetch_failed", symbol=symbol, error=str(e)[:150])
-        demo = self._DEMO_MAP.get(symbol, {"ltp": 24034.7, "prev": 24175.0})
         now = datetime.now(timezone.utc)
         return [
-            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
-            NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+            NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
         ]
 
     async def get_index_cards(self) -> list[IndexCard]:

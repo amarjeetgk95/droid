@@ -266,17 +266,17 @@ class GrowwProvider(MarketDataProvider):
         self.token_manager.record_message()
 
         is_open = calendar_service.is_market_open_now()
-        # Attempt live fetch (Groww if token else NSE public) — keeps TradingView alignment
+        # Pure Groww live fetch — no DEMO fallback for fields
         live = await self._fetch_live_quote(symbol, token or "")
         if live and live.get("ltp"):
-            demo = self._demo_quote(symbol)
             ltp = float(live["ltp"])
-            open_p = live.get("open") or demo["open"]
-            high_p = live.get("high") or demo["high"]
-            low_p = live.get("low") or demo["low"]
-            prev = live.get("prev") or demo["prev"]
-            vol = live.get("volume") if live.get("volume") not in (None, 0) else demo["volume"]
-            oi = live.get("oi") if live.get("oi") is not None else demo["oi"]
+            # Use only Groww fields; if Groww omits open/high/low, use ltp or prev or 0 (no demo)
+            open_p = live.get("open") if live.get("open") not in (None, 0) else ltp
+            high_p = live.get("high") if live.get("high") not in (None, 0) else ltp
+            low_p = live.get("low") if live.get("low") not in (None, 0) else ltp
+            prev = live.get("prev") if live.get("prev") not in (None, 0) else 0.0
+            vol = live.get("volume") if live.get("volume") not in (None, 0) else 0
+            oi = live.get("oi") if live.get("oi") is not None else None
             change = round(ltp - prev, 2) if prev else 0.0
             change_pct = round((change / prev * 100) if prev else 0.0, 2)
             if not is_open:
@@ -287,7 +287,7 @@ class GrowwProvider(MarketDataProvider):
                     previous_close=round(float(prev), 2), change=change, change_percent=change_pct,
                     volume=int(vol) if vol else 0, open_interest=oi, status=DataStatus.CLOSED, provider=self.provider_name,
                 )
-            status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO
+            status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DISCONNECTED
             return NormalizedQuote(
                 symbol=symbol,
                 display_name=symbol,
@@ -299,44 +299,20 @@ class GrowwProvider(MarketDataProvider):
                 previous_close=round(float(prev), 2),
                 change=change,
                 change_percent=change_pct,
-                volume=int(vol) if vol else demo["volume"],
+                volume=int(vol) if vol else 0,
                 open_interest=oi,
                 status=status,
                 provider=self.provider_name,
             )
 
-        # Fallback to calibrated hardcoded demo (when NSE/Groww both unavailable)
-        demo = self._demo_quote(symbol)
-        ltp = demo["ltp"]
-        prev = demo["prev"]
-        if not is_open:
-            change = round(ltp - prev, 2) if prev else 0.0
-            change_pct = round((change / prev * 100) if prev else 0.0, 2)
-            return NormalizedQuote(
-                symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=round(float(ltp), 2), open=round(float(demo["open"]), 2), high=round(float(demo["high"]), 2), low=round(float(demo["low"]), 2),
-                previous_close=round(float(prev), 2), change=change, change_percent=change_pct,
-                volume=demo["volume"], open_interest=demo["oi"], status=DataStatus.CLOSED, provider=self.provider_name,
-            )
-        change = round(ltp - prev, 2)
-        change_pct = round((change / prev * 100) if prev else 0.0, 2)
-        status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DEMO
-        if not token and self.token_manager.is_token_expired():
-            status = DataStatus.DEMO
+        # Pure Groww: if live not available, show ZERO across all indices (no DEMO stale)
+        # User request: remove demo feed, show zero instead of 57348 etc. when broker disconnected
         return NormalizedQuote(
-            symbol=symbol,
-            display_name=symbol,
-            timestamp=now,
-            ltp=ltp,
-            open=demo["open"],
-            high=demo["high"],
-            low=demo["low"],
-            previous_close=prev,
-            change=change,
-            change_percent=change_pct,
-            volume=demo["volume"],
-            open_interest=demo["oi"],
-            status=status,
+            symbol=symbol, display_name=symbol, timestamp=now,
+            ltp=0.0, open=0.0, high=0.0, low=0.0,
+            previous_close=0.0, change=0.0, change_percent=0.0,
+            volume=0, open_interest=None,
+            status=DataStatus.DISCONNECTED if not token or self.token_manager.is_token_expired() else DataStatus.DEMO,
             provider=self.provider_name,
         )
 
@@ -365,11 +341,10 @@ class GrowwProvider(MarketDataProvider):
             token = ""
         if not token or token in ("", "dummy", "mock-demo-token"):
             logger.debug("groww_candles_no_token_pure", symbol=symbol)
-            demo = self._demo_quote(symbol)
             now = datetime.now(timezone.utc)
             return [
-                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
-                NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+                NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
             ]
 
         # Map frontend timeframe -> Groww candle_interval
@@ -385,11 +360,10 @@ class GrowwProvider(MarketDataProvider):
         # Map symbol -> groww_symbol (NSE-NIFTY etc.) and segment
         cfg = self.symbol_map.get(symbol)
         if not cfg:
-            demo = self._demo_quote(symbol)
             now = datetime.now(timezone.utc)
             return [
-                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
-                NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+                NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
             ]
         # groww_symbol candidates — try primary then fallback
         # e.g. NIFTY 50 -> NSE-NIFTY, BANKNIFTY -> NSE-BANKNIFTY, SENSEX -> BSE-SENSEX
@@ -525,13 +499,12 @@ class GrowwProvider(MarketDataProvider):
                 logger.debug("groww_candles_v2_failed", symbol=symbol, groww_sym=groww_sym, error=str(e)[:150])
                 continue
 
-        # Pure Groww returned no data — return honest flat (no Yahoo)
-        demo = self._demo_quote(symbol)
+        # Pure Groww returned no data — return ZERO (no DEMO)
         now = datetime.now(timezone.utc)
         logger.info("groww_candles_no_data_pure", symbol=symbol, timeframe=timeframe)
         return [
-            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
-            NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
+            NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
         ]
 
     async def get_index_cards(self) -> list[IndexCard]:
