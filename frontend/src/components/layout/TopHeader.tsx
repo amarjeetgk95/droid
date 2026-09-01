@@ -98,9 +98,9 @@ function getStreamConfig(state: StreamConnectionState) {
 }
 
 function getModeConfig(mode?: string) {
-  if (mode === 'DEMO') {
+  if (mode === 'OFFLINE') {
     return {
-      label: 'DEMO',
+      label: 'OFFLINE',
       dot: 'bg-amber-500',
       pill: 'bg-amber-500/10 text-amber-700 border-amber-500/30',
     };
@@ -151,7 +151,7 @@ export function TopHeader({
   const sessionCfg = getSessionConfig(marketStatus?.session);
   const streamCfg = getStreamConfig(streamState);
   const modeCfg = getModeConfig(health?.mode);
-  const isDemo = health?.mode === 'DEMO';
+  const isDemo = health?.mode === 'OFFLINE';
 
   // Keyboard shortcut hint for search
   useEffect(() => {

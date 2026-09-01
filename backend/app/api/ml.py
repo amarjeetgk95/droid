@@ -14,14 +14,14 @@ def _make_meta() -> ApiMeta:
             return ApiMeta(
                 provider="xgboost_lightgbm_ensemble",
                 timestamp=datetime.now(timezone.utc),
-                status=DataStatus.DEMO,
+                status=DataStatus.OFFLINE,
             )
     except Exception:
         pass
     return ApiMeta(
         provider="xgboost_lightgbm_ensemble",
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.DEMO,
+        status=DataStatus.OFFLINE,
     )
 
 

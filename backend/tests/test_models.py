@@ -21,11 +21,11 @@ class TestNormalizedQuote:
             change_percent=0.57,
             volume=1234567,
             open_interest=None,
-            status=DataStatus.DEMO,
+            status=DataStatus.OFFLINE,
             provider="fyers",
         )
         assert quote.symbol == "NIFTY 50"
-        assert quote.status == DataStatus.DEMO
+        assert quote.status == DataStatus.OFFLINE
 
     def test_oi_nullable(self):
         """OI must be None for indices like VIX, not 0."""
@@ -59,7 +59,7 @@ class TestNormalizedQuote:
             change_percent=0.5,
             volume=1000,
         )
-        assert quote.status == DataStatus.DEMO
+        assert quote.status == DataStatus.OFFLINE
         assert quote.provider == "fyers"
 
 
@@ -106,4 +106,4 @@ class TestIndexCard:
             volume=1000,
         )
         assert card.sparkline == []
-        assert card.status == DataStatus.DEMO
+        assert card.status == DataStatus.OFFLINE

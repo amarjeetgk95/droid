@@ -33,7 +33,7 @@ class ForecastObject(BaseModel):
     fno_score: Optional[float] = None
 
 def _meta(provider="chart_analysis_engine"):
-    return ApiMeta(provider=provider, timestamp=datetime.now(timezone.utc), status=DataStatus.DEMO)
+    return ApiMeta(provider=provider, timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
 
 @router.get("/universe")
 async def get_universe():

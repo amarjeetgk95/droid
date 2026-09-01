@@ -19,7 +19,7 @@ def _make_meta() -> ApiMeta:
     return ApiMeta(
         provider="ai_insights_engine",
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.DEMO,
+        status=DataStatus.OFFLINE,
     )
 
 

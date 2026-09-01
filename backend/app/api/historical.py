@@ -12,7 +12,7 @@ def _make_meta() -> ApiMeta:
     return ApiMeta(
         provider="historical_intelligence_engine",
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.DEMO,
+        status=DataStatus.OFFLINE,
     )
 
 

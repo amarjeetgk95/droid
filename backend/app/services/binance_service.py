@@ -414,7 +414,7 @@ class BinanceService:
                     volume_24h_quote=price * 45000,
                     volume_24h_base=45000,
                     sparkline=[round(price * (0.98 + (i * 0.005)), 2) for i in range(10)],
-                    status=DataStatus.DEMO,
+                    status=DataStatus.OFFLINE,
                     provider="binance_fallback",
                     last_updated=datetime.now(timezone.utc),
                 )

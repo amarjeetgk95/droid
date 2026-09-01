@@ -17,7 +17,7 @@ export function MarketHealth({ health, loading }: { health: MarketHealthStatus |
           <p className="font-bold flex items-center gap-2">
             {health.status} <span className="text-xs bg-muted px-2 py-0.5 rounded">{health.mode}</span>
           </p>
-          <p className="text-sm text-muted-foreground mt-1">Provider: {health.provider} | Latency: {health.mode === 'DEMO' ? 'N/A' : health.latency_ms ? `${health.latency_ms}ms` : 'N/A'}</p>
+          <p className="text-sm text-muted-foreground mt-1">Provider: {health.provider} | Latency: {health.mode === 'OFFLINE' ? 'N/A' : health.latency_ms ? `${health.latency_ms}ms` : 'N/A'}</p>
         </div>
       </div>
     </div>

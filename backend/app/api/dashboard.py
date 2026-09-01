@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
 def _meta() -> ApiMeta:
-    return ApiMeta(provider="dashboard_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.DEMO)
+    return ApiMeta(provider="dashboard_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}")

@@ -12,7 +12,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/markets", tags=["markets"])
 
 
-def _make_meta(provider: str = "fyers", status: DataStatus = DataStatus.DEMO) -> ApiMeta:
+def _make_meta(provider: str = "fyers", status: DataStatus = DataStatus.OFFLINE) -> ApiMeta:
     return ApiMeta(
         provider=provider,
         timestamp=datetime.now(timezone.utc),

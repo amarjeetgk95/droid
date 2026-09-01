@@ -16,7 +16,7 @@ def _make_meta() -> ApiMeta:
     return ApiMeta(
         provider="paper_trading_engine",
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.DEMO,
+        status=DataStatus.OFFLINE,
     )
 
 

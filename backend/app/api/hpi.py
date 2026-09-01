@@ -17,7 +17,7 @@ engine = HPITrendPatternEngine(hpi_service)
 
 
 def _meta() -> ApiMeta:
-    return ApiMeta(provider="hpi_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.DEMO)
+    return ApiMeta(provider="hpi_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
 
 
 def _ok(data) -> dict:

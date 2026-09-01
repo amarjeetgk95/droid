@@ -95,14 +95,14 @@ class FyersProvider(MarketDataProvider):
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
-        # Only attempt live fetch if token valid; otherwise show zero (no DEMO stale)
+        # Only attempt live fetch if token valid; otherwise show zero Offline (no DEMO)
         if not token or token == "mock-demo-token" or self.token_manager.is_token_expired():
             return NormalizedQuote(
                 symbol=symbol, display_name=symbol, timestamp=now,
                 ltp=0.0, open=0.0, high=0.0, low=0.0,
                 previous_close=0.0, change=0.0, change_percent=0.0,
                 volume=0, open_interest=None,
-                status=DataStatus.DISCONNECTED, provider=self.provider_name,
+                status=DataStatus.OFFLINE, provider=self.provider_name,
             )
 
         # Token valid — try real NSE as proxy for FYERS live (until FYERS WS is wired)
@@ -135,13 +135,13 @@ class FyersProvider(MarketDataProvider):
                 volume=0, open_interest=None, status=DataStatus.LIVE, provider=self.provider_name,
             )
 
-        # Token valid but real fetch failed — still zero (no DEMO)
+        # Token valid but real fetch failed — still zero Offline
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
             previous_close=0.0, change=0.0, change_percent=0.0,
             volume=0, open_interest=None,
-            status=DataStatus.DISCONNECTED, provider=self.provider_name,
+            status=DataStatus.OFFLINE, provider=self.provider_name,
         )
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
@@ -225,7 +225,7 @@ class FyersProvider(MarketDataProvider):
         return MarketHealthStatus(
             status="HEALTHY" if diag["is_token_valid"] else "DEGRADED",
             provider=self.provider_name,
-            mode="LIVE" if diag["is_token_valid"] else "DEMO",
+            mode="LIVE" if diag["is_token_valid"] else "OFFLINE",
             last_update=datetime.now(timezone.utc),
             data_age_seconds=diag["data_lag_seconds"] or 0.5,
             latency_ms=25.0,

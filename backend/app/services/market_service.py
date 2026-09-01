@@ -64,7 +64,7 @@ class MarketService:
                 change=100.0,
                 change_percent=0.4,
                 volume=100000,
-                status=DataStatus.DEMO,
+                status=DataStatus.OFFLINE,
                 provider="fallback",
             )
 
@@ -128,7 +128,7 @@ class MarketService:
                 advance_decline_ratio=1.0,
                 sentiment="NEUTRAL",
                 sentiment_score=50.0,
-                status=DataStatus.DEMO,
+                status=DataStatus.OFFLINE,
                 timestamp=datetime.now(timezone.utc),
             ),
         )

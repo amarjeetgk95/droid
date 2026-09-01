@@ -10,7 +10,7 @@ def _make_meta() -> ApiMeta:
     return ApiMeta(
         provider="institutional_derivatives_tracker",
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.DEMO,
+        status=DataStatus.OFFLINE,
     )
 
 

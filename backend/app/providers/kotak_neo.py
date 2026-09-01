@@ -304,7 +304,7 @@ class KotakNeoProvider(MarketDataProvider):
         return MarketHealthStatus(
             status="HEALTHY" if diag["is_token_valid"] else "DEGRADED",
             provider=self.provider_name,
-            mode="LIVE" if diag["is_token_valid"] else "DEMO",
+            mode="LIVE" if diag["is_token_valid"] else "OFFLINE",
             last_update=datetime.now(timezone.utc),
             data_age_seconds=diag["data_lag_seconds"] or 0.5,
             latency_ms=45.0,

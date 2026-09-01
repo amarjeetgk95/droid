@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/v1/pipeline", tags=["pipeline"])
 
 
 def _meta() -> ApiMeta:
-    return ApiMeta(provider="pipeline_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.DEMO)
+    return ApiMeta(provider="pipeline_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
 
 
 @router.post("/state/capture")

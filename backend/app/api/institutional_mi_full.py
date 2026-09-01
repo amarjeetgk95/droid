@@ -209,7 +209,7 @@ async def get_full_mi(instrument_id: str):
     btc_demo = (iid == "BTCUSD" and 'is_synthetic_fallback' in locals() and is_synthetic_fallback)
     if prof.pipeline == "CRYPTO":
         if btc_demo:
-            live_dot = "DEMO"
+            live_dot = "OFFLINE"
         elif feed_state.health == "FEED_DEGRADED":
             live_dot = "FEED_DEGRADED"
         else:

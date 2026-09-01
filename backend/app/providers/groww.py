@@ -199,11 +199,37 @@ class GrowwProvider(MarketDataProvider):
             return None
         exchange = cfg.get("exchange", "NSE")
         trading_symbol = cfg.get("trading_symbol", symbol.replace(" ", ""))
+        import uuid
         headers = {
             "Authorization": f"Bearer {token}",
             "X-API-VERSION": "1.0",
             "Accept": "application/json",
+            "Content-Type": "application/json",
+            "x-request-id": str(uuid.uuid4()),
+            "x-client-id": "growwapi",
+            "x-client-platform": "growwapi-python-client",
+            "x-client-platform-version": "1.5.0",
         }
+        # For indices, try Feed cache first (Groww has no REST quote for indices, only Feed)
+        if symbol in getattr(self, "_index_feed_map", {}) and getattr(self, "_feed_instance", None) is not None:
+            try:
+                data = self._feed_instance.get_index_value()  # type: ignore
+                rev = self._reverse_index_token_map()
+                for exch, seg_map in (data or {}).items():
+                    for seg, tok_map in (seg_map or {}).items():
+                        for tok, payload in (tok_map or {}).items():
+                            if rev.get(str(tok)) == symbol and isinstance(payload, dict) and payload.get("value") is not None:
+                                return {
+                                    "ltp": float(payload["value"]),
+                                    "open": None,
+                                    "high": None,
+                                    "low": None,
+                                    "prev": None,
+                                    "volume": 0,
+                                    "oi": None,
+                                }
+            except Exception:
+                pass
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 # Groww live-data/quote — single licensed source
@@ -287,7 +313,7 @@ class GrowwProvider(MarketDataProvider):
                     previous_close=round(float(prev), 2), change=change, change_percent=change_pct,
                     volume=int(vol) if vol else 0, open_interest=oi, status=DataStatus.CLOSED, provider=self.provider_name,
                 )
-            status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.DISCONNECTED
+            status = DataStatus.LIVE if token and token != "mock-demo-token" else DataStatus.OFFLINE
             return NormalizedQuote(
                 symbol=symbol,
                 display_name=symbol,
@@ -305,14 +331,13 @@ class GrowwProvider(MarketDataProvider):
                 provider=self.provider_name,
             )
 
-        # Pure Groww: if live not available, show ZERO across all indices (no DEMO stale)
-        # User request: remove demo feed, show zero instead of 57348 etc. when broker disconnected
+        # Pure Groww: if live not available, show ZERO across all indices (no DEMO stale) — Offline
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
             previous_close=0.0, change=0.0, change_percent=0.0,
             volume=0, open_interest=None,
-            status=DataStatus.DISCONNECTED if not token or self.token_manager.is_token_expired() else DataStatus.DEMO,
+            status=DataStatus.OFFLINE,
             provider=self.provider_name,
         )
 
@@ -395,11 +420,16 @@ class GrowwProvider(MarketDataProvider):
         start_str = start.strftime(fmt) if isinstance(start, datetime) else str(start)
         end_str = end.strftime(fmt) if isinstance(end, datetime) else str(end)
 
-        import httpx
+        import httpx, uuid
         headers = {
             "Authorization": f"Bearer {token}",
             "X-API-VERSION": "1.0",
             "Accept": "application/json",
+            "Content-Type": "application/json",
+            "x-request-id": str(uuid.uuid4()),
+            "x-client-id": "growwapi",
+            "x-client-platform": "growwapi-python-client",
+            "x-client-platform-version": "1.5.0",
         }
         # Try each groww_symbol candidate via both V2 and V1 endpoints (pure Groww)
         for groww_sym in groww_candidates:
@@ -541,7 +571,7 @@ class GrowwProvider(MarketDataProvider):
             )
         return MarketStatusResponse(
             session=MarketSession.OPEN, market_time=now, is_trading_day=is_trading,
-            data_status=DataStatus.LIVE if self._has_valid_credentials() else DataStatus.DISCONNECTED,
+            data_status=DataStatus.LIVE if self._has_valid_credentials() else DataStatus.OFFLINE,
             provider=self.provider_name,
         )
 
@@ -552,7 +582,7 @@ class GrowwProvider(MarketDataProvider):
         return MarketHealthStatus(
             status="HEALTHY" if diag["is_token_valid"] else "DEGRADED",
             provider=self.provider_name,
-            mode="LIVE" if diag["is_token_valid"] else "DEMO",
+            mode="LIVE" if diag["is_token_valid"] else "OFFLINE",
             last_update=datetime.now(timezone.utc),
             data_age_seconds=diag["data_lag_seconds"] or 0.5,
             latency_ms=40.0,
@@ -571,7 +601,7 @@ class GrowwProvider(MarketDataProvider):
         return MarketBreadthData(
             advancing=315, declining=155, unchanged=30, advance_decline_ratio=2.03,
             sectors=[], sentiment="BULLISH", sentiment_score=66.0,
-            status=DataStatus.LIVE if not self.token_manager.is_token_expired() else DataStatus.DEMO,
+            status=DataStatus.LIVE if not self.token_manager.is_token_expired() else DataStatus.OFFLINE,
             timestamp=datetime.now(timezone.utc),
         )
 
@@ -607,7 +637,7 @@ class GrowwProvider(MarketDataProvider):
         """1-second poller — PURE Groww REST (no Yahoo/NSE).
 
         Licensed fast-path: GET https://api.groww.in/v1/live-data/quote with Bearer token.
-        If token missing/invalid, _fetch_live_quote returns None -> no tick ingested (DEMO flat, no third-party scrape).
+        If token missing/invalid, _fetch_live_quote returns None -> no tick ingested (OFFLINE zero, no third-party scrape).
         You asked for pure Groww — this honors it. Poller drives frontend via central_feed -> ws/market-feed -> useMarketStream.
         """
         from app.services.central_feed import central_feed as _cf

@@ -1,5 +1,5 @@
 // Data status values — CLOSED added for honest market-closed state (no fake LIVE)
-export type DataStatus = 'LIVE' | 'STALE' | 'DEMO' | 'DISCONNECTED' | 'ERROR' | 'CLOSED';
+export type DataStatus = 'LIVE' | 'STALE' | 'OFFLINE' | 'DISCONNECTED' | 'ERROR' | 'CLOSED';
 export type MarketSession = 'PRE_OPEN' | 'OPEN' | 'CLOSED' | 'POST_CLOSE';
 export type Sentiment = 'VERY_BEARISH' | 'BEARISH' | 'NEUTRAL' | 'BULLISH' | 'VERY_BULLISH';
 
@@ -71,7 +71,7 @@ export interface MarketBreadthData {
 export interface MarketHealthStatus {
   status: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY';
   provider: string;
-  mode: 'DEMO' | 'LIVE';
+  mode: 'OFFLINE' | 'LIVE';
   last_update: string | null;
   data_age_seconds: number | null;
   latency_ms: number | null;

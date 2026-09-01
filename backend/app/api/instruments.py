@@ -8,7 +8,7 @@ from app.instruments.registry import CHART_ANALYSIS_UNIVERSE, get_chart_analysis
 router = APIRouter(prefix="/api/v1/instruments", tags=["instruments"])
 
 def _meta():
-    return ApiMeta(provider="instrument_registry", timestamp=datetime.now(timezone.utc), status=DataStatus.DEMO)
+    return ApiMeta(provider="instrument_registry", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
 
 # Allowed selectors for chart-analysis context must be restricted upstream by caller.
 # Search itself remains generic (restricted registry is now 7 only), but we

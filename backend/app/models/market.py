@@ -7,10 +7,11 @@ from enum import Enum
 class DataStatus(str, Enum):
     LIVE = "LIVE"
     STALE = "STALE"
-    DEMO = "DEMO"
+    DEMO = "DEMO"  # legacy, do not use — use OFFLINE
     DISCONNECTED = "DISCONNECTED"
     ERROR = "ERROR"
     CLOSED = "CLOSED"
+    OFFLINE = "OFFLINE"
 
 
 class MarketSession(str, Enum):
@@ -34,7 +35,7 @@ class NormalizedQuote(BaseModel):
     change_percent: float
     volume: int
     open_interest: int | None = None  # None when not applicable (e.g., VIX)
-    status: DataStatus = DataStatus.DEMO
+    status: DataStatus = DataStatus.OFFLINE
     provider: str = "fyers"
 
 
@@ -80,7 +81,7 @@ class IndexCard(BaseModel):
     volume: int
     open_interest: int | None = None
     sparkline: list[float] = Field(default_factory=list)
-    status: DataStatus = DataStatus.DEMO
+    status: DataStatus = DataStatus.OFFLINE
     timestamp: datetime | None = None
     provider: str = "fyers"
 
@@ -94,7 +95,7 @@ class MarketBreadthData(BaseModel):
     sectors: list["SectorBreadth"] = Field(default_factory=list)
     sentiment: Literal["VERY_BEARISH", "BEARISH", "NEUTRAL", "BULLISH", "VERY_BULLISH"] = "NEUTRAL"
     sentiment_score: float = 50.0  # 0-100
-    status: DataStatus = DataStatus.DEMO
+    status: DataStatus = DataStatus.OFFLINE
     timestamp: datetime | None = None
 
 
@@ -111,7 +112,7 @@ class MarketHealthStatus(BaseModel):
     """Market data health information with full telemetry diagnostics (Section 72)."""
     status: Literal["HEALTHY", "DEGRADED", "UNHEALTHY"] = "HEALTHY"
     provider: str = "fyers"
-    mode: Literal["DEMO", "LIVE"] = "DEMO"
+    mode: Literal["OFFLINE", "LIVE"] = "OFFLINE"
     last_update: datetime | None = None
     data_age_seconds: float | None = None
     latency_ms: float | None = None  # None = not measurable
@@ -139,7 +140,7 @@ class ApiMeta(BaseModel):
     """Standard API response metadata."""
     provider: str = "fyers"
     timestamp: datetime
-    status: DataStatus = DataStatus.DEMO
+    status: DataStatus = DataStatus.OFFLINE
 
 
 class ApiResponse(BaseModel):

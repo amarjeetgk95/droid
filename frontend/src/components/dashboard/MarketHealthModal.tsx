@@ -100,7 +100,7 @@ export function MarketHealthModal({
               </span>
                <p className="font-bold text-foreground capitalize">{health?.provider || 'Fyers'}</p>
               <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-mono">
-                {health?.mode || 'DEMO'}
+                {health?.mode || 'OFFLINE'}
               </span>
             </div>
 
