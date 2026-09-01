@@ -480,6 +480,51 @@ class ApiClient {
     );
   }
 
+  async resetTelegramPreferences() {
+    return this.request<import('./types').TelegramPreferences>('/api/v1/telegram/preferences/reset', { method: 'POST' });
+  }
+
+  async bulkTelegramPreferences(enable: boolean) {
+    return this.request<import('./types').TelegramPreferences>('/api/v1/telegram/preferences/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ enable }),
+    });
+  }
+
+  async previewTelegramEvent(event: Record<string, unknown>) {
+    return this.request<{ event_type: string; instrument: string; preview: string }>('/api/v1/telegram/dev/preview', {
+      method: 'POST',
+      body: JSON.stringify(event),
+    });
+  }
+
+  async quickTestTelegram(params: { instrument: string; event_type: string; candle_timeframe: string; direction: string; setup_type?: string }) {
+    const qs = new URLSearchParams({
+      instrument: params.instrument,
+      event_type: params.event_type,
+      candle_timeframe: params.candle_timeframe,
+      direction: params.direction,
+      setup_type: params.setup_type || (params.direction === 'BEARISH' ? 'BREAKDOWN' : 'BREAKOUT'),
+    }).toString();
+    return this.request<{ status: string; notification_ids: string[]; signal_id: string; preview: string; event: Record<string, unknown> }>(
+      `/api/v1/telegram/dev/quick-test?${qs}`,
+      { method: 'POST' },
+    );
+  }
+
+  async devPublishTelegramEvent(event: Record<string, unknown>) {
+    return this.request<{ status: string; notification_ids: string[] }>('/api/v1/telegram/dev/publish-event', {
+      method: 'POST',
+      body: JSON.stringify(event),
+    });
+  }
+
+  async getTelegramStats() {
+    return this.request<{ notification_queue: Record<string, unknown>; outbound_queue_size: number; link_count: number }>(
+      '/api/v1/telegram/stats',
+    );
+  }
+
   // Chart Forecast & Multi-Timeframe
   async searchInstruments(q: string, asset_class?: string, fno_only?: boolean) {
     const params = new URLSearchParams({ q });
