@@ -135,6 +135,25 @@ class FyersProvider(MarketDataProvider):
                 volume=0, open_interest=None, status=DataStatus.LIVE, provider=self.provider_name,
             )
 
+        # Check cached tick from poller/Feed before zero (so HEALTHY LIVE shows live price even if NSE fetch hiccups)
+        try:
+            from app.services.central_feed import central_feed as _cf_check
+            _cached = _cf_check.get_latest_tick(symbol)
+            if _cached and _cached.ltp > 0:
+                _ltp = float(_cached.ltp)
+                _prev = float(_cached.close) if _cached.close else 0.0
+                _change = round(_ltp - _prev, 2) if _prev else 0.0
+                _change_pct = round((_change / _prev * 100) if _prev else 0.0, 2)
+                return NormalizedQuote(
+                    symbol=symbol, display_name=symbol, timestamp=_cached.timestamp,
+                    ltp=round(_ltp, 2), open=round(float(_cached.open) if _cached.open else _ltp, 2),
+                    high=round(float(_cached.high) if _cached.high else _ltp, 2), low=round(float(_cached.low) if _cached.low else _ltp, 2),
+                    previous_close=round(_prev, 2), change=_change, change_percent=_change_pct,
+                    volume=int(_cached.volume) if _cached.volume else 0, open_interest=_cached.open_interest,
+                    status=DataStatus.LIVE, provider=self.provider_name,
+                )
+        except Exception:
+            pass
         # Token valid but real fetch failed — still zero Offline
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,

@@ -72,7 +72,7 @@ export function useMarketData(refreshInterval = 5000) {
     };
   }, [refreshInterval]);
 
-  // Merge live ticks into cards using useMemo
+  // Merge live ticks into cards using useMemo — when live tick exists, force status LIVE (no DEMO/OFFLINE)
   const displayedCards = useMemo(() => {
     if (!latestTicks || Object.keys(latestTicks).length === 0) return cards;
 
@@ -96,6 +96,8 @@ export function useMarketData(refreshInterval = 5000) {
         sparkline,
         volume: tick.volume || card.volume,
         open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
+        status: 'LIVE',
+        provider: tick.provider || card.provider,
       };
     });
   }, [cards, latestTicks]);

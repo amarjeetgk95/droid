@@ -27,6 +27,10 @@ class CentralMarketDataFeed:
         self._worker_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
+        # Latest tick cache per symbol — used so REST get_quote can return LIVE even when Groww REST fails for indices
+        # Frontend merges WS ticks, but REST status must also be LIVE when WS has recent tick (fixes offline statue with HEALTHY LIVE)
+        self._latest_ticks: dict[str, TickEvent] = {}
+
         # Telemetry
         self.broadcast_count: int = 0
         self.started_at: datetime | None = None
@@ -80,12 +84,29 @@ class CentralMarketDataFeed:
             logger.warning("tick_quarantined", symbol=tick.symbol, reason=validation.reason)
             return False
 
+        # Cache latest tick per symbol for REST fallback (so get_quote returns LIVE even when Groww REST 404 for indices)
+        self._latest_ticks[tick.symbol] = tick
+
         # Asynchronously forward to batch write pipeline (non-blocking)
         from app.services.write_pipeline import write_pipeline
         await write_pipeline.enqueue_tick(tick)
 
         # Publish to event buffer with priority-based load shedding
         return event_buffer.publish(tick)
+
+    def get_latest_tick(self, symbol: str) -> TickEvent | None:
+        """Return latest tick for symbol if ingested within last 60s."""
+        tick = self._latest_ticks.get(symbol)
+        if not tick:
+            return None
+        # Consider stale after 60s (market closed or feed down) — then REST should show OFFLINE
+        try:
+            age = (datetime.now(timezone.utc) - tick.timestamp).total_seconds()
+            if age > 60:
+                return None
+        except Exception:
+            pass
+        return tick
 
     async def _broadcast_loop(self) -> None:
         """Continuous background worker draining buffer and broadcasting to subscribers."""
