@@ -54,7 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: LineChart,
     defaultOpen: true,
     items: [
-      { href: '/chart-analysis', label: 'Chart Forecast', icon: LineChart, description: 'Forecast & patterns' },
+      { href: '/chart-analysis', label: 'Chart Analysis', icon: LineChart, description: 'Technical & patterns' },
       { href: '/ai-analysis', label: 'AI Analysis', icon: Sparkles, description: 'AI insights' },
     ],
   },

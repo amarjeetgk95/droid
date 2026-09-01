@@ -12,10 +12,7 @@ from fastapi import APIRouter, Query
 from app.models.market import ApiMeta, DataStatus
 from app.services.central_feed import central_feed
 from app.services.regime_service import regime_service
-from app.services.regime_service import regime_service
 from app.services.options_service import options_service
-from app.prediction.predictor import forecast_for_timeframe
-from app.prediction.features import build_features
 from app.chart_analysis.service import analyze_instrument
 from app.services.paper_service import paper_service
 
@@ -55,27 +52,16 @@ async def get_dashboard(symbol: str):
         vwap = current_price
         atr_val = atr
 
-    # Chart analysis for quant
+    # Chart analysis for quant — forecast module removed; use synthetic P10/P50/P90
     try:
         chart = await analyze_instrument(sym)
-        # Extract latest forecast per timeframe? Use 5m p10/p50/p90 approximated from forecast expected_range
-        # For now use synthetic mapping: forecasts[tf] has expected_range low/high -> approximate p10/p50/p90 via quant
-        # Use deterministic pricing placeholder
-        forecasts = chart.get("forecasts", {})
-        # Pick 5m
-        fc5 = forecasts.get("5m", {})
-        if fc5 and "expected_range" in fc5:
-            low = fc5["expected_range"]["low"]
-            high = fc5["expected_range"]["high"]
-            p10, p50, p90 = low, (low + high) / 2, high
-            prob_up = fc5.get("direction", {}).get("up", 0.5)
-            prob_down = fc5.get("direction", {}).get("down", 0.5)
-        else:
-            p10, p50, p90 = current_price * 0.99, current_price, current_price * 1.01
-            prob_up, prob_down = 0.52, 0.48
+        p10, p50, p90 = current_price * 0.99, current_price, current_price * 1.01
+        prob_up, prob_down = 0.52, 0.48
         mtf_data = chart.get("multi_timeframe", {})
         if mtf_data and "timeframe_bias" in mtf_data:
             mtf_placeholder = {k: v.get("bias", "NEUTRAL") if isinstance(v, dict) else str(v) for k, v in mtf_data.get("timeframe_bias", {}).items()}
+        elif mtf_data and "per_timeframe" in mtf_data:
+            mtf_placeholder = {k: v.get("bias", "NEUTRAL") for k, v in mtf_data.get("per_timeframe", {}).items() if isinstance(v, dict)}
     except Exception:
         p10, p50, p90 = current_price * 0.99, current_price, current_price * 1.01
         prob_up, prob_down = 0.52, 0.48

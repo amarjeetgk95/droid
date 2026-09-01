@@ -1,36 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
-from typing import Literal, Optional
 from app.chart_analysis.service import analyze_instrument, CHART_TFS
 from app.models.market import ApiMeta, DataStatus
 from app.instruments.registry import CHART_ANALYSIS_UNIVERSE
-from app.instruments.resolver import normalize_query
 
 router = APIRouter(prefix="/api/v1/chart-analysis", tags=["chart-analysis"])
-
-# Strict forecast schema per §7
-class ForecastDirection(BaseModel):
-    up: float = Field(ge=0, le=1)
-    sideways: float = Field(ge=0, le=1)
-    down: float = Field(ge=0, le=1)
-
-class ForecastRange(BaseModel):
-    low: float
-    high: float
-
-class ForecastObject(BaseModel):
-    symbol: str
-    timeframe: str = Field(pattern="^(1m|5m|15m|1h|30m|4h|1D|1W|1d)$")
-    generated_at: str
-    data_timestamp: Optional[str] = None
-    horizon_minutes: int = Field(gt=0)
-    direction: ForecastDirection
-    expected_move_percent: float
-    expected_range: ForecastRange
-    confidence: Literal["HIGH", "MODERATE", "LOW"]
-    technical_score: Optional[float] = None
-    fno_score: Optional[float] = None
 
 def _meta(provider="chart_analysis_engine"):
     return ApiMeta(provider=provider, timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
@@ -62,21 +36,6 @@ async def get_chart_analysis(symbol: str, timeframe: str | None = Query(default=
         raise HTTPException(status_code=500, detail=str(e))
     return {
         "data": result,
-        "error": None,
-        "meta": _meta().model_dump(mode="json"),
-    }
-
-@router.get("/{symbol}/forecast")
-async def get_forecast(symbol: str, timeframe: str | None = Query(default=None, pattern="^(1m|5m|15m|1h|4h|1D|1d)$")):
-    # Normalize Daily casing if passed via query without exact chart TF match
-    if timeframe == "1d":
-        timeframe = "1D"
-    try:
-        result = await analyze_instrument(symbol.strip(), requested_timeframe=timeframe)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return {
-        "data": {"symbol": result["symbol"], "forecasts": result["forecasts"], "generated_at": result["generated_at"]},
         "error": None,
         "meta": _meta().model_dump(mode="json"),
     }

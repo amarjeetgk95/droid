@@ -320,7 +320,7 @@ export default function AIAnalysisPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                 {['1m', '5m', '15m', '1h'].map((tf) => {
                   const tfData = chartMulti.multi_timeframe?.timeframes?.[tf] || chartMulti.timeframes?.[tf];
-                  const bias = tfData?.bias || tfData?.forecast?.direction || '—';
+                  const bias = tfData?.bias || '—';
                   return (
                     <div key={tf} className="bg-secondary/20 p-2 rounded border text-center">
                       <div className="text-[10px] font-mono text-muted-foreground">{tf}</div>

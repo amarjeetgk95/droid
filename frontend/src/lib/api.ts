@@ -525,7 +525,7 @@ class ApiClient {
     );
   }
 
-  // Chart Forecast & Multi-Timeframe
+  // Chart Analysis & Multi-Timeframe (forecast removed)
   async searchInstruments(q: string, asset_class?: string, fno_only?: boolean) {
     const params = new URLSearchParams({ q });
     if (asset_class) params.set('asset_class', asset_class);
@@ -586,10 +586,7 @@ class ApiClient {
     return this.request<void>(`/api/v1/watchlists/${watchlistId}/items/${itemId}`, { method: 'DELETE' });
   }
 
-  // Pipeline & Safety Gates (§4, §6, §7, §22, §23, §25, §28, §40)
-  async validateForecast(p10: number, p50: number, p90: number, current_price?: number) {
-    return this.request<any>('/api/v1/pipeline/forecast/validate', { method: 'POST', body: JSON.stringify({ p10, p50, p90, current_price }) });
-  }
+  // Pipeline & Safety Gates (§4, §6, §7, §22, §23, §25, §28, §40) — forecast validation removed
   async captureMarketState(symbol: string = 'NIFTY') {
     return this.request<any>(`/api/v1/pipeline/state/capture?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' });
   }

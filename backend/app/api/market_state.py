@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from app.core.market_state import capture_market_state
 from app.services.trigger_gateway import trigger_gateway, TriggerType
-from app.quant.forecast_validator import validate_tsfm_forecast
 from app.services.staleness_guard import check_staleness
 from app.services.pricing_engine import calculate_deterministic_pricing, validate_risk_reward, calculate_position_size, validate_quantitative_confirmation
 from app.services.execution_state_machine import execution_state_machine, ExecutionState
@@ -45,31 +44,6 @@ async def capture_state(
         futures={},
     )
     return {"data": state.model_dump(mode="json"), "error": None, "meta": _meta().model_dump()}
-
-
-class ForecastValidatePayload(BaseModel):
-    p10: float
-    p50: float
-    p90: float
-    current_price: float | None = None
-    horizon_minutes: int | None = 60
-
-
-@router.post("/forecast/validate")
-async def validate_forecast(payload: ForecastValidatePayload):
-    """Validate TSFM forecast per §5."""
-    result = validate_tsfm_forecast(payload.p10, payload.p50, payload.p90, payload.current_price, payload.horizon_minutes)
-    return {
-        "data": {
-            "valid": result.valid,
-            "reason": result.reason.value if result.reason else None,
-            "detail": result.detail,
-            "diagnostic_sorted": result.diagnostic_sorted,
-            "forecast": {"p10": payload.p10, "p50": payload.p50, "p90": payload.p90},
-        },
-        "error": None if result.valid else result.detail,
-        "meta": _meta().model_dump(),
-    }
 
 
 @router.post("/trigger/evaluate")

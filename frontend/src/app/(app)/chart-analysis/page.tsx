@@ -33,7 +33,7 @@ function ChartAnalysisInner() {
   return (
     <div className="space-y-4">
       <div className="bg-card border border-border rounded-lg p-4">
-        <h1 className="text-lg font-bold mb-3">Chart Forecast & Multi-Timeframe Analysis</h1>
+        <h1 className="text-lg font-bold mb-3">Chart Analysis & Multi-Timeframe</h1>
         <InstrumentSearch onSelect={handleSelect} initialQuery={selected} />
         {selected && <p className="text-xs text-muted-foreground mt-2">Selected: <b>{selected}</b> — preserved in URL</p>}
       </div>
@@ -55,7 +55,7 @@ function ChartAnalysisInner() {
       )}
       {!data && !loading && !selected && (
         <div className="bg-card border border-border rounded-lg p-8 text-center text-muted-foreground">
-          Search for an instrument above to load its chart and multi-timeframe forecast.
+          Search for an instrument above to load its chart and multi-timeframe analysis.
         </div>
       )}
     </div>

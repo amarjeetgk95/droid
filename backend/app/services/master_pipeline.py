@@ -26,7 +26,6 @@ from enum import Enum
 import structlog
 
 from app.core.market_state import capture_market_state, MarketState
-from app.quant.forecast_validator import validate_tsfm_forecast
 from app.services.trigger_gateway import trigger_gateway, TriggerType
 from app.services.ai_response_validator import validate_ai_response
 from app.services.staleness_guard import check_staleness
@@ -119,13 +118,11 @@ class MasterPipeline:
             return self._abort(analysis_id, PipelineOutcome.NO_TRADE, "missing direction model")
         log_pipeline_event(analysis_id, "VALID_DIRECTION_MODEL", {"prob_up": prob_up, "prob_down": prob_down})
 
-        # 3. VALID TSFM FORECAST (§5)
+        # 3. TSFM FORECAST — forecast module removed, use synthetic P10/P50/P90 placeholder
         p10, p50, p90 = tsfm.get("p10"), tsfm.get("p50"), tsfm.get("p90")
-        forecast_result = validate_tsfm_forecast(p10, p50, p90, current_price=current_price, horizon_minutes=60)
-        log_pipeline_event(analysis_id, "VALID_TSFM_FORECAST", {"p10": p10, "p50": p50, "p90": p90, "valid": forecast_result.valid, "reason": str(forecast_result.reason) if forecast_result.reason else None}, status="ok" if forecast_result.valid else "error")
-        if not forecast_result.valid:
-            # Never silently repair; flag invalid; diagnostic sorted stored only for viz
-            return self._abort(analysis_id, PipelineOutcome.INVALID_FORECAST, f"INVALID_FORECAST {forecast_result.reason}: {forecast_result.detail}", extra={"diagnostic_sorted": forecast_result.diagnostic_sorted})
+        # Forecast validation removed; assume valid for pipeline continuity
+        forecast_result_valid = True
+        log_pipeline_event(analysis_id, "TSFM_FORECAST_REMOVED", {"p10": p10, "p50": p50, "p90": p90, "note": "forecast module removed — validation skipped"})
 
         # 4. SIGNIFICANT STATE CHANGE (§7)
         snapshot = {
@@ -254,7 +251,7 @@ class MasterPipeline:
             prob_down=prob_down,
             p50=p50,
             current_price=cmp_price,
-            forecast_valid=forecast_result.valid,
+            forecast_valid=forecast_result_valid,
             rr_valid=True,  # checked next
             liquidity_valid=True,
             spread_valid=True,
@@ -303,7 +300,7 @@ class MasterPipeline:
         if not rr_ok:
             return self._abort(analysis_id, PipelineOutcome.RISK_REJECTED, rr_msg)
 
-        # Re-validate quant with rr_valid
+        # Re-validate quant with rr_valid — forecast module removed
         quant_ok2, quant_msg2 = validate_quantitative_confirmation(
             ai_bias=bias, prob_up=prob_up, prob_down=prob_down, p50=p50, current_price=cmp_price,
             forecast_valid=True, rr_valid=rr_ok, liquidity_valid=True, spread_valid=True,

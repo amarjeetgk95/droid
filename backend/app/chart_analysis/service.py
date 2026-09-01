@@ -3,9 +3,6 @@ from app.instruments.registry import get_by_symbol_exact, get_instrument, CHART_
 from app.instruments.schemas import InstrumentConfig
 from app.market_data.router import MarketDataRouter
 from app.technical_analysis.analyzer import analyze_timeframe
-from app.prediction.features import build_features
-from app.prediction.predictor import forecast_for_timeframe
-from app.prediction.historical_similarity import historical_similarity
 from app.multi_timeframe.analyzer import analyze_multi_timeframe
 from app.fno.context import get_fno_context, fno_levels_for_sr
 from app.market_data.cache import get_cached_analysis, set_cached_analysis
@@ -191,8 +188,6 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
             crypto_derivatives_ctx = {"available": False, "reason": "Data unavailable — crypto derivatives data could not be retrieved.", "error": str(e)[:200], "data_unavailable": True}
 
     analyses={}
-    forecasts={}
-    features_map={}
     historical={}
     candles_map={}
 
@@ -227,21 +222,6 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
                 "data_timestamp": None,
             }
             analyses[tf]=tech
-            features_map[tf]={"price": None, "data_unavailable": True}
-            forecasts[tf]={
-                "symbol": cfg.symbol,
-                "timeframe": tf,
-                "error": "Data unavailable",
-                "data_unavailable": True,
-                "direction": {"up": 0.33, "sideways": 0.34, "down": 0.33},
-                "confidence": "LOW",
-                "confidence_score": 0,
-                "expected_move_percent": 0,
-                "expected_range": {"low": 0, "high": 0},
-                "horizon_minutes": TIMEFRAME_CONFIG.get(tf, {}).get("horizon_minutes", 30),
-                "invalidation_level": None,
-                "disclaimer": "Data unavailable — no forecast. Do not substitute another instrument.",
-            }
             historical[tf]={"data_unavailable": True, "error": "Data unavailable"}
             continue
         # check cache
@@ -251,18 +231,13 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
             pass
         tech=analyze_timeframe(candles, cfg.symbol, tf, fno_levels=fno_levels)
         analyses[tf]=tech
-        derivatives_ctx = crypto_derivatives_ctx if cfg.asset_class == "CRYPTO" else fno_ctx
-        feat=build_features(candles, tech, derivatives_ctx if derivatives_ctx and derivatives_ctx.get("available") else fno_ctx, cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.__dict__, now)
-        features_map[tf]=feat
-        fc=forecast_for_timeframe(feat, tech, tf, cfg.symbol, cfg.asset_class, data_timestamp=candles[-1]["timestamp"] if candles else now.isoformat(), fno_ctx=derivatives_ctx if derivatives_ctx and derivatives_ctx.get("available") else fno_ctx, crypto_ctx=crypto_derivatives_ctx)
-        forecasts[tf]=fc
-        historical[tf]=historical_similarity(feat, cfg.symbol, tf)
+        # Historical similarity removed with forecast module; provide minimal placeholder
+        historical[tf]={"data_unavailable": False, "note": "forecast module removed"}
         await set_cached_analysis(cfg.symbol, tf, cache_key_ts, tech, ttl=TIMEFRAME_CONFIG[tf].get("refresh_seconds", 60))
 
     # Multi-timeframe — exclude data-unavailable TFs from alignment
     available_analyses = {k: v for k, v in analyses.items() if not v.get("data_unavailable")}
-    available_forecasts = {k: v for k, v in forecasts.items() if not v.get("data_unavailable")}
-    mtf=analyze_multi_timeframe(available_analyses, available_forecasts, fno_ctx.get("available", False))
+    mtf=analyze_multi_timeframe(available_analyses, fno_ctx.get("available", False))
     # annotate unavailable flag
     if unavailable_tfs:
         mtf["unavailable_timeframes"] = unavailable_tfs
@@ -339,7 +314,7 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
     if unavailable_tfs and len(available_analyses) == 0:
         freshness = "DATA_UNAVAILABLE"
 
-    # Build output Instrument → Timeframe → Current Price → Market Regime → Technical Bias → Derivatives Bias → AI Forecast → Confidence → Key Levels → Risk/Invalidation
+    # Build output Instrument → Timeframe → Current Price → Market Regime → Technical Bias → Derivatives Bias → Confidence → Key Levels → Risk/Invalidation
     # Market Regime derived from volatility/trend
     # Technical Bias per TF, Derivatives Bias from FNO/crypto derivatives
     return {
@@ -362,12 +337,10 @@ async def analyze_instrument(symbol: str, requested_timeframe: str | None = None
         "unavailable_timeframes": unavailable_tfs,
         "data_ingestion": data_ingestion,
         "timeframes": analyses,
-        "forecasts": forecasts,
         "historical_similarity": historical,
         "fno": fno_ctx,
         "crypto_derivatives": crypto_derivatives_ctx,
         "derivatives": crypto_derivatives_ctx if cfg.asset_class == "CRYPTO" else fno_ctx,
         "multi_timeframe": mtf,
-        "features": features_map,
         "candles": candles_map,
     }

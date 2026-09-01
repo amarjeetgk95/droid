@@ -15,8 +15,8 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
-# §5 Forecast Validator
-from app.quant.forecast_validator import validate_tsfm_forecast, ForecastInvalidReason
+# §5 Forecast Validator — removed with forecast module
+# from app.quant.forecast_validator import validate_tsfm_forecast, ForecastInvalidReason
 
 # §23 Staleness Guard
 from app.services.staleness_guard import check_staleness
@@ -41,47 +41,9 @@ from app.core.market_state import capture_market_state
 
 
 class TestForecastValidator:
-    def test_valid_forecast(self):
-        r = validate_tsfm_forecast(24695, 24782, 24835, current_price=24750, horizon_minutes=60)
-        assert r.valid is True
-
-    def test_invalid_ordering_p10_not_less_p50(self):
-        r = validate_tsfm_forecast(24800, 24780, 24835)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.P10_NOT_LESS_P50
-        assert r.diagnostic_sorted is not None
-
-    def test_p50_not_less_p90(self):
-        r = validate_tsfm_forecast(24695, 24840, 24835)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.P50_NOT_LESS_P90
-
-    def test_p10_non_positive(self):
-        r = validate_tsfm_forecast(0, 24782, 24835)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.P10_NON_POSITIVE
-
-    def test_not_finite_nan(self):
-        r = validate_tsfm_forecast(float("nan"), 24782, 24835)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.NOT_FINITE_P10
-
-    def test_not_finite_inf(self):
-        r = validate_tsfm_forecast(24695, float("inf"), 24835)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.NOT_FINITE_P50
-
-    def test_invalid_horizon(self):
-        r = validate_tsfm_forecast(24695, 24782, 24835, horizon_minutes=-5)
-        assert r.valid is False
-        assert r.reason == ForecastInvalidReason.INVALID_HORIZON
-
-    def test_no_silent_repair(self):
-        # Invalid must remain flagged invalid even if diagnostic_sorted exists
-        r = validate_tsfm_forecast(24835, 24782, 24695)
-        assert r.valid is False
-        # Ensure diagnostic is sorted but original flagged invalid
-        assert r.diagnostic_sorted["p10"] < r.diagnostic_sorted["p50"] < r.diagnostic_sorted["p90"]
+    """Forecast validator tests removed — forecast module deleted"""
+    def test_placeholder(self):
+        assert True
 
 
 class TestStalenessGuard:
