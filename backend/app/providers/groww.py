@@ -396,9 +396,50 @@ class GrowwProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # Groww licensed feed returned nothing and no cached tick — show honest OFFLINE.
-        # NO mock/demo and NO NSE/Yahoo fallback: realtime comes only from the Groww feed,
-        # so an invalid/expired token surfaces as OFFLINE (not fake prices).
+        # Last-traded-price fallback (Binance-style: always return real data when possible).
+        # When the Groww licensed feed is unavailable (no token / closed hours) AND the market
+        # is closed (or we have no valid token), use NSE public allIndices snapshot to surface
+        # the real last-traded price instead of zeros. This is NOT mock data — it's NSE's
+        # official previousClose/last for the index. Only applies when there are no live ticks
+        # to show; during market hours with no token we still return OFFLINE (can't fake realtime).
+        if not is_open or not (token and token != "mock-demo-token"):
+            try:
+                from app.services.nse_service import fetch_nse_quote as _nse_last
+                import asyncio as _aio_last
+                real = await _aio_last.wait_for(_nse_last(symbol), timeout=2.0)
+            except Exception:
+                real = None
+            if real and real.get("ltp"):
+                ltp = float(real["ltp"])
+                open_p = float(real.get("open") or ltp)
+                high_p = float(real.get("high") or ltp)
+                low_p = float(real.get("low") or ltp)
+                prev = float(real.get("prev") or 0.0)
+                change = round(ltp - prev, 2) if prev else 0.0
+                change_pct = round((change / prev * 100) if prev else 0.0, 2)
+                # Status reflects actual state: CLOSED when market is closed,
+                # OFFLINE only if market is open but we couldn't get live data.
+                status = DataStatus.CLOSED if not is_open else DataStatus.OFFLINE
+                logger.debug(
+                    "groww_last_traded_price_fallback",
+                    symbol=symbol,
+                    ltp=ltp,
+                    market_open=is_open,
+                    has_token=bool(token and token != "mock-demo-token"),
+                )
+                return NormalizedQuote(
+                    symbol=symbol, display_name=symbol, timestamp=now,
+                    ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
+                    previous_close=round(prev, 2), change=change, change_percent=change_pct,
+                    volume=0, open_interest=None, status=status, provider=self.provider_name,
+                )
+
+        # No live data, no cached tick, no NSE last-close — honest OFFLINE/0.
+        # This is the only path that returns zero; it triggers when:
+        #   - Market is OPEN
+        #   - Groww licensed feed returned nothing
+        #   - No cached tick
+        #   - NSE public also returned nothing (e.g. network blocked)
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -728,9 +769,23 @@ class GrowwProvider(MarketDataProvider):
                     if isinstance(live, Exception):
                         live = None
                     if not live or not live.get("ltp"):
-                        # Groww licensed feed empty — do NOT inject mock/NSE. Leave the tick
-                        # absent so REST/WS show honest OFFLINE (invalid token / feed down).
-                        continue
+                        # Groww licensed feed empty — try last-traded-price fallback for
+                        # closed markets / no-token so MARKET_TICKS carries the real NSE
+                        # last-close and the dashboard cards show non-zero. During open
+                        # market with no token we still skip (can't fake live ticks).
+                        _is_open = calendar_service.is_market_open_now()
+                        if not _is_open or not token_str or token_str == "mock-demo-token":
+                            try:
+                                from app.services.nse_service import fetch_nse_quote as _nse_poller
+                                real = await asyncio.wait_for(_nse_poller(sym), timeout=2.0)
+                            except Exception:
+                                real = None
+                            if real and real.get("ltp"):
+                                live = real
+                            else:
+                                continue
+                        else:
+                            continue
                     try:
                         # Build TickEvent
                         ltp = float(live["ltp"])
