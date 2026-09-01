@@ -2,7 +2,6 @@
 
 import { useMarketData } from '@/hooks/useMarketData';
 import { MarketCard } from '@/components/dashboard/MarketCard';
-import DashboardTradingChart from '@/components/dashboard/DashboardTradingChart';
 import { MLPredictionCard } from '@/components/dashboard/MLPredictionCard';
 import { FIIPositioningCard } from '@/components/dashboard/FIIPositioningCard';
 import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
@@ -69,20 +68,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Main Chart + Right Sidebar (compact) — TradingView white */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* Left: TradingView Chart — smaller height, white shade */}
-        <div className="xl:col-span-8 bg-white rounded-lg border border-[#e0e3eb] overflow-hidden h-[420px] xl:h-[520px] flex flex-col shadow-sm">
-          <DashboardTradingChart defaultSymbol="NIFTY 50" />
-        </div>
-
-        {/* Right: Market Overview / Breadth / Stats / Health — stacked, scrollable */}
-        <div className="xl:col-span-4 flex flex-col gap-3 max-h-[520px] xl:overflow-y-auto xl:pr-1 custom-scrollbar">
-          <MarketOverview marketStatus={marketStatus} health={health} loading={loading} />
-          <MarketBreadth data={breadth} loading={loading} />
-          <QuickStats health={health} marketStatus={marketStatus} lastFetch={lastFetch} loading={loading} />
-          <MarketHealth health={health} loading={loading} />
-        </div>
+      {/* Realtime-only view — charts removed (use TradingView), keep live tickers + market stats */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <MarketOverview marketStatus={marketStatus} health={health} loading={loading} />
+        <MarketBreadth data={breadth} loading={loading} />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <QuickStats health={health} marketStatus={marketStatus} lastFetch={lastFetch} loading={loading} />
+        <MarketHealth health={health} loading={loading} />
       </div>
     </div>
   );

@@ -16,12 +16,10 @@ import {
   CryptoOrderBook as OrderBookType,
   CryptoDerivatives,
   CryptoMarketOverview,
-  NormalizedCandle,
 } from '@/lib/types';
 import { api } from '@/lib/api';
 import {
   fetchLiveBinanceTickers,
-  fetchLiveBinanceCandles,
   fetchLiveBinanceOrderBook,
   generateLiveCryptoOverview,
   BinanceMarket,
@@ -29,7 +27,6 @@ import {
 } from '@/lib/binanceLive';
 import { useBinanceTickerStream, useBinanceSymbolStream } from '@/hooks/useBinanceStream';
 import { CryptoTickerCard } from '@/components/crypto/CryptoTickerCard';
-import { CryptoCandleChart } from '@/components/crypto/CryptoCandleChart';
 import { CryptoOrderBook } from '@/components/crypto/CryptoOrderBook';
 import { CryptoDerivativesCard } from '@/components/crypto/CryptoDerivativesCard';
 import { CryptoMarketOverviewStrip } from '@/components/crypto/CryptoMarketOverviewStrip';
@@ -37,12 +34,10 @@ import { CryptoMarketOverviewStrip } from '@/components/crypto/CryptoMarketOverv
 export default function CryptoPage() {
   const [tickers, setTickers] = useState<CryptoTicker[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTCUSDT');
-  const [candles, setCandles] = useState<NormalizedCandle[]>([]);
   const [orderbook, setOrderbook] = useState<OrderBookType | null>(null);
   const [derivatives, setDerivatives] = useState<CryptoDerivatives | null>(null);
   const [overview, setOverview] = useState<CryptoMarketOverview | null>(null);
 
-  const [timeframe, setTimeframe] = useState<string>('1h');
   const [market, setMarket] = useState<BinanceMarket>('spot');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [rightTab, setRightTab] = useState<'orderbook' | 'derivatives'>('orderbook');
@@ -55,8 +50,8 @@ export default function CryptoPage() {
   // --- Binance WebSocket live streams (public, no auth) ---
   const trackedSymbols = useMemo(() => ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','NEARUSDT'], []);
   const { tickers: liveTickers, streamState: tickerStreamState } = useBinanceTickerStream(trackedSymbols, market, true);
-  // Realtime L2 depth + funding rate via WS: seed with REST snapshot orderbook for diff merging
-  const { latestCandle, orderBookLive, derivativesLive, streamState: symbolStreamState } = useBinanceSymbolStream(selectedSymbol, market, timeframe, true, orderbook);
+  // Realtime L2 depth + funding rate via WS: seed with REST snapshot orderbook for diff merging (charts removed, keep live tickers)
+  const { orderBookLive, derivativesLive, streamState: symbolStreamState } = useBinanceSymbolStream(selectedSymbol, market, '1m', true, orderbook);
 
   // Prevent initial fetch loops
   const initialLoadDone = useRef(false);
@@ -103,47 +98,21 @@ export default function CryptoPage() {
     fetchTickersAndOverview();
   }, [fetchTickersAndOverview]);
 
-  // 2. Fetch Active Symbol Details — PRIORITY: direct Binance Vision (real), backend second (may be fallback diagonal)
-  const fetchSymbolDetails = useCallback(async (symbol: string, tf: string) => {
+  // 2. Fetch Active Symbol Details — realtime only (charts removed, keep L2 + funding)
+  const fetchSymbolDetails = useCallback(async (symbol: string) => {
     if (!symbol) return;
     setLoadingDetails(true);
     try {
-      // Always try direct Binance first for real market data (deployed site has no Cloud Run backend)
-      const directCandles = await fetchLiveBinanceCandles(symbol, tf, 100).catch(() => [] as NormalizedCandle[]);
-      // Detect fallback diagonal: if candles are suspiciously monotonic, discard
-      const isFallbackDiagonal = (cs: NormalizedCandle[]) => {
-        if (cs.length < 20) return false;
-        let ups = 0;
-        for (let i = 1; i < cs.length; i++) if (cs[i].close > cs[i - 1].close) ups++;
-        // fallback generates >90% ups with tiny bodies ~0.5% range
-        return ups / cs.length > 0.88 && cs[0].close < cs[cs.length - 1].close * 0.96;
-      };
-      const useDirect = directCandles.length > 0 && !isFallbackDiagonal(directCandles);
-      if (useDirect) {
-        setCandles(directCandles);
-        // Orderbook + derivatives: try direct, then backend
-        const [directOB, dRes] = await Promise.all([
-          fetchLiveBinanceOrderBook(symbol, 20).catch(() => null),
-          api.getCryptoDerivatives(symbol).catch(() => null),
-        ]);
-        if (directOB) setOrderbook(directOB);
-        else {
-          const obRes = await api.getCryptoOrderBook(symbol, 20).catch(() => null);
-          if (obRes?.data) setOrderbook(obRes.data);
-        }
-        if ((dRes as any)?.data) setDerivatives((dRes as any).data);
-      } else {
-        // Direct failed — try backend (still may be fallback, but better than empty)
-        const [cRes, obRes, dRes] = await Promise.all([
-          api.getCryptoCandles(symbol, tf, 100).catch(() => null as any),
-          api.getCryptoOrderBook(symbol, 20).catch(() => null as any),
-          api.getCryptoDerivatives(symbol).catch(() => null as any),
-        ]);
-        if (cRes?.data && !isFallbackDiagonal(cRes.data)) setCandles(cRes.data);
-        else if (directCandles.length) setCandles(directCandles);
+      const [directOB, dRes] = await Promise.all([
+        fetchLiveBinanceOrderBook(symbol, 20).catch(() => null),
+        api.getCryptoDerivatives(symbol).catch(() => null),
+      ]);
+      if (directOB) setOrderbook(directOB);
+      else {
+        const obRes = await api.getCryptoOrderBook(symbol, 20).catch(() => null);
         if (obRes?.data) setOrderbook(obRes.data);
-        if (dRes?.data) setDerivatives(dRes.data);
       }
+      if ((dRes as any)?.data) setDerivatives((dRes as any).data);
     } catch (err) {
       console.error(`Failed to fetch details for ${symbol}:`, err);
     } finally {
@@ -151,16 +120,15 @@ export default function CryptoPage() {
     }
   }, []);
 
-  // Refetch only when symbol string or timeframe changes - NOT on every price tick
+  // Refetch only when symbol string changes - NOT on every price tick
   useEffect(() => {
-    fetchSymbolDetails(selectedSymbol, timeframe);
-  }, [selectedSymbol, timeframe, fetchSymbolDetails]);
+    fetchSymbolDetails(selectedSymbol);
+  }, [selectedSymbol, fetchSymbolDetails]);
 
   // When market switches, refetch REST as initial snapshot (spot vs futures)
   useEffect(() => {
     fetchTickersAndOverview();
-    // keep same selectedSymbol but refetch its details for new market
-    fetchSymbolDetails(selectedSymbol, timeframe);
+    fetchSymbolDetails(selectedSymbol);
   }, [market]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live WS: merge ticker stream into displayed tickers (instant price without refresh)
@@ -222,24 +190,7 @@ export default function CryptoPage() {
   const orderBookIsLive = symbolStreamState === 'CONNECTED' && !!orderBookLive;
   const fundingIsLive = market === 'futures' && symbolStreamState === 'CONNECTED' && !!derivativesLive;
 
-  // Live WS: update chart instantly on new kline without page refresh
-  useEffect(() => {
-    if (!latestCandle) return;
-    setCandles((prev) => {
-      if (prev.length === 0) return [latestCandle];
-      const last = prev[prev.length - 1];
-      if (last.timestamp === latestCandle.timestamp) {
-        return [...prev.slice(0, -1), latestCandle];
-      }
-      const lastTime = new Date(last.timestamp).getTime();
-      const newTime = new Date(latestCandle.timestamp).getTime();
-      if (newTime > lastTime) {
-        const next = [...prev, latestCandle];
-        return next.length > 100 ? next.slice(-100) : next;
-      }
-      return prev;
-    });
-  }, [latestCandle]);
+  // Charts removed — no kline handling (use TradingView)
 
   // Derivatives: poll every 15s via REST for OI & long/short ratio (WS only gives funding); merge with live funding
   useEffect(() => {
@@ -404,20 +355,10 @@ export default function CryptoPage() {
         </div>
       </div>
 
-      {/* 4. Main Chart & Depth/Derivatives Layout */}
+      {/* Realtime-only: Order Book & Derivatives (charts removed) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left 8 Cols: Candlestick Chart */}
+        {/* Left: AI Market Synthesis Strip (full width now) */}
         <div className="lg:col-span-8 space-y-4">
-          <CryptoCandleChart
-            ticker={selectedTicker}
-            candles={candles}
-            timeframe={timeframe}
-            onTimeframeChange={(tf) => setTimeframe(tf)}
-            loading={loadingDetails && candles.length === 0}
-            onRefresh={() => fetchSymbolDetails(selectedSymbol, timeframe)}
-          />
-
-          {/* AI Market Synthesis Strip */}
           <div className="bg-card border border-border rounded-xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -445,7 +386,6 @@ export default function CryptoPage() {
                   : `Synthesize Binance spot order flows, derivatives funding skew, and short-term price momentum with Gemini.`}
               </p>
             </div>
-
             <button
               type="button"
               onClick={handleGenerateAIInsight}

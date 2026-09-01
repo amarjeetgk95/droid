@@ -3,16 +3,6 @@ import { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { InstrumentSearch } from '@/components/chart-analysis/InstrumentSearch';
 import { InstrumentHeader } from '@/components/chart-analysis/InstrumentHeader';
-import { ForecastChart } from '@/components/chart-analysis/ForecastChart';
-import { ForecastOverlay } from '@/components/chart-analysis/ForecastOverlay';
-import { TimeframeForecast } from '@/components/chart-analysis/TimeframeForecast';
-import { LiveForecastPanel } from '@/components/chart-analysis/LiveForecastPanel';
-import { MultiTimeframePanel } from '@/components/chart-analysis/MultiTimeframePanel';
-import { TechnicalAnalysisPanel } from '@/components/chart-analysis/TechnicalAnalysisPanel';
-import { FNOContextPanel } from '@/components/chart-analysis/FNOContextPanel';
-import { HistoricalSimilarity } from '@/components/chart-analysis/HistoricalSimilarity';
-import { ForecastSummary } from '@/components/chart-analysis/ForecastSummary';
-import { AIAnalysisPanel } from '@/components/chart-analysis/AIAnalysisPanel';
 import { useChartAnalysis } from '@/hooks/useChartAnalysis';
 
 function ChartAnalysisInner() {
@@ -31,17 +21,8 @@ function ChartAnalysisInner() {
     }
   }, [symbolParam]);
 
-  // Real-time refresh: poll per timeframe alignment
-  useEffect(() => {
-    if (!selected || !data) return;
-    const tfRefresh: Record<string, number> = { '1m': 15000, '5m': 30000, '15m': 60000, '1h': 300000, '4h': 600000, '1D': 3600000 };
-    const interval = tfRefresh[activeTf] ?? 60000;
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => {
-      fetchAnalysis(selected);
-    }, interval);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [selected, activeTf, data?.symbol]);
+  // Charts removed — keep live data fetch via useChartAnalysis if needed, but no chart polling
+  // Realtime data is handled via central_feed WS (1s) and MarketCards; chart polling disabled
 
   const handleSelect = (sym: string) => {
     setSelected(sym);
@@ -62,42 +43,13 @@ function ChartAnalysisInner() {
       {data && (
         <>
           <InstrumentHeader data={data} />
-          <div className="flex gap-2 flex-wrap">
-            {(['1m','5m','15m','1h','4h','1D'] as const).map(tf => (
-              <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1 rounded text-sm border ${activeTf===tf?'bg-primary text-primary-foreground':'bg-card border-border'}`}>{tf === '1D' ? 'Daily' : tf}</button>
-            ))}
-            <span className="text-xs text-muted-foreground self-center ml-2">Active {activeTf} • Auto-refresh every {activeTf==='1m'?'15s':activeTf==='5m'?'30s':activeTf==='15m'?'60s':activeTf==='1h'?'5m':activeTf==='4h'?'10m':'1h'} • Forecast updates in real time</span>
-          </div>
-          {data.freshness === 'DATA_UNAVAILABLE' && (
-            <div className="bg-amber-50 border border-amber-300 rounded p-4 text-amber-900 text-sm">
-              <b>Data unavailable</b> — No market data available for {data.symbol} at this time. No substitution is made. Please check data feeds (NSE/BSE for indices, Binance for BTC/ETH/SOL) and try again. {data.unavailable_timeframes?.length ? `Unavailable timeframes: ${data.unavailable_timeframes.join(', ')}.` : ''}
-            </div>
-          )}
-          {Array.isArray(data.unavailable_timeframes) && data.unavailable_timeframes.length > 0 && data.freshness !== 'DATA_UNAVAILABLE' && (
-            <div className="bg-amber-50 border border-amber-200 rounded p-3 text-amber-800 text-xs">
-              Data unavailable for: {data.unavailable_timeframes.join(', ')} — those panes show &quot;Data unavailable&quot; without substituting another instrument.
-            </div>
-          )}
-          <ForecastChart data={data} timeframe={activeTf} />
-          <LiveForecastPanel data={data} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <TimeframeForecast data={data} />
-            <MultiTimeframePanel data={data} />
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <TechnicalAnalysisPanel data={data} timeframe={activeTf} />
-            <FNOContextPanel data={data} />
-          </div>
-          <ForecastSummary data={data} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <HistoricalSimilarity data={data} timeframe={activeTf} />
-            <AIAnalysisPanel data={data} />
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-900 text-sm">
+            Charts removed — use TradingView for candles. Realtime data fetch active via Groww Feed (1s) + Binance WS.
           </div>
           <div className="bg-card border border-border rounded-lg p-4 space-y-2">
-            <h3 className="font-semibold mb-2">Data Freshness & Forecast Status</h3>
-            <p className="text-sm">{data.freshness} {data.freshness==='STALE' && '(STALE — forecast not current)'} {data.freshness==='DELAYED' && '(DELAYED)'} • Updated {data.data_age_seconds}s ago • Source: {data.exchange} • Asset: {data.asset_class} • Generated {new Date(data.generated_at).toLocaleTimeString()}</p>
-            <p className="text-xs text-muted-foreground">Data timestamp: {data.data_timestamp ? new Date(data.data_timestamp).toLocaleString() : '—'} • Prediction timestamp: {new Date(data.generated_at).toLocaleString()} • Model ensemble-v1 • Forecast displayed as <b>PREDICTED</b> dashed overlay distinct from historical solid candles.</p>
-            { (data.freshness==='STALE' || data.freshness==='DELAYED') && <p className="text-xs text-amber-600">Forecast status: STALE — data is {data.data_age_seconds}s old. UI does not present outdated prediction as current.</p>}
+            <h3 className="font-semibold mb-2">Data Freshness & Realtime Status</h3>
+            <p className="text-sm">{data.freshness} • Updated {data.data_age_seconds}s ago • Source: {data.exchange} • Asset: {data.asset_class} • Generated {new Date(data.generated_at).toLocaleTimeString()}</p>
+            <p className="text-xs text-muted-foreground">Data timestamp: {data.data_timestamp ? new Date(data.data_timestamp).toLocaleString() : '—'} • Realtime via central_feed WS 1s (Groww licensed) + Binance WS</p>
           </div>
         </>
       )}
