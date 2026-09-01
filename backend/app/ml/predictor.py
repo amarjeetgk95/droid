@@ -34,6 +34,7 @@ class MLPredictor:
         # Options Context
         chain_data = None
         max_pain = None
+        term_structure = None
         try:
             chain_data = await options_service.get_option_chain_matrix(underlying)
             max_pain = chain_data.max_pain
