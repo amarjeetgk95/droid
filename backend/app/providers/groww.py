@@ -183,89 +183,75 @@ class GrowwProvider(MarketDataProvider):
         return self._DEMO_QUOTES.get(symbol, {"ltp": 24034.7, "open": 24117.0, "high": 24128.0, "low": 23993.0, "prev": 24175.0, "volume": 1000000, "oi": 300000})
 
     async def _fetch_live_quote(self, symbol: str, token: str) -> dict | None:
-        """Attempt live Groww quote fetch. Returns parsed dict or None on failure.
+        """PURE Groww quote fetch — no Yahoo/NSE fallback.
 
-        Uses Groww live-data/quote and live-data/ltp endpoints:
-        GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY
-        Falls back to NSE public allIndices for accurate demo when Groww fails.
+        Uses ONLY Groww live-data/quote ( licensed ):
+        GET https://api.groww.in/v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=NIFTY
+        If token is missing/invalid, returns None (caller will surface DEMO, not third-party scrape).
+        You integrated Groww exactly to avoid Yahoo/NSE — this honors that.
         """
         import httpx
         cfg = self.symbol_map.get(symbol)
         if not cfg:
             return None
+        if not token or token in ("", "dummy", "mock-demo-token"):
+            logger.debug("groww_quote_no_token_pure", symbol=symbol)
+            return None
         exchange = cfg.get("exchange", "NSE")
         trading_symbol = cfg.get("trading_symbol", symbol.replace(" ", ""))
-        # Skip Groww live fetch if no valid token — avoids Illegal header error
-        should_try_groww = bool(token and token not in ("", "dummy", "mock-demo-token"))
         headers = {
             "Authorization": f"Bearer {token}",
             "X-API-VERSION": "1.0",
             "Accept": "application/json",
-        } if should_try_groww else {}
+        }
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Primary: Groww live-data/quote (only when authenticated)
-                if should_try_groww:
-                    try:
-                        url = f"{self.API_BASE}/live-data/quote"
-                        params = {"exchange": exchange, "segment": cfg.get("segment", "CASH"), "trading_symbol": trading_symbol}
-                        resp = await client.get(url, params=params, headers=headers)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            payload = data.get("payload") or data
-                            if isinstance(payload, dict) and "last_price" in payload:
+                # Groww live-data/quote — single licensed source
+                url = f"{self.API_BASE}/live-data/quote"
+                params = {"exchange": exchange, "segment": cfg.get("segment", "CASH"), "trading_symbol": trading_symbol}
+                resp = await client.get(url, params=params, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    payload = data.get("payload") or data
+                    # Groww returns {last_price, ohlc_open, high_trade_range, low_trade_range, previous_close, volume, open_interest}
+                    if isinstance(payload, dict) and ("last_price" in payload or "ltp" in payload):
+                        return {
+                            "ltp": float(payload.get("last_price") or payload.get("ltp") or 0),
+                            "open": float(payload.get("ohlc_open") or 0) or None,
+                            "high": float(payload.get("high_trade_range") or payload.get("high") or 0) or None,
+                            "low": float(payload.get("low_trade_range") or payload.get("low") or 0) or None,
+                            "prev": float(payload.get("previous_close") or payload.get("close") or 0) or None,
+                            "volume": int(payload.get("volume") or 0),
+                            "oi": int(payload.get("open_interest") or 0) if payload.get("open_interest") is not None else None,
+                        }
+                    # Some payloads nest under 'quote'
+                    quote = payload.get("quote") if isinstance(payload, dict) else None
+                    if isinstance(quote, dict) and ("last_price" in quote or "ltp" in quote):
+                        return {
+                            "ltp": float(quote.get("last_price") or quote.get("ltp") or 0),
+                            "open": float(quote.get("ohlc_open") or 0) or None,
+                            "high": float(quote.get("high_trade_range") or quote.get("high") or 0) or None,
+                            "low": float(quote.get("low_trade_range") or quote.get("low") or 0) or None,
+                            "prev": float(quote.get("previous_close") or quote.get("close") or 0) or None,
+                            "volume": int(quote.get("volume") or 0),
+                            "oi": int(quote.get("open_interest") or 0) if quote.get("open_interest") is not None else None,
+                        }
+                    # Alternative bulk quote shape: {payload: {NSE_NIFTY: {...}}}
+                    # Try to find any dict with last_price inside payload values
+                    if isinstance(payload, dict):
+                        for v in payload.values():
+                            if isinstance(v, dict) and ("last_price" in v or "ltp" in v):
                                 return {
-                                    "ltp": float(payload.get("last_price") or payload.get("ltp") or 0),
-                                    "open": float(payload.get("ohlc_open") or 0) or None,
-                                    "high": float(payload.get("high_trade_range") or payload.get("high") or 0) or None,
-                                    "low": float(payload.get("low_trade_range") or payload.get("low") or 0) or None,
-                                    "prev": float(payload.get("previous_close") or payload.get("close") or 0) or None,
-                                    "volume": int(payload.get("volume") or 0),
-                                    "oi": int(payload.get("open_interest") or 0) if payload.get("open_interest") is not None else None,
+                                    "ltp": float(v.get("last_price") or v.get("ltp") or 0),
+                                    "open": float(v.get("ohlc_open") or 0) or None,
+                                    "high": float(v.get("high_trade_range") or v.get("high") or 0) or None,
+                                    "low": float(v.get("low_trade_range") or v.get("low") or 0) or None,
+                                    "prev": float(v.get("previous_close") or v.get("close") or 0) or None,
+                                    "volume": int(v.get("volume") or 0),
+                                    "oi": int(v.get("open_interest") or 0) if v.get("open_interest") is not None else None,
                                 }
-                    except Exception as e:
-                        logger.debug("groww_live_fetch_failed", symbol=symbol, error=str(e)[:150])
-                # Fallback 1: NSE public allIndices (accurate vs TradingView, no auth)
-                try:
-                    nse_resp = await client.get("https://www.nseindia.com/api/allIndices", headers={"User-Agent": "Mozilla/5.0"}, timeout=5.0)
-                    if nse_resp.status_code == 200:
-                        j = nse_resp.json()
-                        nse_map = {"NIFTY 50": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FIN SERVICE", "INDIA VIX": "INDIA VIX"}
-                        nse_key = nse_map.get(symbol)
-                        if nse_key:
-                            for idx in j.get("data", []):
-                                if idx.get("indexSymbol") == nse_key or idx.get("index") == nse_key:
-                                    return {
-                                        "ltp": float(idx.get("last") or 0),
-                                        "open": float(idx.get("open") or 0),
-                                        "high": float(idx.get("high") or 0),
-                                        "low": float(idx.get("low") or 0),
-                                        "prev": float(idx.get("previousClose") or 0),
-                                        "volume": 0,
-                                        "oi": None,
-                                    }
-                        # SENSEX via Yahoo BSE (NSE doesn't have BSE SENSEX)
-                        if symbol == "SENSEX":
-                            try:
-                                yahoo_resp = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/%5EBSESN?interval=1d&range=1d", headers={"User-Agent": "Mozilla/5.0"}, timeout=5.0)
-                                if yahoo_resp.status_code == 200:
-                                    yj = yahoo_resp.json()
-                                    meta = yj.get("chart", {}).get("result", [{}])[0].get("meta", {})
-                                    quote = yj.get("chart", {}).get("result", [{}])[0].get("indicators", {}).get("quote", [{}])[0]
-                                    if meta.get("regularMarketPrice"):
-                                        return {
-                                            "ltp": float(meta.get("regularMarketPrice") or 0),
-                                            "open": float(quote.get("open", [0])[0] or meta.get("chartPreviousClose") or 0),
-                                            "high": float(quote.get("high", [0])[0] or meta.get("regularMarketDayHigh") or 0),
-                                            "low": float(quote.get("low", [0])[0] or meta.get("regularMarketDayLow") or 0),
-                                            "prev": float(meta.get("chartPreviousClose") or 0),
-                                            "volume": 0,
-                                            "oi": None,
-                                        }
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+                else:
+                    logger.debug("groww_quote_http_non200", symbol=symbol, status=resp.status_code, body=resp.text[:200])
         except Exception as e:
             logger.debug("groww_live_quote_failed", symbol=symbol, error=str(e)[:200])
         return None
@@ -365,27 +351,184 @@ class GrowwProvider(MarketDataProvider):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[NormalizedCandle]:
+        """PURE Groww historical candles — no Yahoo/NSE.
+
+        Uses Groww licensed endpoint:
+        GET https://api.groww.in/v1/historical/candles?exchange=NSE&segment=CASH&groww_symbol=NSE-NIFTY&start_time=YYYY-MM-DD HH:MM:SS&end_time=...&candle_interval=5minute
+        Falls back to flat DEMO only if Groww token missing or Groww returns no data.
+        """
         await self.rate_limiter.acquire()
-        # Prefer real historical candles (Yahoo/NSE) over synthetic
+        # Groww historical requires valid token
         try:
-            from app.services.nse_service import fetch_nse_candles
-            count = 75 if timeframe == "5m" else 30
-            real = await fetch_nse_candles(symbol, timeframe, count)
-            if real:
-                return [
-                    NormalizedCandle(
-                        timestamp=r["timestamp"],
-                        open=r["open"], high=r["high"], low=r["low"], close=r["close"],
-                        volume=r["volume"], vwap=None,
-                    )
-                    for r in real
-                ]
-        except Exception as e:
-            logger.debug("groww_candles_real_fetch_failed", symbol=symbol, error=str(e)[:150])
-        # Real fetch failed: return flat previous-close (no synthetic walk — honest when market closed or data unavailable)
+            token = await self.token_manager.get_valid_token()
+        except Exception:
+            token = ""
+        if not token or token in ("", "dummy", "mock-demo-token"):
+            logger.debug("groww_candles_no_token_pure", symbol=symbol)
+            demo = self._demo_quote(symbol)
+            now = datetime.now(timezone.utc)
+            return [
+                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+                NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+            ]
+
+        # Map frontend timeframe -> Groww candle_interval
+        tf_map = {
+            "1m": "1minute",
+            "5m": "5minute",
+            "15m": "15minute",
+            "1h": "1hour",
+            "1D": "1day",
+        }
+        candle_interval = tf_map.get(timeframe, "5minute")
+
+        # Map symbol -> groww_symbol (NSE-NIFTY etc.) and segment
+        cfg = self.symbol_map.get(symbol)
+        if not cfg:
+            demo = self._demo_quote(symbol)
+            now = datetime.now(timezone.utc)
+            return [
+                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+                NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
+            ]
+        # groww_symbol candidates — try primary then fallback
+        # e.g. NIFTY 50 -> NSE-NIFTY, BANKNIFTY -> NSE-BANKNIFTY, SENSEX -> BSE-SENSEX
+        trading_sym = cfg.get("trading_symbol", symbol.replace(" ", ""))
+        exchange = cfg.get("exchange", "NSE")
+        segment = cfg.get("segment", "CASH")
+        groww_candidates = [
+            f"{exchange}-{trading_sym}",
+            f"{exchange}_{trading_sym}",
+            trading_sym,
+            f"{exchange}-NIFTY" if symbol == "NIFTY 50" else None,
+        ]
+        groww_candidates = [c for c in groww_candidates if c]
+
+        # Determine start/end window (use 1 day for intraday TFs, 90 days for daily)
+        if not start or not end:
+            end_dt = datetime.now(timezone.utc)
+            if timeframe == "1D":
+                start_dt = end_dt - timedelta(days=90)
+            else:
+                # Intraday: last trading day window 09:15-15:30 IST (UTC+5:30)
+                # Use 1 day range to ensure data
+                start_dt = end_dt - timedelta(days=1)
+            start = start or start_dt
+            end = end or end_dt
+
+        # Groww expects "YYYY-MM-DD HH:MM:SS"
+        fmt = "%Y-%m-%d %H:%M:%S"
+        start_str = start.strftime(fmt) if isinstance(start, datetime) else str(start)
+        end_str = end.strftime(fmt) if isinstance(end, datetime) else str(end)
+
+        import httpx
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-API-VERSION": "1.0",
+            "Accept": "application/json",
+        }
+        # Try each groww_symbol candidate via both V2 and V1 endpoints (pure Groww)
+        for groww_sym in groww_candidates:
+            # Try V2: /historical/candles
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    url = f"{self.API_BASE}/historical/candles"
+                    params = {
+                        "exchange": exchange,
+                        "segment": segment,
+                        "groww_symbol": groww_sym,
+                        "start_time": start_str,
+                        "end_time": end_str,
+                        "candle_interval": candle_interval,
+                    }
+                    resp = await client.get(url, params=params, headers=headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        payload = data.get("payload") or data.get("candles") or data
+                        candles_raw = None
+                        if isinstance(payload, dict):
+                            # Common shapes: {candles: [[ts, o,h,l,c,v], ...]} or {payload: {candles: ...}}
+                            candles_raw = payload.get("candles") or payload.get("payload") or payload.get("data")
+                            if candles_raw is None and "open" in payload:
+                                candles_raw = [payload]
+                        elif isinstance(payload, list):
+                            candles_raw = payload
+                        if candles_raw and isinstance(candles_raw, list) and len(candles_raw) > 0:
+                            out = []
+                            for c in candles_raw:
+                                try:
+                                    if isinstance(c, (list, tuple)) and len(c) >= 5:
+                                        # [timestamp, open, high, low, close, volume?] timestamp may be ms or sec
+                                        ts_raw = c[0]
+                                        if isinstance(ts_raw, (int, float)) and ts_raw > 1e12:  # ms
+                                            ts = datetime.fromtimestamp(ts_raw / 1000.0, tz=timezone.utc)
+                                        elif isinstance(ts_raw, (int, float)):
+                                            ts = datetime.fromtimestamp(float(ts_raw), tz=timezone.utc)
+                                        else:
+                                            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                                        out.append(NormalizedCandle(
+                                            timestamp=ts,
+                                            open=float(c[1]), high=float(c[2]), low=float(c[3]), close=float(c[4]),
+                                            volume=float(c[5]) if len(c) > 5 else 0, vwap=None,
+                                        ))
+                                    elif isinstance(c, dict):
+                                        ts_raw = c.get("timestamp") or c.get("ts") or c.get("time") or c.get("candleTime")
+                                        if ts_raw is None:
+                                            continue
+                                        if isinstance(ts_raw, (int, float)):
+                                            ts = datetime.fromtimestamp(ts_raw / 1000.0 if ts_raw > 1e12 else float(ts_raw), tz=timezone.utc)
+                                        else:
+                                            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                                        out.append(NormalizedCandle(
+                                            timestamp=ts,
+                                            open=float(c.get("open") or c.get("o") or 0),
+                                            high=float(c.get("high") or c.get("h") or 0),
+                                            low=float(c.get("low") or c.get("l") or 0),
+                                            close=float(c.get("close") or c.get("c") or 0),
+                                            volume=float(c.get("volume") or c.get("v") or 0), vwap=None,
+                                        ))
+                                except Exception:
+                                    continue
+                            if out:
+                                out.sort(key=lambda x: x.timestamp)
+                                # Return last 75
+                                return out[-75:] if len(out) > 75 else out
+                    # V2 returned empty — try deprecated V1 range endpoint
+                    url_v1 = f"{self.API_BASE}/historical/candle/range"
+                    params_v1 = {
+                        "exchange": exchange,
+                        "segment": segment,
+                        "trading_symbol": trading_sym,
+                        "start_time": start_str,
+                        "end_time": end_str,
+                        "interval_in_minutes": {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "1D": 1440}.get(timeframe, 5),
+                    }
+                    resp_v1 = await client.get(url_v1, params=params_v1, headers=headers)
+                    if resp_v1.status_code == 200:
+                        data_v1 = resp_v1.json()
+                        payload_v1 = data_v1.get("payload") or data_v1
+                        candles_v1 = payload_v1.get("candles") if isinstance(payload_v1, dict) else payload_v1
+                        if isinstance(candles_v1, list) and candles_v1:
+                            out = []
+                            for c in candles_v1:
+                                try:
+                                    if isinstance(c, dict):
+                                        ts_raw = c.get("timestamp") or c.get("candleTime")
+                                        ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")) if isinstance(ts_raw, str) else datetime.fromtimestamp(float(ts_raw)/1000.0 if float(ts_raw)>1e12 else float(ts_raw), tz=timezone.utc)
+                                        out.append(NormalizedCandle(timestamp=ts, open=float(c.get("open",0)), high=float(c.get("high",0)), low=float(c.get("low",0)), close=float(c.get("close",0)), volume=float(c.get("volume",0)), vwap=None))
+                                except Exception:
+                                    continue
+                            if out:
+                                out.sort(key=lambda x: x.timestamp)
+                                return out[-75:]
+            except Exception as e:
+                logger.debug("groww_candles_v2_failed", symbol=symbol, groww_sym=groww_sym, error=str(e)[:150])
+                continue
+
+        # Pure Groww returned no data — return honest flat (no Yahoo)
         demo = self._demo_quote(symbol)
         now = datetime.now(timezone.utc)
-        # Always return flat previous-close candles when real data unavailable — no fake walk
+        logger.info("groww_candles_no_data_pure", symbol=symbol, timeframe=timeframe)
         return [
             NormalizedCandle(timestamp=now - timedelta(minutes=5), open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
             NormalizedCandle(timestamp=now, open=demo["prev"], high=demo["prev"], low=demo["prev"], close=demo["prev"], volume=0, vwap=None),
@@ -488,13 +631,11 @@ class GrowwProvider(MarketDataProvider):
         return rev
 
     async def _poller_loop(self) -> None:
-        """1-second poller that fetches Groww REST (or NSE) and pushes to central_feed.
+        """1-second poller — PURE Groww REST (no Yahoo/NSE).
 
-        This is the legal fast-path: when Groww token is present we use Groww's
-        licensed REST endpoint (GET /v1/live-data/quote with Bearer token).
-        When token is missing we fall back to NSE public scrape (1s cache).
-        Poller drives sub-second frontend updates via central_feed -> ws/market-feed
-        -> useMarketStream -> displayedCards, matching TradingView tick feel.
+        Licensed fast-path: GET https://api.groww.in/v1/live-data/quote with Bearer token.
+        If token missing/invalid, _fetch_live_quote returns None -> no tick ingested (DEMO flat, no third-party scrape).
+        You asked for pure Groww — this honors it. Poller drives frontend via central_feed -> ws/market-feed -> useMarketStream.
         """
         from app.services.central_feed import central_feed as _cf
 
@@ -574,7 +715,7 @@ class GrowwProvider(MarketDataProvider):
         token_info = self.token_manager.token_info
         token = token_info.access_token if token_info else None
         if not token or token in ("", "dummy", "mock-demo-token"):
-            logger.info("groww_feed_skipped_no_token", reason="poller will provide data via NSE/Groww REST")
+            logger.info("groww_feed_skipped_no_token", reason="poller requires valid Groww token — no third-party fallback per your request")
             return
         try:
             from growwapi import GrowwAPI, GrowwFeed  # type: ignore
