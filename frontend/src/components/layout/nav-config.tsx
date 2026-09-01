@@ -2,10 +2,7 @@
 
 import {
   LayoutDashboard,
-  Activity,
   LineChart,
-  Search,
-  FileText,
   Star,
   Coins,
   Settings,
@@ -15,18 +12,24 @@ import {
   History,
   Bot,
   BarChart3,
-  Zap,
   Radio,
+  FileText,
+  Activity,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 export type NavItem = {
+  id: string;
   href: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
   description?: string;
+  shortcut?: string;
   badge?: string;
+  badgeKey?: 'signals' | 'algo' | 'ai' | 'broker';
+  badgeVariant?: 'default' | 'success' | 'warning' | 'danger' | 'purple' | 'blue';
   keywords?: string[];
+  isBeta?: boolean;
 };
 
 export type NavGroup = {
@@ -40,82 +43,158 @@ export type NavGroup = {
 export const NAV_GROUPS: NavGroup[] = [
   {
     id: 'intelligence',
-    label: 'Intelligence',
+    label: 'Alpha & Intelligence',
+    icon: Sparkles,
+    defaultOpen: true,
+    items: [
+      {
+        id: 'market-intel',
+        href: '/market-intelligence',
+        label: 'Market Intelligence',
+        icon: BarChart3,
+        description: '4-asset macro breadth & institutional flows',
+        keywords: ['breadth', 'fii', 'dii', 'macro', 'nifty', 'banknifty', 'sector'],
+      },
+      {
+        id: 'regime-levels',
+        href: '/markets',
+        label: 'Regime & Levels',
+        icon: TrendingUp,
+        description: 'Multi-TF regime classification & pivot targets',
+        keywords: ['regime', 'levels', 'support', 'resistance', 'trend', 'volatility'],
+      },
+      {
+        id: 'ai-insights',
+        href: '/ai-analysis',
+        label: 'AI Deep Insights',
+        icon: Sparkles,
+        description: 'GenAI reasoning, risk bias & synthesis',
+        badgeKey: 'ai',
+        keywords: ['ai', 'gemini', 'ollama', 'openrouter', 'reasoning', 'sentiment'],
+      },
+      {
+        id: 'historical-intel',
+        href: '/historical-intelligence',
+        label: 'Historical Patterns',
+        icon: History,
+        description: 'Historical similarity & forward scenario engine',
+        keywords: ['history', 'similarity', 'patterns', 'backtest', 'scenarios'],
+      },
+    ],
+  },
+  {
+    id: 'execution',
+    label: 'Execution & Strategy',
     icon: Activity,
     defaultOpen: true,
     items: [
-      { href: '/market-intelligence', label: 'Market Intelligence', icon: BarChart3, description: '4-asset universe' },
-      { href: '/markets', label: 'Regime & Levels', icon: TrendingUp, description: 'Levels & regime' },
+      {
+        id: 'chart-terminal',
+        href: '/chart-analysis',
+        label: 'Pro Chart Terminal',
+        icon: LineChart,
+        description: 'Full-screen canvas, multi-timeframe & tools',
+        shortcut: '⌘2',
+        keywords: ['chart', 'candle', 'tradingview', 'canvas', 'technical', 'indicators'],
+      },
+      {
+        id: 'options-desk',
+        href: '/options',
+        label: 'Options & Greeks',
+        icon: Layers,
+        description: 'Live option chain, Black-76, Max Pain & PCR',
+        shortcut: '⌘3',
+        keywords: ['options', 'chain', 'oi', 'greeks', 'iv', 'delta', 'gamma', 'straddle'],
+      },
+      {
+        id: 'signal-center',
+        href: '/signals',
+        label: 'Signal Center',
+        icon: Radio,
+        description: 'Real-time multi-strategy alpha alerts',
+        badgeKey: 'signals',
+        shortcut: '⌘4',
+        keywords: ['signals', 'alerts', 'momentum', 'breakout', 'mean-reversion'],
+      },
+      {
+        id: 'paper-trading',
+        href: '/paper-trading',
+        label: 'Paper Trading',
+        icon: FileText,
+        description: 'Simulated execution & virtual portfolio',
+        keywords: ['paper', 'sim', 'virtual', 'orders', 'positions', 'pnl'],
+      },
+      {
+        id: 'algo-engine',
+        href: '/algo-trading',
+        label: 'Algo Trading',
+        icon: Bot,
+        description: 'Automated strategy runners & risk guards',
+        badgeKey: 'algo',
+        shortcut: '⌘5',
+        keywords: ['algo', 'automation', 'bot', 'strategies', 'runners', 'execution'],
+      },
     ],
   },
   {
-    id: 'analysis',
-    label: 'Analysis',
-    icon: LineChart,
-    defaultOpen: true,
-    items: [
-      { href: '/ai-analysis', label: 'AI Analysis', icon: Sparkles, description: 'AI insights' },
-    ],
-  },
-  {
-    id: 'derivatives',
-    label: 'Derivatives',
-    icon: Layers,
-    defaultOpen: true,
-    items: [
-      { href: '/options', label: 'Options', icon: Layers, description: 'Chain & IV' },
-    ],
-  },
-  {
-    id: 'signals',
-    label: 'Signals',
-    icon: Zap,
-    defaultOpen: true,
-    items: [
-      { href: '/signals', label: 'Signal Center', icon: Radio, description: 'Generate & dispatch' },
-    ],
-  },
-  {
-    id: 'discover',
-    label: 'Discover',
-    icon: Search,
+    id: 'assets',
+    label: 'Markets & Assets',
+    icon: Coins,
     defaultOpen: false,
     items: [
-      { href: '/historical-intelligence', label: 'Historical Intel', icon: History, description: 'Similarity & scenarios' },
-    ],
-  },
-  {
-    id: 'trading',
-    label: 'Trading',
-    icon: FileText,
-    defaultOpen: true,
-    items: [
-      { href: '/paper-trading', label: 'Paper Trading', icon: FileText, description: 'Virtual P&L' },
-      { href: '/algo-trading', label: 'Algo Trading', icon: Bot, description: 'Automated' },
-    ],
-  },
-  {
-    id: 'personal',
-    label: 'Personal',
-    icon: Star,
-    defaultOpen: false,
-    items: [
-      { href: '/watchlist', label: 'Watchlist', icon: Star, description: 'Tracked instruments' },
+      {
+        id: 'crypto-futures',
+        href: '/crypto',
+        label: 'Crypto Derivatives',
+        icon: Coins,
+        description: 'Binance USDT-M Futures & live orderbook',
+        keywords: ['crypto', 'binance', 'btc', 'eth', 'futures', 'orderbook'],
+      },
+      {
+        id: 'watchlists',
+        href: '/watchlist',
+        label: 'Watchlists & Baskets',
+        icon: Star,
+        description: 'Tracked instruments & custom price alerts',
+        keywords: ['watchlist', 'favorites', 'instruments', 'baskets', 'tracking'],
+      },
     ],
   },
 ];
 
 export const STANDALONE_ITEMS: NavItem[] = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard, description: 'Overview' },
+  {
+    id: 'dashboard',
+    href: '/',
+    label: 'Command Dashboard',
+    icon: LayoutDashboard,
+    description: 'Executive overview, index cards & market health',
+    shortcut: '⌘1',
+    keywords: ['dashboard', 'home', 'overview', 'indices', 'market status'],
+  },
 ];
 
 export const BOTTOM_ITEMS: NavItem[] = [
-  { href: '/crypto', label: 'Crypto', icon: Coins, description: 'Binance live' },
-  { href: '/settings', label: 'Settings', icon: Settings, description: 'Preferences & broker' },
+  {
+    id: 'settings',
+    href: '/settings',
+    label: 'Settings & Gateways',
+    icon: Settings,
+    description: 'Broker API, AI model routing & quant params',
+    keywords: ['settings', 'config', 'broker', 'fyers', 'api', 'keys', 'models'],
+  },
 ];
 
+export const ALL_NAV_ITEMS: NavItem[] = [
+  ...STANDALONE_ITEMS,
+  ...NAV_GROUPS.flatMap((g) => g.items),
+  ...BOTTOM_ITEMS,
+];
+
+export const ALL_NAV_HREFS = ALL_NAV_ITEMS.map((i) => i.href);
+
 export function isGroupActive(pathname: string, group: NavGroup): boolean {
-  return group.items.some((i) => pathname === i.href || pathname.startsWith(i.href + '/'));
+  return group.items.some((i) => isActivePath(pathname, i.href));
 }
 
 export function isActivePath(pathname: string, href: string): boolean {
@@ -123,8 +202,6 @@ export function isActivePath(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + '/');
 }
 
-export const ALL_NAV_HREFS = [
-  ...STANDALONE_ITEMS.map((i) => i.href),
-  ...NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href)),
-  ...BOTTOM_ITEMS.map((i) => i.href),
-];
+export function findNavItemByHref(href: string): NavItem | undefined {
+  return ALL_NAV_ITEMS.find((i) => i.href === href);
+}

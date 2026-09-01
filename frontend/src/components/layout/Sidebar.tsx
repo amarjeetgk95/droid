@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import {
   ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
-  X,
+  LayoutDashboard,
   Sparkles,
+  Star,
+  Layers,
+  Activity,
+  Coins,
 } from 'lucide-react';
 import { getStoredSettings } from '@/lib/settings';
 import { cn } from '@/lib/utils';
@@ -16,12 +18,21 @@ import {
   NAV_GROUPS,
   STANDALONE_ITEMS,
   BOTTOM_ITEMS,
+  ALL_NAV_ITEMS,
   isGroupActive,
   isActivePath,
+  NavGroup,
+  NavItem,
 } from './nav-config';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { SidebarHeader } from './Sidebar/SidebarHeader';
+import { SidebarFilter } from './Sidebar/SidebarFilter';
+import { SidebarFavorites } from './Sidebar/SidebarFavorites';
+import { SidebarFlyout } from './Sidebar/SidebarFlyout';
+import { SidebarStatusDock } from './Sidebar/SidebarStatusDock';
+import { useMarketDataContext } from '@/context/MarketDataContext';
 
 // ---------------------------------------------------------------------------
 // Storage keys & helpers
@@ -68,71 +79,84 @@ export type SidebarProps = {
 };
 
 // ---------------------------------------------------------------------------
-// Reusable NavLink
+// Reusable NavLink Item
 // ---------------------------------------------------------------------------
 function NavLink({
-  href,
-  label,
-  icon: Icon,
+  item,
   active,
   collapsed,
   onNavigate,
-  description,
-  badge,
-  muted,
-  tooltipSide = 'right',
+  badgeData,
 }: {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  item: NavItem;
   active: boolean;
   collapsed?: boolean;
   onNavigate?: () => void;
-  description?: string;
-  badge?: string;
-  muted?: boolean;
-  tooltipSide?: 'right' | 'left' | 'top' | 'bottom';
+  badgeData?: { label: string; color: string; pulse?: boolean };
 }) {
+  const Icon = item.icon;
+
   const content = (
     <Link
-      href={href}
+      href={item.href}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       className={cn(
-        'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150 ease-out',
+        'group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium transition-all duration-150 ease-out',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0',
         collapsed
-          ? 'justify-center px-2 py-2.5 w-10 h-10 mx-auto'
+          ? 'justify-center w-10 h-10 mx-auto'
           : 'w-full',
         active
           ? collapsed
-            ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/20'
-            : 'bg-primary/10 text-primary font-medium shadow-sm ring-1 ring-primary/10 dark:bg-primary/15'
-          : muted
-            ? 'text-muted-foreground/60 hover:bg-accent/40 hover:text-foreground'
-            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30'
+            : 'bg-primary/10 text-primary font-semibold ring-1 ring-primary/15 dark:bg-primary/15'
+          : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
       )}
     >
       {/* Active left accent when expanded */}
       {active && !collapsed && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 rounded-full bg-primary" aria-hidden />
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-full bg-primary" aria-hidden />
       )}
+
       <Icon
         className={cn(
-          'shrink-0 transition-colors',
+          'shrink-0 transition-all duration-150',
           collapsed ? 'w-5 h-5' : 'w-4 h-4',
-          active ? (collapsed ? 'text-primary-foreground' : 'text-primary') : 'group-hover:text-foreground',
+          active
+            ? collapsed
+              ? 'text-primary-foreground'
+              : 'text-primary'
+            : 'opacity-80 group-hover:opacity-100 group-hover:text-foreground',
         )}
       />
+
       {!collapsed && (
-        <>
-          <span className="flex-1 truncate text-left">{label}</span>
-          {badge && (
-            <span className="shrink-0 text-[10px] leading-none font-semibold px-1.5 py-0.5 rounded-full bg-muted border text-muted-foreground">
-              {badge}
-            </span>
-          )}
-        </>
+        <div className="flex flex-1 items-center justify-between min-w-0">
+          <div className="flex flex-col min-w-0">
+            <span className="truncate leading-tight">{item.label}</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 ml-1">
+            {badgeData ? (
+              <span
+                className={cn(
+                  'text-[9px] font-bold px-1.5 py-0.2 rounded-full border leading-tight flex items-center gap-1',
+                  badgeData.color,
+                )}
+              >
+                {badgeData.pulse && (
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                )}
+                {badgeData.label}
+              </span>
+            ) : item.shortcut ? (
+              <kbd className="hidden group-hover:inline-flex text-[9px] font-mono px-1 py-0.2 rounded bg-muted/70 text-muted-foreground border border-border/40">
+                {item.shortcut}
+              </kbd>
+            ) : null}
+          </div>
+        </div>
       )}
     </Link>
   );
@@ -142,16 +166,23 @@ function NavLink({
   return (
     <Tooltip delayDuration={150}>
       <TooltipTrigger asChild>{content}</TooltipTrigger>
-      <TooltipContent side={tooltipSide} sideOffset={8} className="flex flex-col gap-0.5">
-        <span className="font-medium">{label}</span>
-        {description && <span className="text-[11px] opacity-75">{description}</span>}
+      <TooltipContent side="right" sideOffset={10} className="flex flex-col gap-0.5 max-w-[200px]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-xs">{item.label}</span>
+          {item.shortcut && (
+            <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-muted text-muted-foreground border">
+              {item.shortcut}
+            </kbd>
+          )}
+        </div>
+        {item.description && <span className="text-[10px] text-muted-foreground">{item.description}</span>}
       </TooltipContent>
     </Tooltip>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Group header button
+// Group Accordion Header
 // ---------------------------------------------------------------------------
 function GroupHeader({
   label,
@@ -175,22 +206,27 @@ function GroupHeader({
       aria-expanded={open}
       aria-controls={`nav-group-${id}`}
       className={cn(
-        'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold tracking-widest uppercase transition-colors',
+        'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         activeGroup
-          ? 'text-foreground bg-secondary/60'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+          ? 'text-foreground font-extrabold bg-accent/40'
+          : 'text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground',
       )}
     >
-      <Icon className={cn('w-3.5 h-3.5 shrink-0', activeGroup && 'text-primary')} />
+      <Icon className={cn('w-3.5 h-3.5 shrink-0', activeGroup ? 'text-primary' : 'opacity-70')} />
       <span className="flex-1 text-left truncate">{label}</span>
-      <ChevronDown className={cn('w-3 h-3 shrink-0 transition-transform duration-200', open && 'rotate-180')} />
+      <ChevronDown
+        className={cn(
+          'w-3 h-3 shrink-0 opacity-60 transition-transform duration-200',
+          open && 'rotate-180 opacity-100',
+        )}
+      />
     </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Main Sidebar
+// Main Enterprise Sidebar
 // ---------------------------------------------------------------------------
 export function Sidebar({
   collapsed: controlledCollapsed,
@@ -198,9 +234,18 @@ export function Sidebar({
   mobileOpen: controlledMobileOpen,
   onMobileOpenChange,
 }: SidebarProps) {
+  const router = useRouter();
   const pathname = usePathname();
 
-  // collapsed state: controlled if provided, else internal
+  // Context market telemetry
+  let marketCtx: ReturnType<typeof useMarketDataContext> | null = null;
+  try {
+    marketCtx = useMarketDataContext();
+  } catch {}
+
+  const streamState = marketCtx?.streamState ?? 'CONNECTED';
+
+  // Collapsed state
   const [internalCollapsed, setInternalCollapsed] = useState<boolean>(() => loadCollapsed());
   const collapsed = controlledCollapsed ?? internalCollapsed;
   const setCollapsed = useCallback(
@@ -213,7 +258,7 @@ export function Sidebar({
     [collapsed, onCollapsedChange],
   );
 
-  // mobile drawer
+  // Mobile state
   const [internalMobileOpen, setInternalMobileOpen] = useState(false);
   const mobileOpen = controlledMobileOpen ?? internalMobileOpen;
   const setMobileOpen = useCallback(
@@ -227,7 +272,17 @@ export function Sidebar({
   const [apiType, setApiType] = useState<string>('indian');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  // Sync apiType + hydrate collapsed/groups
+  // Dynamic Telemetry Badges
+  const telemetryBadges = useMemo(() => {
+    return {
+      signals: { label: '+3 LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true },
+      algo: { label: '2 RUNNING', color: 'bg-blue-500/10 text-blue-600 border-blue-500/30', pulse: false },
+      ai: { label: 'SYNC', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false },
+      broker: { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true },
+    };
+  }, []);
+
+  // Hydrate settings and group state
   useEffect(() => {
     try {
       setApiType(getStoredSettings().broker.apiType);
@@ -240,7 +295,6 @@ export function Sidebar({
       for (const g of NAV_GROUPS) initial[g.id] = g.defaultOpen ?? false;
       setOpenGroups(initial);
     }
-    // also sync collapsed from storage if uncontrolled
     if (controlledCollapsed === undefined) {
       setInternalCollapsed(loadCollapsed());
     }
@@ -264,7 +318,7 @@ export function Sidebar({
     return () => window.removeEventListener('storage', onStorage);
   }, [controlledCollapsed]);
 
-  // Auto-open group containing active route, persist
+  // Auto-open group containing active route
   useEffect(() => {
     setOpenGroups((prev) => {
       let changed = false;
@@ -274,7 +328,6 @@ export function Sidebar({
           next[g.id] = true;
           changed = true;
         }
-        // initialize missing groups with default
         if (!(g.id in next)) {
           next[g.id] = g.defaultOpen ?? false;
           changed = true;
@@ -288,24 +341,36 @@ export function Sidebar({
     });
   }, [pathname]);
 
-  // Persist openGroups
-  useEffect(() => {
-    if (Object.keys(openGroups).length) saveGroupState(openGroups);
-  }, [openGroups]);
-
-  // Keyboard: Cmd/Ctrl+B toggles collapsed (desktop only)
+  // Keyboard Shortcuts: Cmd/Ctrl+B (toggle sidebar), Cmd/Ctrl+1..5 (jump to top tools)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName);
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault();
         if (window.innerWidth >= 768) setCollapsed((p) => !p);
         else setMobileOpen(!mobileOpen);
       }
-      if (e.key === 'Escape' && mobileOpen) setMobileOpen(false);
+
+      // Quick jumps: Cmd+1 to Cmd+5 when not typing in an input
+      if ((e.metaKey || e.ctrlKey) && !isInput) {
+        const num = parseInt(e.key, 10);
+        if (num >= 1 && num <= 5) {
+          const targetItem = ALL_NAV_ITEMS.find((item) => item.shortcut === `⌘${num}`);
+          if (targetItem) {
+            e.preventDefault();
+            router.push(targetItem.href);
+          }
+        }
+      }
+
+      if (e.key === 'Escape' && mobileOpen) {
+        setMobileOpen(false);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [mobileOpen, setCollapsed, setMobileOpen]);
+  }, [mobileOpen, setCollapsed, setMobileOpen, router]);
 
   // Body scroll lock when mobile drawer open
   useEffect(() => {
@@ -330,130 +395,75 @@ export function Sidebar({
     if (mobileOpen) setMobileOpen(false);
   }, [mobileOpen, setMobileOpen]);
 
-  // Derived: bottom items split
-  const cryptoItem = useMemo(() => BOTTOM_ITEMS.find((i) => i.href === '/crypto')!, []);
-  const settingsItem = useMemo(() => BOTTOM_ITEMS.find((i) => i.href === '/settings')!, []);
   const dashboardItem = STANDALONE_ITEMS[0];
 
   // -----------------------------------------------------------------------
-  // Shared nav content
+  // Shared Nav Content Renderer
   // -----------------------------------------------------------------------
   const NavContent = ({ isCollapsed, isMobile }: { isCollapsed: boolean; isMobile?: boolean }) => (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className={cn('flex h-14 shrink-0 items-center gap-2 border-b border-border px-3', isCollapsed && !isMobile && 'justify-center px-2')}>
-        <div className={cn('flex items-center gap-2 min-w-0', isCollapsed && !isMobile && 'justify-center')}>
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold text-xs tracking-widest shadow-sm ring-1 ring-primary/20 shrink-0">
-            D
-          </div>
-          {!isCollapsed && (
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-bold tracking-tight text-sm">DROID</span>
-              <span className="hidden lg:inline-flex items-center gap-1 text-[10px] font-semibold leading-none bg-muted border px-2 py-1 rounded-full text-muted-foreground">
-                <Sparkles className="w-3 h-3 opacity-60" />
-                PHASE 1
-              </span>
-            </div>
-          )}
-        </div>
+    <div className="flex h-full flex-col select-none">
+      {/* 1. Header & Desk Switcher */}
+      <SidebarHeader
+        collapsed={isCollapsed}
+        isMobile={isMobile}
+        onToggleCollapse={() => setCollapsed((p) => !p)}
+        onCloseMobile={() => setMobileOpen(false)}
+      />
 
-        {/* Desktop collapse toggle */}
-        {!isMobile && (
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setCollapsed((p) => !p)}
-                aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                className={cn(
-                  'inline-flex items-center justify-center rounded-md border border-transparent h-7 w-7 shrink-0',
-                  'text-muted-foreground hover:text-foreground hover:bg-accent hover:border-border transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  isCollapsed && 'mx-auto',
-                  !isCollapsed && 'ml-auto',
-                )}
-              >
-                {isCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={10}>
-              {isCollapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
-            </TooltipContent>
-          </Tooltip>
-        )}
+      {/* 2. Fast Navigation Filter */}
+      <SidebarFilter
+        collapsed={isCollapsed}
+        onNavigate={handleNavigate}
+        onExpand={() => setCollapsed(false)}
+      />
 
-        {/* Mobile close */}
-        {isMobile && (
-          <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            aria-label="Close navigation"
-            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent border border-transparent hover:border-border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Nav */}
+      {/* 3. Main Nav Scroll Area */}
       <ScrollArea className="flex-1 overflow-hidden">
-        <nav aria-label="Primary" className={cn('flex flex-col gap-3 p-3', isCollapsed && !isMobile && 'p-2 gap-2 items-center')}>
-          {/* Dashboard */}
+        <nav
+          aria-label="Primary"
+          className={cn(
+            'flex flex-col gap-2 p-2',
+            isCollapsed && !isMobile && 'gap-2 items-center px-1.5',
+          )}
+        >
+          {/* Dashboard Direct Link */}
           <NavLink
-            href={dashboardItem.href}
-            label={dashboardItem.label}
-            icon={dashboardItem.icon}
+            item={dashboardItem}
             active={isActivePath(pathname, dashboardItem.href)}
             collapsed={isCollapsed && !isMobile}
             onNavigate={handleNavigate}
-            description={dashboardItem.description}
           />
 
-          {!isCollapsed && <Separator className="my-0.5 opacity-60" />}
+          {/* Pinned Favorites */}
+          <SidebarFavorites
+            collapsed={isCollapsed && !isMobile}
+            onNavigate={handleNavigate}
+          />
 
-          {/* Groups */}
-          <div className={cn('flex flex-col gap-1', isCollapsed && !isMobile && 'w-full items-center gap-1')}>
+          <Separator className="my-0.5 opacity-60" />
+
+          {/* Navigation Groups */}
+          <div className={cn('flex flex-col gap-1.5', isCollapsed && !isMobile && 'w-full items-center gap-1.5')}>
             {NAV_GROUPS.map((group) => {
               const Icon = group.icon;
               const open = openGroups[group.id] ?? group.defaultOpen ?? false;
               const activeGroup = isGroupActive(pathname, group);
 
-              // Collapsed rendering: flatten items as icons
+              // Collapsed Rail Mode: Sleek Flyout Popover
               if (isCollapsed && !isMobile) {
                 return (
-                  <div key={group.id} className="flex flex-col items-center gap-1 w-full">
-                    <div className="flex items-center justify-center w-full py-1">
-                      <Tooltip delayDuration={150}>
-                        <TooltipTrigger asChild>
-                          <span className={cn('h-6 w-6 rounded-md flex items-center justify-center border', activeGroup ? 'bg-secondary border-border text-foreground' : 'bg-muted/50 border-transparent text-muted-foreground')}>
-                            <Icon className="w-3.5 h-3.5" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="right" sideOffset={10}>
-                          <span className="font-medium">{group.label}</span>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    {group.items.map((item) => (
-                      <NavLink
-                        key={item.href}
-                        href={item.href}
-                        label={item.label}
-                        icon={item.icon}
-                        active={isActivePath(pathname, item.href)}
-                        collapsed
-                        onNavigate={handleNavigate}
-                        description={item.description}
-                      />
-                    ))}
-                    <Separator className="my-1 w-6 opacity-60" />
-                  </div>
+                  <SidebarFlyout
+                    key={group.id}
+                    group={group}
+                    onNavigate={handleNavigate}
+                    telemetryBadges={telemetryBadges}
+                  />
                 );
               }
 
-              // Expanded
+              // Expanded Mode: Smooth Accordion
               return (
-                <div key={group.id} className="flex flex-col gap-1">
+                <div key={group.id} className="flex flex-col gap-0.5">
                   <GroupHeader
                     id={group.id}
                     label={group.label}
@@ -462,6 +472,7 @@ export function Sidebar({
                     activeGroup={activeGroup}
                     onToggle={() => toggleGroup(group.id)}
                   />
+
                   <div
                     id={`nav-group-${group.id}`}
                     className={cn(
@@ -470,28 +481,18 @@ export function Sidebar({
                     )}
                   >
                     <div className="overflow-hidden">
-                      <div className="ml-2 pl-3 border-l border-border/60 flex flex-col gap-0.5 py-0.5">
+                      <div className="ml-2 pl-2 border-l border-border/60 flex flex-col gap-0.5 py-0.5">
                         {group.items.map((item) => {
-                          const ItemIcon = item.icon;
                           const active = isActivePath(pathname, item.href);
+                          const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
                           return (
-                            <Link
+                            <NavLink
                               key={item.href}
-                              href={item.href}
-                              aria-current={active ? 'page' : undefined}
-                              onClick={handleNavigate}
-                              className={cn(
-                                'group relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors duration-150',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                                active
-                                  ? 'bg-primary/10 text-primary font-medium ring-1 ring-primary/10 dark:bg-primary/15'
-                                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                              )}
-                            >
-                              {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-full bg-primary" aria-hidden />}
-                              <ItemIcon className={cn('w-4 h-4 shrink-0', active ? 'text-primary' : 'opacity-70 group-hover:opacity-100')} />
-                              <span className="truncate">{item.label}</span>
-                            </Link>
+                              item={item}
+                              active={active}
+                              onNavigate={handleNavigate}
+                              badgeData={badgeData}
+                            />
                           );
                         })}
                       </div>
@@ -501,99 +502,55 @@ export function Sidebar({
               );
             })}
           </div>
-
-          {!isCollapsed && <Separator className="opacity-60" />}
-
-          {/* Crypto */}
-          <div className={cn('flex flex-col gap-1', isCollapsed && !isMobile && 'w-full items-center')}>
-            <NavLink
-              href={cryptoItem.href}
-              label={cryptoItem.label}
-              icon={cryptoItem.icon}
-              active={isActivePath(pathname, cryptoItem.href)}
-              collapsed={isCollapsed && !isMobile}
-              onNavigate={handleNavigate}
-              description={cryptoItem.description}
-              badge={!isCollapsed && apiType !== 'crypto' ? 'Binance' : undefined}
-              muted={apiType !== 'crypto'}
-            />
-            {/* Settings */}
-            <NavLink
-              href={settingsItem.href}
-              label={settingsItem.label}
-              icon={settingsItem.icon}
-              active={isActivePath(pathname, settingsItem.href)}
-              collapsed={isCollapsed && !isMobile}
-              onNavigate={handleNavigate}
-              description={settingsItem.description}
-            />
-          </div>
         </nav>
       </ScrollArea>
 
-      {/* Footer */}
-      <div className={cn('shrink-0 border-t border-border p-3', isCollapsed && !isMobile && 'p-2 flex flex-col items-center gap-2')}>
-        {!isCollapsed ? (
-          <>
-            <div className="flex items-center gap-2 text-[11px] leading-tight text-muted-foreground">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
-              <span className="font-medium">8 menus grouped</span>
-              <span className="hidden xl:inline opacity-60">• ⌘B to toggle</span>
-            </div>
-            <p className="mt-1 text-[11px] leading-snug text-muted-foreground/80">
-              Click group header to collapse. Crypto dims when Broker = Indian.
-            </p>
-          </>
-        ) : (
-          !isMobile && (
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setCollapsed(false)}
-                  aria-label="Expand sidebar"
-                  className="h-8 w-8 rounded-md bg-muted hover:bg-accent border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <PanelLeftOpen className="w-4 h-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={10}>Expand sidebar</TooltipContent>
-            </Tooltip>
-          )
-        )}
-      </div>
+      {/* 4. Bottom Operational Status Dock */}
+      <SidebarStatusDock
+        collapsed={isCollapsed}
+        isMobile={isMobile}
+        apiType={apiType}
+        streamState={streamState}
+        onExpand={() => setCollapsed(false)}
+        onNavigate={handleNavigate}
+      />
     </div>
   );
 
   return (
     <TooltipProvider delayDuration={200}>
-      {/* Desktop */}
+      {/* Desktop Persistent Sidebar */}
       <aside
         aria-label="Primary navigation"
         className={cn(
-          'hidden md:flex shrink-0 flex-col border-r border-border bg-card/80 backdrop-blur-sm supports-[backdrop-filter]:bg-card/80 transition-all duration-300 ease-in-out will-change-[width] overflow-hidden',
-          collapsed ? 'w-[72px]' : 'w-64 lg:w-[272px]',
+          'hidden md:flex shrink-0 flex-col border-r border-border/80 bg-card/90 backdrop-blur-md supports-[backdrop-filter]:bg-card/85 transition-all duration-300 ease-in-out will-change-[width] overflow-hidden shadow-2xs',
+          collapsed ? 'w-[68px]' : 'w-64 lg:w-[268px]',
         )}
       >
         <NavContent isCollapsed={collapsed} />
       </aside>
 
-      {/* Mobile trigger placeholder - actual trigger lives in TopHeader, but we expose via global event */}
-      {/* Mobile drawer */}
-      <div className={cn('md:hidden fixed inset-0 z-50 transition', mobileOpen ? 'visible' : 'invisible pointer-events-none')} aria-hidden={!mobileOpen}>
+      {/* Mobile Modal Drawer */}
+      <div
+        className={cn(
+          'md:hidden fixed inset-0 z-50 transition',
+          mobileOpen ? 'visible' : 'invisible pointer-events-none',
+        )}
+        aria-hidden={!mobileOpen}
+      >
         {/* Backdrop */}
         <div
           onClick={() => setMobileOpen(false)}
           className={cn(
-            'absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-300',
+            'absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300',
             mobileOpen ? 'opacity-100' : 'opacity-0',
           )}
         />
-        {/* Panel */}
+        {/* Slide-out Drawer Panel */}
         <aside
           aria-label="Primary navigation"
           className={cn(
-            'absolute left-0 top-0 h-full w-[84vw] max-w-[320px] bg-card border-r border-border shadow-xl flex flex-col transition-transform duration-300 ease-out will-change-transform',
+            'absolute left-0 top-0 h-full w-[84vw] max-w-[320px] bg-card border-r border-border shadow-2xl flex flex-col transition-transform duration-300 ease-out will-change-transform',
             mobileOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
@@ -604,7 +561,6 @@ export function Sidebar({
   );
 }
 
-// Expose a tiny hook for TopHeader to control drawer when Sidebar is uncontrolled
 export function useSidebarMobile() {
   const [open, setOpen] = useState(false);
   return { open, setOpen };
