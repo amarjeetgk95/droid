@@ -3,6 +3,12 @@ import { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { InstrumentSearch } from '@/components/chart-analysis/InstrumentSearch';
 import { InstrumentHeader } from '@/components/chart-analysis/InstrumentHeader';
+import { ChartNavigationBar } from '@/components/chart-analysis/ChartNavigationBar';
+import { TechnicalAnalysisPanel } from '@/components/chart-analysis/TechnicalAnalysisPanel';
+import { MultiTimeframePanel } from '@/components/chart-analysis/MultiTimeframePanel';
+import { FNOContextPanel } from '@/components/chart-analysis/FNOContextPanel';
+import { HistoricalSimilarity } from '@/components/chart-analysis/HistoricalSimilarity';
+import { AIAnalysisPanel } from '@/components/chart-analysis/AIAnalysisPanel';
 import { useChartAnalysis } from '@/hooks/useChartAnalysis';
 
 function ChartAnalysisInner() {
@@ -21,21 +27,30 @@ function ChartAnalysisInner() {
     }
   }, [symbolParam]);
 
-  // Charts removed — keep live data fetch via useChartAnalysis if needed, but no chart polling
-  // Realtime data is handled via central_feed WS (1s) and MarketCards; chart polling disabled
-
   const handleSelect = (sym: string) => {
     setSelected(sym);
+    setActiveTf('15m');
     router.push(`/chart-analysis?symbol=${encodeURIComponent(sym)}`);
     fetchAnalysis(sym);
   };
 
+  const handleTfChange = (tf: string) => {
+    setActiveTf(tf);
+    if (selected) fetchAnalysis(selected, tf);
+  };
+
   return (
     <div className="space-y-4">
+      {/* Refined navigation bar — from scratch */}
+      <ChartNavigationBar activeTf={activeTf} onTfChange={handleTfChange} data={data} symbol={selected} loading={loading} />
+
       <div className="bg-card border border-border rounded-lg p-4">
-        <h1 className="text-lg font-bold mb-3">Chart Analysis & Multi-Timeframe</h1>
+        <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-primary animate-pulse" aria-hidden />
+          Instrument
+        </h2>
         <InstrumentSearch onSelect={handleSelect} initialQuery={selected} />
-        {selected && <p className="text-xs text-muted-foreground mt-2">Selected: <b>{selected}</b> — preserved in URL</p>}
+        {selected && <p className="text-xs text-muted-foreground mt-2">Selected: <b>{selected}</b> — {activeTf} • preserved in URL</p>}
       </div>
 
       {loading && <div className="bg-card border border-border rounded p-8 text-center text-muted-foreground">Loading analysis for {selected}...</div>}
@@ -43,19 +58,16 @@ function ChartAnalysisInner() {
       {data && (
         <>
           <InstrumentHeader data={data} />
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-900 text-sm">
-            Charts removed — use TradingView for candles. Realtime data fetch active via Groww Feed (1s) + Binance WS.
-          </div>
-          <div className="bg-card border border-border rounded-lg p-4 space-y-2">
-            <h3 className="font-semibold mb-2">Data Freshness & Realtime Status</h3>
-            <p className="text-sm">{data.freshness} • Updated {data.data_age_seconds}s ago • Source: {data.exchange} • Asset: {data.asset_class} • Generated {new Date(data.generated_at).toLocaleTimeString()}</p>
-            <p className="text-xs text-muted-foreground">Data timestamp: {data.data_timestamp ? new Date(data.data_timestamp).toLocaleString() : '—'} • Realtime via central_feed WS 1s (Groww licensed) + Binance WS</p>
-          </div>
+          <TechnicalAnalysisPanel data={data} timeframe={activeTf} />
+          <MultiTimeframePanel data={data} />
+          <FNOContextPanel data={data} />
+          <HistoricalSimilarity data={data} timeframe={activeTf} />
+          <AIAnalysisPanel data={data} />
         </>
       )}
       {!data && !loading && !selected && (
         <div className="bg-card border border-border rounded-lg p-8 text-center text-muted-foreground">
-          Search for an instrument above to load its chart and multi-timeframe analysis.
+          Search for an instrument above to load its technical & multi-timeframe analysis.
         </div>
       )}
     </div>
