@@ -211,7 +211,6 @@ class GrowwProvider(MarketDataProvider):
             "x-client-platform-version": "1.5.0",
         }
         # For indices, Feed is primary licensed source — try Feed cache first before REST
-        # Groww REST /live-data/quote often 404 for indices (NIFTY is not a CASH trading_symbol)
         is_index = symbol in getattr(self, "_index_feed_map", {})
         if is_index:
             # Try Feed cache if available (populated by NATS after ~1s)
@@ -234,12 +233,61 @@ class GrowwProvider(MarketDataProvider):
                                     }
                 except Exception:
                     pass
-            # Fallback for indices: try Groww LTP bulk endpoint (sometimes supports indices)
+            # Fallback for indices: try Groww SDK get_quote/get_ltp with multiple symbol variants (more reliable than raw REST)
+            try:
+                from growwapi import GrowwAPI as _GrowwAPI  # type: ignore
+                _api = _GrowwAPI(token)  # type: ignore
+                for _sym in [trading_symbol, symbol, symbol.replace(" ", ""), "NIFTY" if symbol=="NIFTY 50" else None, "BANKNIFTY" if symbol=="BANKNIFTY" else None]:
+                    if not _sym:
+                        continue
+                    try:
+                        _resp = _api.get_quote(trading_symbol=_sym, exchange=exchange, segment="CASH")  # type: ignore
+                        _payload = _resp.get("payload") or _resp if isinstance(_resp, dict) else _resp
+                        if isinstance(_payload, dict) and ("last_price" in _payload or "ltp" in _payload):
+                            return {
+                                "ltp": float(_payload.get("last_price") or _payload.get("ltp") or 0),
+                                "open": float(_payload.get("ohlc_open") or 0) or None,
+                                "high": float(_payload.get("high_trade_range") or _payload.get("high") or 0) or None,
+                                "low": float(_payload.get("low_trade_range") or _payload.get("low") or 0) or None,
+                                "prev": float(_payload.get("previous_close") or _payload.get("close") or 0) or None,
+                                "volume": int(_payload.get("volume") or 0),
+                                "oi": int(_payload.get("open_interest") or 0) if _payload.get("open_interest") is not None else None,
+                            }
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            # Also try LTP bulk endpoint via SDK
+            try:
+                from growwapi import GrowwAPI as _GrowwAPI2  # type: ignore
+                _api2 = _GrowwAPI2(token)  # type: ignore
+                idx_map2 = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
+                ltp_sym2 = idx_map2.get(symbol, f"NSE_{trading_symbol}")
+                try:
+                    _ltp_resp = _api2.get_ltp(exchange_trading_symbols=(ltp_sym2,), segment="CASH")  # type: ignore
+                    _payload2 = _ltp_resp.get("payload") or _ltp_resp if isinstance(_ltp_resp, dict) else _ltp_resp
+                    def _find_ltp2(obj):
+                        if isinstance(obj, dict):
+                            if "ltp" in obj and isinstance(obj["ltp"], (int, float)):
+                                return float(obj["ltp"])
+                            if "last_price" in obj:
+                                return float(obj["last_price"])
+                            for v in obj.values():
+                                r = _find_ltp2(v)
+                                if r is not None:
+                                    return r
+                        return None
+                    _ltp_val2 = _find_ltp2(_payload2)
+                    if _ltp_val2 and _ltp_val2 > 0:
+                        return {"ltp": float(_ltp_val2), "open": None, "high": None, "low": None, "prev": None, "volume": 0, "oi": None}
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # Fallback for indices: try Groww LTP bulk endpoint via raw REST (sometimes supports indices)
             try:
                 import httpx as _httpx2
                 async with _httpx2.AsyncClient(timeout=5.0) as _client:
-                    # LTP endpoint: GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_NIFTY
-                    # Try common index symbol encodings
                     idx_map = {"NIFTY 50": "NSE_NIFTY", "BANKNIFTY": "NSE_BANKNIFTY", "FINNIFTY": "NSE_FINNIFTY", "SENSEX": "BSE_SENSEX", "INDIA VIX": "NSE_INDIAVIX"}
                     ltp_sym = idx_map.get(symbol, f"NSE_{trading_symbol}")
                     ltp_url = f"{self.API_BASE}/live-data/ltp"
@@ -248,7 +296,6 @@ class GrowwProvider(MarketDataProvider):
                     if ltp_resp.status_code == 200:
                         lj = ltp_resp.json()
                         payload = lj.get("payload") or lj
-                        # payload shape: {ltp: {NSE: {CASH: {NIFTY: {ltp: ...}}}}} or {NSE_NIFTY: {ltp: ...}}
                         def _find_ltp(obj):
                             if isinstance(obj, dict):
                                 if "ltp" in obj and isinstance(obj["ltp"], (int, float)):
