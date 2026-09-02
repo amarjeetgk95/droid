@@ -94,7 +94,6 @@ export function HiFractalAnalogs({ defaultSymbol = 'NIFTY' }: Props) {
             <option value="NIFTY">NIFTY 50</option>
             <option value="BANKNIFTY">BANKNIFTY</option>
             <option value="SENSEX">SENSEX</option>
-            <option value="BTCUSD">BTC/USD</option>
           </select>
 
           {/* Timeframe Select */}

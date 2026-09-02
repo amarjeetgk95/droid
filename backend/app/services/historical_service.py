@@ -20,7 +20,7 @@ class HistoricalService:
 
     def __init__(self, market_service: MarketService | None = None):
         self.market_service = market_service or MarketService()
-        self._watchlist: set[str] = {"NIFTY 50", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIA VIX"}
+        self._watchlist: set[str] = {"NIFTY 50", "BANKNIFTY", "SENSEX"}
 
     async def _get_db_session(self):
         """Get database session if available."""

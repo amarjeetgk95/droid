@@ -7,16 +7,12 @@ module (kept in sync with app.instruments.registry.CHART_ANALYSIS_UNIVERSE).
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# §1 — Supported Derivative Universe (7 only)
+# §1 — Supported Derivative Universe (NIFTY, BANKNIFTY, SENSEX only)
 # ---------------------------------------------------------------------------
 HPI_DERIVATIVES: dict[str, dict] = {
     "NIFTY":     {"display_name": "NIFTY 50",  "asset_class": "INDEX",  "exchange": "NSE"},
     "BANKNIFTY": {"display_name": "BANKNIFTY", "asset_class": "INDEX",  "exchange": "NSE"},
-    "FINNIFTY":  {"display_name": "FINNIFTY",  "asset_class": "INDEX",  "exchange": "NSE"},
     "SENSEX":    {"display_name": "SENSEX",    "asset_class": "INDEX",  "exchange": "BSE"},
-    "BTC":       {"display_name": "Bitcoin",   "asset_class": "CRYPTO", "exchange": "BINANCE"},
-    "ETH":       {"display_name": "Ethereum",  "asset_class": "CRYPTO", "exchange": "BINANCE"},
-    "SOL":       {"display_name": "Solana",    "asset_class": "CRYPTO", "exchange": "BINANCE"},
 }
 
 HPI_UNIVERSE: list[str] = list(HPI_DERIVATIVES.keys())

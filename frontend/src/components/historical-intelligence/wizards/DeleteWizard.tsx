@@ -56,12 +56,16 @@ export function DeleteWizard({ symbol, derivative, onClose, onPreview, onConfirm
 
   const next = async () => {
     setError(null);
-    if (step === 'scope' && categories.length === 0) {
-      setError('Pick at least one dataset.');
-      return;
-    }
-    if (step === 'scope' && rangeType === 'custom' && (!startDate || !endDate)) {
-      setError('Provide both start and end dates for a custom range.');
+    if (step === 'scope') {
+      if (categories.length === 0) {
+        setError('Pick at least one dataset.');
+        return;
+      }
+      if (rangeType === 'custom' && (!startDate || !endDate)) {
+        setError('Provide both start and end dates for a custom range.');
+        return;
+      }
+      setStep('impact');
       return;
     }
     if (step === 'impact') {

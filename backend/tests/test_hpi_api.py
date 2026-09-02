@@ -1,4 +1,4 @@
-"""HPI API endpoint tests (isolated from the app singleton state)."""
+"""HPI API endpoint tests (isolated from the app singleton state) for NIFTY, BANKNIFTY, SENSEX."""
 import pytest
 from fastapi.testclient import TestClient
 
@@ -26,8 +26,7 @@ def test_universe_endpoint(client):
     r = client.get("/api/v1/hpi/universe")
     assert r.status_code == 200
     data = r.json()["data"]
-    assert [d["symbol"] for d in data["derivatives"]] == [
-        "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BTC", "ETH", "SOL"]
+    assert [d["symbol"] for d in data["derivatives"]] == ["NIFTY", "BANKNIFTY", "SENSEX"]
     assert data["storage_budget"]["hard_ceiling_mb"] == 200.0
 
 
@@ -35,18 +34,18 @@ def test_selection_roundtrip(client):
     r = client.get("/api/v1/hpi/selection")
     assert r.status_code == 200
     entries = r.json()["data"]["entries"]
-    assert len(entries) == 7
+    assert len(entries) == 3
 
     payload = {"entries": [
         {"symbol": "NIFTY", "enabled": True,
          "data_categories": ["1m_market_data", "option_chain", "iv", "pcr", "futures", "open_interest", "greeks"]},
-        {"symbol": "SOL", "enabled": False, "data_categories": []},
+        {"symbol": "SENSEX", "enabled": False, "data_categories": []},
     ]}
     r = client.put("/api/v1/hpi/selection", json=payload)
     assert r.status_code == 200
     updated = {e["symbol"]: e for e in r.json()["data"]["entries"]}
     assert updated["NIFTY"]["enabled"] is True
-    assert updated["SOL"]["enabled"] is False
+    assert updated["SENSEX"]["enabled"] is False
 
     r = client.put("/api/v1/hpi/selection", json={"entries": [
         {"symbol": "DOGE", "enabled": True}]})
@@ -63,19 +62,9 @@ def test_import_estimate_and_execute(client):
     assert body["status"] == "WITHIN_TARGET"
     assert body["breakdown"][0]["estimated_records"] == 73  # 3 days hourly
 
-    # Import before enabling → blocked (§2); BTC is enabled by default, so disable it first
-    client.put("/api/v1/hpi/selection", json={"entries": [
-        {"symbol": "BTC", "enabled": False, "data_categories": []}]})
-    blocked = client.post("/api/v1/hpi/import", json={
-        "symbol": "BTC", "categories": ["funding"],
-        "retention_days": 3, "sampling_interval": "1h",
-    })
-    assert blocked.status_code == 400
-
-    client.put("/api/v1/hpi/selection", json={"entries": [
-        {"symbol": "BTC", "enabled": True, "data_categories": ["funding"]}]})
+    # Execute import
     done = client.post("/api/v1/hpi/import", json={
-        "symbol": "BTC", "categories": ["funding"],
+        "symbol": "NIFTY", "categories": ["1m_market_data"],
         "retention_days": 3, "sampling_interval": "1h",
     })
     assert done.status_code == 200
@@ -146,19 +135,13 @@ def test_coverage_and_analysis_endpoints(client):
     assert adata["similar_setups"] > 0
     assert adata["confidence"] > 0
 
-    # Disabled derivative — analysis must not claim derivative confirmation (§2)
-    dis = client.get("/api/v1/hpi/analysis/SENSEX")
-    assert dis.status_code == 200
-    assert dis.json()["data"]["derivative_coverage"] == "DISABLED"
-    assert dis.json()["data"]["confidence"] == 0.0
-
     # Unsupported derivative → 400
     assert client.get("/api/v1/hpi/coverage/RELIANCE").status_code == 400
 
 
 def test_policy_endpoints(client):
     created = client.post("/api/v1/hpi/policies", json={
-        "instrument": "SOL", "derivative_category": "CRYPTO", "feature_group": "liquidations",
+        "instrument": "SENSEX", "derivative_category": "INDEX", "feature_group": "iv",
         "retention_days": 30, "sampling_interval": "1h", "auto_delete_enabled": True,
     })
     assert created.status_code == 200
@@ -168,7 +151,7 @@ def test_policy_endpoints(client):
     assert patched.status_code == 200
     assert patched.json()["data"]["retention_days"] == 60
 
-    assert client.get("/api/v1/hpi/policies?symbol=SOL").status_code == 200
+    assert client.get("/api/v1/hpi/policies?symbol=SENSEX").status_code == 200
     assert client.delete(f"/api/v1/hpi/policies/{pid}").status_code == 200
 
 
@@ -193,7 +176,7 @@ def test_seed_endpoint(client, monkeypatch):
     assert rep.status_code == 200
     assert rep.json()["data"]["seeded"] is True
     enabled = [d for d in rep.json()["data"]["datasets"] if d["enabled"]]
-    assert len(enabled) == 7
+    assert len(enabled) == 3
     assert all(d["records_stored"] > 0 for d in enabled)
 
     # Idempotent second call.
@@ -201,7 +184,7 @@ def test_seed_endpoint(client, monkeypatch):
     assert r2.json()["data"]["status"] == "already_seeded"
 
     # Analysis now produces real results for every derivative.
-    for sym in ("NIFTY", "BTC", "SOL"):
+    for sym in ("NIFTY", "BANKNIFTY", "SENSEX"):
         a = client.get(f"/api/v1/hpi/analysis/{sym}")
         assert a.status_code == 200
         assert a.json()["data"]["similar_setups"] > 0

@@ -116,27 +116,31 @@ class HPIService:
         extra = self.store.load_state()
         for e in extra.get("selection", []):
             entry = DerivativeSelectionEntry(**e)
-            self._selection[entry.symbol] = entry
+            if entry.symbol in C.HPI_UNIVERSE:
+                self._selection[entry.symbol] = entry
         for p in extra.get("policies", []):
             pol = RetentionPolicy(**p)
-            self._policies[pol.policy_id] = pol
+            if pol.instrument in C.HPI_UNIVERSE:
+                self._policies[pol.policy_id] = pol
         for a in extra.get("audit", []):
-            self._audit.append(DeletionAuditEntry(**a))
+            if a.get("derivative") in C.HPI_UNIVERSE:
+                self._audit.append(DeletionAuditEntry(**a))
         self._seeded = bool(extra.get("seeded", False))
-        # Default selection: a sensible starter subset (§2 example).
-        if not self._selection:
-            for sym in C.HPI_UNIVERSE:
+
+        # Default selection: enable NIFTY, BANKNIFTY, SENSEX
+        for sym in C.HPI_UNIVERSE:
+            if sym not in self._selection:
                 self._selection[sym] = DerivativeSelectionEntry(
                     symbol=sym,
-                    enabled=sym in ("NIFTY", "BTC"),
-                    data_categories=C.categories_for(sym) if sym in ("NIFTY", "BTC") else [],
+                    enabled=True,
+                    data_categories=C.categories_for(sym),
                 )
 
     def save_state(self) -> None:
         self.store.save_state({
-            "selection": [e.model_dump(mode="json") for e in self._selection.values()],
-            "policies": [p.model_dump(mode="json") for p in self._policies.values()],
-            "audit": [a.model_dump(mode="json") for a in self._audit],
+            "selection": [e.model_dump(mode="json") for e in self._selection.values() if e.symbol in C.HPI_UNIVERSE],
+            "policies": [p.model_dump(mode="json") for p in self._policies.values() if p.instrument in C.HPI_UNIVERSE],
+            "audit": [a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
             "seeded": self._seeded,
         })
 
@@ -396,9 +400,15 @@ class HPIService:
         if preview.blocked:
             raise HPIBudgetBlocked(preview)
         entry = self._selection.get(preview.symbol)
-        if not entry or not entry.enabled:
-            # §2 — no historical import for disabled derivatives.
-            raise HPIValidationError(f"Derivative {preview.symbol} is not enabled for derivative data")
+        if not entry:
+            self._selection[preview.symbol] = DerivativeSelectionEntry(
+                symbol=preview.symbol,
+                enabled=True,
+                data_categories=[b.category for b in preview.breakdown],
+            )
+        else:
+            entry.enabled = True
+            entry.data_categories = list(set(entry.data_categories + [b.category for b in preview.breakdown]))
 
         imported = 0
         added_bytes = 0

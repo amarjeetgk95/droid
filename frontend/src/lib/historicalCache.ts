@@ -258,7 +258,7 @@ export async function getStorageStats(): Promise<StorageReport> {
         resolve({
           totalBars: total,
           estimatedMb: estMb,
-          symbolsTracked: ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD'],
+          symbolsTracked: ['NIFTY', 'BANKNIFTY', 'SENSEX'],
           lastSyncAt: Date.now(),
           dbVersion: DB_VERSION,
           integrityOk: true,

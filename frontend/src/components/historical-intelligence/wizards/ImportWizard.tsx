@@ -66,8 +66,12 @@ export function ImportWizard({ symbol, derivative, initialCategories, initialSam
 
   const next = async () => {
     setError(null);
-    if (step === 'scope' && categories.length === 0) {
-      setError('Pick at least one data category.');
+    if (step === 'scope') {
+      if (categories.length === 0) {
+        setError('Pick at least one data category.');
+        return;
+      }
+      setStep('period');
       return;
     }
     if (step === 'period') {

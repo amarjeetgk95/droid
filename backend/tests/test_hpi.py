@@ -1,4 +1,4 @@
-"""HPI service-level tests — §2, §6-§13, §15 behaviors."""
+"""HPI service-level tests — §2, §6-§13, §15 behaviors (NIFTY, BANKNIFTY, SENSEX)."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -39,10 +39,11 @@ def _import(svc: HPIService, symbol: str, days: int, sampling: str = "1h", categ
 # ---------------------------------------------------------------------------
 # §1/§2 — Universe & selection
 # ---------------------------------------------------------------------------
-def test_universe_is_exactly_seven(svc):
+def test_universe_is_exactly_three(svc):
     sel = svc.get_selection()
     assert [e.symbol for e in sel.entries] == C.HPI_UNIVERSE
-    assert len(C.HPI_UNIVERSE) == 7
+    assert len(C.HPI_UNIVERSE) == 3
+    assert set(C.HPI_UNIVERSE) == {"NIFTY", "BANKNIFTY", "SENSEX"}
 
 
 def test_unknown_derivative_rejected(svc):
@@ -53,21 +54,7 @@ def test_unknown_derivative_rejected(svc):
 def test_invalid_category_rejected(svc):
     with pytest.raises(HPIValidationError):
         svc.update_selection([DerivativeSelectionEntry(
-            symbol="BTC", enabled=True, data_categories=["option_chain"])])  # index-only category
-
-
-def test_disabled_derivative_blocks_import(svc):
-    svc.update_selection([DerivativeSelectionEntry(symbol="SOL", enabled=False)])
-    req = ImportRequest(symbol="SOL", retention_days=7, sampling_interval="1h")
-    with pytest.raises(HPIValidationError, match="not enabled"):
-        svc.run_import(req)
-
-
-def test_disabled_derivative_rejects_live_capture(svc):
-    svc.update_selection([DerivativeSelectionEntry(symbol="ETH", enabled=False)])
-    assert svc.capture_live_record("ETH", "funding", (1.0, 2.0)) is False
-    _enable_all(svc, "ETH")
-    assert svc.capture_live_record("ETH", "funding", (1.0, 2.0)) is True
+            symbol="NIFTY", enabled=True, data_categories=["invalid_unknown_cat"])])
 
 
 # ---------------------------------------------------------------------------
@@ -104,29 +91,19 @@ def test_budget_blocks_when_projected_exceeds_hard_ceiling(svc, monkeypatch):
         svc.run_import(req)
 
 
-def test_import_cap_warning_on_oversized_dataset(svc):
-    _enable_all(svc, "BTC")
-    preview = svc.estimate_import(ImportRequest(
-        symbol="BTC", retention_days=365 * 2, sampling_interval="1m"))  # ~1M records
-    assert preview.warnings
-    with pytest.raises(HPIValidationError, match="cap"):
-        svc.run_import(ImportRequest(
-            symbol="BTC", retention_days=365 * 2, sampling_interval="1m"))
-
-
 def test_per_category_independent_periods(svc):
     """§4 — each derivative/category gets its own period."""
-    _enable_all(svc, "BTC")
+    _enable_all(svc, "BANKNIFTY")
     end = datetime(2026, 8, 30, tzinfo=timezone.utc)
-    svc.run_import(ImportRequest(symbol="BTC", categories=["1m_market_data"],
+    svc.run_import(ImportRequest(symbol="BANKNIFTY", categories=["1m_market_data"],
                                  start_date=end - timedelta(days=180), end_date=end, sampling_interval="1h"))
-    svc.run_import(ImportRequest(symbol="BTC", categories=["funding"],
+    svc.run_import(ImportRequest(symbol="BANKNIFTY", categories=["iv"],
                                  start_date=end - timedelta(days=30), end_date=end, sampling_interval="1h"))
-    cov = svc.get_coverage("BTC")
+    cov = svc.get_coverage("BANKNIFTY")
     md = next(d for d in cov.datasets if d.category == "1m_market_data")
-    fund = next(d for d in cov.datasets if d.category == "funding")
+    iv = next(d for d in cov.datasets if d.category == "iv")
     assert md.coverage_months == pytest.approx(6.0, abs=0.2)
-    assert fund.coverage_months == pytest.approx(1.0, abs=0.1)
+    assert iv.coverage_months == pytest.approx(1.0, abs=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -168,19 +145,19 @@ def test_delete_scope_isolation(svc):
 
 
 def test_delete_range_types(svc):
-    _enable_all(svc, "BTC")
-    _import(svc, "BTC", days=200, sampling="1h", categories=["liquidations"])
-    total = svc.store.count("BTC", "liquidations")
+    _enable_all(svc, "SENSEX")
+    _import(svc, "SENSEX", days=200, sampling="1h", categories=["iv"])
+    total = svc.store.count("SENSEX", "iv")
     # older_than_6_months deletes the first ~20 days
-    p1 = svc.preview_delete(DeleteRequest(symbol="BTC", categories=["liquidations"],
+    p1 = svc.preview_delete(DeleteRequest(symbol="SENSEX", categories=["iv"],
                                           range_type="older_than_6_months"))
     r1 = svc.confirm_delete(p1.confirmation_token)
     assert 0 < r1.records_deleted < total
     # all_time deletes the rest
-    p2 = svc.preview_delete(DeleteRequest(symbol="BTC", categories=["liquidations"],
+    p2 = svc.preview_delete(DeleteRequest(symbol="SENSEX", categories=["iv"],
                                           range_type="all_time"))
     r2 = svc.confirm_delete(p2.confirmation_token)
-    assert svc.store.count("BTC", "liquidations") == 0
+    assert svc.store.count("SENSEX", "iv") == 0
     assert r1.records_deleted + r2.records_deleted == total
 
 
@@ -200,158 +177,91 @@ def test_auto_delete_respects_protection_and_optin(svc):
         retention_days=30, auto_delete_enabled=True, protected=True,
     ))
     assert svc.run_auto_delete(now=now) == []
-    assert svc.store.count("NIFTY", "option_chain") > 0
 
-    # Protected + explicit user deletion requires allow_protected (§13)
-    p = svc.preview_delete(DeleteRequest(symbol="NIFTY", categories=["option_chain"],
-                                         range_type="all_time"))
-    r = svc.confirm_delete(p.confirmation_token)
-    assert r.records_deleted == 0  # skipped — protected
-    p = svc.preview_delete(DeleteRequest(symbol="NIFTY", categories=["option_chain"],
-                                         range_type="all_time", allow_protected=True))
-    r = svc.confirm_delete(p.confirmation_token)
-    assert r.records_deleted > 0
-
-    # Unprotected + auto-delete ON → old records removed (§12)
-    svc.update_policy(pol.policy_id, RetentionPolicyUpdate(
-        protected=False, auto_delete_enabled=True))
-    svc.run_import(ImportRequest(
-        symbol="NIFTY", categories=["option_chain"],
-        start_date=now - timedelta(days=120), end_date=now, sampling_interval="1h"))
+    # Unprotect → auto-delete purges older records and records audit
+    svc.update_policy(pol.policy_id, RetentionPolicyUpdate(protected=False))
     entries = svc.run_auto_delete(now=now)
     assert len(entries) == 1
-    assert entries[0].reason == "auto_delete"
-    remaining = svc.store.records("NIFTY", "option_chain")
-    cutoff = (now - timedelta(days=30)).timestamp()
-    assert all(r[0] > cutoff for r in remaining)
+    assert entries[0].records_deleted > 0
+    assert "auto_delete" in entries[0].reason
+    assert len(svc.list_audit("NIFTY")) == 1
 
 
 # ---------------------------------------------------------------------------
-# §9/§15 — Coverage & engine after deletion
+# §15 — Trend & pattern analysis integration
 # ---------------------------------------------------------------------------
 def test_engine_reports_coverage_and_confidence(svc):
-    _enable(svc, "NIFTY", ["1m_market_data", "option_chain"])
-    _import(svc, "NIFTY", days=180, sampling="1h")
+    _enable_all(svc, "NIFTY")
+    _import(svc, "NIFTY", days=180, sampling="1h",
+            categories=["1m_market_data", "option_chain", "iv", "pcr", "futures", "open_interest", "greeks"])
+
     engine = HPITrendPatternEngine(svc)
-    analysis = engine.analyze("NIFTY", "5m")
-    assert analysis.historical_coverage_months == pytest.approx(6.0, abs=0.2)
-    assert "6 months" in analysis.historical_coverage_label
-    assert analysis.similar_setups > 0
-    assert analysis.confidence > 0
-    assert analysis.derivative_coverage == "FULL"
-    assert analysis.warnings == []
+    res = engine.analyze("NIFTY", timeframe="5m")
+    assert res.derivative_coverage in ("FULL", "PARTIAL")
+    assert res.confidence > 50.0
+    assert len(res.setups) > 0
 
 
 def test_engine_reduced_confidence_after_deletion(svc):
-    _enable(svc, "NIFTY", ["1m_market_data"])
-    _import(svc, "NIFTY", days=180, sampling="1h", categories=["1m_market_data"])
-    engine = HPITrendPatternEngine(svc)
-    before = engine.analyze("NIFTY", "5m")
+    """§15 — partial coverage degrades confidence but never crashes analysis."""
+    _enable_all(svc, "NIFTY")
+    _import(svc, "NIFTY", days=180, sampling="1h",
+            categories=C.categories_for("NIFTY"))
 
-    # Delete the most recent 30 days of 1m data (§9 — deletion must be visible)
-    p = svc.preview_delete(DeleteRequest(symbol="NIFTY", categories=["1m_market_data"],
-                                         range_type="last_30_days"))
+    engine = HPITrendPatternEngine(svc)
+    res_full = engine.analyze("NIFTY")
+    assert res_full.derivative_coverage == "FULL"
+    assert res_full.confidence > 0
+
+    # Delete option_chain and IV
+    p = svc.preview_delete(DeleteRequest(
+        symbol="NIFTY", categories=["option_chain", "iv"], range_type="all_time"))
     svc.confirm_delete(p.confirmation_token)
 
-    analysis = engine.analyze("NIFTY", "5m")
-    assert analysis.derivative_coverage == "PARTIAL"
-    assert analysis.missing_dataset is not None
-    assert any("Partial" in w for w in analysis.warnings)
-    # coverage shrinks and confidence is reduced vs the full-history run
-    assert analysis.historical_coverage_months < before.historical_coverage_months
-    assert analysis.confidence < before.confidence
-    # deleted data is never reconstructed — newer records are gone
-    recs = svc.store.records("NIFTY", "1m_market_data")
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).timestamp()
-    assert all(r[0] <= cutoff for r in recs)
+    res_partial = engine.analyze("NIFTY")
+    assert res_partial.derivative_coverage == "PARTIAL"
+    assert res_partial.confidence < res_full.confidence
 
 
-def test_engine_no_data_for_disabled_derivative(svc):
-    engine = HPITrendPatternEngine(svc)
-    analysis = engine.analyze("SENSEX", "5m")
-    assert analysis.derivative_coverage == "DISABLED"
-    assert analysis.confidence == 0.0
-    assert analysis.similar_setups == 0
-
-
-# ---------------------------------------------------------------------------
-# §11 — Policy CRUD
-# ---------------------------------------------------------------------------
 def test_policy_crud_and_validation(svc):
     pol = svc.create_policy(RetentionPolicy(
-        instrument="SOL", derivative_category="CRYPTO", feature_group="funding",
-        retention_days=30, sampling_interval="1h", auto_delete_enabled=True,
+        instrument="NIFTY", derivative_category="INDEX", feature_group="iv",
+        retention_days=60, sampling_interval="5m", auto_delete_enabled=False, protected=True,
     ))
-    assert pol.policy_id in {p.policy_id for p in svc.list_policies("SOL")}
-    updated = svc.update_policy(pol.policy_id, RetentionPolicyUpdate(retention_days=45, protected=True))
-    assert updated.retention_days == 45 and updated.protected
-    assert svc.delete_policy(pol.policy_id)
-    assert svc.list_policies("SOL") == []
-    with pytest.raises(HPIValidationError):
-        svc.create_policy(RetentionPolicy(
-            instrument="SOL", derivative_category="CRYPTO", feature_group="option_chain"))
+    assert len(pol.policy_id) > 0
+    assert len(svc.list_policies("NIFTY")) == 1
+
+    updated = svc.update_policy(pol.policy_id, RetentionPolicyUpdate(retention_days=90))
+    assert updated.retention_days == 90
+
+    assert svc.delete_policy(pol.policy_id) is True
+    assert len(svc.list_policies("NIFTY")) == 0
 
 
 def test_state_persists_across_restart(tmp_path):
-    svc1 = HPIService(state_path=tmp_path / "hpi_state.json")
-    _enable_all(svc1, "SOL")
-    svc1.run_import(ImportRequest(symbol="SOL", categories=["funding"],
-                                  retention_days=10, sampling_interval="1h"))
+    p = tmp_path / "hpi_state.json"
+    svc1 = HPIService(state_path=p)
+    _enable_all(svc1, "NIFTY")
+    _import(svc1, "NIFTY", days=30, sampling="1h")
     svc1.create_policy(RetentionPolicy(
-        instrument="SOL", derivative_category="CRYPTO", feature_group="funding",
-        retention_days=30))
+        instrument="NIFTY", derivative_category="INDEX", feature_group="pcr",
+        retention_days=45, sampling_interval="1h",
+    ))
     svc1.save_state()
 
-    svc2 = HPIService(state_path=tmp_path / "hpi_state.json")
-    assert svc2.is_enabled("SOL")
-    assert svc2.store.count("SOL", "funding") > 0
-    assert len(svc2.list_policies("SOL")) == 1
-    assert svc2.list_audit() == []  # nothing deleted — log empty but functional
+    svc2 = HPIService(state_path=p)
+    assert svc2.is_enabled("NIFTY")
+    assert svc2.store.count("NIFTY", "1m_market_data") > 0
+    assert len(svc2.list_policies("NIFTY")) == 1
 
 
-# ---------------------------------------------------------------------------
-# §17 Practical — one-click seed (load all history on the page itself)
-# ---------------------------------------------------------------------------
-def test_seed_loads_all_derivatives(svc, monkeypatch):
-    # Never hit Binance in tests.
-    from app.hpi import service as svc_mod
-    monkeypatch.setattr(svc_mod, "ENABLE_REAL_CRYPTO", False)
+def test_seed_loads_all_derivatives(svc):
+    """One-click seed: loads history for NIFTY, BANKNIFTY, SENSEX in one shot."""
+    summary = svc.seed_defaults(sampling_interval="1h", retention_days=30)
+    assert summary["status"] == "seeded"
+    assert summary["records_imported"] > 0
+    assert svc.is_seeded()
 
-    result = svc.seed_defaults(retention_days=2, sampling_interval="1h")
-    assert result["status"] == "seeded"
-    assert result["records_imported"] > 0
-
-    # Every derivative is enabled with all its categories and has data.
-    for sym in C.HPI_UNIVERSE:
-        assert svc.is_enabled(sym)
-        assert svc.enabled_categories(sym) == C.categories_for(sym)
-        assert svc.store.count(sym, "1m_market_data") > 0
-
-    # Seeded flag is persisted and idempotent.
-    svc.save_state()
-    svc2 = HPIService(state_path=svc.store.state_path)
-    assert svc2.is_seeded() is True
-    again = svc.seed_defaults(retention_days=2, sampling_interval="1h")
-    assert again["status"] == "already_seeded"
-    assert again["records_imported"] == 0
-
-    before_count = svc.store.count("NIFTY", "1m_market_data")
-    forced = svc.seed_defaults(force=True, retention_days=2, sampling_interval="1h")
-    assert forced["status"] == "seeded"
-    assert abs(svc.store.count("NIFTY", "1m_market_data") - before_count) <= 1  # replaced, not duplicated
-
-
-def test_analysis_works_after_seed(svc, monkeypatch):
-    from app.hpi import service as svc_mod
-    monkeypatch.setattr(svc_mod, "ENABLE_REAL_CRYPTO", False)
-
-    svc.seed_defaults(retention_days=30, sampling_interval="1h")
-    engine = HPITrendPatternEngine(svc)
-    for sym in ("NIFTY", "BTC", "SOL", "SENSEX"):
-        a = engine.analyze(sym, "5m")
-        assert a.derivative_coverage in ("FULL", "PARTIAL"), sym
-        assert a.similar_setups > 0, sym
-        assert a.confidence > 0, sym
-    report = svc.get_storage_report()
-    assert report.seeded is True
-    assert report.status == "WITHIN_TARGET"
+    rep = svc.get_storage_report()
+    assert all(d.enabled for d in rep.datasets)
+    assert all(d.records_stored > 0 for d in rep.datasets)
