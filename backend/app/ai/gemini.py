@@ -1,8 +1,11 @@
 import json
 import httpx
 from datetime import datetime, timezone
+from typing import Any, AsyncGenerator
+
 from app.ai.base import BaseLLMProvider
-from app.models.ai import AIInsightResponse, MarketBias
+from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
+from app.ai.streaming import ReasoningExtractor
 from app.core.config import settings
 import structlog
 
@@ -10,10 +13,9 @@ logger = structlog.get_logger()
 
 
 class GeminiProvider(BaseLLMProvider):
-    """Google Gemini – strict, no mock fallback. Fails fast with clear errors."""
+    """Google Gemini – strict, no mock fallback with streaming support."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        # Keys are injected per-request from frontend settings; fallback to server env only if explicitly set
         self.api_key = (api_key or "").strip() or getattr(settings, "gemini_api_key", "") or ""
         self.api_key = self.api_key.strip()
         self.model = (model or "gemini-2.0-flash").strip()
@@ -52,8 +54,7 @@ class GeminiProvider(BaseLLMProvider):
     async def analyze(self, market_state: dict, task: str) -> dict:
         from app.ai.prompt_builder import build_system_prompt
         system_prompt = build_system_prompt()
-        import json as _j
-        user_prompt = f"Task: {task}\nMarketState: {_j.dumps(market_state, default=str)}"
+        user_prompt = f"Task: {task}\nMarketState: {json.dumps(market_state, default=str)}"
         insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
         return insight.model_dump(mode="json")
 
@@ -64,13 +65,12 @@ class GeminiProvider(BaseLLMProvider):
         user_prompt: str,
     ) -> AIInsightResponse:
         if not self.api_key:
-            raise ValueError("Gemini API key missing. Add your AIza... key in Terminal Configuration -> AI Engine -> Google Gemini.")
+            raise ValueError("Gemini API key missing. Add your AIza... key in Settings -> AI Engine -> Google Gemini.")
         if not self.api_key.startswith("AIza"):
             raise ValueError(f"Gemini API key looks invalid (must start with 'AIza'). Got: {self.api_key[:12]}...")
         if not self.model:
             raise ValueError("Gemini model not selected.")
 
-        # Map friendly names to API model IDs if needed
         model_id = self.model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={self.api_key}"
         payload = {
@@ -90,12 +90,11 @@ class GeminiProvider(BaseLLMProvider):
                     data = resp.json()
                     try:
                         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    except (KeyError, IndexError) as e:
+                    except (KeyError, IndexError):
                         raise ValueError(f"Gemini returned unexpected shape: {json.dumps(data)[:400]}")
                     parsed = json.loads(raw_text)
-                    # Validate required fields
                     if "market_bias" not in parsed or "executive_summary" not in parsed:
-                        raise ValueError(f"Gemini JSON missing required fields. Got keys: {list(parsed.keys())}. Raw: {raw_text[:300]}")
+                        raise ValueError(f"Gemini JSON missing required fields. Got keys: {list(parsed.keys())}.")
                     return AIInsightResponse(
                         symbol=symbol,
                         timestamp=datetime.now(timezone.utc),
@@ -115,12 +114,103 @@ class GeminiProvider(BaseLLMProvider):
                 elif resp.status_code == 401:
                     raise ValueError("Gemini 401 – invalid API key.")
                 elif resp.status_code == 403:
-                    raise ValueError("Gemini 403 – API not enabled or quota exceeded. Enable Generative Language API in Google Cloud.")
+                    raise ValueError("Gemini 403 – API not enabled or quota exceeded.")
                 elif resp.status_code == 429:
-                    raise ValueError("Gemini 429 – rate limited / quota exhausted. Try again in 30s.")
+                    raise ValueError("Gemini 429 – rate limited / quota exhausted.")
                 else:
                     raise ValueError(f"Gemini {resp.status_code}: {resp.text[:400]}")
         except ValueError:
             raise
         except Exception as e:
             raise ValueError(f"Gemini request failed: {str(e)[:400]}")
+
+    async def stream_chat(
+        self,
+        messages: list[AIChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+    ) -> AsyncGenerator[AIChatStreamChunk, None]:
+        """Stream conversational chat responses from Gemini via SSE."""
+        if not self.api_key:
+            yield AIChatStreamChunk(type="error", delta="Gemini API key missing.", provider_used="gemini")
+            return
+
+        model_id = self.model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={self.api_key}"
+
+        # Convert AIChatMessages to Gemini contents
+        contents = []
+        system_instruction_text = ""
+
+        for m in messages:
+            if m.role == "system":
+                system_instruction_text += f"{m.content}\n"
+            else:
+                gemini_role = "user" if m.role in ("user", "tool") else "model"
+                contents.append({
+                    "role": gemini_role,
+                    "parts": [{"text": m.content}],
+                })
+
+        if not contents:
+            contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+            },
+        }
+
+        if system_instruction_text:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction_text.strip()}],
+            }
+
+        extractor = ReasoningExtractor()
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    if response.status_code != 200:
+                        err_text = await response.aread()
+                        yield AIChatStreamChunk(type="error", delta=f"Gemini Stream Error {response.status_code}: {err_text.decode('utf-8', errors='ignore')[:300]}", provider_used="gemini")
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        try:
+                            chunk_json = json.loads(data_str)
+                            candidates = chunk_json.get("candidates", [])
+                            if not candidates:
+                                continue
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            for p in parts:
+                                text_part = p.get("text", "")
+                                if text_part:
+                                    parsed_parts = extractor.process(text_part)
+                                    for p_type, p_text in parsed_parts:
+                                        if p_type == "reasoning":
+                                            yield AIChatStreamChunk(
+                                                type="reasoning",
+                                                reasoning_delta=p_text,
+                                                model_used=model_id,
+                                                provider_used="gemini",
+                                            )
+                                        else:
+                                            yield AIChatStreamChunk(
+                                                type="content",
+                                                delta=p_text,
+                                                model_used=model_id,
+                                                provider_used="gemini",
+                                            )
+                        except Exception as parse_err:
+                            logger.debug("gemini_stream_parse_warn", error=str(parse_err))
+
+                    yield AIChatStreamChunk(type="done", finish_reason="stop", model_used=model_id, provider_used="gemini")
+
+        except Exception as e:
+            logger.error("gemini_stream_failed", error=str(e))
+            yield AIChatStreamChunk(type="error", delta=f"Gemini Stream Failed: {str(e)[:300]}", provider_used="gemini")

@@ -359,7 +359,7 @@ export function TelegramTab() {
   const statuses = (queueStats?.statuses as Record<string, number> | undefined);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${

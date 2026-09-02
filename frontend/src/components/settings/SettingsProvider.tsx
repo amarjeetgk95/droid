@@ -139,7 +139,38 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { savedRef.current = savedSnapshot; }, [savedSnapshot]);
 
-  // Dirty — global and per-section (memoised, per-section JSON only)
+  // ── Debounced validation (300ms) — avoids zod on every keystroke ────────
+  const [debouncedSettings, setDebouncedSettings] = useState<AppSettings>(settings);
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSettings(settings), 300);
+    return () => clearTimeout(id);
+  }, [settings]);
+
+  // ── Dirty — per-section JSON with useRef cache (only changed section re-serialized)
+  const sectionSerializedRef = useRef<Record<SettingsSection, string>>({
+    broker: '',
+    quantitative: '',
+    ai: '',
+    paper: '',
+    preferences: '',
+  });
+  const prevSectionObjectsRef = useRef<Record<SettingsSection, unknown>>({
+    broker: (settings as unknown as Record<string, unknown>).broker,
+    quantitative: (settings as unknown as Record<string, unknown>).quantitative,
+    ai: (settings as unknown as Record<string, unknown>).ai,
+    paper: (settings as unknown as Record<string, unknown>).paper,
+    preferences: (settings as unknown as Record<string, unknown>).preferences,
+  });
+  const savedSerializedRef = useRef<Record<SettingsSection, string>>({
+    broker: '',
+    quantitative: '',
+    ai: '',
+    paper: '',
+    preferences: '',
+  });
+  const prevSavedSnapshotForDirtyRef = useRef<string>(savedSnapshot);
+  const parsedSavedRef = useRef<AppSettings | null>(null);
+
   const { isDirty, isDirtySections } = useMemo(() => {
     const dirtySections: Record<SettingsSection, boolean> = {
       broker: false,
@@ -149,24 +180,57 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
       preferences: false,
     };
     try {
-      const saved = JSON.parse(savedRef.current) as AppSettings;
-      const sections: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
-      for (const s of sections) {
-        const a = JSON.stringify((settings as unknown as Record<string, unknown>)[s]);
-        const b = JSON.stringify((saved as unknown as Record<string, unknown>)[s]);
-        dirtySections[s] = a !== b;
+      // Re-parse saved only when snapshot string changes
+      if (prevSavedSnapshotForDirtyRef.current !== savedSnapshot || !parsedSavedRef.current) {
+        parsedSavedRef.current = JSON.parse(savedRef.current) as AppSettings;
+        prevSavedSnapshotForDirtyRef.current = savedSnapshot;
+        // invalidate saved serialized cache when snapshot changes
+        const savedObj = parsedSavedRef.current as unknown as Record<string, unknown>;
+        const sections: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
+        for (const s of sections) {
+          savedSerializedRef.current[s] = JSON.stringify(savedObj[s]);
+        }
       }
-      const global = Object.values(dirtySections).some(Boolean) || JSON.stringify(settings) !== savedRef.current;
-      return { isDirty: global, isDirtySections: dirtySections };
+      const saved = parsedSavedRef.current as unknown as Record<string, unknown>;
+      const cur = settings as unknown as Record<string, unknown>;
+      const sections: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
+      let globalDirty = false;
+      for (const s of sections) {
+        const curSection = cur[s];
+        // Only serialize section when its object identity changed
+        if (prevSectionObjectsRef.current[s] !== curSection || !sectionSerializedRef.current[s]) {
+          sectionSerializedRef.current[s] = JSON.stringify(curSection);
+          prevSectionObjectsRef.current[s] = curSection;
+        }
+        const a = sectionSerializedRef.current[s];
+        const b = savedSerializedRef.current[s];
+        const isSectionDirty = a !== b;
+        dirtySections[s] = isSectionDirty;
+        if (isSectionDirty) globalDirty = true;
+      }
+      // global stringify avoided — per-section dirty already covers it; fallback only if no section dirty but snapshot mismatch (e.g. schemaVersion)
+      if (!globalDirty) {
+        // Check schemaVersion without full stringify: compare cached section serializations + snapshot version
+        const curSnap = sectionSerializedRef.current.broker + sectionSerializedRef.current.quantitative + sectionSerializedRef.current.ai + sectionSerializedRef.current.paper + sectionSerializedRef.current.preferences;
+        const savedSnap = savedSerializedRef.current.broker + savedSerializedRef.current.quantitative + savedSerializedRef.current.ai + savedSerializedRef.current.paper + savedSerializedRef.current.preferences;
+        if (curSnap !== savedSnap) globalDirty = true;
+        else {
+          // fallback to full comparison only if per-section concat equal but snapshot differs (e.g. schemaVersion)
+          const curVersion = (settings as unknown as { schemaVersion?: number }).schemaVersion;
+          const savedVersion = (parsedSavedRef.current as unknown as { schemaVersion?: number })?.schemaVersion;
+          if (curVersion !== savedVersion) globalDirty = true;
+        }
+      }
+      return { isDirty: globalDirty, isDirtySections: dirtySections };
     } catch {
+      // Fallback: minimal stringify only on error path
       const global = JSON.stringify(settings) !== savedRef.current;
       return { isDirty: global, isDirtySections: dirtySections };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, savedSnapshot]);
 
-  // Validation
-  const validationResult = useMemo(() => validateSettings(settings), [settings]);
+  // Validation (debounced)
+  const validationResult = useMemo(() => validateSettings(debouncedSettings), [debouncedSettings]);
   const validationErrors = validationResult.errors;
   const sectionErrors = useMemo(() => {
     const map: Record<SettingsSection, ValidationError[]> = { broker: [], quantitative: [], ai: [], paper: [], preferences: [] };
@@ -353,7 +417,7 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     return validationErrors.find((e) => e.path === fieldPath)?.message;
   }, [validationErrors]);
 
-  const value: SettingsContextValue = {
+  const value: SettingsContextValue = useMemo(() => ({
     settings,
     isDirty,
     isDirtySections,
@@ -378,7 +442,7 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     importJson,
     getFieldError,
     clearMessage,
-  };
+  }), [settings, isDirty, isDirtySections, isSaving, isSavingSections, isLoading, validationErrors, sectionErrors, lastSaved, saveMessage, updateBroker, updateQuantitative, updateAI, updatePaper, updatePreferences, patchSection, replaceAllSettings, save, saveSection, reset, exportJson, importJson, getFieldError, clearMessage]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

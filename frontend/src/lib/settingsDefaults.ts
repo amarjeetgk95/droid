@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     slippagePct: 0.05,
   },
   ai: {
-    provider: 'gemini',
+    provider: 'openrouter',
     connectionMode: 'OpenRouter',
     directProvider: 'OpenAI',
     routingMode: 'Task Optimized',

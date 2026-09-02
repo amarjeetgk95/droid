@@ -17,11 +17,15 @@ logger = structlog.get_logger()
 
 class CustomOpenAICompatibleProvider(AIProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = (api_key or "").strip()
-        self.model = (model or "custom-model").strip()
-        if not base_url:
-            raise ValueError("Custom OpenAI-compatible requires base_url")
-        self.base_url = base_url.rstrip("/")
+        from app.core.config import settings as _cfg
+        fallback_key = (getattr(_cfg, "custom_openai_api_key", "") or "").strip()
+        self.api_key = ((api_key or "").strip() or fallback_key)
+        self.model = (model or getattr(_cfg, "custom_openai_model", "custom-model") or "custom-model").strip()
+        fallback_url = (getattr(_cfg, "custom_openai_base_url", "") or "").strip()
+        effective_base = (base_url or fallback_url or "").strip()
+        if not effective_base:
+            raise ValueError("Custom OpenAI-compatible requires base_url – configure CUSTOM_OPENAI_BASE_URL or pass base_url per-request")
+        self.base_url = effective_base.rstrip("/")
 
     @property
     def provider_name(self) -> str:

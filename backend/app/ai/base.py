@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any
-
-from app.models.ai import AIInsightResponse
+from typing import Any, AsyncGenerator
+from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
 
 
 class AIProvider(ABC):
@@ -37,8 +36,24 @@ class AIProvider(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> AIInsightResponse:
-        """Generate structured market analysis given grounded context (legacy)."""
+        """Generate structured market analysis given grounded context."""
         ...
+
+    async def stream_chat(
+        self,
+        messages: list[AIChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+    ) -> AsyncGenerator[AIChatStreamChunk, None]:
+        """Stream conversational chat tokens, reasoning tokens, and tool calls."""
+        # Default fallback non-streaming emulation if provider hasn't overridden
+        res = await self.generate_analysis(
+            symbol="NIFTY",
+            system_prompt=messages[0].content if messages and messages[0].role == "system" else "",
+            user_prompt=messages[-1].content if messages else "",
+        )
+        yield AIChatStreamChunk(type="content", delta=res.executive_summary)
+        yield AIChatStreamChunk(type="done", finish_reason="stop")
 
     @property
     @abstractmethod

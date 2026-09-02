@@ -147,7 +147,6 @@ export function SidebarHeader({
               <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-xs tracking-wider shadow-sm ring-1 ring-primary/30">
                 <span>D</span>
                 <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
                 </span>
               </div>

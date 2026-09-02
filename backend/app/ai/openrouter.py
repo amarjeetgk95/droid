@@ -1,21 +1,25 @@
 import json
 import httpx
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from app.ai.base import BaseLLMProvider
-from app.models.ai import AIInsightResponse
+from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
 from app.ai.capability_registry import should_use_structured_outputs, validate_no_unsupported_params
+from app.ai.streaming import ReasoningExtractor
 import structlog
 
 logger = structlog.get_logger()
 
+
 class OpenRouterProvider(BaseLLMProvider):
-    """OpenRouter Gateway – Claude, DeepSeek, GPT-4o via unified API. No mock fallback."""
+    """OpenRouter Gateway – Claude, DeepSeek, GPT-4o, Llama via unified API with streaming and tool support."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.api_key = (api_key or "").strip()
-        self.model = (model or "anthropic/claude-3.7-sonnet").strip()
+        from app.core.config import settings as _cfg
+        fallback = (getattr(_cfg, "openrouter_api_key", "") or "").strip()
+        self.api_key = ((api_key or "").strip() or fallback)
+        self.model = (model or getattr(_cfg, "openrouter_default_model", "anthropic/claude-3.7-sonnet") or "anthropic/claude-3.7-sonnet").strip()
 
     @property
     def provider_name(self) -> str:
@@ -40,7 +44,6 @@ class OpenRouterProvider(BaseLLMProvider):
         if not self.api_key.startswith("sk-or-"):
             return {"success": False, "provider": "openrouter", "error": "API key must start with sk-or-"}
         try:
-            # Lightweight catalog fetch proves connectivity
             from app.services.openrouter_catalog import get_model_catalog
             catalog = await get_model_catalog()
             return {"success": True, "provider": "openrouter", "model": self.model, "free_count": catalog.get("free_count", 0)}
@@ -56,9 +59,9 @@ class OpenRouterProvider(BaseLLMProvider):
 
     async def generate_analysis(self, symbol: str, system_prompt: str, user_prompt: str) -> AIInsightResponse:
         if not self.api_key:
-            raise ValueError("OpenRouter API key is missing. Go to Settings -> AI Engine -> OpenRouter and add your sk-or-v1-... key (from https://openrouter.ai/keys). No .env hardcode required - key is stored via Settings and sent per-request.")
+            raise ValueError("OpenRouter API key is missing. Go to Settings -> AI Engine -> OpenRouter and add your sk-or-v1-... key (from https://openrouter.ai/keys).")
         if not self.api_key.startswith("sk-or-"):
-            raise ValueError(f"OpenRouter API key looks invalid (must start with 'sk-or-'). Got: {self.api_key[:12]}... Check Settings -> AI Engine.")
+            raise ValueError(f"OpenRouter API key looks invalid (must start with 'sk-or-'). Got: {self.api_key[:12]}...")
 
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
@@ -67,8 +70,6 @@ class OpenRouterProvider(BaseLLMProvider):
             "HTTP-Referer": "https://fo-droid.web.app",
             "X-Title": "DROID F&O Analysis",
         }
-        # Capability-aware protocol per §17-18: Ling 3.0 Flash Fin must NOT receive response_format
-        # Otherwise use native structured outputs if supported; else prompted JSON + local validation
         use_structured = should_use_structured_outputs(self.model)
         prompted_suffix = "\n\nReturn ONLY one valid JSON object. Do not use markdown. Do not include explanations outside the JSON. Do not include code fences."
         base_payload = {
@@ -81,23 +82,17 @@ class OpenRouterProvider(BaseLLMProvider):
         }
         if use_structured:
             payload_with_json = {**base_payload, "response_format": {"type": "json_object"}}
-            # Ensure we don't send unsupported params when capability says no
             payload_with_json = validate_no_unsupported_params(self.model, payload_with_json)
         else:
-            payload_with_json = base_payload  # never send response_format for Ling etc.
+            payload_with_json = base_payload
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                # Single attempt based on capability; fallback only if provider still rejects (defensive)
                 resp = await client.post(url, json=payload_with_json, headers=headers)
                 if use_structured and resp.status_code == 400 and "structured-outputs" in resp.text:
-                    logger.warning("openrouter_structured_not_supported_fallback", model=self.model, error=resp.text[:300])
                     resp = await client.post(url, json=base_payload, headers=headers)
-                if not use_structured and resp.status_code == 400 and "response_format" in resp.text:
-                    # Already not sending, but log
-                    logger.warning("openrouter_unexpected_structured_error", model=self.model, error=resp.text[:300])
                 if resp.status_code == 401:
-                    raise ValueError("OpenRouter: 401 Unauthorized – API key invalid or expired. Check AI Engine settings.")
+                    raise ValueError("OpenRouter: 401 Unauthorized – API key invalid or expired.")
                 if resp.status_code == 402:
                     raise ValueError("OpenRouter: 402 Payment Required – insufficient credits.")
                 if resp.status_code == 429:
@@ -107,16 +102,13 @@ class OpenRouterProvider(BaseLLMProvider):
                 data = resp.json()
                 try:
                     content = data["choices"][0]["message"]["content"]
-                except (KeyError, IndexError, TypeError) as e:
+                except (KeyError, IndexError, TypeError):
                     raise ValueError(f"OpenRouter returned unexpected shape: {json.dumps(data)[:400]}")
-                # content may be JSON string
+
                 if isinstance(content, str):
-                    # Strip markdown fences if present
                     c = content.strip()
                     if c.startswith("```"):
-                        # Remove ```json ... ```
                         parts = c.split("```")
-                        # parts[1] may be 'json\n{...}' or just json
                         if len(parts) >= 2:
                             c = parts[1]
                             if c.lstrip().startswith("json"):
@@ -130,53 +122,32 @@ class OpenRouterProvider(BaseLLMProvider):
                         raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]} (json error: {je})")
                 else:
                     parsed = content
-                # Normalize + sanitize before strict validation (free models often return verbose biases / 0-1 confidence)
-                # --- market_bias normalization ---
+
                 raw_bias = str(parsed.get("market_bias", "NEUTRAL")).strip()
                 bias_upper = raw_bias.upper()
-                # Direct match
                 if bias_upper in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
                     parsed["market_bias"] = bias_upper
                 else:
-                    # Fuzzy: map verbose like "Cautiously Bullish with Volatility Premium Edge" -> BULLISH
                     if "BULL" in bias_upper:
                         parsed["market_bias"] = "BULLISH"
                     elif "BEAR" in bias_upper:
                         parsed["market_bias"] = "BEARISH"
                     elif "VOLATILE" in bias_upper or "VOLATILITY" in bias_upper:
                         parsed["market_bias"] = "VOLATILE"
-                    elif "NEUTRAL" in bias_upper or "SIDEWAYS" in bias_upper or "RANGE" in bias_upper:
-                        parsed["market_bias"] = "NEUTRAL"
                     else:
-                        # Default to NEUTRAL but keep original for logging
-                        logger.warning("openrouter_bias_normalized", raw_bias=raw_bias, normalized="NEUTRAL", model=self.model)
                         parsed["market_bias"] = "NEUTRAL"
-                # --- confidence normalization (handle "0.68" vs 68) ---
+
                 try:
                     raw_conf = parsed.get("confidence", 80.0)
-                    conf_val = float(str(raw_conf).strip().replace("%",""))
-                    # If model returned 0-1 fraction, scale to 0-100
-                    if 0 <= conf_val <= 1.0:
-                        # Heuristic: 0.68 -> 68, but 1.0 -> 100, 0.5 -> 50; keep 0.0 as 0
-                        # Only scale if original was decimal <1 and not already 0-1 edge like 0.9 intended as 0.9% (unlikely)
-                        # We treat any 0<val<=1 as fraction
-                        if conf_val > 0 and conf_val <= 1.0:
-                            conf_val = conf_val * 100
+                    conf_val = float(str(raw_conf).strip().replace("%", ""))
+                    if 0 < conf_val <= 1.0:
+                        conf_val = conf_val * 100
                     parsed["confidence"] = conf_val
                 except Exception:
-                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'. Raw: {json.dumps(parsed)[:300]}")
-                if not (0 <= parsed["confidence"] <= 100):
-                    raise ValueError(f"OpenRouter confidence out of range 0-100: {parsed['confidence']}. Raw: {json.dumps(parsed)[:300]}")
+                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'.")
+
                 conf_val = float(parsed["confidence"])
 
-                # Strict JSON schema validation – fail honestly if missing required fields (after normalization)
-                required_fields = ["market_bias", "confidence", "executive_summary", "options_interpretation", "futures_flow_analysis", "regime_and_levels", "recommended_strategy_framework", "risk_management_notes"]
-                missing = [f for f in required_fields if f not in parsed or parsed.get(f) in (None, "")]
-                if missing:
-                    raise ValueError(f"OpenRouter response missing required fields: {missing}. Got keys: {list(parsed.keys())}. Raw: {json.dumps(parsed)[:400]}")
-                # Final literal check (should always pass after normalization)
-                if parsed.get("market_bias") not in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
-                    raise ValueError(f"OpenRouter returned invalid market_bias '{parsed.get('market_bias')}'. Expected BULLISH|BEARISH|NEUTRAL|VOLATILE. Raw: {json.dumps(parsed)[:300]}")
                 return AIInsightResponse(
                     symbol=symbol,
                     timestamp=datetime.now(timezone.utc),
@@ -195,3 +166,147 @@ class OpenRouterProvider(BaseLLMProvider):
             raise
         except Exception as e:
             raise ValueError(f"OpenRouter request failed: {str(e)[:300]}")
+
+    async def stream_chat(
+        self,
+        messages: list[AIChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+    ) -> AsyncGenerator[AIChatStreamChunk, None]:
+        """Stream chat tokens with reasoning and tool call extraction via SSE."""
+        if not self.api_key:
+            yield AIChatStreamChunk(type="error", delta="OpenRouter API key is missing. Add your sk-or-v1-... key in Settings -> AI Engine.", provider_used="openrouter")
+            return
+
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://fo-droid.web.app",
+            "X-Title": "DROID F&O Copilot",
+        }
+
+        # Format messages
+        formatted_messages = []
+        for m in messages:
+            msg_dict: dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                msg_dict["tool_calls"] = m.tool_calls
+            if m.tool_call_id:
+                msg_dict["tool_call_id"] = m.tool_call_id
+            if m.name:
+                msg_dict["name"] = m.name
+            formatted_messages.append(msg_dict)
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": formatted_messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        if tools:
+            payload["tools"] = tools
+
+        extractor = ReasoningExtractor()
+        tool_calls_accumulator: dict[int, dict[str, Any]] = {}
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as response:
+                    if response.status_code == 401:
+                        yield AIChatStreamChunk(type="error", delta="OpenRouter 401: Invalid API Key.", provider_used="openrouter")
+                        return
+                    if response.status_code == 402:
+                        yield AIChatStreamChunk(type="error", delta="OpenRouter 402: Insufficient Credits.", provider_used="openrouter")
+                        return
+                    if response.status_code != 200:
+                        err_text = await response.aread()
+                        yield AIChatStreamChunk(type="error", delta=f"OpenRouter Error {response.status_code}: {err_text.decode('utf-8', errors='ignore')[:300]}", provider_used="openrouter")
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            chunk_json = json.loads(data_str)
+                            choice = chunk_json["choices"][0]
+                            delta_obj = choice.get("delta", {})
+                            finish_reason = choice.get("finish_reason")
+
+                            # 1. Native reasoning delta (OpenRouter DeepSeek-R1 / QwQ)
+                            reasoning_delta = delta_obj.get("reasoning") or delta_obj.get("reasoning_content")
+                            if reasoning_delta:
+                                yield AIChatStreamChunk(
+                                    type="reasoning",
+                                    reasoning_delta=reasoning_delta,
+                                    model_used=self.model,
+                                    provider_used="openrouter",
+                                )
+
+                            # 2. Tool calls delta
+                            if "tool_calls" in delta_obj and delta_obj["tool_calls"]:
+                                for tc in delta_obj["tool_calls"]:
+                                    idx = tc.get("index", 0)
+                                    if idx not in tool_calls_accumulator:
+                                        tool_calls_accumulator[idx] = {
+                                            "id": tc.get("id", ""),
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""},
+                                        }
+                                    if tc.get("id"):
+                                        tool_calls_accumulator[idx]["id"] = tc["id"]
+                                    fn = tc.get("function", {})
+                                    if fn.get("name"):
+                                        tool_calls_accumulator[idx]["function"]["name"] += fn["name"]
+                                    if fn.get("arguments"):
+                                        tool_calls_accumulator[idx]["function"]["arguments"] += fn["arguments"]
+
+                            # 3. Content delta with embedded <think> detection
+                            content_delta = delta_obj.get("content", "")
+                            if content_delta:
+                                parsed_parts = extractor.process(content_delta)
+                                for p_type, p_text in parsed_parts:
+                                    if p_type == "reasoning":
+                                        yield AIChatStreamChunk(
+                                            type="reasoning",
+                                            reasoning_delta=p_text,
+                                            model_used=self.model,
+                                            provider_used="openrouter",
+                                        )
+                                    else:
+                                        yield AIChatStreamChunk(
+                                            type="content",
+                                            delta=p_text,
+                                            model_used=self.model,
+                                            provider_used="openrouter",
+                                        )
+
+                            if finish_reason == "tool_calls" or (finish_reason and tool_calls_accumulator):
+                                for _, tc in tool_calls_accumulator.items():
+                                    yield AIChatStreamChunk(
+                                        type="tool_call",
+                                        tool_call=tc,
+                                        model_used=self.model,
+                                        provider_used="openrouter",
+                                    )
+                                tool_calls_accumulator.clear()
+
+                            if finish_reason:
+                                yield AIChatStreamChunk(
+                                    type="done",
+                                    finish_reason=finish_reason,
+                                    model_used=self.model,
+                                    provider_used="openrouter",
+                                )
+
+                        except Exception as parse_err:
+                            logger.debug("openrouter_stream_parse_warn", error=str(parse_err))
+
+        except Exception as e:
+            logger.error("openrouter_stream_failed", error=str(e))
+            yield AIChatStreamChunk(type="error", delta=f"OpenRouter Stream Error: {str(e)[:300]}", provider_used="openrouter")

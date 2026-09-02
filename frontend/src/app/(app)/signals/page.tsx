@@ -56,11 +56,24 @@ export default function SignalsPage() {
     finally { setHistoryLoading(false); }
   }, []);
 
-  // Initial + poll active every 4s
+  // Poll active throttled to 30s with jitter + hidden-tab pause
   useEffect(() => {
     fetchActive(true);
-    const id = setInterval(() => fetchActive(false), 4000);
-    return () => clearInterval(id);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        if (!document.hidden) void fetchActive(false);
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void fetchActive(false); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [fetchActive]);
 
   useEffect(() => {

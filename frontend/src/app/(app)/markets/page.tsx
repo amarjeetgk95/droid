@@ -18,8 +18,10 @@ export default function MarketsPage() {
 
   useEffect(() => {
     let isMounted = true;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
 
     const fetchRegime = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const res = await api.getRegimeOverview(selectedSymbol);
         if (!isMounted) return;
@@ -34,11 +36,21 @@ export default function MarketsPage() {
     };
 
     fetchRegime();
-    const interval = setInterval(fetchRegime, 5000);
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(async () => {
+        await fetchRegime();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void fetchRegime(); };
+    document.addEventListener('visibilitychange', onVis);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [selectedSymbol]);
 

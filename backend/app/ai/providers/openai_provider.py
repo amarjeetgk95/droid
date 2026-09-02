@@ -1,16 +1,16 @@
 """
 Direct Provider: OpenAI — §11
-
-Each provider must have its own adapter.
-Do not assume identical API features.
+Supports chat completions, streaming, and tool execution.
 """
 import json
 import httpx
 from datetime import datetime, timezone
+from typing import Any, AsyncGenerator
 
 from app.ai.base import AIProvider
-from app.models.ai import AIInsightResponse
+from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
 from app.ai.capability_registry import should_use_structured_outputs
+from app.ai.streaming import ReasoningExtractor
 import structlog
 
 logger = structlog.get_logger()
@@ -18,9 +18,12 @@ logger = structlog.get_logger()
 
 class OpenAIProvider(AIProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = (api_key or "").strip()
-        self.model = (model or "gpt-4o-mini").strip()
-        self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        # Per-request key fallback to config (env) — Settings UI is primary
+        from app.core.config import settings as _cfg
+        fallback = (getattr(_cfg, "openai_api_key", "") or "").strip()
+        self.api_key = ((api_key or "").strip() or fallback)
+        self.model = (model or getattr(_cfg, "openai_model", "gpt-4o-mini") or "gpt-4o-mini").strip()
+        self.base_url = (base_url or getattr(_cfg, "custom_openai_base_url", "") or "https://api.openai.com/v1").rstrip("/") or "https://api.openai.com/v1"
 
     @property
     def provider_name(self) -> str:
@@ -53,8 +56,7 @@ class OpenAIProvider(AIProvider):
             return {"success": False, "provider": "openai", "error": str(e)[:300]}
 
     async def analyze(self, market_state: dict, task: str) -> dict:
-        from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
-        # market_state expected to be dict with regime/futures etc.; build prompts via helper simplified
+        from app.ai.prompt_builder import build_system_prompt
         system_prompt = build_system_prompt()
         user_prompt = f"Task: {task}\nMarketState: {json.dumps(market_state, default=str)}"
         insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
@@ -73,11 +75,10 @@ class OpenAIProvider(AIProvider):
             ],
             "temperature": 0.2,
         }
-        # Capability-aware: OpenAI supports structured outputs
         if should_use_structured_outputs(self.model):
             base_payload["response_format"] = {"type": "json_object"}
         else:
-            base_payload["messages"][0]["content"] += "\n\nReturn ONLY one valid JSON object. Do not use markdown. Do not include explanations outside the JSON. Do not include code fences."
+            base_payload["messages"][0]["content"] += "\n\nReturn ONLY one valid JSON object. Do not use markdown."
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=base_payload, headers=headers)
@@ -101,7 +102,7 @@ class OpenAIProvider(AIProvider):
                 parsed = json.loads(c)
             else:
                 parsed = content
-            # Normalize bias etc. reuse openrouter normalization minimal
+
             if "market_bias" in parsed:
                 raw_bias = str(parsed.get("market_bias", "NEUTRAL")).upper()
                 if raw_bias not in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
@@ -111,6 +112,7 @@ class OpenAIProvider(AIProvider):
                         parsed["market_bias"] = "BEARISH"
                     else:
                         parsed["market_bias"] = "NEUTRAL"
+
             return AIInsightResponse(
                 symbol=symbol,
                 timestamp=datetime.now(timezone.utc),
@@ -125,3 +127,104 @@ class OpenAIProvider(AIProvider):
                 disclaimer=parsed.get("disclaimer", "Quantitative analysis for research only."),
                 provider_used=f"openai:{self.model}",
             )
+
+    async def stream_chat(
+        self,
+        messages: list[AIChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+    ) -> AsyncGenerator[AIChatStreamChunk, None]:
+        """Stream OpenAI chat tokens, tool calls and reasoning deltas via SSE."""
+        if not self.api_key:
+            yield AIChatStreamChunk(type="error", delta="OpenAI API key missing.", provider_used="openai")
+            return
+
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+        formatted_messages = []
+        for m in messages:
+            msg_dict: dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                msg_dict["tool_calls"] = m.tool_calls
+            if m.tool_call_id:
+                msg_dict["tool_call_id"] = m.tool_call_id
+            if m.name:
+                msg_dict["name"] = m.name
+            formatted_messages.append(msg_dict)
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": formatted_messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        extractor = ReasoningExtractor()
+        tool_calls_accumulator: dict[int, dict[str, Any]] = {}
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as response:
+                    if response.status_code != 200:
+                        err_text = await response.aread()
+                        yield AIChatStreamChunk(type="error", delta=f"OpenAI Stream Error {response.status_code}: {err_text.decode('utf-8', errors='ignore')[:300]}", provider_used="openai")
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            chunk_json = json.loads(data_str)
+                            choice = chunk_json["choices"][0]
+                            delta_obj = choice.get("delta", {})
+                            finish_reason = choice.get("finish_reason")
+
+                            # Tool calls delta
+                            if "tool_calls" in delta_obj and delta_obj["tool_calls"]:
+                                for tc in delta_obj["tool_calls"]:
+                                    idx = tc.get("index", 0)
+                                    if idx not in tool_calls_accumulator:
+                                        tool_calls_accumulator[idx] = {
+                                            "id": tc.get("id", ""),
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""},
+                                        }
+                                    if tc.get("id"):
+                                        tool_calls_accumulator[idx]["id"] = tc["id"]
+                                    fn = tc.get("function", {})
+                                    if fn.get("name"):
+                                        tool_calls_accumulator[idx]["function"]["name"] += fn["name"]
+                                    if fn.get("arguments"):
+                                        tool_calls_accumulator[idx]["function"]["arguments"] += fn["arguments"]
+
+                            # Content delta
+                            content_delta = delta_obj.get("content", "")
+                            if content_delta:
+                                parsed_parts = extractor.process(content_delta)
+                                for p_type, p_text in parsed_parts:
+                                    if p_type == "reasoning":
+                                        yield AIChatStreamChunk(type="reasoning", reasoning_delta=p_text, model_used=self.model, provider_used="openai")
+                                    else:
+                                        yield AIChatStreamChunk(type="content", delta=p_text, model_used=self.model, provider_used="openai")
+
+                            if finish_reason == "tool_calls" or (finish_reason and tool_calls_accumulator):
+                                for _, tc in tool_calls_accumulator.items():
+                                    yield AIChatStreamChunk(type="tool_call", tool_call=tc, model_used=self.model, provider_used="openai")
+                                tool_calls_accumulator.clear()
+
+                            if finish_reason:
+                                yield AIChatStreamChunk(type="done", finish_reason=finish_reason, model_used=self.model, provider_used="openai")
+
+                        except Exception as parse_err:
+                            logger.debug("openai_stream_parse_warn", error=str(parse_err))
+
+        except Exception as e:
+            logger.error("openai_stream_failed", error=str(e))
+            yield AIChatStreamChunk(type="error", delta=f"OpenAI Stream Error: {str(e)[:300]}", provider_used="openai")

@@ -2,8 +2,19 @@ from datetime import datetime, timezone
 import time
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Body, Header, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.ai_service import ai_service
+from app.services.ai_copilot_service import ai_copilot_service
+from app.services.ai_strategy_service import ai_strategy_service
+from app.services.ai_validation_service import ai_validation_service
+from app.services.regime_service import regime_service
+from app.models.ai import (
+    AIChatRequest,
+    AIOptionsStrategyRequest,
+    AITradeValidationRequest,
+    AIDailyBriefingResponse,
+)
 from app.services.openrouter_catalog import get_model_catalog, validate_model_or_raise, get_cache_status, clear_cache as clear_model_cache
 from app.models.market import ApiMeta, DataStatus
 from app.core.config import settings
@@ -32,11 +43,33 @@ class AITestRequest(BaseModel):
     openRouterModel: str | None = None
     ollamaBaseUrl: str | None = None
     ollamaModel: str | None = None
+    # Direct providers — §34; keep optional for per-request key forwarding
+    openaiApiKey: str | None = None
+    openaiModel: str | None = None
+    openaiBaseUrl: str | None = None
+    novitaApiKey: str | None = None
+    novitaModel: str | None = None
+    novitaBaseUrl: str | None = None
+    nvidiaApiKey: str | None = None
+    nvidiaModel: str | None = None
+    nvidiaBaseUrl: str | None = None
+    customOpenaiApiKey: str | None = None
+    customOpenaiModel: str | None = None
+    customOpenaiBaseUrl: str | None = None
+    apiKey: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    customBaseUrl: str | None = None
 
 
 @router.post("/test")
 async def test_ai_provider(payload: AITestRequest = Body(...)):
     """Strict end-to-end test: validates connectivity, latency, and JSON schema. No mock fallback for real providers."""
+    # compat: mock_ai -> openrouter
+    prov_norm = (payload.provider or "openrouter").lower()
+    if prov_norm == "mock_ai":
+        prov_norm = "openrouter"
+        payload.provider = "openrouter"
     try:
         result = await ai_service.test_provider(
             symbol=payload.symbol,
@@ -47,6 +80,22 @@ async def test_ai_provider(payload: AITestRequest = Body(...)):
             openRouterModel=payload.openRouterModel,
             ollamaBaseUrl=payload.ollamaBaseUrl,
             ollamaModel=payload.ollamaModel,
+            openaiApiKey=payload.openaiApiKey,
+            openaiModel=payload.openaiModel,
+            openaiBaseUrl=payload.openaiBaseUrl,
+            novitaApiKey=payload.novitaApiKey,
+            novitaModel=payload.novitaModel,
+            novitaBaseUrl=payload.novitaBaseUrl,
+            nvidiaApiKey=payload.nvidiaApiKey,
+            nvidiaModel=payload.nvidiaModel,
+            nvidiaBaseUrl=payload.nvidiaBaseUrl,
+            customOpenaiApiKey=payload.customOpenaiApiKey,
+            customOpenaiModel=payload.customOpenaiModel,
+            customOpenaiBaseUrl=payload.customOpenaiBaseUrl,
+            apiKey=payload.apiKey,
+            model=payload.model,
+            base_url=payload.base_url,
+            customBaseUrl=payload.customBaseUrl,
         )
         # Always return 200 with success flag, so frontend can show detailed diagnostics
         return {
@@ -61,13 +110,16 @@ async def test_ai_provider(payload: AITestRequest = Body(...)):
 @router.post("/analyze/{symbol}")
 async def generate_market_analysis(
     symbol: str,
-    provider: str = Query(default="openrouter", description="LLM provider: openrouter | gemini | ollama"),
+    provider: str = Query(default="openrouter", description="LLM provider: openrouter | gemini | ollama | openai | novita | nvidia | custom_openai"),
     model: str | None = Query(default=None, description="OpenRouter model ID or auto (when provider=openrouter)"),
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     openrouter_api_key: str | None = Query(default=None, alias="openRouterApiKey", description="OpenRouter key from Settings (optional, overrides env)"),
 ):
     """Generate grounded, structured AI market analysis. Strict – fails if provider not configured (no silent mock). Settings-driven key (no hardcode)."""
+    # compat: mock_ai -> openrouter
+    if provider.lower() == "mock_ai":
+        provider = "openrouter"
     effective_key = (openrouter_api_key or x_openrouter_key or "").strip() or None
     try:
         # If provider is openrouter and model specified, enforce free-only validation
@@ -129,6 +181,22 @@ class AIModelAnalyzeRequest(BaseModel):
     geminiModel: str | None = None
     ollamaBaseUrl: str | None = None
     ollamaModel: str | None = None
+    # Direct providers — §34; per-request key fallback to config
+    openaiApiKey: str | None = None
+    openaiModel: str | None = None
+    openaiBaseUrl: str | None = None
+    novitaApiKey: str | None = None
+    novitaModel: str | None = None
+    novitaBaseUrl: str | None = None
+    nvidiaApiKey: str | None = None
+    nvidiaModel: str | None = None
+    nvidiaBaseUrl: str | None = None
+    customOpenaiApiKey: str | None = None
+    customOpenaiModel: str | None = None
+    customOpenaiBaseUrl: str | None = None
+    apiKey: str | None = None
+    base_url: str | None = None
+    customBaseUrl: str | None = None
 
 
 async def _handle_models_list(
@@ -290,24 +358,29 @@ async def analyze_with_model(
     # Support old provider param as alias
     provider = payload.provider or "openrouter"
     analysis_type = payload.analysis_type or "multi_timeframe"
-    # Resolve keys — Settings-driven priority
+    # Resolve keys — Settings-driven priority (per-request key fallback to config)
     effective_openrouter_key = (payload.openRouterApiKey or x_openrouter_key or "").strip() or None
     effective_gemini_key = (payload.geminiApiKey or x_gemini_key or payload.geminiApiKey or "").strip() or None
 
+    # compat: mock_ai -> openrouter
+    if provider.lower() == "mock_ai":
+        provider = "openrouter"
+
     try:
-        # Validate model against catalog — skip for non-openrouter providers
-        if provider.lower() not in ("gemini", "ollama"):
+        # Validate model against catalog — skip for non-openrouter providers (direct providers + gemini/ollama)
+        direct_providers = ("gemini", "ollama", "openai", "novita", "novita_ai", "nvidia", "custom_openai", "custom", "custom_openai_compatible")
+        if provider.lower() not in direct_providers:
             validated = await validate_model_or_raise(model_id, free_only=free_only)
             effective_model = validated["id"]
         else:
-            # For gemini/ollama, don't validate against OpenRouter catalog
+            # For gemini/ollama/direct providers, don't validate against OpenRouter catalog
             effective_model = model_id
             validated = None
 
         # Determine provider for ai_service
         # If model is openrouter model, provider is openrouter with specific model
         # Use openrouter provider
-        # For backward compat, if provider is gemini/ollama, bypass catalog check and use that provider
+        # For backward compat, if provider is gemini/ollama/direct, bypass catalog check and use that provider via create_provider_for_test
         if provider.lower() in ("gemini", "ollama"):
             # Those providers have their own validation; allow through — gemini key passed via payload/header if needed
             # For gemini, we need to use test path? For analyze, we still use get_llm_provider but that ignores key.
@@ -342,6 +415,14 @@ async def analyze_with_model(
                 user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures_gem, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
                 insight = await GeminiProvider(api_key=effective_gemini_key, model=payload.geminiModel or "gemini-2.5-flash").generate_analysis(symbol, system_prompt, user_prompt)
             elif provider.lower() == "ollama" and (payload.ollamaBaseUrl or payload.ollamaModel):
+                # Ollama localhost is local-only — backend on Render cannot reach user's laptop; gate with clear hint (browser check is primary)
+                _base = (payload.ollamaBaseUrl or "").strip()
+                if _base and ("localhost" in _base or "127.0.0.1" in _base):
+                    raise ValueError(
+                        f"Ollama URL {_base} is localhost — backend on Render cannot reach your local machine. "
+                        f"This is local-only. Use direct browser check: fetch {_base}/api/tags from your browser. "
+                        f"Ensure `ollama serve` and `ollama pull {payload.ollamaModel or 'deepseek-r1:8b'}` are running, or configure a remote Ollama URL."
+                    )
                 from app.ai.ollama import OllamaProvider
                 from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
                 from app.services.regime_service import regime_service
@@ -371,6 +452,73 @@ async def analyze_with_model(
                 insight = await OllamaProvider(base_url=payload.ollamaBaseUrl, model=payload.ollamaModel or "deepseek-r1:8b").generate_analysis(symbol, system_prompt, user_prompt)
             else:
                 insight = await ai_service.generate_market_analysis(symbol, provider_name=provider.lower())
+        elif provider.lower() in ("openai", "novita", "novita_ai", "nvidia", "custom_openai", "custom", "custom_openai_compatible"):
+            # Direct providers — mirror gemini/ollama block using create_provider_for_test (per-request key fallback to config)
+            from app.ai.registry import create_provider_for_test
+            from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
+            from app.services.regime_service import regime_service
+            from app.services.options_service import options_service
+            # Normalize provider id
+            p_norm = provider.lower()
+            if p_norm in ("custom", "custom_openai_compatible"):
+                p_norm = "custom_openai"
+            if p_norm == "novita_ai":
+                p_norm = "novita"
+            # Build market context
+            regime = await regime_service.classify_market_regime(symbol)
+            try:
+                from app.services.ai_service import _fetch_futures_safe as _ffs_dp
+                futures_dp = await _ffs_dp(symbol)
+            except Exception:
+                futures_dp = None
+            try:
+                chain = await options_service.get_option_chain_matrix(symbol)
+                options_analytics = chain.analytics
+                max_pain = getattr(chain, "max_pain", None)
+                if max_pain is None and chain.analytics:
+                    try:
+                        max_pain = await options_service.calculate_max_pain(symbol)
+                    except Exception:
+                        max_pain = chain.analytics.max_pain_strike
+                strikes = getattr(chain, "strikes", None)
+            except Exception:
+                options_analytics = None
+                max_pain = None
+                strikes = None
+            system_prompt = build_system_prompt()
+            user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures_dp, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
+            # Map payload keys to create_provider_for_test kwargs (supports per-request -> config fallback)
+            kwargs: dict = {}
+            if p_norm == "openai":
+                kwargs["openaiApiKey"] = payload.openaiApiKey or payload.apiKey or ""
+                kwargs["openaiModel"] = payload.openaiModel or payload.model or ""
+                if payload.openaiBaseUrl:
+                    kwargs["base_url"] = payload.openaiBaseUrl
+                elif payload.base_url:
+                    kwargs["base_url"] = payload.base_url
+            elif p_norm == "novita":
+                kwargs["novitaApiKey"] = payload.novitaApiKey or payload.apiKey or ""
+                kwargs["novitaModel"] = payload.novitaModel or payload.model or ""
+                if payload.novitaBaseUrl:
+                    kwargs["base_url"] = payload.novitaBaseUrl
+                elif payload.base_url:
+                    kwargs["base_url"] = payload.base_url
+            elif p_norm == "nvidia":
+                kwargs["nvidiaApiKey"] = payload.nvidiaApiKey or payload.apiKey or ""
+                kwargs["nvidiaModel"] = payload.nvidiaModel or payload.model or ""
+                if payload.nvidiaBaseUrl:
+                    kwargs["base_url"] = payload.nvidiaBaseUrl
+                elif payload.base_url:
+                    kwargs["base_url"] = payload.base_url
+            elif p_norm == "custom_openai":
+                kwargs["apiKey"] = payload.customOpenaiApiKey or payload.apiKey or ""
+                kwargs["model"] = payload.customOpenaiModel or payload.model or ""
+                kwargs["base_url"] = payload.customOpenaiBaseUrl or payload.customBaseUrl or payload.base_url or ""
+            # Provide model fallback if still empty
+            if not kwargs.get("model") and not kwargs.get("openaiModel") and not kwargs.get("novitaModel") and not kwargs.get("nvidiaModel"):
+                kwargs["model"] = effective_model if effective_model != "auto" else None
+            llm = create_provider_for_test(p_norm, **kwargs)
+            insight = await llm.generate_analysis(symbol, system_prompt, user_prompt)
         else:
             # Use openrouter with validated model and Settings-driven key
             insight = await ai_service.generate_market_analysis(
@@ -450,3 +598,141 @@ async def analyze_symbol_with_model(
     return await analyze_with_model(
         AIModelAnalyzeRequest(model=model, symbol=symbol, allow_paid=allow_paid, openRouterApiKey=key)
     )
+
+
+# ---------------------------------------------------------------------------
+# Interactive Streaming Copilot (SSE)
+# ---------------------------------------------------------------------------
+
+@router.post("/chat/stream")
+async def stream_chat_copilot(
+    payload: AIChatRequest = Body(...),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+    x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key"),
+):
+    """
+    Stream interactive multi-turn AI copilot responses via Server-Sent Events (SSE).
+    Supports DeepSeek-R1 reasoning tokens, live tool execution against quant engines, and provider fallback.
+    """
+    if not payload.openrouter_api_key and x_openrouter_key:
+        payload.openrouter_api_key = x_openrouter_key
+    if not payload.gemini_api_key and x_gemini_key:
+        payload.gemini_api_key = x_gemini_key
+    if not payload.openai_api_key and x_openai_key:
+        payload.openai_api_key = x_openai_key
+
+    return StreamingResponse(
+        ai_copilot_service.stream_copilot_turn(payload),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Options Strategy Architect
+# ---------------------------------------------------------------------------
+
+@router.post("/strategy/recommend")
+async def recommend_options_strategy(
+    payload: AIOptionsStrategyRequest = Body(...),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+):
+    """Recommend optimal risk-defined options strategy tailored to current IV, S/R, and outlook."""
+    if not payload.openrouter_api_key and x_openrouter_key:
+        payload.openrouter_api_key = x_openrouter_key
+    if not payload.gemini_api_key and x_gemini_key:
+        payload.gemini_api_key = x_gemini_key
+
+    try:
+        rec = await ai_strategy_service.recommend_strategy(payload)
+        return {
+            "data": rec.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        logger.error("strategy_recommend_endpoint_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Trade Thesis & Invalidation Auditor
+# ---------------------------------------------------------------------------
+
+@router.post("/trade/validate")
+async def validate_trade_setup(
+    payload: AITradeValidationRequest = Body(...),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+):
+    """Audit user proposed entry/SL/target against live option walls and trend regime."""
+    if not payload.openrouter_api_key and x_openrouter_key:
+        payload.openrouter_api_key = x_openrouter_key
+    if not payload.gemini_api_key and x_gemini_key:
+        payload.gemini_api_key = x_gemini_key
+
+    try:
+        val = await ai_validation_service.validate_trade(payload)
+        return {
+            "data": val.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        logger.error("trade_validate_endpoint_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Daily Market Briefing (Pre/Post-Market)
+# ---------------------------------------------------------------------------
+
+@router.get("/briefing/{symbol}")
+async def get_market_briefing(
+    symbol: str,
+    session_type: str = Query(default="PRE_MARKET", description="PRE_MARKET | POST_MARKET | INTRADAY"),
+):
+    """Generate daily institutional briefing synthesizing technical pivots, FII flow, and option pins."""
+    try:
+        underlying = symbol.upper().replace(" 50", "")
+        regime = await regime_service.classify_market_regime(underlying)
+        pivots = regime.key_levels.classic_pivots
+
+        briefing = AIDailyBriefingResponse(
+            symbol=underlying,
+            session_type=session_type if session_type in ("PRE_MARKET", "POST_MARKET", "INTRADAY_UPDATE") else "PRE_MARKET",
+            timestamp=datetime.now(timezone.utc),
+            executive_summary=f"{underlying} enters session in {regime.regime_state} regime (Score {regime.confidence_score}%). Spot ₹{regime.spot_price} positioned relative to Pivot ₹{pivots.pivot}.",
+            key_levels_to_watch={
+                "spot": regime.spot_price,
+                "pivot": pivots.pivot,
+                "r1": pivots.r1,
+                "s1": pivots.s1,
+                "poc": regime.key_levels.poc,
+                "vah": regime.key_levels.vah,
+                "val": regime.key_levels.val,
+            },
+            options_pin_and_pivots=f"Primary gravitational support at S1 ₹{pivots.s1}; resistance at R1 ₹{pivots.r1}. Volume Profile Point of Control at ₹{regime.key_levels.poc}.",
+            fii_dii_implication="Institutional FII long/short positioning remains moderately balanced; watch morning opening range breakout.",
+            actionable_playbook=[
+                f"Defend longs above Classic Pivot ₹{pivots.pivot}",
+                f"Look for mean-reversion exhaustion near R1 ₹{pivots.r1}",
+                f"Respect 14-period ATR volatility band of {regime.indicators.atr_14} points",
+            ],
+            provider_used="droid_quant_engine",
+        )
+        return {
+            "data": briefing.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        logger.error("briefing_endpoint_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+

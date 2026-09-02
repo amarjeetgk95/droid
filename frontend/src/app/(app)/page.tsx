@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useMarketDataContext } from '@/context/MarketDataContext';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
@@ -92,14 +92,21 @@ export default function DashboardPage() {
       ? 'BTCUSD'
       : 'NIFTY';
 
-  const handleManualRefresh = async () => {
+  const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
       await refetch();
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [refetch]);
+
+  const handleSelectCard = useCallback((symbol: string) => {
+    if (symbol.includes('BANKNIFTY')) setSelectedSymbol('BANKNIFTY');
+    else if (symbol.includes('SENSEX')) setSelectedSymbol('SENSEX');
+    else if (symbol.includes('BTC')) setSelectedSymbol('BTCUSD');
+    else setSelectedSymbol('NIFTY');
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -115,10 +122,21 @@ export default function DashboardPage() {
       }
     };
     fetchRegime();
-    const interval = setInterval(fetchRegime, 30000);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(async () => {
+        if (!document.hidden) await fetchRegime();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void fetchRegime(); };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [activeSymbol]);
 
@@ -258,12 +276,7 @@ export default function DashboardPage() {
                   <MarketCard
                     card={card}
                     isSelected={isSelected}
-                    onSelect={() => {
-                      if (card.symbol.includes('BANKNIFTY')) setSelectedSymbol('BANKNIFTY');
-                      else if (card.symbol.includes('SENSEX')) setSelectedSymbol('SENSEX');
-                      else if (card.symbol.includes('BTC')) setSelectedSymbol('BTCUSD');
-                      else setSelectedSymbol('NIFTY');
-                    }}
+                    onSelect={() => handleSelectCard(card.symbol)}
                   />
                 </ErrorBoundary>
               );

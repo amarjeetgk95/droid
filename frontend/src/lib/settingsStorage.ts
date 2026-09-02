@@ -52,9 +52,8 @@ export function saveStoredSettings(settings: AppSettings): void {
   if (typeof window === 'undefined') return;
   try {
     const toSave = { ...settings, schemaVersion: 2 };
+    // Single write to V2 only — V1 mirror removed to avoid double write cost per save
     writeRaw(STORAGE_KEY_V2, JSON.stringify(toSave));
-    // Keep v1 mirror for one release cycle for downgrade safety, then drop
-    writeRaw(STORAGE_KEY, JSON.stringify(toSave));
   } catch (err) {
     console.error('Failed to save settings to localStorage:', err);
   }

@@ -97,7 +97,8 @@ export function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
 
 export function migrateMockAI(settings: AppSettings): AppSettings {
   if ((settings.ai as unknown as { provider?: string })?.provider === 'mock_ai' || (settings.ai as unknown as { provider?: string })?.provider === 'mock') {
-    return { ...settings, ai: { ...settings.ai, provider: 'gemini' as const } };
+    // compat: mock_ai -> openrouter (backend now treats mock_ai as openrouter; frontend defaults to openrouter)
+    return { ...settings, ai: { ...settings.ai, provider: 'openrouter' as const, connectionMode: 'OpenRouter' as const } };
   }
   return settings;
 }

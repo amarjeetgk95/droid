@@ -6,6 +6,7 @@ import type {
   HpiAuditEntry, HpiDerivative, HpiImportPreview, HpiImportResult,
   HpiPolicy, HpiSelectionEntry, HpiStorageReport, HpiUniverse,
 } from '@/lib/types';
+import { deepEqual } from '@/lib/deepEqual';
 import { ToastProvider, useToast } from '@/lib/historical-intelligence/toast';
 import { HiSectionNav, hiSectionMeta, type HiSectionId } from '@/components/historical-intelligence/HiSectionNav';
 import { HiTopStrip } from '@/components/historical-intelligence/HiTopStrip';
@@ -70,7 +71,7 @@ function HistoricalIntelligencePageInner() {
 
   const refresh = React.useCallback(() => loadAll(true), [loadAll]);
 
-  const dirty = React.useMemo(() => JSON.stringify(selection) !== JSON.stringify(savedSelection), [selection, savedSelection]);
+  const dirty = React.useMemo(() => !deepEqual(selection, savedSelection), [selection, savedSelection]);
 
   const toggle = (symbol: string, enabled: boolean) => {
     const entry = selection[symbol] ?? { symbol, enabled: false, data_categories: [] };

@@ -70,7 +70,7 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
@@ -89,7 +89,7 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
       )}
 
       {/* 1. Live Virtual Account Telemetry Card */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
           <div>
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -147,7 +147,7 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
       </div>
 
       {/* 2. Capital & Risk Allocation Parameters */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-primary" />

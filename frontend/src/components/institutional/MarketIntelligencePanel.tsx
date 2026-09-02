@@ -39,10 +39,18 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
     }
     setLoading(true);
     fetchMi();
-    const id = setInterval(() => { if (!document.hidden && !cancelled) fetchMi(); }, 30000);
-    const onVis = () => { if (!document.hidden && !cancelled) fetchMi(); };
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        if (!document.hidden && !cancelled) void fetchMi();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden && !cancelled) void fetchMi(); };
     document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+    return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener('visibilitychange', onVis); };
   }, [selected]);
 
   if (loading) return <div className="bg-card border rounded p-4 h-80 animate-pulse">Loading Market Intelligence…</div>;

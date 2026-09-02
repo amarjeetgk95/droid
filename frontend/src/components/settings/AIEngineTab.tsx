@@ -23,8 +23,8 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     (settings.provider === 'openrouter' ? 'OpenRouter' : settings.provider === 'ollama' ? 'Local Ollama' : 'OpenRouter');
 
   return (
-    <div className="space-y-6">
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="space-y-4">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Brain className="w-4 h-4 text-primary" />

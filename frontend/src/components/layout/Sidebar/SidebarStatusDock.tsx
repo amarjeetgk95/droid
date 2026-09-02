@@ -85,7 +85,7 @@ export function SidebarStatusDock({
   return (
     <div className="flex flex-col gap-2 p-3 border-t border-border/80 bg-secondary/20">
       {/* Real-time Gateway Telemetry Pill */}
-      <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-card/60 border border-border/50 shadow-2xs">
+      <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-card/60 border border-border/50 shadow-sm">
         <div className="flex items-center gap-2 min-w-0">
           <span className="relative flex h-2 w-2 shrink-0">
             {isStreamLive && (

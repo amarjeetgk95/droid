@@ -15,7 +15,7 @@ export function ApiTypeSelector({ settings, onChange }: Props) {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
       <div>
         <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
           <Globe className="w-4 h-4 text-primary" />

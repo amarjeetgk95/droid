@@ -15,7 +15,7 @@ export default function Legend({ symbol = 'BTCUSDT', data, hoverIdx, tf }) {
   const tfLabel = tf >= 1440 ? '1D' : tf >= 60 ? tf / 60 + 'H' : tf + 'm';
 
   return (
-    <div className="absolute left-3 top-2 text-[12px] pointer-events-none leading-[18px] text-[#131722] bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded">
+    <div className="absolute left-3 top-2 text-[12px] pointer-events-none leading-[18px] text-[#131722] bg-white/80  px-1.5 py-0.5 rounded">
       <div className="font-semibold text-[#131722] mb-[2px]">
         {symbol} · {tfLabel}
       </div>

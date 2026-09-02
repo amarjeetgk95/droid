@@ -61,7 +61,16 @@ class ApiClient {
       }
       if (contentType.includes('application/json')) {
         const error = await response.json().catch(() => ({ detail: response.statusText }));
-        throw new Error(error.detail || `API Error ${response.status}: ${response.statusText}`);
+        // Surface FREE-only guard hint and catalog fallback clearly
+        const detail = error.detail || error.error || error.message || `API Error ${response.status}: ${response.statusText}`;
+        const hint = error.hint ? ` Hint: ${error.hint}` : '';
+        const extra = error.detail && error.detail.toLowerCase().includes('paid models are disabled')
+          ? ' Hint: Select a FREE OpenRouter model (prompt=0 & completion=0). Try Auto — Best Free, or enable Allow Paid Models in Settings. Catalog will fallback to cached models if OpenRouter is temporarily unavailable.'
+          : hint;
+        const retry = response.status === 502 && error.detail && error.detail.toLowerCase().includes('openrouter catalog')
+          ? ' (Retrying will use cached model list if available)'
+          : '';
+        throw new Error(`${detail}${extra}${retry}`);
       } else {
         throw new Error(`Backend at ${this.baseUrl} returned error ${response.status} (${response.statusText}).`);
       }
@@ -249,35 +258,251 @@ class ApiClient {
   }
 
   // AI Market Analyst & Structured Insights (Phase 8) — Settings-driven (no hardcode)
-  async generateAIAnalysis(symbol: string, provider: string = 'mock_ai', opts?: { openRouterApiKey?: string; geminiApiKey?: string; geminiModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
+  // NOTE: generateAIAnalysis is deprecated for gemini/ollama — use generateAIAnalysisWithModel (POST /api/v1/ai/analyze) for all connection modes.
+  // Kept for back-compat; now forwards correctly to unified endpoint where needed.
+  async generateAIAnalysis(
+    symbol: string,
+    provider: string = 'openrouter',
+    opts?: {
+      openRouterApiKey?: string;
+      geminiApiKey?: string;
+      geminiModel?: string;
+      ollamaBaseUrl?: string;
+      ollamaModel?: string;
+      openaiApiKey?: string;
+      openaiModel?: string;
+      openaiBaseUrl?: string;
+      novitaApiKey?: string;
+      novitaModel?: string;
+      novitaBaseUrl?: string;
+      nvidiaApiKey?: string;
+      nvidiaModel?: string;
+      nvidiaBaseUrl?: string;
+      customOpenaiApiKey?: string;
+      customOpenaiModel?: string;
+      customOpenaiBaseUrl?: string;
+      apiKey?: string;
+      model?: string;
+      base_url?: string;
+      [key: string]: unknown;
+    },
+  ) {
+    // compat: mock_ai -> openrouter
+    const normProvider = provider === 'mock_ai' ? 'openrouter' : provider;
+    // For any non-openrouter via legacy endpoint, route via unified model-aware endpoint to ensure keys forwarded (gemini/ollama/direct providers)
+    if (normProvider !== 'openrouter') {
+      const payload: Record<string, unknown> = {
+        symbol,
+        provider: normProvider,
+        ...opts,
+      };
+      // Ensure at least one key/model field propagates — fallback to unified endpoint which handles per-request key -> config fallback
+      return this.generateAIAnalysisWithModel(payload as any);
+    }
     const headers: Record<string, string> = {};
-    if (opts?.openRouterApiKey) headers['X-OpenRouter-Key'] = opts.openRouterApiKey;
-    if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey;
-    // Pass via header + query fallback for backend that also accepts query
-    const qp = opts?.openRouterApiKey ? `&openRouterApiKey=${encodeURIComponent(opts.openRouterApiKey)}` : '';
-    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${provider}${qp}`, {
+    if (opts?.openRouterApiKey) headers['X-OpenRouter-Key'] = opts.openRouterApiKey as string;
+    if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey as string;
+    const qp = opts?.openRouterApiKey ? `&openRouterApiKey=${encodeURIComponent(opts.openRouterApiKey as string)}` : '';
+    const body = opts && Object.keys(opts).length > 0 ? JSON.stringify(opts) : undefined;
+    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${normProvider}${qp}`, {
       method: 'POST',
       headers,
-      body: opts?.geminiApiKey || opts?.geminiModel || opts?.ollamaBaseUrl ? JSON.stringify(opts) : undefined,
+      body,
     });
   }
 
-  async generateAIAnalysisWithModel(payload: { symbol?: string; model?: string; provider?: string; analysis_type?: string; allow_paid?: boolean; openRouterApiKey?: string; geminiApiKey?: string; geminiModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
-    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta; model_used?: string; latency_ms?: number }>('/api/v1/ai/analyze', {
+  async generateAIAnalysisWithModel(payload: {
+    symbol?: string;
+    model?: string;
+    provider?: string;
+    analysis_type?: string;
+    allow_paid?: boolean;
+    openRouterApiKey?: string;
+    geminiApiKey?: string;
+    geminiModel?: string;
+    ollamaBaseUrl?: string;
+    ollamaModel?: string;
+    openaiApiKey?: string;
+    openaiModel?: string;
+    openaiBaseUrl?: string;
+    novitaApiKey?: string;
+    novitaModel?: string;
+    novitaBaseUrl?: string;
+    nvidiaApiKey?: string;
+    nvidiaModel?: string;
+    nvidiaBaseUrl?: string;
+    customOpenaiApiKey?: string;
+    customOpenaiModel?: string;
+    customOpenaiBaseUrl?: string;
+    apiKey?: string;
+    base_url?: string;
+    customBaseUrl?: string;
+    [key: string]: unknown;
+  }) {
+    // compat: mock_ai -> openrouter for unified path
+    const norm = { ...payload };
+    if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
+    // Ollama local-only hint: if base_url is localhost, inform caller but still attempt (backend will gate with clear message)
+    return this.request<{ data: import('./types').AIInsightResponse; error: string | null; meta: import('./types').ApiMeta; model_used?: string; latency_ms?: number; hint?: string }>('/api/v1/ai/analyze', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(norm),
     });
   }
 
-  async testAIProvider(payload: { provider: string; symbol?: string; geminiApiKey?: string; geminiModel?: string; openRouterApiKey?: string; openRouterModel?: string; ollamaBaseUrl?: string; ollamaModel?: string }) {
+  async testAIProvider(payload: {
+    provider: string;
+    symbol?: string;
+    geminiApiKey?: string;
+    geminiModel?: string;
+    openRouterApiKey?: string;
+    openRouterModel?: string;
+    ollamaBaseUrl?: string;
+    ollamaModel?: string;
+    openaiApiKey?: string;
+    openaiModel?: string;
+    openaiBaseUrl?: string;
+    novitaApiKey?: string;
+    novitaModel?: string;
+    novitaBaseUrl?: string;
+    nvidiaApiKey?: string;
+    nvidiaModel?: string;
+    nvidiaBaseUrl?: string;
+    customOpenaiApiKey?: string;
+    customOpenaiModel?: string;
+    customOpenaiBaseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    base_url?: string;
+    customBaseUrl?: string;
+    [key: string]: unknown;
+  }) {
+    // compat mock_ai -> openrouter
+    const norm = { ...payload };
+    if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
     return this.request<{ data: { success: boolean; provider: string; model: string; latency_ms: number; schema_valid: boolean; is_mock?: boolean; message?: string; error?: string; hint?: string; insight?: import('./types').AIInsightResponse }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/ai/test', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(norm),
     });
   }
 
   async getAIHistory(symbol: string) {
     return this.request<{ data: import('./types').AIHistoryItem[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/history/${encodeURIComponent(symbol)}`);
+  }
+
+  // Live Interactive Streaming Copilot (SSE)
+  async streamAIChat(
+    payload: import('./types').AIChatRequest,
+    onChunk: (chunk: import('./types').AIChatStreamChunk) => void,
+    onError: (err: string) => void,
+    onDone: () => void,
+    signal?: AbortSignal
+  ) {
+    const url = `${this.baseUrl}/api/v1/ai/chat/stream`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    if (payload.openrouter_api_key) {
+      headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
+    }
+    if (payload.gemini_api_key) {
+      headers['X-Gemini-Key'] = payload.gemini_api_key;
+    }
+    if (payload.openai_api_key) {
+      headers['X-OpenAI-Key'] = payload.openai_api_key;
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        onError(`Server error ${response.status}: ${errText.slice(0, 300)}`);
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        onError('No readable stream available in response.');
+        return;
+      }
+
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const jsonStr = trimmed.slice(6).trim();
+          if (jsonStr === '[DONE]') {
+            onDone();
+            return;
+          }
+          try {
+            const chunk: import('./types').AIChatStreamChunk = JSON.parse(jsonStr);
+            onChunk(chunk);
+            if (chunk.type === 'done') {
+              onDone();
+            } else if (chunk.type === 'error') {
+              onError(chunk.delta || 'Unknown stream error');
+            }
+          } catch {
+            // Ignore parse errors on partial chunks
+          }
+        }
+      }
+      onDone();
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        onDone();
+      } else {
+        onError(err.message || 'Stream connection failed.');
+      }
+    }
+  }
+
+  // Options Strategy Architect
+  async recommendOptionsStrategy(payload: import('./types').AIOptionsStrategyRequest) {
+    const headers: Record<string, string> = {};
+    if (payload.openrouter_api_key) headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
+    if (payload.gemini_api_key) headers['X-Gemini-Key'] = payload.gemini_api_key;
+    return this.request<{ data: import('./types').AIOptionsStrategyRecommendation; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/ai/strategy/recommend', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Trade Thesis & Invalidation Auditor
+  async validateTradeSetup(payload: import('./types').AITradeValidationRequest) {
+    const headers: Record<string, string> = {};
+    if (payload.openrouter_api_key) headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
+    if (payload.gemini_api_key) headers['X-Gemini-Key'] = payload.gemini_api_key;
+    return this.request<{ data: import('./types').AITradeValidationResponse; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/ai/trade/validate', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Daily Market Briefing (Pre/Post-Market)
+  async getMarketBriefing(symbol: string, sessionType: string = 'PRE_MARKET') {
+    return this.request<{ data: import('./types').AIDailyBriefingResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ai/briefing/${encodeURIComponent(symbol)}?session_type=${sessionType}`);
   }
 
   // Dynamic OpenRouter Model Catalog (Free-Model-Only)

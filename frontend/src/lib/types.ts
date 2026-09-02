@@ -343,6 +343,148 @@ export interface AIHistoryItem {
   executive_summary: string;
 }
 
+export type AIChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export interface AIChatMessage {
+  role: AIChatRole;
+  content: string;
+  reasoning_content?: string | null;
+  tool_calls?: any[] | null;
+  tool_call_id?: string | null;
+  name?: string | null;
+}
+
+export interface AIChatRequest {
+  messages: AIChatMessage[];
+  symbol?: string;
+  provider?: string;
+  model?: string | null;
+  temperature?: number;
+  context_page?: string | null;
+  enable_tools?: boolean;
+  allow_paid?: boolean | null;
+  openrouter_api_key?: string | null;
+  gemini_api_key?: string | null;
+  openai_api_key?: string | null;
+  ollama_base_url?: string | null;
+  ollama_model?: string | null;
+}
+
+export interface AIChatStreamChunk {
+  type: 'content' | 'reasoning' | 'tool_call' | 'tool_result' | 'done' | 'error';
+  delta?: string;
+  reasoning_delta?: string;
+  tool_call?: {
+    id?: string;
+    type?: string;
+    function?: {
+      name: string;
+      arguments: string;
+    };
+  } | null;
+  tool_result?: {
+    name: string;
+    arguments: string;
+    result: any;
+  } | null;
+  finish_reason?: string | null;
+  provider_used?: string | null;
+  model_used?: string | null;
+}
+
+export interface AIOptionLeg {
+  strike: number;
+  option_type: 'CE' | 'PE';
+  action: 'BUY' | 'SELL';
+  expiry?: string | null;
+  estimated_premium: number;
+  delta?: number | null;
+  theta?: number | null;
+}
+
+export interface AIOptionsStrategyRecommendation {
+  symbol: string;
+  strategy_name: string;
+  market_outlook: string;
+  legs: AIOptionLeg[];
+  max_profit_pts: string;
+  max_loss_pts: string;
+  risk_reward_ratio: string;
+  breakevens: number[];
+  net_debit_credit_pts: number;
+  net_delta: number;
+  net_theta: number;
+  rationale: string;
+  entry_rules: string[];
+  exit_rules: string[];
+  risk_management: string;
+  timestamp: string;
+  provider_used: string;
+}
+
+export interface AIOptionsStrategyRequest {
+  symbol?: string;
+  outlook?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'HIGH_VOLATILITY' | 'LOW_VOLATILITY' | 'DIRECTIONAL_RANGE';
+  custom_query?: string | null;
+  target_dte?: number | null;
+  max_risk_tolerance?: 'LOW' | 'MODERATE' | 'AGGRESSIVE';
+  provider?: string;
+  model?: string | null;
+  allow_paid?: boolean | null;
+  openrouter_api_key?: string | null;
+  gemini_api_key?: string | null;
+}
+
+export interface AITradeValidationRequest {
+  symbol?: string;
+  timeframe?: string;
+  direction?: 'BUY' | 'SELL';
+  entry_price: number;
+  stop_loss: number;
+  target_price: number;
+  thesis_notes?: string | null;
+  provider?: string;
+  model?: string | null;
+  allow_paid?: boolean | null;
+  openrouter_api_key?: string | null;
+  gemini_api_key?: string | null;
+}
+
+export interface AITradeValidationResponse {
+  symbol: string;
+  decision: 'CONFIRM' | 'REJECT' | 'WATCH' | 'UNCERTAIN';
+  score: number;
+  risk_reward_calculated: number;
+  technical_alignment: string;
+  derivatives_alignment: string;
+  volatility_regime_check: string;
+  invalidation_conditions: string[];
+  warning_traps: string[];
+  executive_verdict: string;
+  timestamp: string;
+  provider_used: string;
+}
+
+export interface AIDailyBriefingResponse {
+  symbol: string;
+  session_type: 'PRE_MARKET' | 'POST_MARKET' | 'INTRADAY_UPDATE';
+  timestamp: string;
+  executive_summary: string;
+  key_levels_to_watch: {
+    spot: number;
+    pivot: number;
+    r1: number;
+    s1: number;
+    poc: number;
+    vah: number;
+    val: number;
+  };
+  options_pin_and_pivots: string;
+  fii_dii_implication: string;
+  actionable_playbook: string[];
+  provider_used: string;
+}
+
 export interface OpenRouterModel {
   id: string;
   name: string;

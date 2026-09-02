@@ -17,7 +17,7 @@ export function DirectProviderPanel({ settings, onChange }: Props) {
   const [isCustomModel, setIsCustomModel] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
       <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
         <Network className="w-4 h-4 text-primary" />
         Direct Provider

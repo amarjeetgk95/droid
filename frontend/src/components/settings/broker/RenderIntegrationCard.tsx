@@ -23,7 +23,7 @@ export function RenderIntegrationCard({ settings }: Props) {
   const flattradeServerLoginUrl = FLATTRADE_LOGIN_URL;
 
   return (
-    <div className="bg-card border border-primary/20 rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="bg-card border border-primary/20 rounded-xl p-4 space-y-3 shadow-sm">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-lg bg-primary/10 text-primary">

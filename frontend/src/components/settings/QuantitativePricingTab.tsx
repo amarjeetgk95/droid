@@ -34,9 +34,9 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
   }, [settings.brokeragePerOrder]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 1. Quantitative Pricing Engine Parameters */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Sliders className="w-4 h-4 text-primary" />
@@ -126,7 +126,7 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
       </div>
 
       {/* 2. Transaction Cost (only user-editable fields) */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Percent className="w-4 h-4 text-primary" />
@@ -149,7 +149,7 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
       </div>
 
       {/* 3. Live Cost Breakdown Simulator Card */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div className="flex items-center justify-between border-b border-border pb-3">
           <div>
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { Radio, TrendingUp, Landmark, Bitcoin } from 'lucide-react';
 import type { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
 
@@ -25,12 +25,12 @@ interface Props {
   onChange: (updates: Partial<BrokerSettings>) => void;
 }
 
-export function ProviderGrid({ settings, onChange }: Props) {
-  const visibleProviders = settings.apiType === 'crypto' ? CRYPTO_PROVIDERS : INDIAN_PROVIDERS;
-  const handleProviderSelect = (providerId: BrokerProviderId) => onChange({ provider: providerId });
+export const ProviderGrid = memo(function ProviderGrid({ settings, onChange }: Props) {
+  const visibleProviders = useMemo(() => (settings.apiType === 'crypto' ? CRYPTO_PROVIDERS : INDIAN_PROVIDERS), [settings.apiType]);
+  const handleProviderSelect = useCallback((providerId: BrokerProviderId) => onChange({ provider: providerId }), [onChange]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
       <div>
         <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
           <Radio className="w-4 h-4 text-primary" />
@@ -69,4 +69,4 @@ export function ProviderGrid({ settings, onChange }: Props) {
       </div>
     </div>
   );
-}
+});

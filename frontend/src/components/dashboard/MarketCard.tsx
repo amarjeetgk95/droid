@@ -12,15 +12,13 @@ function formatNumber(num: number) {
 
 function Sparkline({ data, isPositive }: { data: number[]; isPositive: boolean }) {
   if (!data || data.length < 2) return null;
-  // Reject non-finite values instead of producing NaN path points.
   const clean = data.filter((v) => Number.isFinite(v));
   if (clean.length < 2) return null;
   const min = Math.min(...clean);
   const max = Math.max(...clean);
-  const range = max - min || 1; // min !== max here (filtered finite, len>=2) but keep safe
-  const width = 80;
-  const height = 28;
-
+  const range = max - min || 1;
+  const width = 72;
+  const height = 24;
   const points = clean
     .map((val, idx) => {
       const x = (idx / (clean.length - 1)) * width;
@@ -28,19 +26,10 @@ function Sparkline({ data, isPositive }: { data: number[]; isPositive: boolean }
       return `${x},${y}`;
     })
     .join(' ');
-
   const strokeColor = isPositive ? '#22c55e' : '#ef4444';
-
   return (
-    <svg width={width} height={height} className="overflow-visible">
-      <polyline
-        fill="none"
-        stroke={strokeColor}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-      />
+    <svg width={width} height={height} className="overflow-visible shrink-0">
+      <polyline fill="none" stroke={strokeColor} strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" points={points} />
     </svg>
   );
 }
@@ -53,7 +42,6 @@ interface MarketCardProps {
 
 export function MarketCard({ card, isSelected = false, onSelect }: MarketCardProps) {
   const isPos = (card.change ?? 0) >= 0;
-
   const low = Number(card.low) || 0;
   const high = Number(card.high) || 0;
   const ltp = Number(card.ltp) || 0;
@@ -63,79 +51,66 @@ export function MarketCard({ card, isSelected = false, onSelect }: MarketCardPro
   return (
     <div
       onClick={onSelect}
-      className={`rounded-xl border p-4 flex flex-col justify-between transition-all cursor-pointer select-none ${
+      className={`rounded-lg border p-3 flex flex-col justify-between transition-colors cursor-pointer select-none [contain:paint] cv-auto ${
         isSelected
-          ? 'bg-primary/10 border-primary shadow-sm ring-1 ring-primary/30'
-          : 'bg-card border-border hover:border-primary/50 hover:bg-secondary/30'
+          ? 'bg-blue-500/10 border-blue-500/30 ring-1 ring-blue-500/20'
+          : 'bg-card border-border hover:border-slate-700 hover:bg-slate-900/40'
       }`}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 180px' } as React.CSSProperties}
     >
-      <div className="flex justify-between items-start mb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <h3 className="font-bold text-sm text-foreground truncate">
+      <div className="flex justify-between items-start gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <h3 className="font-semibold text-[13px] tracking-tight text-foreground truncate">
             {card.display_name || card.symbol}
           </h3>
-          {isSelected && (
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-          )}
+          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />}
         </div>
         <DataStatus status={card.status} />
       </div>
 
-      <div className="my-1.5 flex items-center justify-between">
-        <div>
-          <div className="text-xl sm:text-2xl font-black tabular-nums tracking-tight text-foreground">
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[20px] font-bold tabular-nums tracking-tight leading-none text-foreground font-mono">
             {safeNum(card.ltp)}
           </div>
-          <div
-            className={`text-xs font-semibold flex items-center gap-1 mt-0.5 ${
-              isPos ? 'text-emerald-500' : 'text-rose-500'
-            }`}
-          >
-            <span>{isPos ? '▲' : '▼'}</span>
+          <div className={`text-[11px] font-medium flex items-center gap-1 mt-1 tabular-nums ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+            <span className="text-[10px] leading-none">{isPos ? '▲' : '▼'}</span>
             <span>{safeNum(card.change)}</span>
-            <span>({safeNum(card.change_percent)}%)</span>
+            <span className="opacity-80">({safeNum(card.change_percent)}%)</span>
           </div>
         </div>
-        <div className="opacity-90 shrink-0">
-          <Sparkline data={card.sparkline} isPositive={isPos} />
-        </div>
+        <Sparkline data={card.sparkline} isPositive={isPos} />
       </div>
 
-      {/* Day Range Bar */}
       {rangeSpan > 0 && (
-        <div className="my-2 space-y-1">
-          <div className="w-full bg-secondary/80 h-1.5 rounded-full overflow-hidden relative">
-            <div
-              className={`h-full rounded-full ${isPos ? 'bg-emerald-500' : 'bg-rose-500'}`}
-              style={{ width: `${rangePct}%` }}
-            />
+        <div className="mt-2.5 space-y-1">
+          <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full ${isPos ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${rangePct}%` }} />
           </div>
-          <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
-            <span>L: {safeNum(card.low)}</span>
-            <span>H: {safeNum(card.high)}</span>
+          <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums font-mono leading-none">
+            <span>L {safeNum(card.low)}</span>
+            <span>H {safeNum(card.high)}</span>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1 text-[11px] text-muted-foreground border-t border-border/60 pt-2">
-        <div className="flex justify-between">
-          <span>Open:</span>
-          <span className="text-foreground tabular-nums font-mono">{safeNum(card.open)}</span>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2.5 text-[11px] border-t border-slate-800 pt-2.5">
+        <div className="flex justify-between gap-2">
+          <span className="text-muted-foreground text-[10px]">Open</span>
+          <span className="text-foreground tabular-nums font-mono font-medium">{safeNum(card.open)}</span>
         </div>
-        <div className="flex justify-between">
-          <span>Prev:</span>
-          <span className="text-foreground tabular-nums font-mono">{safeNum(card.previous_close)}</span>
+        <div className="flex justify-between gap-2">
+          <span className="text-muted-foreground text-[10px]">Prev</span>
+          <span className="text-foreground tabular-nums font-mono font-medium">{safeNum(card.previous_close)}</span>
         </div>
-        <div className="flex justify-between">
-          <span>Vol:</span>
-          <span className="text-foreground tabular-nums font-mono">{safeInt(card.volume)}</span>
+        <div className="flex justify-between gap-2">
+          <span className="text-muted-foreground text-[10px]">Vol</span>
+          <span className="text-foreground tabular-nums font-mono font-medium">{safeInt(card.volume)}</span>
         </div>
-        <div className="flex justify-between">
-          <span>OI:</span>
-          <span className="text-foreground tabular-nums font-mono">
-            {card.open_interest !== null && card.open_interest !== undefined
-              ? formatNumber(card.open_interest)
-              : '—'}
+        <div className="flex justify-between gap-2">
+          <span className="text-muted-foreground text-[10px]">OI</span>
+          <span className="text-foreground tabular-nums font-mono font-medium">
+            {card.open_interest != null ? formatNumber(card.open_interest) : '—'}
           </span>
         </div>
       </div>

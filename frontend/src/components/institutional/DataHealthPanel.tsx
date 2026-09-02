@@ -16,10 +16,18 @@ export function DataHealthPanel() {
       }
     }
     fetchH();
-    const id = setInterval(() => { if (!document.hidden && !cancelled) fetchH(); }, 30000);
-    const onVis = () => { if (!document.hidden && !cancelled) fetchH(); };
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        if (!document.hidden && !cancelled) void fetchH();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden && !cancelled) void fetchH(); };
     document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+    return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener('visibilitychange', onVis); };
   }, []);
 
   const dot = (status: string) => {

@@ -17,13 +17,13 @@ interface Props {
 
 export function BrokerConnectionTab({ settings, fullSettings, onChange }: Props) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <ApiTypeSelector settings={settings} onChange={onChange} />
       <ProviderGrid settings={settings} onChange={onChange} />
       <RenderIntegrationCard settings={settings} />
       <TelemetryCard settings={settings} fullSettings={fullSettings} />
       {settings.provider === 'binance' && (
-        <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Key className="w-4 h-4 text-primary" />

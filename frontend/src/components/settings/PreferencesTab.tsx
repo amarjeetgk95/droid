@@ -61,7 +61,7 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
@@ -80,7 +80,7 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
       )}
 
       {/* 1. Interface & Number Format Preferences */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Palette className="w-4 h-4 text-primary" />
@@ -142,7 +142,7 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
       </div>
 
       {/* 2. Backup, Import & Factory Reset */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Sliders className="w-4 h-4 text-primary" />

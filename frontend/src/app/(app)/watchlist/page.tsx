@@ -219,7 +219,7 @@ export default function WatchlistPage() {
                 <ChevronDown className="w-3.5 h-3.5" />
               </button>
               {showWatchlistDropdown && (
-                <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-10 min-w-[180px]">
+                <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-sm z-10 min-w-[180px]">
                   {watchlists.map(wl => (
                     <button
                       key={wl.id}

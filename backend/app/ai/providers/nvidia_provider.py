@@ -15,9 +15,11 @@ logger = structlog.get_logger()
 
 class NvidiaProvider(AIProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = (api_key or "").strip()
-        self.model = (model or "meta/llama-3.1-70b-instruct").strip()
-        self.base_url = (base_url or "https://integrate.api.nvidia.com/v1").rstrip("/")
+        from app.core.config import settings as _cfg
+        fallback = (getattr(_cfg, "nvidia_api_key", "") or "").strip()
+        self.api_key = ((api_key or "").strip() or fallback)
+        self.model = (model or getattr(_cfg, "nvidia_model", "meta/llama-3.1-70b-instruct") or "meta/llama-3.1-70b-instruct").strip()
+        self.base_url = (base_url or getattr(_cfg, "nvidia_base_url", "") or "https://integrate.api.nvidia.com/v1").rstrip("/") or "https://integrate.api.nvidia.com/v1"
 
     @property
     def provider_name(self) -> str:

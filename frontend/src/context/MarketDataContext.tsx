@@ -29,7 +29,7 @@ type MarketDataContextType = {
 
 const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
-const DEFAULT_REFRESH_MS = 15000;
+const DEFAULT_REFRESH_MS = 30000;
 
 const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, marketStatus: null };
 
@@ -186,39 +186,83 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     };
   }, [refreshInterval, fetchData]);
 
-  // Merge live ticks into cards — but ONLY while the feed is actually fresh.
-  // latestTicks keeps the last-ever tick batch; `ticksFresh` flips false after
-  // FEED_STALE_MS without a message, so a card never claims LIVE after the stream dies.
+  // Merge live ticks into cards — per-symbol memoized to avoid re-rendering unchanged cards.
+  // latestTicks keeps the last-ever tick batch; `ticksFresh` flips false after FEED_STALE_MS without a message.
+  // Each unchanged card keeps its original reference so React.memo(MarketCard) skips re-render.
+  const prevDisplayedRef = useRef<Map<string, IndexCard>>(new Map());
   const displayedCards = useMemo(() => {
-    if (!latestTicks || Object.keys(latestTicks).length === 0) return cards;
-    if (streamState !== 'CONNECTED') return cards;
-    if (!ticksFresh) return cards;
+    if (!latestTicks || Object.keys(latestTicks).length === 0) {
+      prevDisplayedRef.current.clear();
+      cards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
+      return cards;
+    }
+    if (streamState !== 'CONNECTED' || !ticksFresh) {
+      prevDisplayedRef.current.clear();
+      cards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
+      return cards;
+    }
 
-    return cards.map((card) => {
+    const next: IndexCard[] = [];
+    for (const card of cards) {
       const tick: TimestampedTick | undefined = latestTicks[card.symbol];
-      if (!tick) return card;
-
+      if (!tick) {
+        // Keep previous reference if symbol unchanged to preserve memo equality
+        const prev = prevDisplayedRef.current.get(card.symbol);
+        if (prev && prev === card) {
+          next.push(card);
+        } else if (prev && deepCardsEqual(prev, card)) {
+          // If card object is new but deep equal and no tick, reuse prev reference
+          next.push(prev);
+        } else {
+          prevDisplayedRef.current.set(card.symbol, card);
+          next.push(card);
+        }
+        continue;
+      }
       const newLtp = Number(tick.ltp);
-      if (!Number.isFinite(newLtp) || newLtp <= 0) return card;
+      if (!Number.isFinite(newLtp) || newLtp <= 0) {
+        const prev = prevDisplayedRef.current.get(card.symbol);
+        if (prev && prev.ltp === card.ltp) next.push(prev);
+        else {
+          prevDisplayedRef.current.set(card.symbol, card);
+          next.push(card);
+        }
+        continue;
+      }
+      const prev = prevDisplayedRef.current.get(card.symbol);
+      // Fast path: if tick ltp same as previous displayed ltp and volume unchanged, reuse prev
+      if (prev && prev.ltp === newLtp && prev.volume === (tick.volume ?? card.volume) && prev.status === 'LIVE') {
+        next.push(prev);
+        continue;
+      }
       const change = newLtp - card.previous_close;
       const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
-      const sparkline = [...card.sparkline];
-      if (sparkline.length > 0) sparkline[sparkline.length - 1] = newLtp;
-
-      return {
+      // Only clone sparkline when we actually update it — avoid spread on every tick for unchanged
+      let sparkline = card.sparkline;
+      if (card.sparkline.length > 0 && card.sparkline[card.sparkline.length - 1] !== newLtp) {
+        sparkline = card.sparkline.slice();
+        sparkline[sparkline.length - 1] = newLtp;
+      }
+      const merged: IndexCard = {
         ...card,
         ltp: newLtp,
         change: Number(change.toFixed(2)),
         change_percent: Number(changePercent.toFixed(2)),
         sparkline,
-        // ?? not || — a legitimate 0 volume must not fall back to stale data
         volume: tick.volume ?? card.volume,
         open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
         status: 'LIVE' as DataStatus,
         provider: tick.provider || card.provider,
       };
-    });
+      prevDisplayedRef.current.set(card.symbol, merged);
+      next.push(merged);
+    }
+    return next;
   }, [cards, latestTicks, streamState, ticksFresh]);
+
+  function deepCardsEqual(a: IndexCard, b: IndexCard): boolean {
+    return a.ltp === b.ltp && a.change === b.change && a.change_percent === b.change_percent && a.volume === b.volume && a.status === b.status && a.sparkline === b.sparkline;
+  }
 
   const value = useMemo<MarketDataContextType>(() => ({
     cards: displayedCards,

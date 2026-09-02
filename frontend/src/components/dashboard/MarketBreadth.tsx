@@ -6,10 +6,10 @@ import { BarChart3 } from 'lucide-react';
 export function MarketBreadth({ data, loading }: { data: MarketBreadthData | null; loading: boolean }) {
   if (loading || !data) {
     return (
-      <div className="bg-card rounded-xl border border-border p-5 h-72 animate-pulse flex flex-col justify-between">
-        <div className="h-4 bg-secondary rounded w-36" />
-        <div className="h-8 bg-secondary rounded w-full" />
-        <div className="h-24 bg-secondary rounded w-full" />
+      <div className="bg-card rounded-xl border border-border p-4 space-y-3 cv-auto" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 280px' } as React.CSSProperties}>
+        <div className="skeleton h-4 w-36 rounded" />
+        <div className="skeleton h-6 w-full rounded" />
+        <div className="skeleton h-20 w-full rounded" />
       </div>
     );
   }
@@ -21,66 +21,58 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
   const advPct = (advancing / total) * 100;
   const decPct = (declining / total) * 100;
   const unchPct = (unchanged / total) * 100;
-
   const sentiment = (data.sentiment || 'NEUTRAL').toUpperCase();
   const isBull = sentiment.includes('BULL') || (data.advance_decline_ratio ?? 0) > 1.2;
   const isBear = sentiment.includes('BEAR') || (data.advance_decline_ratio ?? 0) < 0.8;
 
   return (
-    <div className="bg-card rounded-xl border border-border p-5 space-y-4 shadow-xs">
+    <div className="bg-card rounded-xl border border-border p-4 space-y-3 shadow-sm [contain:paint] cv-auto" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 320px' } as React.CSSProperties}>
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
-            <BarChart3 className="w-4 h-4" />
+          <div className="p-1 rounded-md bg-blue-500/10 border border-blue-500/15 text-blue-400">
+            <BarChart3 className="w-3.5 h-3.5" />
           </div>
-          <h2 className="text-sm font-bold tracking-tight text-foreground uppercase">
-            Market Breadth &amp; Sectors
-          </h2>
+          <h2 className="text-[11px] font-bold tracking-widest text-slate-300 uppercase">Market Breadth & Sectors</h2>
         </div>
         <DataStatus status={data.status} />
       </div>
 
-      {/* Advance / Decline Bar */}
-      <div className="space-y-1.5 bg-secondary/30 border border-border/50 rounded-xl p-3.5">
-        <div className="flex justify-between text-xs font-semibold">
-          <span className="text-emerald-500 flex items-center gap-1">
-            <span>Advances:</span>
-            <strong className="tabular-nums font-mono">{safeInt(advancing)}</strong>
-            <span className="text-[10px] text-muted-foreground">({advPct.toFixed(0)}%)</span>
+      {/* Advance / Decline Bar — tight */}
+      <div className="space-y-2 bg-slate-900/50 border border-slate-800 rounded-lg p-3">
+        <div className="flex justify-between text-[11px] font-medium">
+          <span className="text-emerald-400 flex items-center gap-1">
+            Advances <strong className="tabular-nums font-mono">{safeInt(advancing)}</strong>
+            <span className="text-[10px] text-slate-500">({advPct.toFixed(0)}%)</span>
           </span>
-          <span className="text-muted-foreground flex items-center gap-1">
-            <span>Unchanged:</span>
-            <strong className="tabular-nums font-mono">{safeInt(unchanged)}</strong>
+          <span className="text-slate-500 flex items-center gap-1 text-[11px]">
+            Unch <strong className="tabular-nums font-mono text-slate-400">{safeInt(unchanged)}</strong>
           </span>
-          <span className="text-rose-500 flex items-center gap-1">
-            <span>Declines:</span>
-            <strong className="tabular-nums font-mono">{safeInt(declining)}</strong>
-            <span className="text-[10px] text-muted-foreground">({decPct.toFixed(0)}%)</span>
+          <span className="text-red-400 flex items-center gap-1">
+            Declines <strong className="tabular-nums font-mono">{safeInt(declining)}</strong>
+            <span className="text-[10px] text-slate-500">({decPct.toFixed(0)}%)</span>
           </span>
         </div>
 
-        <div className="w-full h-2.5 rounded-full bg-secondary overflow-hidden flex">
-          <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${advPct}%` }} />
-          <div className="bg-muted-foreground/30 h-full transition-all duration-500" style={{ width: `${unchPct}%` }} />
-          <div className="bg-rose-500 h-full transition-all duration-500" style={{ width: `${decPct}%` }} />
+        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden flex">
+          <div className="bg-emerald-500 h-full" style={{ width: `${advPct}%` }} />
+          <div className="bg-slate-600 h-full" style={{ width: `${unchPct}%` }} />
+          <div className="bg-red-500 h-full" style={{ width: `${decPct}%` }} />
         </div>
 
-        <div className="flex justify-between items-center pt-2 mt-2 border-t border-border/40 text-xs">
+        <div className="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
           <div>
-            <span className="text-muted-foreground text-[11px] block">A/D Ratio</span>
-            <span className="text-base font-black tabular-nums font-mono text-foreground">
-              {safeNum(data.advance_decline_ratio)}
-            </span>
+            <span className="text-slate-500 text-[10px] tracking-wide uppercase block leading-none">A/D Ratio</span>
+            <span className="text-sm font-bold tabular-nums font-mono text-foreground leading-none mt-1 block">{safeNum(data.advance_decline_ratio)}</span>
           </div>
           <div className="text-right">
-            <span className="text-muted-foreground text-[11px] block">Breadth Sentiment</span>
+            <span className="text-slate-500 text-[10px] tracking-wide uppercase block leading-none">Sentiment</span>
             <span
-              className={`text-xs px-2 py-0.5 rounded font-bold uppercase inline-block mt-0.5 ${
+              className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase inline-block mt-1 tracking-wide border ${
                 isBull
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                   : isBear
-                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                  : 'bg-secondary text-foreground'
+                  ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
               }`}
             >
               {safeStr(data.sentiment).replace(/_/g, ' ')}
@@ -89,35 +81,25 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
         </div>
       </div>
 
-      {/* Sector Performance Grid */}
       {data.sectors && data.sectors.length > 0 && (
         <div>
-          <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">
-            Key Sector Performance
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <h3 className="text-[10px] font-semibold tracking-widest text-slate-500 uppercase mb-2">Key Sector Performance</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {data.sectors.slice(0, 6).map((sector) => {
               const chg = sector.change_percent ?? 0;
               const isP = chg >= 0;
               return (
                 <div
                   key={sector.name}
-                  className="flex justify-between items-center px-3 py-2 rounded-lg bg-secondary/20 border border-border/40 text-xs hover:bg-secondary/40 transition-colors"
+                  className="flex justify-between items-center px-2.5 py-2 rounded-md bg-slate-900/40 border border-slate-800 text-xs hover:bg-slate-800/50 transition-colors"
                 >
-                  <span className="font-medium text-foreground truncate max-w-[120px]">
-                    {sector.name}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground font-mono">
+                  <span className="font-medium text-slate-200 truncate max-w-[120px] text-[12px]">{sector.name}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] text-slate-500 font-mono">
                       {sector.advancing}▲ / {sector.declining}▼
                     </span>
-                    <span
-                      className={`font-mono font-bold tabular-nums ${
-                        isP ? 'text-emerald-500' : 'text-rose-500'
-                      }`}
-                    >
-                      {isP ? '+' : ''}
-                      {safeNum(chg)}%
+                    <span className={`font-mono font-semibold tabular-nums text-xs ${isP ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {isP ? '+' : ''}{safeNum(chg)}%
                     </span>
                   </div>
                 </div>

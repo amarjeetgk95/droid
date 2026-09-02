@@ -15,9 +15,11 @@ logger = structlog.get_logger()
 
 class NovitaProvider(AIProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = (api_key or "").strip()
-        self.model = (model or "meta-llama/llama-3.3-70b-instruct").strip()
-        self.base_url = (base_url or "https://api.novita.ai/v3/openai").rstrip("/")
+        from app.core.config import settings as _cfg
+        fallback = (getattr(_cfg, "novita_api_key", "") or "").strip()
+        self.api_key = ((api_key or "").strip() or fallback)
+        self.model = (model or getattr(_cfg, "novita_model", "meta-llama/llama-3.3-70b-instruct") or "meta-llama/llama-3.3-70b-instruct").strip()
+        self.base_url = (base_url or getattr(_cfg, "novita_base_url", "") or "https://api.novita.ai/v3/openai").rstrip("/") or "https://api.novita.ai/v3/openai"
 
     @property
     def provider_name(self) -> str:

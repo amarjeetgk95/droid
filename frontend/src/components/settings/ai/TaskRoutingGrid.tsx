@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { AISettings, AITaskId, AIRoutingMode } from '@/lib/settings';
 import { TASK_LABELS } from './constants';
@@ -9,15 +9,15 @@ interface Props {
   onChange: (updated: Partial<AISettings>) => void;
 }
 
-export function TaskRoutingGrid({ settings, onChange }: Props) {
+export const TaskRoutingGrid = memo(function TaskRoutingGrid({ settings, onChange }: Props) {
   const routingMode: AIRoutingMode = (settings as unknown as { routingMode: AIRoutingMode }).routingMode || 'Task Optimized';
-  const handleTaskModel = (task: AITaskId, model: string) => {
+  const handleTaskModel = useCallback((task: AITaskId, model: string) => {
     const current = (settings as unknown as { taskModels: Record<string, string> }).taskModels || {};
     onChange({ taskModels: { ...current, [task]: model } } as unknown as Partial<AISettings>);
-  };
+  }, [settings, onChange]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-3 shadow-xs">
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
       <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
         <GitBranch className="w-4 h-4 text-primary" />
         Task-Specific Model Routing
@@ -37,4 +37,4 @@ export function TaskRoutingGrid({ settings, onChange }: Props) {
       </div>
     </div>
   );
-}
+});

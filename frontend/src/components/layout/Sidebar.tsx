@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import {
@@ -79,9 +79,9 @@ export type SidebarProps = {
 };
 
 // ---------------------------------------------------------------------------
-// Reusable NavLink Item
+// Reusable NavLink Item — memoized to avoid re-render on every pathname tick
 // ---------------------------------------------------------------------------
-function NavLink({
+const NavLink = memo(function NavLink({
   item,
   active,
   collapsed,
@@ -179,12 +179,12 @@ function NavLink({
       </TooltipContent>
     </Tooltip>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
-// Group Accordion Header
+// Group Accordion Header — memoized
 // ---------------------------------------------------------------------------
-function GroupHeader({
+const GroupHeader = memo(function GroupHeader({
   label,
   icon: Icon,
   open,
@@ -223,7 +223,7 @@ function GroupHeader({
       />
     </button>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Main Enterprise Sidebar
@@ -273,13 +273,13 @@ export function Sidebar({
   const [brokerProvider, setBrokerProvider] = useState<string>('fyers');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  // Dynamic Telemetry Badges
+  // Telemetry Badges — no pulse (single LIVE dot is in TopHeader)
   const telemetryBadges = useMemo(() => {
     return {
-      signals: { label: '+3 LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true },
+      signals: { label: '+3 LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
       algo: { label: '2 RUNNING', color: 'bg-blue-500/10 text-blue-600 border-blue-500/30', pulse: false },
       ai: { label: 'SYNC', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false },
-      broker: { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true },
+      broker: { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
     };
   }, []);
 
@@ -528,9 +528,10 @@ export function Sidebar({
       <aside
         aria-label="Primary navigation"
         className={cn(
-          'hidden md:flex shrink-0 flex-col border-r border-border/80 bg-card/90 backdrop-blur-md supports-[backdrop-filter]:bg-card/85 transition-all duration-300 ease-in-out will-change-[width] overflow-hidden shadow-2xs',
+          'hidden md:flex shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 ease-out will-change-transform overflow-hidden shadow-sm [contain:paint]',
           collapsed ? 'w-[68px]' : 'w-64 lg:w-[268px]',
         )}
+        style={{ contentVisibility: 'auto', containIntrinsicSize: '0 600px' } as React.CSSProperties}
       >
         <NavContent isCollapsed={collapsed} />
       </aside>
@@ -543,11 +544,11 @@ export function Sidebar({
         )}
         aria-hidden={!mobileOpen}
       >
-        {/* Backdrop */}
+        {/* Backdrop — no blur for perf */}
         <div
           onClick={() => setMobileOpen(false)}
           className={cn(
-            'absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300',
+            'absolute inset-0 bg-black/50 transition-opacity duration-200',
             mobileOpen ? 'opacity-100' : 'opacity-0',
           )}
         />
@@ -555,7 +556,7 @@ export function Sidebar({
         <aside
           aria-label="Primary navigation"
           className={cn(
-            'absolute left-0 top-0 h-full w-[84vw] max-w-[320px] bg-card border-r border-border shadow-2xl flex flex-col transition-transform duration-300 ease-out will-change-transform',
+            'absolute left-0 top-0 h-full w-[84vw] max-w-[320px] bg-card border-r border-border shadow-sm flex flex-col transition-transform duration-300 ease-out will-change-transform',
             mobileOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >

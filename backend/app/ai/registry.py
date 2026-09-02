@@ -38,6 +38,9 @@ if NvidiaProvider:
 
 def get_llm_provider(name: str = "gemini") -> BaseLLMProvider:
     key = (name or "gemini").lower()
+    # compat: mock_ai -> openrouter
+    if key == "mock_ai":
+        key = "openrouter"
     # Normalize direct provider aliases
     if key in ("custom", "custom_openai", "custom_openai_compatible"):
         key = "custom_openai"
@@ -49,13 +52,23 @@ def get_llm_provider(name: str = "gemini") -> BaseLLMProvider:
     return _providers[key]
 
 def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
-    """Instantiate a provider with per-request keys (used by /ai/test strict mode)."""
+    """Instantiate a provider with per-request keys (used by /ai/test strict mode). Per-request key fallback to config (env)."""
     p = provider.lower()
+    # compat: mock_ai -> openrouter
+    if p == "mock_ai":
+        p = "openrouter"
     if p in ("gemini", "google_gemini"):
-        return GeminiProvider(api_key=kwargs.get("geminiApiKey") or kwargs.get("api_key"), model=kwargs.get("geminiModel") or kwargs.get("model"))
+        key = (kwargs.get("geminiApiKey") or kwargs.get("api_key") or kwargs.get("apiKey") or "").strip() if (kwargs.get("geminiApiKey") or kwargs.get("api_key") or kwargs.get("apiKey")) else ""
+        if not key:
+            try:
+                from app.core.config import settings as _cfg
+                key = (getattr(_cfg, "gemini_api_key", "") or "").strip()
+            except Exception:
+                key = ""
+        return GeminiProvider(api_key=key, model=kwargs.get("geminiModel") or kwargs.get("model"))
     if p == "openrouter":
         # Settings-driven key: frontend Settings UI is primary, env is fallback (no hardcode required)
-        frontend_key = (kwargs.get("openRouterApiKey") or kwargs.get("api_key") or kwargs.get("openRouter_api_key") or "").strip()
+        frontend_key = (kwargs.get("openRouterApiKey") or kwargs.get("api_key") or kwargs.get("apiKey") or kwargs.get("openRouter_api_key") or "").strip()
         if not frontend_key:
             try:
                 from app.core.config import settings as _cfg
@@ -64,21 +77,57 @@ def create_provider_for_test(provider: str, **kwargs) -> BaseLLMProvider:
                 frontend_key = ""
         return OpenRouterProvider(api_key=frontend_key, model=kwargs.get("openRouterModel") or kwargs.get("model"))
     if p == "ollama":
-        return OllamaProvider(base_url=kwargs.get("ollamaBaseUrl") or kwargs.get("base_url"), model=kwargs.get("ollamaModel") or kwargs.get("model"))
+        return OllamaProvider(base_url=kwargs.get("ollamaBaseUrl") or kwargs.get("base_url") or kwargs.get("customBaseUrl"), model=kwargs.get("ollamaModel") or kwargs.get("model"))
     if p in ("openai",):
         if not OpenAIProvider:
             raise ValueError("OpenAI provider not available")
-        return OpenAIProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("openaiApiKey"), model=kwargs.get("model") or kwargs.get("openaiModel"), base_url=kwargs.get("base_url") or kwargs.get("apiBaseUrl"))
+        key = (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("openaiApiKey") or kwargs.get("openai_api_key") or "").strip() if (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("openaiApiKey") or kwargs.get("openai_api_key")) else ""
+        if not key:
+            try:
+                from app.core.config import settings as _cfg
+                key = (getattr(_cfg, "openai_api_key", "") or getattr(_cfg, "OPENAI_API_KEY", "") or "").strip()
+            except Exception:
+                key = ""
+        return OpenAIProvider(api_key=key, model=kwargs.get("model") or kwargs.get("openaiModel"), base_url=kwargs.get("base_url") or kwargs.get("apiBaseUrl") or kwargs.get("openaiBaseUrl"))
     if p in ("novita", "novita_ai"):
         if not NovitaProvider:
             raise ValueError("Novita provider not available")
-        return NovitaProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("novitaApiKey"), model=kwargs.get("model") or kwargs.get("novitaModel"), base_url=kwargs.get("base_url"))
+        key = (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("novitaApiKey") or "").strip() if (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("novitaApiKey")) else ""
+        if not key:
+            try:
+                from app.core.config import settings as _cfg
+                key = (getattr(_cfg, "novita_api_key", "") or "").strip()
+            except Exception:
+                key = ""
+        return NovitaProvider(api_key=key, model=kwargs.get("model") or kwargs.get("novitaModel"), base_url=kwargs.get("base_url") or kwargs.get("novitaBaseUrl"))
     if p in ("nvidia",):
         if not NvidiaProvider:
             raise ValueError("NVIDIA provider not available")
-        return NvidiaProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("nvidiaApiKey"), model=kwargs.get("model") or kwargs.get("nvidiaModel"), base_url=kwargs.get("base_url"))
-    if p == "custom":
+        key = (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("nvidiaApiKey") or "").strip() if (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("nvidiaApiKey")) else ""
+        if not key:
+            try:
+                from app.core.config import settings as _cfg
+                key = (getattr(_cfg, "nvidia_api_key", "") or "").strip()
+            except Exception:
+                key = ""
+        return NvidiaProvider(api_key=key, model=kwargs.get("model") or kwargs.get("nvidiaModel"), base_url=kwargs.get("base_url") or kwargs.get("nvidiaBaseUrl"))
+    if p in ("custom", "custom_openai", "custom_openai_compatible"):
         if not CustomOpenAICompatibleProvider:
             raise ValueError("Custom OpenAI provider not available")
-        return CustomOpenAICompatibleProvider(api_key=kwargs.get("apiKey") or kwargs.get("api_key"), model=kwargs.get("model"), base_url=kwargs.get("base_url") or kwargs.get("apiBaseUrl") or kwargs.get("customBaseUrl"))
+        key = (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("customOpenaiApiKey") or kwargs.get("custom_openai_api_key") or "").strip() if (kwargs.get("apiKey") or kwargs.get("api_key") or kwargs.get("customOpenaiApiKey") or kwargs.get("custom_openai_api_key")) else ""
+        if not key:
+            try:
+                from app.core.config import settings as _cfg
+                key = (getattr(_cfg, "custom_openai_api_key", "") or "").strip()
+            except Exception:
+                key = ""
+        base = (kwargs.get("base_url") or kwargs.get("apiBaseUrl") or kwargs.get("customBaseUrl") or kwargs.get("customOpenaiBaseUrl") or "").strip()
+        if not base:
+            try:
+                from app.core.config import settings as _cfg
+                base = (getattr(_cfg, "custom_openai_base_url", "") or "").strip()
+            except Exception:
+                base = ""
+        # Also check generic custom provider base_url fallback
+        return CustomOpenAICompatibleProvider(api_key=key, model=kwargs.get("model") or kwargs.get("customOpenaiModel"), base_url=base or kwargs.get("base_url") or "http://localhost:8080/v1")
     raise ValueError(f"Unknown provider '{provider}'")

@@ -1,78 +1,149 @@
 @import "tailwindcss";
 
+/* TradingView-pro dark: slate-950 + tight 12px grid */
 @theme inline {
-  --color-background: #f8fafc;
-  --color-foreground: #18181b;
-  --color-card: #ffffff;
-  --color-card-foreground: #18181b;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #18181b;
-  --color-primary: #2563eb;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #f1f5f9;
-  --color-secondary-foreground: #334155;
-  --color-muted: #f4f4f5;
-  --color-muted-foreground: #71717a;
-  --color-accent: #eff6ff;
-  --color-accent-foreground: #1e3a8a;
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #ffffff;
-  --color-border: #e4e4e7;
-  --color-input: #e4e4e7;
-  --color-ring: #2563eb;
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger: #dc2626;
+  --color-background: #020617;
+  --color-foreground: #e2e8f0;
+  --color-card: #0f172a;
+  --color-card-foreground: #e2e8f0;
+  --color-popover: #0f172a;
+  --color-popover-foreground: #e2e8f0;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #f8fafc;
+  --color-secondary: #1e293b;
+  --color-secondary-foreground: #cbd5e1;
+  --color-muted: #1e293b;
+  --color-muted-foreground: #94a3b8;
+  --color-accent: #1e293b;
+  --color-accent-foreground: #e2e8f0;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #f8fafc;
+  --color-border: #1e293b;
+  --color-input: #1e293b;
+  --color-ring: #3b82f6;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
+  --font-sans: var(--font-inter), Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), JetBrains Mono, ui-monospace, monospace;
+  --grid-unit: 12px;
+}
+
+:root {
+  --sidebar-w: 268px;
+  --sidebar-w-collapsed: 68px;
+  --header-h: 56px;
 }
 
 html {
-  color-scheme: light;
+  color-scheme: dark;
+  scrollbar-gutter: stable;
+  font-feature-settings: "tnum" 1, "ss01" 1;
 }
 
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Scrollbar styling for market terminal feel */
+/* Tight 12px grid helper — apply where density matters */
+.grid-12 {
+  gap: calc(var(--grid-unit));
+}
+.p-tight { padding: calc(var(--grid-unit)); }
+.px-tight { padding-left: calc(var(--grid-unit)); padding-right: calc(var(--grid-unit)); }
+
+/* Performance: isolate paint for shell */
+aside[aria-label="Primary navigation"],
+header {
+  contain: paint;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 500px;
+}
+header { contain-intrinsic-size: 0 56px; }
+
+/* Cards / heavy lists — skip offscreen paint */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 320px;
+}
+
+/* Scrollbar — dark slate, thin, no jank */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: var(--color-background);
 }
-
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #334155;
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted-foreground);
+  background: #475569;
 }
+* { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
 
-/* Market ticker marquee — seamless loop, pause on hover */
+/* Marquee — single composited transform, respects reduced motion */
 @keyframes marquee {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
 }
-
 .animate-marquee {
   animation: marquee 60s linear infinite;
+  will-change: transform;
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .animate-marquee {
-    animation-duration: 120s;
+  .animate-marquee { animation: none !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
+
+/* Replace heavy backdrop-blur-md with none/slate — keep class but neutralize cost */
+.backdrop-blur-md {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.supports-\[backdrop-filter\]\:bg-card\/60,
+.supports-\[backdrop-filter\]\:bg-card\/85 {
+  background-color: var(--color-card) !important;
+}
+
+/* Prefer transform over width where possible — hint GPU */
+.will-change-transform { will-change: transform; }
+
+/* Focus: fast, no layout shift */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Reduce shadow cost: map shadow-2xs/2xl to shadow-sm */
+.shadow-2xs, .shadow-2xl { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.10) !important; }
+
+/* Mono tabular numbers by default for market data */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+.font-mono { font-family: var(--font-mono); }
+
+/* Skeleton — cheap shimmer without blur */
+@keyframes shimmer { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+.skeleton { animation: shimmer 1.6s ease-in-out infinite; background: #1e293b; }
+
+/* Live dot — only LIVE animates (single pulse in header) */
+@keyframes livePulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+.animate-live { animation: livePulse 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .animate-live { animation: none !important; } }

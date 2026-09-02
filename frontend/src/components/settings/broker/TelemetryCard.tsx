@@ -99,7 +99,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
         <div>
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

@@ -78,22 +78,21 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
     return () => { cancelled = true; };
   }, [symbol, tf]);
 
-  // Live polling: every 2s refresh the tail of the series and merge.
+  // Live polling: 5s refresh (throttled from 2s) with jitter + hidden-tab pause + single-flight.
   useEffect(() => {
     if (!live) return undefined;
-    const backendTf = TF_TO_BACKEND[tf] || '5m';
-    const backendSymbol = toBackendSymbol(symbol);
-    // Skip polls while the initial load is in flight — avoids a duplicate
-    // full-history request on mount/symbol change.
-    const interval = setInterval(async () => {
+    let timeout = null;
+    let cancelled = false;
+    const poll = async () => {
       if (typeof document !== 'undefined' && document.hidden) return;
       if (loadingRef.current) return;
-      // Single-flight: never stack poll requests.
       if (pollInFlightRef.current) return;
+      const backendTf = TF_TO_BACKEND[tfRef.current] || '5m';
+      const backendSymbol = toBackendSymbol(symbolRef.current);
       pollInFlightRef.current = true;
       try {
-        // Poll only the tail of the series, not the full history every tick.
         const res = await api.getCandles(backendSymbol, backendTf, 2);
+        if (cancelled) return;
         const raw = res.data || [];
         if (!raw.length) return;
         const mapped = raw.map((c) => ({
@@ -110,7 +109,6 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
           const lastPrev = prev[prev.length - 1]?.t;
           const lastNew = mapped[mapped.length - 1]?.t;
           if (lastNew && lastPrev && lastNew > lastPrev) {
-            // Append new bars that are beyond prev
             const toAppend = mapped.filter((d) => d.t > lastPrev);
             if (toAppend.length) {
               const next = [...prev, ...toAppend];
@@ -118,9 +116,6 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
               return next;
             }
           }
-          // Update the last candle ONLY if the polled data covers it — when the
-          // market closes, the newest polled candle can be OLDER than the local
-          // last bar; overwriting then would corrupt the chart with stale data.
           if (mapped.length && lastPrev && lastNew && lastNew >= lastPrev) {
             const latest = mapped[mapped.length - 1];
             const next = prev.slice();
@@ -137,8 +132,22 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
       } catch {} finally {
         pollInFlightRef.current = false;
       }
-    }, 2000);
-    return () => clearInterval(interval);
+    };
+    const schedule = () => {
+      const jittered = 5000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(async () => {
+        await poll();
+        if (!cancelled) schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void poll(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [symbol, tf, live]);
 
   return { data, loading, error };

@@ -192,21 +192,35 @@ export default function CryptoPage() {
 
   // Charts removed — no kline handling (use TradingView)
 
-  // Derivatives: poll every 15s via REST for OI & long/short ratio (WS only gives funding); merge with live funding
+  // Derivatives: poll throttled to 30s (was 15s) via REST for OI & long/short ratio; jitter + hidden-tab pause
   useEffect(() => {
     if (!selectedSymbol) return;
-    const poll = setInterval(() => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const doPoll = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       api.getCryptoDerivatives(selectedSymbol)
         .then((res) => {
           if (res.data) setDerivatives((prev) => {
-            // avoid flash if unchanged (but let funding be overridden by WS live)
             if (prev && prev.funding_rate === res.data.funding_rate && prev.long_short_ratio === res.data.long_short_ratio && prev.open_interest_usd === res.data.open_interest_usd) return prev;
             return res.data;
           });
         })
         .catch(() => {});
-    }, 15000);
-    return () => clearInterval(poll);
+    };
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        doPoll();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) doPoll(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [selectedSymbol]);
 
   // AI Quick Insight generator - uses selectedTicker display price, not triggering fetch loops

@@ -260,7 +260,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           </button>
 
           {showDropdown && (
-            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-xl shadow-lg max-h-[520px] overflow-hidden flex flex-col">
+            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-xl shadow-sm max-h-[520px] overflow-hidden flex flex-col">
               {/* Search + §33 Filters */}
               <div className="p-2 border-b border-border space-y-2">
                 <div className="relative">
@@ -386,9 +386,12 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
         </div>
 
         {error && (
-          <div className="text-[11px] p-2 rounded bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" />
-            {error} — {usingCached ? 'Using cached model list' : 'Retrying will use cached list if available.'}
+          <div className="text-[11px] p-2 rounded bg-destructive/10 border border-destructive/20 text-destructive flex flex-col gap-1">
+            <div className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error} — {usingCached ? 'Using cached model list' : 'Retrying will use cached list if available.'}</div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={handleRefresh} className="px-2 py-1 bg-card border border-border rounded text-[11px] font-mono hover:bg-secondary cursor-pointer">Retry Refresh</button>
+              <span className="text-muted-foreground">FREE-only guard: paid models hard-blocked (prompt=0 & completion=0 required). Try Auto — Best Free.</span>
+            </div>
           </div>
         )}
 

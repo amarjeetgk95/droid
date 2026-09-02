@@ -127,17 +127,33 @@ export default function MarketIntelligencePage() {
     }
   }, []);
 
-  // Initial + poll only selected instrument (live update without full refresh, only relevant instrument rerenders)
+  // Throttled unified polling: 30s with jitter + hidden-tab pause (was 4s/7s)
   useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = (fn: () => void) => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        if (!document.hidden) fn();
+        schedule(fn);
+      }, jittered);
+    };
+    const onVis = () => {
+      if (document.hidden) return;
+      if (selected === 'BREAKOUT_SETUPS') void fetchBreakoutSetups(false);
+      else void fetchFor(selected, false);
+    };
+    document.addEventListener('visibilitychange', onVis);
     if (selected === 'BREAKOUT_SETUPS') {
       fetchBreakoutSetups(true);
-      const id = setInterval(() => fetchBreakoutSetups(false), 4000);
-      return () => clearInterval(id);
+      schedule(() => void fetchBreakoutSetups(false));
     } else {
       fetchFor(selected, true);
-      const id = setInterval(() => fetchFor(selected, false), 7000);
-      return () => clearInterval(id);
+      schedule(() => void fetchFor(selected, false));
     }
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [selected, fetchFor, fetchBreakoutSetups]);
 
   // Pre-warm other instruments in background without blocking UI (cached)

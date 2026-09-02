@@ -44,8 +44,21 @@ export function InstitutionalFlowTracker({ symbol, expiry }: Props) {
 
   useEffect(() => {
     fetchData();
-    const timer = setInterval(fetchData, 15000); // 15s refresh
-    return () => clearInterval(timer);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(() => {
+        if (typeof document !== 'undefined' && !document.hidden) void fetchData();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void fetchData(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [symbol, expiry]);
 
   const getBuildupBadge = (type: string) => {

@@ -242,6 +242,9 @@ class AIService:
         openrouter_api_key: str | None = None,
     ) -> AIInsightResponse:
         """Aggregate cross-phase metrics and generate structured AI report."""
+        # compat mock_ai -> openrouter
+        if provider_name.lower() == "mock_ai":
+            provider_name = "openrouter"
         underlying = symbol.upper().replace(" 50", "")
 
         # 1. Fetch Regime & Key Levels (Phase 6)
@@ -409,6 +412,22 @@ class AIService:
         openRouterModel: str | None = None,
         ollamaBaseUrl: str | None = None,
         ollamaModel: str | None = None,
+        openaiApiKey: str | None = None,
+        openaiModel: str | None = None,
+        openaiBaseUrl: str | None = None,
+        novitaApiKey: str | None = None,
+        novitaModel: str | None = None,
+        novitaBaseUrl: str | None = None,
+        nvidiaApiKey: str | None = None,
+        nvidiaModel: str | None = None,
+        nvidiaBaseUrl: str | None = None,
+        customOpenaiApiKey: str | None = None,
+        customOpenaiModel: str | None = None,
+        customOpenaiBaseUrl: str | None = None,
+        apiKey: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        customBaseUrl: str | None = None,
     ) -> dict:
         """Strict connectivity + prompt + schema test. Returns latency and detailed result."""
         # Real providers – instantiate with supplied keys and do strict test
@@ -447,6 +466,9 @@ class AIService:
                 "hint": "Frontend will run a direct browser check to your Ollama instance. Ensure Ollama is running and CORS is allowed, or use a remote Ollama URL.",
             }
 
+        # compat: mock_ai -> openrouter for test
+        if provider.lower() == "mock_ai":
+            provider = "openrouter"
         # Strict OpenRouter validation: enforce FREE-only and resolve `auto` before provider instantiation
         # This prevents paid model leakage and ensures test uses real catalog (no mock fallback)
         effective_openrouter_model = openRouterModel
@@ -494,6 +516,22 @@ class AIService:
             openRouterModel=effective_openrouter_model,
             ollamaBaseUrl=ollamaBaseUrl,
             ollamaModel=ollamaModel,
+            openaiApiKey=openaiApiKey,
+            openaiModel=openaiModel,
+            openaiBaseUrl=openaiBaseUrl,
+            novitaApiKey=novitaApiKey,
+            novitaModel=novitaModel,
+            novitaBaseUrl=novitaBaseUrl,
+            nvidiaApiKey=nvidiaApiKey,
+            nvidiaModel=nvidiaModel,
+            nvidiaBaseUrl=nvidiaBaseUrl,
+            customOpenaiApiKey=customOpenaiApiKey,
+            customOpenaiModel=customOpenaiModel,
+            customOpenaiBaseUrl=customOpenaiBaseUrl,
+            apiKey=apiKey,
+            model=model,
+            base_url=base_url,
+            customBaseUrl=customBaseUrl,
         )
         start = time.perf_counter()
         try:
@@ -513,6 +551,18 @@ class AIService:
         except Exception as e:
             latency_ms = int((time.perf_counter() - start) * 1000)
             msg = str(e)
+            # Provider-specific hint
+            hint = "Check API key, model name, and network. For Ollama, ensure `ollama serve` is running."
+            if provider.lower() == "openai" and "api key" in msg.lower():
+                hint = "OpenAI key missing/invalid — add sk-... in Settings -> AI Engine -> Direct Provider -> OpenAI."
+            elif provider.lower() in ("novita", "novita_ai") and "api key" in msg.lower():
+                hint = "Novita key missing — add in Settings -> AI Engine -> Direct Provider -> Novita AI."
+            elif provider.lower() == "nvidia" and "api key" in msg.lower():
+                hint = "NVIDIA key missing — add in Settings -> AI Engine -> Direct Provider -> NVIDIA."
+            elif provider.lower() in ("custom_openai", "custom") and "base_url" in msg.lower():
+                hint = "Custom provider requires base_url — configure in Settings -> AI Engine."
+            elif "paid models are disabled" in msg.lower():
+                hint = "FREE-only guard blocked paid model. Select a FREE model (prompt=0 & completion=0) or enable Allow Paid Models."
             return {
                 "success": False,
                 "provider": provider,
@@ -521,7 +571,7 @@ class AIService:
                 "schema_valid": False,
                 "is_mock": False,
                 "error": msg,
-                "hint": "Check API key, model name, and network. For Ollama, ensure `ollama serve` is running.",
+                "hint": hint,
             }
 
 

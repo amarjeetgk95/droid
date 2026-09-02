@@ -82,10 +82,21 @@ export default function PaperTradingPage() {
     };
 
     loadData();
-    const interval = setInterval(loadData, 3000);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      timeout = setTimeout(async () => {
+        if (!document.hidden) await loadData();
+        schedule();
+      }, jittered);
+    };
+    schedule();
+    const onVis = () => { if (!document.hidden) void loadData(); };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
 
