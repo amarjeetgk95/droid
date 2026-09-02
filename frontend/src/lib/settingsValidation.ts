@@ -17,12 +17,6 @@ export const UpstoxCredentialsSchema = z.object({
   redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
 });
 
-export const GrowwCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(4096),
-  apiSecret: z.string().trim().max(4096),
-  accessToken: z.string().trim().max(4096).optional().default(''),
-});
-
 export const KotakNeoCredentialsSchema = z.object({
   apiKey: z.string().trim().max(4096),
   apiSecret: z.string().trim().max(4096),
@@ -37,10 +31,9 @@ export const BinanceCredentialsSchema = z.object({
 
 export const BrokerSettingsSchema = z.object({
   apiType: z.enum(['indian', 'crypto']),
-  provider: z.enum(['fyers', 'upstox', 'groww', 'kotak_neo', 'binance']),
+  provider: z.enum(['fyers', 'upstox', 'kotak_neo', 'binance']),
   fyers: FyersCredentialsSchema,
   upstox: UpstoxCredentialsSchema,
-  groww: GrowwCredentialsSchema,
   kotakNeo: KotakNeoCredentialsSchema,
   binance: BinanceCredentialsSchema,
 }).superRefine((data, ctx) => {

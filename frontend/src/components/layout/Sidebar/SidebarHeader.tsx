@@ -35,14 +35,13 @@ export type DeskOption = {
 };
 
 const BROKER_DESK_MAP: Record<string, { id: string; name: string; account: string }> = {
-  groww: { id: 'groww-live', name: 'Groww Live Desk', account: 'GROWW • Trade API' },
   fyers: { id: 'fyers-live', name: 'Fyers Live Desk', account: 'FYERS • Institutional' },
   upstox: { id: 'upstox-live', name: 'Upstox Live Desk', account: 'UPSTOX • Official V2' },
   kotak_neo: { id: 'kotak-live', name: 'Kotak Neo Desk', account: 'KOTAK NEO • Session' },
 };
 
-function getDeskOptions(provider: string = 'groww'): DeskOption[] {
-  const liveInfo = BROKER_DESK_MAP[provider] || BROKER_DESK_MAP.groww;
+function getDeskOptions(provider: string = 'fyers'): DeskOption[] {
+  const liveInfo = BROKER_DESK_MAP[provider] || BROKER_DESK_MAP.fyers;
   return [
     {
       id: 'paper-sim',
@@ -84,17 +83,17 @@ export function SidebarHeader({
   onToggleCollapse,
   onCloseMobile,
 }: SidebarHeaderProps) {
-  const [provider, setProvider] = useState<string>('groww');
-  const [selectedDeskId, setSelectedDeskId] = useState<string>('groww-live');
+  const [provider, setProvider] = useState<string>('fyers');
+  const [selectedDeskId, setSelectedDeskId] = useState<string>('fyers-live');
 
   useEffect(() => {
     try {
       const s = localStorage.getItem('droid_app_settings_v1');
       if (s) {
         const parsed = JSON.parse(s);
-        const p = parsed?.broker?.provider || 'groww';
+        const p = parsed?.broker?.provider || 'fyers';
         setProvider(p);
-        const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.groww;
+        const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.fyers;
         const saved = localStorage.getItem(DESK_STORAGE_KEY);
         setSelectedDeskId(saved && (saved === 'paper-sim' || saved === 'binance-crypto') ? saved : liveInfo.id);
       }
@@ -104,9 +103,9 @@ export function SidebarHeader({
       if (e.key === 'droid_app_settings_v1' && e.newValue) {
         try {
           const parsed = JSON.parse(e.newValue);
-          const p = parsed?.broker?.provider || 'groww';
+          const p = parsed?.broker?.provider || 'fyers';
           setProvider(p);
-          const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.groww;
+          const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.fyers;
           const saved = localStorage.getItem(DESK_STORAGE_KEY);
           setSelectedDeskId(saved && (saved === 'paper-sim' || saved === 'binance-crypto') ? saved : liveInfo.id);
         } catch {}

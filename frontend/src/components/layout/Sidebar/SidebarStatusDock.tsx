@@ -21,7 +21,7 @@ export function SidebarStatusDock({
   collapsed,
   isMobile,
   apiType,
-  provider = 'groww',
+  provider = 'fyers',
   streamState = 'CONNECTED',
   onExpand,
   onNavigate,
@@ -34,7 +34,7 @@ export function SidebarStatusDock({
   const gatewayLabel =
     apiType === 'crypto'
       ? 'BINANCE FUTURES'
-      : `${(provider || 'groww').replace('_', ' ').toUpperCase()} GATEWAY`;
+      : `${(provider || 'fyers').replace('_', ' ').toUpperCase()} GATEWAY`;
 
   if (collapsed && !isMobile) {
     return (

@@ -22,13 +22,14 @@ import {
   Landmark,
   Globe,
 } from 'lucide-react';
-import { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
+import { BrokerSettings, ApiType, BrokerProviderId, AppSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { useMarketStream } from '@/hooks/useMarketStream';
 import { useSettings } from '@/components/settings/SettingsProvider';
 
 interface Props {
   settings: BrokerSettings;
+  fullSettings?: AppSettings;
   onChange: (updated: Partial<BrokerSettings>) => void;
   errors?: { path: string; message: string }[];
 }
@@ -48,7 +49,6 @@ type ProviderCard = {
 const INDIAN_PROVIDERS: ProviderCard[] = [
   { id: 'fyers',     name: 'Fyers API v3',     badge: 'Low Latency',    desc: 'WebSocket & Brokerage',         apiType: 'indian', icon: TrendingUp, portalUrl: 'https://myapi.fyers.in/dashboard' },
   { id: 'upstox',    name: 'Upstox Pro',       badge: 'Official V2',    desc: 'Real-Time Tick Stream',         apiType: 'indian', icon: Building2,  portalUrl: 'https://developer.upstox.com/' },
-  { id: 'groww',     name: 'Groww Open API',   badge: 'New',            desc: 'API Key + API Secret',          apiType: 'indian', icon: Smartphone, portalUrl: 'https://groww.in/trade-api' },
   { id: 'kotak_neo', name: 'Kotak Neo',        badge: 'Session-based',  desc: 'API Key + TOTP + MPIN',         apiType: 'indian', icon: Landmark,   portalUrl: 'https://www.kotaksecurities.com/platform/neo-trade-api/' },
 ];
 
@@ -56,7 +56,7 @@ const CRYPTO_PROVIDERS: ProviderCard[] = [
   { id: 'binance', name: 'Binance API', badge: 'Crypto & Spot', desc: 'Public Spot & Futures', apiType: 'crypto', icon: Bitcoin, portalUrl: 'https://www.binance.com/en/my/settings/api-management' },
 ];
 
-export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) {
+export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, onChange, errors = [] }: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `broker.${field}`)?.message;
   const [tokenStatus, setTokenStatus] = useState<Record<string, any> | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
@@ -104,16 +104,16 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
 
   const { streamState, reconnectCount } = useMarketStream();
 
-  // Access full AppSettings from context so Force Refresh can hot-sync the
+  // Access full AppSettings from prop or context so Force Refresh can hot-sync the
   // *dirty* local settings to the backend even if user hasn't clicked Save.
-  // Falls back gracefully if rendered outside SettingsProvider (tests).
-  let fullSettings: any = null;
+  let contextFullSettings: any = null;
   try {
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    fullSettings = (useSettings() as any)?.settings ?? null;
+    contextFullSettings = (useSettings() as any)?.settings ?? null;
   } catch {
-    fullSettings = null;
+    contextFullSettings = null;
   }
+  const fullSettings = propFullSettings || contextFullSettings;
 
   const visibleProviders = settings.apiType === 'crypto' ? CRYPTO_PROVIDERS : INDIAN_PROVIDERS;
 
@@ -139,11 +139,6 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
       const hasCreds = Boolean(settings.upstox.apiKey && settings.upstox.secret);
       if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
       return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
-    }
-    if (p === 'groww') {
-      const hasCreds = Boolean((settings.groww.apiKey && settings.groww.apiSecret) || settings.groww.accessToken);
-      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live Feed', tone: 'emerald' as const, hasCreds };
-      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate with Groww') : 'Enter API Key + Secret or Access Token', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'kotak_neo') {
       const hasCreds = Boolean(settings.kotakNeo.apiKey && settings.kotakNeo.apiSecret && settings.kotakNeo.mpin);
@@ -245,7 +240,7 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
   };
 
   const handleApiTypeChange = (next: ApiType) => {
-    const defaultProvider: BrokerProviderId = next === 'crypto' ? 'binance' : 'groww';
+    const defaultProvider: BrokerProviderId = next === 'crypto' ? 'binance' : 'fyers';
     onChange({ apiType: next, provider: defaultProvider });
   };
 
@@ -540,6 +535,12 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
           setShowSecret={setShowSecret}
           copied={copiedRedirect}
           onCopy={handleCopyRedirect}
+          loginUrl={
+            settings.fyers.appId
+              ? `https://api-t1.fyers.in/api/v3/generate-authcode?client_id=${encodeURIComponent(settings.fyers.appId)}&redirect_uri=${encodeURIComponent(settings.fyers.redirectUri || 'https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback')}&response_type=code&state=droid_fyers`
+              : undefined
+          }
+          loginLabel="Login & Authorize with FYERS"
         />
       )}
 
@@ -560,76 +561,6 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
           copied={copiedRedirect}
           onCopy={handleCopyRedirect}
         />
-      )}
-
-      {settings.provider === 'groww' && (
-        <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Key className="w-4 h-4 text-primary" />
-              Groww Open API Credentials
-            </h3>
-            <a href="https://groww.in/trade-api" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">
-              <span>Groww Trade API</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 flex items-start gap-2">
-            <Info className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <strong>Authentication:</strong> You can connect Groww in two ways:
-              <ul className="list-disc ml-4 mt-1 space-y-0.5">
-                <li><strong>API Key + API Secret:</strong> Backend automatically computes SHA256 checksum and fetches access token on Force Refresh.</li>
-                <li><strong>Direct Access Token:</strong> Paste a pre-generated daily access token directly below.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Groww API Key</label>
-              <input
-                type="text"
-                placeholder="e.g. groww_xxxxxxxxxxxxxxxx"
-                value={settings.groww.apiKey}
-                onChange={(e) => onChange({ groww: { ...settings.groww, apiKey: e.target.value } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-              />
-              {getError('groww.apiKey') && <p className="text-[10px] text-destructive mt-1">{getError('groww.apiKey')}</p>}
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Groww API Secret</label>
-              <div className="relative">
-                <input
-                  type={showSecret ? 'text' : 'password'}
-                  placeholder="Enter your Groww API Secret"
-                  value={settings.groww.apiSecret}
-                  onChange={(e) => onChange({ groww: { ...settings.groww, apiSecret: e.target.value } })}
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-                <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer">
-                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {getError('groww.apiSecret') && <p className="text-[10px] text-destructive mt-1">{getError('groww.apiSecret')}</p>}
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="text-xs font-semibold text-foreground block mb-1">Groww Access Token (Optional / Direct Token)</label>
-              <input
-                type="text"
-                placeholder="Paste pre-generated JWT / Access Token (optional if API Key + Secret provided)"
-                value={settings.groww.accessToken || ''}
-                onChange={(e) => onChange({ groww: { ...settings.groww, accessToken: e.target.value } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-              />
-              <span className="text-[11px] text-muted-foreground mt-1 block">
-                If you generated an Access Token on Groww Developer Console, paste it here for instant live access.
-              </span>
-            </div>
-          </div>
-        </div>
       )}
 
       {settings.provider === 'kotak_neo' && (
@@ -761,6 +692,8 @@ interface IndianBrokerCredentialsProps {
   setShowSecret: (b: boolean) => void;
   copied: boolean;
   onCopy: () => void;
+  loginUrl?: string;
+  loginLabel?: string;
 }
 
 function IndianBrokerCredentials(props: IndianBrokerCredentialsProps) {
@@ -818,6 +751,24 @@ function IndianBrokerCredentials(props: IndianBrokerCredentialsProps) {
           </div>
           <span className="text-[11px] text-muted-foreground mt-1 block">Paste this exact callback URL into your broker developer app configuration.</span>
         </div>
+
+        {props.loginUrl && (
+          <div className="sm:col-span-2 pt-2 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground">Authenticate & Generate Daily Token</p>
+              <p className="text-[11px] text-muted-foreground">Log in via official Fyers OAuth to activate live market data & trading.</p>
+            </div>
+            <a
+              href={props.loginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+            >
+              <span>{props.loginLabel || 'Login with Broker'}</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

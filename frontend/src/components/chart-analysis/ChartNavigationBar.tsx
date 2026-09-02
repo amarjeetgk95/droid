@@ -143,7 +143,7 @@ export function ChartNavigationBar({ activeTf, onTfChange, data, symbol, loading
           <FreshnessDot freshness={freshness} />
           <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/60 border border-border/60 text-[11px] font-medium text-muted-foreground">
             <Wifi className={cn('w-3 h-3', isLive ? 'text-emerald-500' : 'text-muted-foreground/40')} />
-            <span className="hidden xl:inline">Groww • Binance</span>
+            <span className="hidden xl:inline">Fyers • Binance</span>
             <span className="xl:hidden">Feed 1s</span>
           </span>
           <span className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-full bg-secondary/60 border border-border text-[11px] font-medium text-muted-foreground">

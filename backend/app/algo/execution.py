@@ -178,33 +178,12 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
         return {"available_margin": "500000", "used_margin": "0", "total_balance": "500000"}
 
 
-class GrowwLiveBrokerAdapter(BrokerAdapter):
-    """Live broker adapter for Groww Open API (§14, §40)."""
-    provider_name = "groww"
-
-    async def submit_order(self, record: OrderRecord) -> dict:
-        return await PaperBrokerAdapter().submit_order(record)
-
-    async def query_order(self, broker_order_id: str) -> dict:
-        return {"broker_order_id": broker_order_id, "status": "FILLED"}
-
-    async def cancel_order(self, broker_order_id: str) -> dict:
-        return {"broker_order_id": broker_order_id, "status": "CANCELLED"}
-
-    async def get_positions(self, account_id: Any) -> list[dict]:
-        return []
-
-    async def get_funds(self, account_id: Any) -> dict:
-        return {"available_margin": "500000", "used_margin": "0", "total_balance": "500000"}
-
-
 class BrokerRegistry:
     def __init__(self):
         self._adapters: dict[str, BrokerAdapter] = {}
         self._paper = PaperBrokerAdapter()
         # Register live broker adapters
         self.register(FyersLiveBrokerAdapter())
-        self.register(GrowwLiveBrokerAdapter())
 
     def register(self, adapter: BrokerAdapter) -> None:
         self._adapters[adapter.provider_name] = adapter

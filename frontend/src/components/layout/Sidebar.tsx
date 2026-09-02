@@ -270,7 +270,7 @@ export function Sidebar({
   );
 
   const [apiType, setApiType] = useState<string>('indian');
-  const [brokerProvider, setBrokerProvider] = useState<string>('groww');
+  const [brokerProvider, setBrokerProvider] = useState<string>('fyers');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   // Dynamic Telemetry Badges

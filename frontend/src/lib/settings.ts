@@ -1,5 +1,5 @@
 export type ApiType = 'indian' | 'crypto';
-export type IndianProviderId = 'fyers' | 'upstox' | 'groww' | 'kotak_neo';
+export type IndianProviderId = 'fyers' | 'upstox' | 'kotak_neo';
 export type CryptoProviderId = 'binance';
 export type BrokerProviderId = IndianProviderId | CryptoProviderId;
 
@@ -13,12 +13,6 @@ export interface UpstoxCredentials {
   apiKey: string;
   secret: string;
   redirectUri: string;
-}
-
-export interface GrowwCredentials {
-  apiKey: string;
-  apiSecret: string;
-  accessToken?: string;
 }
 
 export interface KotakNeoCredentials {
@@ -39,7 +33,6 @@ export interface BrokerSettings {
   provider: BrokerProviderId;
   fyers: FyersCredentials;
   upstox: UpstoxCredentials;
-  groww: GrowwCredentials;
   kotakNeo: KotakNeoCredentials;
   binance: BinanceCredentials;
 }
@@ -168,7 +161,7 @@ export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
 export const DEFAULT_SETTINGS: AppSettings = {
   broker: {
     apiType: 'indian',
-    provider: 'groww',
+    provider: 'fyers',
     fyers: {
       appId: '',
       secret: '',
@@ -178,11 +171,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
       apiKey: '',
       secret: '',
       redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback',
-    },
-    groww: {
-      apiKey: '',
-      apiSecret: '',
-      accessToken: '',
     },
     kotakNeo: {
       apiKey: '',
@@ -268,8 +256,6 @@ const SECRET_FIELDS: Record<string, string[]> = {
   broker: [
     'fyers.secret',
     'upstox.secret',
-    'groww.apiSecret',
-    'groww.accessToken',
     'kotakNeo.apiSecret',
     'kotakNeo.mpin',
     'kotakNeo.totp',
@@ -371,7 +357,7 @@ function migrateMockProvider(settings: AppSettings): AppSettings {
   if (legacyProvider === 'mock' || legacyProvider === 'mock_ai') {
     return {
       ...settings,
-      broker: { ...settings.broker, provider: 'groww' as BrokerProviderId },
+      broker: { ...settings.broker, provider: 'fyers' as BrokerProviderId },
     };
   }
   return settings;

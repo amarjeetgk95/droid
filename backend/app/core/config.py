@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # Market Data — api_type gates Indian vs Crypto universes
     api_type: str = "indian"
-    market_data_provider: str = "groww"
+    market_data_provider: str = "fyers"
 
     # Logging
     log_level: str = "INFO"
@@ -39,14 +39,6 @@ class Settings(BaseSettings):
     upstox_secret_key: str = ""
     upstox_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback"
     upstox_access_token: str = ""
-
-    # Groww Open API Settings
-    # Groww Open API Settings
-    # Auth: "checksum" (API Key + Secret, SHA256(secret+timestamp)) or "totp"
-    groww_api_key: str = ""
-    groww_api_secret: str = ""
-    groww_access_token: str = ""
-    groww_auth_mode: Literal["checksum", "totp"] = "checksum"
 
     # Kotak Neo (Neo API) Settings
     # api_key = UCC (Unique Client Code, 5 chars), api_secret = dashboard access token
@@ -156,7 +148,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog
-        indian_providers = ("fyers", "upstox", "groww", "kotak_neo")
+        indian_providers = ("fyers", "upstox", "kotak_neo")
         crypto_providers = ("binance",)
 
         if self.api_type == "crypto":
@@ -174,9 +166,9 @@ class Settings(BaseSettings):
                     "config_provider_fallback",
                     api_type=self.api_type,
                     requested=self.market_data_provider,
-                    using="groww",
+                    using="fyers",
                 )
-                self.market_data_provider = "groww"
+                self.market_data_provider = "fyers"
         return self
 
     model_config = {

@@ -1,7 +1,6 @@
 from app.providers.base import MarketDataProvider
 from app.providers.fyers import FyersProvider
 from app.providers.upstox import UpstoxProvider
-from app.providers.groww import GrowwProvider
 from app.providers.kotak_neo import KotakNeoProvider
 from app.providers.binance_provider import BinanceProvider
 from app.core.broker_runtime import get_config
@@ -10,7 +9,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-INDIAN_PROVIDERS = ("fyers", "upstox", "groww", "kotak_neo")
+INDIAN_PROVIDERS = ("fyers", "upstox", "kotak_neo")
 CRYPTO_PROVIDERS = ("binance",)
 
 _provider_instance: MarketDataProvider | None = None
@@ -187,14 +186,6 @@ def _create_provider() -> MarketDataProvider:
             api_key=creds.get("api_key"),
             secret_key=creds.get("secret_key"),
             access_token=creds.get("access_token"),
-        )
-    if provider_name == "groww":
-        logger.info("provider_init", api_type=api_type, provider="groww", live=bool(creds))
-        return GrowwProvider(
-            api_key=creds.get("api_key"),
-            api_secret=creds.get("api_secret"),
-            access_token=creds.get("access_token"),
-            auth_mode=creds.get("auth_mode") or "checksum",
         )
     if provider_name == "kotak_neo":
         logger.info("provider_init", api_type=api_type, provider="kotak_neo", live=bool(creds))

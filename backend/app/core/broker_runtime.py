@@ -34,7 +34,6 @@ logger = structlog.get_logger()
 _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "fyers": "fyers",
     "upstox": "upstox",
-    "groww": "groww",
     "kotak_neo": "kotakNeo",
     "binance": "binance",
 }
@@ -42,13 +41,6 @@ _PROVIDER_SAVED_KEY: Dict[str, str] = {
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
     "upstox": {"api_key": "apiKey", "secret_key": "secret", "access_token": "access_token"},
-    "groww": {
-        "api_key": "apiKey",
-        "api_secret": "apiSecret",
-        "access_token": "accessToken",
-        "totp": "totp",
-        "auth_mode": "authMode",
-    },
     "kotak_neo": {
         "api_key": "apiKey",
         "api_secret": "apiSecret",
@@ -74,45 +66,42 @@ _active: Optional[BrokerConfig] = None
 def _env_config() -> BrokerConfig:
     """Build a config from static env-driven settings (fallback / startup)."""
     from app.core.config import settings as cfg
-    import os
 
     provider = cfg.market_data_provider
     if cfg.api_type == "crypto" and provider != "binance":
         provider = "binance"
     elif cfg.api_type != "crypto" and provider not in _PROVIDER_CRED_KEYS:
-        provider = "groww"
-
-    # Auto-select Groww when Groww creds are present but provider is still default fyers
-    if cfg.api_type != "crypto":
-        has_groww = bool(cfg.groww_api_key or cfg.groww_api_secret or cfg.groww_access_token)
-        has_fyers = bool(cfg.fyers_app_id or cfg.fyers_secret_key or cfg.fyers_access_token)
-        if has_groww and not has_fyers and provider == "fyers" and not os.getenv("MARKET_DATA_PROVIDER"):
-            provider = "groww"
-            logger.info("broker_auto_select_groww", reason="groww creds present, fyers empty, MARKET_DATA_PROVIDER not set — switching to groww")
-
-        # Also if groww creds present and fyers empty, prefer groww
-        if has_groww and provider != "groww" and provider in ("fyers", "upstox", "kotak_neo"):
-            if not has_fyers:
-                provider = "groww"
+        provider = "fyers"
 
     # Populate credentials from env so provider starts LIVE without needing Settings UI save
     creds: Dict[str, Any] = {}
-    if provider == "groww":
-        if cfg.groww_api_key:
-            creds["api_key"] = cfg.groww_api_key
-        if cfg.groww_api_secret:
-            creds["api_secret"] = cfg.groww_api_secret
-        if cfg.groww_access_token:
-            creds["access_token"] = cfg.groww_access_token
-        if cfg.groww_auth_mode:
-            creds["auth_mode"] = cfg.groww_auth_mode
-    elif provider == "fyers":
+    if provider == "fyers":
         if cfg.fyers_app_id:
             creds["app_id"] = cfg.fyers_app_id
         if cfg.fyers_secret_key:
             creds["secret_key"] = cfg.fyers_secret_key
         if cfg.fyers_access_token:
             creds["access_token"] = cfg.fyers_access_token
+    elif provider == "upstox":
+        if cfg.upstox_api_key:
+            creds["api_key"] = cfg.upstox_api_key
+        if cfg.upstox_secret_key:
+            creds["secret_key"] = cfg.upstox_secret_key
+        if cfg.upstox_access_token:
+            creds["access_token"] = cfg.upstox_access_token
+    elif provider == "kotak_neo":
+        if cfg.kotak_neo_api_key:
+            creds["api_key"] = cfg.kotak_neo_api_key
+        if cfg.kotak_neo_api_secret:
+            creds["api_secret"] = cfg.kotak_neo_api_secret
+        if cfg.kotak_neo_access_token:
+            creds["access_token"] = cfg.kotak_neo_access_token
+        if cfg.kotak_neo_mobile_number:
+            creds["mobile_number"] = cfg.kotak_neo_mobile_number
+        if cfg.kotak_neo_mpin:
+            creds["mpin"] = cfg.kotak_neo_mpin
+        if cfg.kotak_neo_totp:
+            creds["totp"] = cfg.kotak_neo_totp
 
     return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
 
@@ -140,13 +129,6 @@ def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
             val = raw.get("accessToken") or raw.get("access_token") or raw.get("token")
         if val not in (None, ""):
             creds[ctor_arg] = val
-    if provider == "groww":
-        mode = broker.get("groww_auth_mode") or raw.get("authMode") or raw.get("auth_mode")
-        if mode in ("checksum", "totp"):
-            creds["auth_mode"] = mode
-        # If api_key looks like an access token (JWT or 40+ chars) and access_token missing, populate access_token
-        if creds.get("api_key") and str(creds["api_key"]).startswith("eyJ") and not creds.get("access_token"):
-            creds["access_token"] = creds["api_key"]
     return creds
 
 

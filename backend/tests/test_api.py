@@ -20,7 +20,7 @@ class TestHealthEndpoints:
         r = client.get("/api/v1/health/market-data")
         assert r.status_code == 200
         data = r.json()
-        assert data["provider"] in ("mock", "fyers", "groww", "upstox")
+        assert data["provider"] in ("fyers", "upstox", "kotak_neo", "binance")
         assert data["mode"] in ("OFFLINE", "LIVE", "DEMO")
 
 
@@ -39,7 +39,7 @@ class TestMarketEndpoints:
         assert r.status_code == 200
         body = r.json()
         assert body["data"]["symbol"] == "NIFTY 50"
-        assert body["meta"]["status"] in ("OFFLINE", "LIVE", "DEMO", "STALE")
+        assert body["meta"]["status"] in ("OFFLINE", "LIVE", "DEMO", "STALE", "CLOSED")
 
     def test_get_invalid_symbol(self):
         r = client.get("/api/v1/markets/INVALID/quote")
@@ -71,7 +71,7 @@ class TestMarketEndpoints:
         r = client.get("/api/v1/markets/breadth")
         assert r.status_code == 200
         body = r.json()
-        assert body["data"]["status"] in ("OFFLINE", "LIVE", "DEMO", "STALE")
+        assert body["data"]["status"] in ("OFFLINE", "LIVE", "DEMO", "STALE", "CLOSED")
 
     def test_index_cards(self):
         r = client.get("/api/v1/markets/cards")
