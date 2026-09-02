@@ -192,20 +192,20 @@ class GrowwService:
         logger.info("groww_token_fetched", expires_at=None, key_prefix=token[:8] + "...")
         return token
 
-    # ---------- Headers ----------
-
     def _build_headers(self, access_token: str) -> dict[str, str]:
         tok = (access_token or "").strip()
         if tok.startswith("Bearer "):
             tok = tok[7:].strip()
         return {
-            "x-request-id": _gen_request_id(),
             "Authorization": f"Bearer {tok}",
+            "Accept": "application/json",
             "Content-Type": "application/json",
+            "X-API-VERSION": "1.0",
+            "x-api-version": "1.0",
             "x-client-id": "growwapi",
             "x-client-platform": "growwapi-python-client",
             "x-client-platform-version": "1.5.0",
-            "x-api-version": "1.0",
+            "x-request-id": _gen_request_id(),
         }
 
     # ---------- Live Data: Quote (full snapshot) ----------
