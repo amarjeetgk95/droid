@@ -54,7 +54,7 @@ export function MarketCard({ card, isSelected = false, onSelect }: MarketCardPro
       className={`rounded-lg border p-3 flex flex-col justify-between transition-colors cursor-pointer select-none [contain:paint] cv-auto ${
         isSelected
           ? 'bg-blue-500/10 border-blue-500/30 ring-1 ring-blue-500/20'
-          : 'bg-card border-border hover:border-slate-700 hover:bg-slate-900/40'
+          : 'bg-card border-border hover:border-border hover:bg-card/40'
       }`}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 180px' } as React.CSSProperties}
     >
@@ -84,7 +84,7 @@ export function MarketCard({ card, isSelected = false, onSelect }: MarketCardPro
 
       {rangeSpan > 0 && (
         <div className="mt-2.5 space-y-1">
-          <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-secondary h-1 rounded-full overflow-hidden">
             <div className={`h-full rounded-full ${isPos ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${rangePct}%` }} />
           </div>
           <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums font-mono leading-none">
@@ -94,7 +94,7 @@ export function MarketCard({ card, isSelected = false, onSelect }: MarketCardPro
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2.5 text-[11px] border-t border-slate-800 pt-2.5">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2.5 text-[11px] border-t border-border pt-2.5">
         <div className="flex justify-between gap-2">
           <span className="text-muted-foreground text-[10px]">Open</span>
           <span className="text-foreground tabular-nums font-mono font-medium">{safeNum(card.open)}</span>

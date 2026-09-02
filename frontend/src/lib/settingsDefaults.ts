@@ -114,7 +114,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     allowOvernightPositions: true,
   },
   preferences: {
-    theme: 'dark',
+    theme: 'light',
     numberFormat: 'INDIAN',
     defaultIndexSymbol: 'NIFTY 50',
   },

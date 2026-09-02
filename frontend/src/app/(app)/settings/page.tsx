@@ -45,11 +45,11 @@ const TABS: TabConfig[] = [
 function SettingsSkeleton() {
  return (
  <div className="space-y-4 max-w-5xl mx-auto animate-pulse">
-  <div className="h-[88px] rounded-xl bg-slate-900 border border-slate-800" />
-  <div className="h-12 rounded-xl bg-slate-900 border border-slate-800" />
+  <div className="h-[88px] rounded-xl bg-card border border-border" />
+  <div className="h-12 rounded-xl bg-card border border-border" />
   <div className="space-y-3">
-  <div className="h-40 rounded-xl bg-slate-900 border border-slate-800" />
-  <div className="h-64 rounded-xl bg-slate-900 border border-slate-800" />
+  <div className="h-40 rounded-xl bg-card border border-border" />
+  <div className="h-64 rounded-xl bg-card border border-border" />
   </div>
  </div>
  );

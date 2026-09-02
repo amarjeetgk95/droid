@@ -6,8 +6,8 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink } from 'lucide-react';
-import { getStoredSettings } from '@/lib/settings';
+import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink, Sun, Moon } from 'lucide-react';
+import { getStoredSettings, saveStoredSettings } from '@/lib/settings';
 import { ClockDate } from './Clock';
 
 // Route label map for breadcrumb
@@ -52,7 +52,7 @@ function getSessionConfig(session?: string) {
       return {
         label: 'CLOSED',
         dot: 'bg-slate-500',
-        pill: 'bg-slate-800 text-slate-400 border-slate-700',
+        pill: 'bg-secondary text-muted-foreground border-border',
         dotAnimate: '',
       };
   }
@@ -92,7 +92,7 @@ function getStreamConfig(state: StreamConnectionState) {
       return {
         label: state,
         dot: 'bg-slate-500',
-        pill: 'bg-slate-800 text-slate-400 border-slate-700',
+        pill: 'bg-secondary text-muted-foreground border-border',
         animate: '',
       };
   }
@@ -142,6 +142,51 @@ export function TopHeader({
     }
   }, [pathname]);
 
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  useEffect(() => {
+    const syncTheme = () => {
+      try {
+        const s = getStoredSettings();
+        const t = (s.preferences.theme as 'light' | 'dark' | 'system') || 'light';
+        const resolved = t === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+        setTheme(resolved);
+      } catch { setTheme(document.documentElement.getAttribute('data-theme') as 'light' | 'dark' || 'light'); }
+    };
+    syncTheme();
+    window.addEventListener('storage', syncTheme);
+    window.addEventListener('droid-theme-changed', syncTheme as EventListener);
+    return () => { window.removeEventListener('storage', syncTheme); window.removeEventListener('droid-theme-changed', syncTheme as EventListener); };
+  }, [pathname]);
+
+  const toggleTheme = () => {
+    const next: 'light' | 'dark' = theme === 'dark' ? 'light' : 'dark';
+    try {
+      const rawV2 = localStorage.getItem('droid_app_settings_v2');
+      const rawV1 = localStorage.getItem('droid_app_settings_v1');
+      let parsed: Record<string, unknown> | null = null;
+      let key = 'droid_app_settings_v2';
+      if (rawV2) { parsed = JSON.parse(rawV2); }
+      else if (rawV1) { parsed = JSON.parse(rawV1); key = 'droid_app_settings_v1'; }
+      if (parsed && typeof parsed === 'object') {
+        const prefs = (parsed.preferences as Record<string, unknown>) || {};
+        prefs.theme = next;
+        parsed.preferences = prefs;
+        localStorage.setItem(key, JSON.stringify(parsed));
+        if (key === 'droid_app_settings_v2') localStorage.setItem('droid_app_settings_v1', JSON.stringify(parsed));
+        else localStorage.setItem('droid_app_settings_v2', JSON.stringify(parsed));
+      } else {
+        // no stored settings yet — create minimal
+        const minimal = { preferences: { theme: next, numberFormat: 'INDIAN', defaultIndexSymbol: 'NIFTY 50' } } as Record<string, unknown>;
+        localStorage.setItem('droid_app_settings_v2', JSON.stringify(minimal));
+      }
+    } catch {}
+    document.documentElement.setAttribute('data-theme', next);
+    document.documentElement.style.colorScheme = next;
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    setTheme(next);
+    window.dispatchEvent(new CustomEvent('droid-theme-changed'));
+  };
+
   const breadcrumb = (ROUTE_LABELS[pathname] ?? pathname.replace('/', '').replace(/-/g, ' ')) || 'Dashboard';
   const sessionCfg = getSessionConfig(marketStatus?.session);
   const streamCfg = getStreamConfig(streamState);
@@ -163,7 +208,7 @@ export function TopHeader({
 
   return (
     <>
-      <header className="sticky top-0 z-30 h-14 shrink-0 border-b border-slate-800 bg-[#0f172a] flex items-center justify-between gap-2 px-3 sm:px-4 [contain:paint]" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}>
+      <header className="sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-card flex items-center justify-between gap-2 px-3 sm:px-4 [contain:paint]" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}>
         {/* LEFT — Clock + Context */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {onMenuClick && (
@@ -171,7 +216,7 @@ export function TopHeader({
               type="button"
               onClick={onMenuClick}
               aria-label="Open navigation"
-              className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-100 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-secondary hover:bg-secondary text-muted-foreground hover:text-slate-100 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Menu className="w-4 h-4" />
             </button>
@@ -185,7 +230,7 @@ export function TopHeader({
               <ClockDate />
             </div>
 
-            <div className="hidden md:block h-7 w-px bg-slate-800" />
+            <div className="hidden md:block h-7 w-px bg-secondary" />
 
             {/* Breadcrumb — desktop only */}
             <div className="hidden lg:flex items-center gap-2 min-w-0">
@@ -200,7 +245,7 @@ export function TopHeader({
         {/* CENTER — System Status Capsule — tight pills, single LIVE pulse only */}
         <div className="flex items-center justify-center gap-2 shrink-0">
           {/* Desktop capsule */}
-          <div className="hidden md:flex items-center gap-1 p-1 rounded-full bg-slate-900 border border-slate-800">
+          <div className="hidden md:flex items-center gap-1 p-1 rounded-full bg-card border border-border">
             {/* Session */}
             <span
               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold tracking-wide border ${sessionCfg.pill}`}
@@ -210,7 +255,7 @@ export function TopHeader({
               {sessionCfg.label}
             </span>
 
-            <span className="w-px h-4 bg-slate-800" />
+            <span className="w-px h-4 bg-secondary" />
 
             {/* Mode — no pulse */}
             <span
@@ -221,7 +266,7 @@ export function TopHeader({
               {modeCfg.label}
             </span>
 
-            <span className="w-px h-4 bg-slate-800" />
+            <span className="w-px h-4 bg-secondary" />
 
             {/* Stream — only LIVE dot animates */}
             <span
@@ -237,7 +282,7 @@ export function TopHeader({
           </div>
 
           {/* Mobile dots — only LIVE animates */}
-          <div className="flex md:hidden items-center gap-1.5 p-1.5 rounded-full bg-slate-900 border border-slate-800">
+          <div className="flex md:hidden items-center gap-1.5 p-1.5 rounded-full bg-card border border-border">
             <span className={`w-2 h-2 rounded-full ${sessionCfg.dot}`} title={sessionCfg.label} />
             <span className={`w-2 h-2 rounded-full ${modeCfg.dot}`} title={modeCfg.label} />
             <span className={`w-2 h-2 rounded-full ${streamCfg.dot} ${streamCfg.animate}`} title={streamCfg.label} />
@@ -278,31 +323,41 @@ export function TopHeader({
               const el = document.getElementById('global-search-trigger');
               el?.click();
             }}
-            className="hidden sm:inline-flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-400 hover:text-slate-100 transition-colors cursor-pointer group"
+            className="hidden sm:inline-flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md bg-secondary hover:bg-secondary border border-border text-xs text-muted-foreground hover:text-slate-100 transition-colors cursor-pointer group"
             title="Search instruments (⌘K)"
           >
-            <Search className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300" />
+            <Search className="w-3.5 h-3.5 text-slate-500 group-hover:text-muted-foreground" />
             <span className="hidden lg:inline font-medium">Search</span>
-            <kbd className="hidden lg:inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-medium leading-none">
+            <kbd className="hidden lg:inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded bg-card border border-border text-[10px] font-medium leading-none">
               <Command className="w-3 h-3" />K
             </kbd>
           </button>
 
           {/* Search — mobile icon */}
           <button
-            className="sm:hidden p-2 rounded-md hover:bg-slate-800 border border-transparent hover:border-slate-700 text-slate-400 hover:text-slate-100 transition-colors cursor-pointer"
+            className="sm:hidden p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-slate-100 transition-colors cursor-pointer"
             aria-label="Search"
             title="Search"
           >
             <Search className="w-4 h-4" />
           </button>
 
-          <div className="hidden sm:block h-5 w-px bg-slate-800 mx-0.5" />
+          <div className="hidden sm:block h-5 w-px bg-border mx-0.5" />
+
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
 
           {/* Telemetry */}
           <button
             onClick={() => setShowHealthModal(true)}
-            className="p-2 rounded-md hover:bg-slate-800 border border-transparent hover:border-slate-700 text-slate-400 hover:text-slate-100 transition-colors cursor-pointer"
+            className="p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             title="View ingestion diagnostics"
             aria-label="Telemetry"
           >
@@ -311,14 +366,14 @@ export function TopHeader({
 
           {/* Notifications */}
           <button
-            className="relative p-2 rounded-md hover:bg-slate-800 border border-transparent hover:border-slate-700 text-slate-400 hover:text-slate-100 transition-colors cursor-pointer"
+            className="relative p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             title="Alerts & notifications"
             aria-label="Notifications"
           >
             <Bell className="w-4 h-4" />
           </button>
 
-          <div className="h-6 w-px bg-slate-800 mx-1 hidden sm:block" />
+          <div className="h-6 w-px bg-secondary mx-1 hidden sm:block" />
 
           <UserProfileMenu />
         </div>

@@ -1,7 +1,39 @@
 @import "tailwindcss";
 
-/* TradingView-pro dark: slate-950 + tight 12px grid */
+/* Light-first design system — airy, clean, fast */
 @theme inline {
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0f172a;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #f8fafc;
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #334155;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-accent: #f1f5f9;
+  --color-accent-foreground: #0f172a;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #f8fafc;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
+  --color-ring: #2563eb;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --font-sans: var(--font-inter), Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), JetBrains Mono, ui-monospace, monospace;
+  --grid-unit: 12px;
+}
+
+/* Dark override — toggled via <html data-theme="dark"> */
+html[data-theme="dark"] {
   --color-background: #020617;
   --color-foreground: #e2e8f0;
   --color-card: #0f172a;
@@ -16,20 +48,9 @@
   --color-muted-foreground: #94a3b8;
   --color-accent: #1e293b;
   --color-accent-foreground: #e2e8f0;
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #f8fafc;
   --color-border: #1e293b;
   --color-input: #1e293b;
   --color-ring: #3b82f6;
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --font-sans: var(--font-inter), Inter, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), JetBrains Mono, ui-monospace, monospace;
-  --grid-unit: 12px;
 }
 
 :root {
@@ -39,10 +60,11 @@
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
   scrollbar-gutter: stable;
   font-feature-settings: "tnum" 1, "ss01" 1;
 }
+html[data-theme="dark"] { color-scheme: dark; }
 
 body {
   background-color: var(--color-background);
@@ -55,14 +77,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Tight 12px grid helper — apply where density matters */
-.grid-12 {
-  gap: calc(var(--grid-unit));
-}
-.p-tight { padding: calc(var(--grid-unit)); }
-.px-tight { padding-left: calc(var(--grid-unit)); padding-right: calc(var(--grid-unit)); }
+/* 12px grid helpers */
+.grid-12 { gap: var(--grid-unit); }
+.p-tight { padding: var(--grid-unit); }
+.px-tight { padding-left: var(--grid-unit); padding-right: var(--grid-unit); }
 
-/* Performance: isolate paint for shell */
+/* Paint containment */
 aside[aria-label="Primary navigation"],
 header {
   contain: paint;
@@ -70,39 +90,24 @@ header {
   contain-intrinsic-size: 0 500px;
 }
 header { contain-intrinsic-size: 0 56px; }
-
-/* Cards / heavy lists — skip offscreen paint */
 .cv-auto {
   content-visibility: auto;
   contain-intrinsic-size: 0 320px;
 }
 
-/* Scrollbar — dark slate, thin, no jank */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--color-background);
-}
-::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-* { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+/* Scrollbar — light/dark adaptive */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-background); }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #334155; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #475569; }
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+html[data-theme="dark"] * { scrollbar-color: #334155 transparent; }
 
-/* Marquee — single composited transform, respects reduced motion */
-@keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-.animate-marquee {
-  animation: marquee 60s linear infinite;
-  will-change: transform;
-}
+/* Marquee */
+@keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+.animate-marquee { animation: marquee 60s linear infinite; will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee { animation: none !important; }
   *, *::before, *::after {
@@ -113,37 +118,26 @@ header { contain-intrinsic-size: 0 56px; }
   }
 }
 
-/* Replace heavy backdrop-blur-md with none/slate — keep class but neutralize cost */
-.backdrop-blur-md {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
+.backdrop-blur-md { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 .supports-\[backdrop-filter\]\:bg-card\/60,
 .supports-\[backdrop-filter\]\:bg-card\/85 {
   background-color: var(--color-card) !important;
 }
 
-/* Prefer transform over width where possible — hint GPU */
 .will-change-transform { will-change: transform; }
 
-/* Focus: fast, no layout shift */
-:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
+:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.shadow-2xs, .shadow-2xl { box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08) !important; }
+html[data-theme="dark"] .shadow-2xs,
+html[data-theme="dark"] .shadow-2xl { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.20) !important; }
 
-/* Reduce shadow cost: map shadow-2xs/2xl to shadow-sm */
-.shadow-2xs, .shadow-2xl { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.10) !important; }
-
-/* Mono tabular numbers by default for market data */
 .tabular-nums { font-variant-numeric: tabular-nums; }
 .font-mono { font-family: var(--font-mono); }
 
-/* Skeleton — cheap shimmer without blur */
 @keyframes shimmer { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-.skeleton { animation: shimmer 1.6s ease-in-out infinite; background: #1e293b; }
+.skeleton { animation: shimmer 1.6s ease-in-out infinite; background: #e2e8f0; }
+html[data-theme="dark"] .skeleton { background: #1e293b; }
 
-/* Live dot — only LIVE animates (single pulse in header) */
 @keyframes livePulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 .animate-live { animation: livePulse 1.8s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .animate-live { animation: none !important; } }

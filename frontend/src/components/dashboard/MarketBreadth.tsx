@@ -32,20 +32,20 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
           <div className="p-1 rounded-md bg-blue-500/10 border border-blue-500/15 text-blue-400">
             <BarChart3 className="w-3.5 h-3.5" />
           </div>
-          <h2 className="text-[11px] font-bold tracking-widest text-slate-300 uppercase">Market Breadth & Sectors</h2>
+          <h2 className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">Market Breadth & Sectors</h2>
         </div>
         <DataStatus status={data.status} />
       </div>
 
       {/* Advance / Decline Bar — tight */}
-      <div className="space-y-2 bg-slate-900/50 border border-slate-800 rounded-lg p-3">
+      <div className="space-y-2 bg-card/50 border border-border rounded-lg p-3">
         <div className="flex justify-between text-[11px] font-medium">
           <span className="text-emerald-400 flex items-center gap-1">
             Advances <strong className="tabular-nums font-mono">{safeInt(advancing)}</strong>
             <span className="text-[10px] text-slate-500">({advPct.toFixed(0)}%)</span>
           </span>
           <span className="text-slate-500 flex items-center gap-1 text-[11px]">
-            Unch <strong className="tabular-nums font-mono text-slate-400">{safeInt(unchanged)}</strong>
+            Unch <strong className="tabular-nums font-mono text-muted-foreground">{safeInt(unchanged)}</strong>
           </span>
           <span className="text-red-400 flex items-center gap-1">
             Declines <strong className="tabular-nums font-mono">{safeInt(declining)}</strong>
@@ -53,13 +53,13 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
           </span>
         </div>
 
-        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden flex">
+        <div className="w-full h-2 rounded-full bg-secondary overflow-hidden flex">
           <div className="bg-emerald-500 h-full" style={{ width: `${advPct}%` }} />
           <div className="bg-slate-600 h-full" style={{ width: `${unchPct}%` }} />
           <div className="bg-red-500 h-full" style={{ width: `${decPct}%` }} />
         </div>
 
-        <div className="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
+        <div className="flex justify-between items-center pt-2 border-t border-border text-xs">
           <div>
             <span className="text-slate-500 text-[10px] tracking-wide uppercase block leading-none">A/D Ratio</span>
             <span className="text-sm font-bold tabular-nums font-mono text-foreground leading-none mt-1 block">{safeNum(data.advance_decline_ratio)}</span>
@@ -72,7 +72,7 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                   : isBear
                   ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                  : 'bg-slate-800 text-slate-300 border-slate-700'
+                  : 'bg-secondary text-muted-foreground border-border'
               }`}
             >
               {safeStr(data.sentiment).replace(/_/g, ' ')}
@@ -91,9 +91,9 @@ export function MarketBreadth({ data, loading }: { data: MarketBreadthData | nul
               return (
                 <div
                   key={sector.name}
-                  className="flex justify-between items-center px-2.5 py-2 rounded-md bg-slate-900/40 border border-slate-800 text-xs hover:bg-slate-800/50 transition-colors"
+                  className="flex justify-between items-center px-2.5 py-2 rounded-md bg-card/40 border border-border text-xs hover:bg-secondary/50 transition-colors"
                 >
-                  <span className="font-medium text-slate-200 truncate max-w-[120px] text-[12px]">{sector.name}</span>
+                  <span className="font-medium text-foreground truncate max-w-[120px] text-[12px]">{sector.name}</span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] text-slate-500 font-mono">
                       {sector.advancing}▲ / {sector.declining}▼

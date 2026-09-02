@@ -101,8 +101,8 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
               onChange={(e) => onChange({ theme: e.target.value as any })}
               className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden"
             >
-              <option value="dark">Cyberpunk Dark (Default OLED)</option>
-              <option value="light">Daylight Light Theme</option>
+              <option value="light">Daylight Light (Default)</option>
+              <option value="dark">Midnight Dark</option>
               <option value="system">Follow Operating System</option>
             </select>
           </div>

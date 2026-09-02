@@ -18,7 +18,7 @@ class ApiClient {
     this.token = token;
   }
 
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private async request<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options?.headers as Record<string, string> || {}),
@@ -31,9 +31,11 @@ class ApiClient {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.baseUrl}${cleanPath}`;
 
-    // Hard timeout — a hung backend must not leak stacked polling requests.
+    // Adaptive timeout: 60s for AI inference / test / strategy / validation endpoints; 15s for high-frequency market data
+    const timeoutMs = options?.timeoutMs ?? (cleanPath.includes('/ai/') ? 60_000 : 15_000);
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
@@ -44,7 +46,8 @@ class ApiClient {
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        throw new Error(`Request to ${this.baseUrl} timed out after 10s.`);
+        const timeoutSec = Math.round(timeoutMs / 1000);
+        throw new Error(`Request to ${this.baseUrl} timed out after ${timeoutSec}s. (The AI model may be initializing or experiencing high load)`);
       }
       throw new Error(`Cannot reach backend at ${this.baseUrl}. Make sure the backend server is running.`);
     } finally {
