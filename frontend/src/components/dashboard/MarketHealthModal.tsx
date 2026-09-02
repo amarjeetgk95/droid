@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { MarketHealthStatus } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { api } from '@/lib/api';
-import { X, Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw } from 'lucide-react';
+import { X, Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw, KeyRound, ExternalLink } from 'lucide-react';
 import { safeStr } from '@/lib/utils';
+import { getStoredSettings } from '@/lib/settings';
 
 export function MarketHealthModal({
  isOpen,
@@ -18,9 +19,18 @@ export function MarketHealthModal({
  health: MarketHealthStatus | null;
  streamState: StreamConnectionState;
 }) {
- const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
- const [pipelineStats, setPipelineStats] = useState<{ timeseries_store: Record<string, unknown>; write_pipeline: Record<string, unknown> } | null>(null);
- const [actionLoading, setActionLoading] = useState(false);
+  const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
+  const [pipelineStats, setPipelineStats] = useState<{ timeseries_store: Record<string, unknown>; write_pipeline: Record<string, unknown> } | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<Record<string, unknown> | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [activeBroker, setActiveBroker] = useState<string>('fyers');
+
+  useEffect(() => {
+    try {
+      const stored = getStoredSettings();
+      if (stored?.broker?.provider) setActiveBroker(stored.broker.provider);
+    } catch { /* ignore */ }
+  }, []);
 
  useEffect(() => {
  if (!isOpen) return;
@@ -29,17 +39,19 @@ export function MarketHealthModal({
  let delay = 3000;
  let timeout: ReturnType<typeof setTimeout> | null = null;
 
- const fetchTelemetry = async () => {
-  try {
-  const [cRes, pRes] = await Promise.all([
-   api.getCacheStats(),
-   api.getPipelineStats(),
-  ]);
-  if (!isMounted) return;
-  setCacheStats(cRes.data);
-  setPipelineStats(pRes.data);
-  delay = 3000; // bounce back to normal cadence on success
-  } catch {
+  const fetchTelemetry = async () => {
+   try {
+   const [cRes, pRes, tRes] = await Promise.all([
+    api.getCacheStats(),
+    api.getPipelineStats(),
+    api.getTokenStatus(),
+   ]);
+   if (!isMounted) return;
+   setCacheStats(cRes.data);
+   setPipelineStats(pRes.data);
+   setTokenStatus(tRes.data);
+   delay = 3000;
+   } catch {
   // Back-off polling while the backend is failing — don't hammer it every 3s.
   delay = Math.min(30000, delay * 2);
   } finally {
@@ -164,6 +176,34 @@ export function MarketHealthModal({
    </div>
    </div>
 
+   {/* Broker Auth Status */}
+   <div className="bg-secondary/70 p-3 rounded-lg border border-border">
+    <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
+     <KeyRound className="w-3.5 h-3.5 text-primary" /> Broker Auth
+    </span>
+    <p className={`font-bold ${(tokenStatus as Record<string, unknown>)?.is_token_valid ? 'text-success' : 'text-warning'}`}>
+     {(tokenStatus as Record<string, unknown>)?.is_token_valid ? 'VALID' : 'EXPIRED / NONE'}
+    </p>
+    <div className="flex items-center gap-2 mt-1">
+     <span className="text-[10px] text-muted-foreground capitalize">{safeStr((tokenStatus as Record<string, unknown>)?.provider ?? activeBroker, '—')}</span>
+     {(tokenStatus as Record<string, unknown>)?.state && (
+      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-primary/10 text-primary">
+       {String((tokenStatus as Record<string, unknown>)?.state)}
+      </span>
+     )}
+    </div>
+    {!(tokenStatus as Record<string, unknown>)?.is_token_valid && (
+     <a
+      href={`https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400 hover:text-amber-300 transition-colors"
+     >
+      Re-authenticate <ExternalLink className="w-3 h-3" />
+     </a>
+    )}
+   </div>
+
    {/* Buffer & Queue Metrics */}
    <div className="border border-border rounded-lg p-4 bg-muted/20 space-y-3">
    <div className="flex items-center justify-between">
@@ -255,28 +295,52 @@ export function MarketHealthModal({
    <div className="text-right">
     <span className="text-muted-foreground">Network Latency:</span>
     <span className="font-mono font-medium ml-1.5 text-foreground">
-    {health?.latency_ms ? `${health.latency_ms}ms` : 'N/A (Demo)'}
+    {health?.latency_ms ? `${health.latency_ms}ms` : 'N/A'}
+    </span>
+   </div>
+   <div>
+    <span className="text-muted-foreground">Broker Uptime:</span>
+    <span className="font-mono font-medium ml-1.5 text-foreground">
+    {(tokenStatus as Record<string, unknown>)?.uptime_seconds != null
+     ? `${Math.round(Number((tokenStatus as Record<string, unknown>)?.uptime_seconds))}s`
+     : '—'}
+    </span>
+   </div>
+   <div className="text-right">
+    <span className="text-muted-foreground">Broker Reconnects:</span>
+    <span className="font-mono font-medium ml-1.5 text-foreground">
+    {(tokenStatus as Record<string, unknown>)?.reconnect_count ?? 0}
     </span>
    </div>
    </div>
   </div>
 
-  {/* Footer */}
-  <div className="p-4 border-t border-border bg-muted/40 flex items-center justify-between">
+   {/* Footer */}
+   <div className="p-4 border-t border-border bg-muted/40 flex items-center justify-between gap-2">
+   <div className="flex items-center gap-2">
+    <button
+    onClick={handleResetCircuitBreaker}
+    disabled={actionLoading}
+    className="px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs transition-colors cursor-pointer"
+    >
+    Reset Breaker
+    </button>
+    <a
+    href={`https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`}
+    target="_blank"
+    rel="noreferrer"
+    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/15 text-amber-400 border border-amber-500/20 font-medium text-xs transition-colors"
+    >
+    <KeyRound className="w-3 h-3" /> Re-auth {activeBroker.toUpperCase()}
+    </a>
+   </div>
    <button
-   onClick={handleResetCircuitBreaker}
-   disabled={actionLoading}
-   className="px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs transition-colors cursor-pointer"
+    onClick={onClose}
+    className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 font-medium text-xs transition-colors cursor-pointer"
    >
-   Reset Breaker
+    Close
    </button>
-   <button
-   onClick={onClose}
-   className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 font-medium text-xs transition-colors cursor-pointer"
-   >
-   Close
-   </button>
-  </div>
+   </div>
   </div>
  </div>
  );

@@ -6,7 +6,7 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink } from 'lucide-react';
+import { Activity, Bell, Clock3, Menu, Zap, ExternalLink } from 'lucide-react';
 import { getStoredSettings } from '@/lib/settings';
 import { ClockDate } from './Clock';
 
@@ -151,16 +151,6 @@ export function TopHeader({
   const authLoginUrl = `https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`;
   const isHealthy = health?.is_healthy === true && health?.mode !== 'OFFLINE';
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
   return (
     <>
       <header className="sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-card flex items-center justify-between gap-2 px-3 sm:px-4 [contain:paint]" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}>
@@ -271,31 +261,6 @@ export function TopHeader({
               <ExternalLink className="w-3 h-3 opacity-60" />
             </a>
           )}
-
-          {/* Search — desktop */}
-          <button
-            onClick={() => {
-              const el = document.getElementById('global-search-trigger');
-              el?.click();
-            }}
-            className="hidden sm:inline-flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md bg-secondary hover:bg-secondary border border-border text-xs text-muted-foreground hover:text-slate-100 transition-colors cursor-pointer group"
-            title="Search instruments (⌘K)"
-          >
-            <Search className="w-3.5 h-3.5 text-slate-500 group-hover:text-muted-foreground" />
-            <span className="hidden lg:inline font-medium">Search</span>
-            <kbd className="hidden lg:inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded bg-card border border-border text-[10px] font-medium leading-none">
-              <Command className="w-3 h-3" />K
-            </kbd>
-          </button>
-
-          {/* Search — mobile icon */}
-          <button
-            className="sm:hidden p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-slate-100 transition-colors cursor-pointer"
-            aria-label="Search"
-            title="Search"
-          >
-            <Search className="w-4 h-4" />
-          </button>
 
           <div className="hidden sm:block h-5 w-px bg-border mx-0.5" />
 
