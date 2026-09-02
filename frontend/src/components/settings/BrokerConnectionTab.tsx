@@ -91,7 +91,6 @@ export function BrokerConnectionTab({
   const [refreshing, setRefreshing] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
-  const [showAccessToken, setShowAccessToken] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [testing, setTesting] = useState(false);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
@@ -798,34 +797,7 @@ export function BrokerConnectionTab({
                 </div>
               </div>
 
-              <div className="sm:col-span-2 pt-2 border-t border-border/40">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-muted-foreground" />
-                    Manual Access Token (Optional)
-                  </label>
-                  <span className="text-[10px] text-muted-foreground">For external TOTP scripts</span>
-                </div>
-                <div className="relative">
-                  <input
-                    type={showAccessToken ? 'text' : 'password'}
-                    placeholder="Paste access_token if generated externally (optional)"
-                    value={settings.fyers.accessToken || ''}
-                    onChange={(e) =>
-                      onChange({ fyers: { ...settings.fyers, accessToken: e.target.value.trim() } })
-                    }
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAccessToken(!showAccessToken)}
-                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    {showAccessToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
+              {/* OAuth Authorization Banner */}
               <div className="sm:col-span-2 pt-3 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-primary/5 p-4 rounded-xl border border-primary/20">
                 <div>
                   <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
@@ -1039,36 +1011,7 @@ export function BrokerConnectionTab({
                 </div>
               </div>
 
-              <div className="sm:col-span-2 pt-2 border-t border-border/40">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-muted-foreground" />
-                    Manual Session Token (Optional)
-                  </label>
-                  <span className="text-[10px] text-muted-foreground">For pre-authenticated sessions</span>
-                </div>
-                <div className="relative">
-                  <input
-                    type={showAccessToken ? 'text' : 'password'}
-                    placeholder="Paste session token if generated externally"
-                    value={flattradeCreds.token || ''}
-                    onChange={(e) =>
-                      onChange({
-                        flattrade: { ...flattradeCreds, token: e.target.value.trim() },
-                      })
-                    }
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAccessToken(!showAccessToken)}
-                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    {showAccessToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
+              {/* OAuth Authorization Banner */}
               <div className="sm:col-span-2 pt-3 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-emerald-500/5 p-4 rounded-xl border border-emerald-500/20">
                 <div>
                   <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
