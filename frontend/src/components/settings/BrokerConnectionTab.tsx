@@ -4,14 +4,11 @@ import React, { useState, useEffect } from 'react';
 import {
   Radio,
   RefreshCw,
-  Key,
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
   Copy,
   Check,
-  Eye,
-  EyeOff,
   Activity,
   ExternalLink,
   Info,
@@ -20,8 +17,10 @@ import {
   Landmark,
   Globe,
   HelpCircle,
+  Server,
   Lock,
-  Layers,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { BrokerSettings, ApiType, BrokerProviderId, AppSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
@@ -35,7 +34,8 @@ interface Props {
   errors?: { path: string; message: string }[];
 }
 
-const REDIRECT_BASE = 'https://droid-backend-emeq.onrender.com/api/v1/tokens';
+const BACKEND_BASE = 'https://droid-backend-emeq.onrender.com';
+const REDIRECT_BASE = `${BACKEND_BASE}/api/v1/tokens`;
 
 type ProviderCard = {
   id: BrokerProviderId;
@@ -52,7 +52,7 @@ const INDIAN_PROVIDERS: ProviderCard[] = [
     id: 'fyers',
     name: 'Fyers API v3',
     badge: 'Low Latency',
-    desc: 'Official REST & WebSocket Feed',
+    desc: 'Official REST & WebSocket Gateway',
     apiType: 'indian',
     icon: TrendingUp,
     portalUrl: 'https://myapi.fyers.in/dashboard',
@@ -61,7 +61,7 @@ const INDIAN_PROVIDERS: ProviderCard[] = [
     id: 'flattrade',
     name: 'Flattrade PiConnect',
     badge: 'Zero Brokerage',
-    desc: 'WallConnect / PiConnect API & WebSocket',
+    desc: 'WallConnect API & Realtime Feed',
     apiType: 'indian',
     icon: Landmark,
     portalUrl: 'https://wallconnect.flattrade.in/',
@@ -73,7 +73,7 @@ const CRYPTO_PROVIDERS: ProviderCard[] = [
     id: 'binance',
     name: 'Binance API',
     badge: 'Crypto & Spot',
-    desc: 'Public Spot & Futures',
+    desc: 'Public Spot & Futures Gateway',
     apiType: 'crypto',
     icon: Bitcoin,
     portalUrl: 'https://www.binance.com/en/my/settings/api-management',
@@ -90,10 +90,11 @@ export function BrokerConnectionTab({
   const [loadingToken, setLoadingToken] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [showSecret, setShowSecret] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [testing, setTesting] = useState(false);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     provider: string;
@@ -105,7 +106,6 @@ export function BrokerConnectionTab({
     error?: string | null;
   } | null>(null);
 
-  // Ensure flattrade object is initialized
   const flattradeCreds = settings.flattrade || {
     userId: '',
     apiKey: '',
@@ -161,72 +161,53 @@ export function BrokerConnectionTab({
   const getProviderMeta = () => {
     const p = settings.provider;
     if (p === 'binance') {
-      const hasCreds = Boolean(settings.binance.apiKey);
       return {
         connected: true,
         label: 'CONNECTED',
-        sub: 'Public WebSocket (no auth needed)',
+        sub: 'Public WebSocket (Zero auth needed)',
         tone: 'emerald' as const,
-        hasCreds,
+        hasCreds: true,
       };
     }
     const tokenConnected = tokenStatus?.is_token_valid === true;
     if (p === 'fyers') {
-      const hasCreds = Boolean(settings.fyers.appId && settings.fyers.secret);
       if (tokenConnected) {
         return {
           connected: true,
           label: 'CONNECTED',
-          sub: 'WebSocket • Live Feed Active',
+          sub: 'WebSocket • Live Stream Active',
           tone: 'emerald' as const,
-          hasCreds,
+          hasCreds: true,
         };
       }
       return {
         connected: false,
-        label: hasCreds
-          ? tokenStatus?.state === 'AUTH_EXPIRED'
-            ? 'AUTH EXPIRED'
-            : 'CREDENTIALS SAVED — AUTH REQUIRED'
-          : 'NOT CONFIGURED',
-        sub: hasCreds
-          ? tokenStatus?.last_error || 'Log in with Fyers to generate daily token'
-          : 'Enter App ID + Secret',
-        tone: hasCreds
-          ? tokenStatus?.state === 'AUTH_EXPIRED'
-            ? ('red' as const)
-            : ('amber' as const)
-          : ('red' as const),
-        hasCreds,
+        label: tokenStatus?.state === 'AUTH_EXPIRED'
+          ? 'DAILY AUTH EXPIRED'
+          : 'RENDER MANAGED — DAILY AUTH REQUIRED',
+        sub: 'Click below to authorize your daily session',
+        tone: tokenStatus?.state === 'AUTH_EXPIRED' ? ('red' as const) : ('amber' as const),
+        hasCreds: true,
       };
     }
     if (p === 'flattrade') {
-      const hasCreds = Boolean(flattradeCreds.apiKey && flattradeCreds.apiSecret);
       if (tokenConnected || Boolean(flattradeCreds.token)) {
         return {
           connected: true,
           label: 'CONNECTED',
           sub: 'PiConnect • Live Stream Active',
           tone: 'emerald' as const,
-          hasCreds,
+          hasCreds: true,
         };
       }
       return {
         connected: false,
-        label: hasCreds
-          ? tokenStatus?.state === 'AUTH_EXPIRED'
-            ? 'AUTH EXPIRED'
-            : 'CREDENTIALS SAVED — AUTH REQUIRED'
-          : 'NOT CONFIGURED',
-        sub: hasCreds
-          ? tokenStatus?.last_error || 'Log in with Flattrade to generate session token'
-          : 'Enter Client Code, API Key + Secret',
-        tone: hasCreds
-          ? tokenStatus?.state === 'AUTH_EXPIRED'
-            ? ('red' as const)
-            : ('amber' as const)
-          : ('red' as const),
-        hasCreds,
+        label: tokenStatus?.state === 'AUTH_EXPIRED'
+          ? 'DAILY AUTH EXPIRED'
+          : 'RENDER MANAGED — DAILY AUTH REQUIRED',
+        sub: 'Click below to authorize your daily session',
+        tone: tokenStatus?.state === 'AUTH_EXPIRED' ? ('red' as const) : ('amber' as const),
+        hasCreds: true,
       };
     }
     return { connected: false, label: 'UNKNOWN', sub: '', tone: 'red' as const, hasCreds: false };
@@ -238,40 +219,16 @@ export function BrokerConnectionTab({
     setLoadingToken(true);
     try {
       const res = await api.getTokenStatus();
-      const m = getProviderMeta();
-      if (!m.hasCreds && settings.provider !== 'binance') {
-        setTokenStatus({
-          provider: settings.provider,
-          has_token: false,
-          is_valid: false,
-          expires_at: null,
-          time_to_expiry_hours: 0,
-          token_type: 'NONE',
-        });
-      } else {
-        setTokenStatus(res.data);
-      }
+      setTokenStatus(res.data);
     } catch {
-      const m = getProviderMeta();
-      if (m.connected) {
-        setTokenStatus({
-          provider: settings.provider,
-          has_token: true,
-          is_valid: true,
-          expires_at: new Date(Date.now() + 86400000).toISOString(),
-          time_to_expiry_hours: 23.5,
-          token_type: 'PUBLIC_WS',
-        });
-      } else {
-        setTokenStatus({
-          provider: settings.provider,
-          has_token: false,
-          is_valid: false,
-          expires_at: null,
-          time_to_expiry_hours: 0,
-          token_type: 'NONE',
-        });
-      }
+      setTokenStatus({
+        provider: settings.provider,
+        has_token: false,
+        is_valid: false,
+        expires_at: null,
+        time_to_expiry_hours: 0,
+        token_type: 'NONE',
+      });
     } finally {
       setLoadingToken(false);
     }
@@ -314,10 +271,7 @@ export function BrokerConnectionTab({
   };
 
   const handleCopyRedirect = (provider: 'fyers' | 'flattrade') => {
-    const uri =
-      provider === 'fyers'
-        ? settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`
-        : flattradeCreds.redirectUri || `${REDIRECT_BASE}/flattrade/callback`;
+    const uri = `${REDIRECT_BASE}/${provider}/callback`;
     navigator.clipboard.writeText(uri);
     setCopiedRedirect(true);
     setTimeout(() => setCopiedRedirect(false), 2000);
@@ -336,17 +290,9 @@ export function BrokerConnectionTab({
     (p) => p.id === settings.provider
   );
 
-  const fyersLoginUrl = settings.fyers.appId
-    ? `https://api-t1.fyers.in/api/v3/generate-authcode?client_id=${encodeURIComponent(
-        settings.fyers.appId
-      )}&redirect_uri=${encodeURIComponent(
-        settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`
-      )}&response_type=code&state=droid_fyers`
-    : undefined;
-
-  const flattradeLoginUrl = flattradeCreds.apiKey
-    ? `https://auth.flattrade.in/?app_key=${encodeURIComponent(flattradeCreds.apiKey)}`
-    : undefined;
+  // Server-side direct OAuth endpoints hosted on Render
+  const fyersServerLoginUrl = `${REDIRECT_BASE}/fyers/login`;
+  const flattradeServerLoginUrl = `${REDIRECT_BASE}/flattrade/login`;
 
   return (
     <div className="space-y-6">
@@ -358,7 +304,7 @@ export function BrokerConnectionTab({
             Market Universe
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
-            Choose the asset universe you want to trade or analyze. Indian markets support FYERS and Flattrade gateways; Crypto uses Binance Spot &amp; Futures.
+            Choose your market universe. Indian markets operate via FYERS API v3 or Flattrade PiConnect; Crypto operates via Binance.
           </p>
         </div>
 
@@ -419,12 +365,12 @@ export function BrokerConnectionTab({
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Radio className="w-4 h-4 text-primary" />
-            {settings.apiType === 'crypto' ? 'Crypto Gateway' : 'Select Indian Broker Gateway'}
+            {settings.apiType === 'crypto' ? 'Crypto Gateway' : 'Active Indian Broker'}
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
             {settings.apiType === 'crypto'
               ? 'Binance provides real-time spot and futures market data.'
-              : 'Switch seamlessly between FYERS and Flattrade without restarting the server. Credentials for both are preserved in Render.'}
+              : 'Select your active broker. All API credentials and secret keys are securely stored on your Render backend.'}
           </p>
         </div>
 
@@ -465,25 +411,119 @@ export function BrokerConnectionTab({
         </div>
       </div>
 
-      {/* 3. Live Token Status & Diagnostic Card */}
+      {/* 3. Render Managed Integration Card */}
+      {settings.apiType === 'indian' && (
+        <div className="bg-card border border-primary/20 rounded-xl p-5 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                <Server className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <span>Render Backend Integration</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5" />
+                    Keys Managed on Render
+                  </span>
+                </h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Your App ID, API Secret, and OAuth exchanges are handled directly by your Render service (<code>droid-backend-emeq</code>).
+                </p>
+              </div>
+            </div>
+            <a
+              href={
+                settings.provider === 'fyers'
+                  ? 'https://myapi.fyers.in/dashboard'
+                  : 'https://wallconnect.flattrade.in/'
+              }
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-primary hover:underline flex items-center gap-1 font-medium shrink-0"
+            >
+              <span>{settings.provider === 'fyers' ? 'Fyers Portal' : 'WallConnect Portal'}</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+
+          <div className="p-3.5 bg-secondary/40 rounded-xl border border-border/50 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground font-medium">
+                Render Callback URL (Configure in {settings.provider === 'fyers' ? 'Fyers' : 'Flattrade'} Portal):
+              </span>
+              <div className="flex items-center gap-2">
+                <code className="text-[11px] font-mono bg-background/80 px-2 py-1 rounded border border-border/60 text-sky-300">
+                  {REDIRECT_BASE}/{settings.provider}/callback
+                </code>
+                <button
+                  type="button"
+                  onClick={() => handleCopyRedirect(settings.provider as 'fyers' | 'flattrade')}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-secondary/80 text-foreground rounded text-[11px] font-medium transition-all cursor-pointer border border-border"
+                >
+                  {copiedRedirect ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Daily 1-Click Login Banner */}
+          <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-primary" />
+                Daily 1-Click Authentication (SEBI Compliant)
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Render will automatically fetch server keys, process the 2FA login, and activate your 24-hour market feed.
+              </p>
+            </div>
+            <a
+              href={settings.provider === 'fyers' ? fyersServerLoginUrl : flattradeServerLoginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
+            >
+              <span>
+                {settings.provider === 'fyers'
+                  ? 'Login & Authorize with FYERS'
+                  : 'Login & Authorize with Flattrade'}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Live Token Status & Diagnostic Card */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
           <div>
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              Broker Token &amp; Authentication Telemetry
+              Live Telemetry &amp; Connection Status
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Live token lifecycle and latency diagnostics managed by backend TokenManager.
+              Monitored by Render backend TokenManager.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleTestConnection}
-              disabled={testing || !providerMeta.hasCreds}
-              title={!providerMeta.hasCreds ? 'Enter API credentials first' : 'Test broker connection in real time'}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={testing}
+              title="Test broker connection in real time"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
             >
               <Activity className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
               <span>{testing ? 'Testing Live...' : 'Test Connection'}</span>
@@ -491,9 +531,9 @@ export function BrokerConnectionTab({
             <button
               type="button"
               onClick={handleRefreshToken}
-              disabled={refreshing || loadingToken || !providerMeta.hasCreds}
-              title={!providerMeta.hasCreds ? 'Enter API credentials first' : 'Refresh token'}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={refreshing || loadingToken}
+              title="Refresh token"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-primary' : ''}`} />
               <span>{refreshing ? 'Refreshing...' : 'Force Refresh'}</span>
@@ -547,7 +587,7 @@ export function BrokerConnectionTab({
                   <div className="text-amber-300 flex items-center gap-2 pt-1 border-t border-destructive/20">
                     <Info className="w-3.5 h-3.5 shrink-0" />
                     <span>
-                      Click <strong>&quot;Login &amp; Authorize&quot;</strong> below to authenticate and generate your session token.
+                      Click <strong>&quot;Login &amp; Authorize&quot;</strong> above to generate and activate your daily session.
                     </span>
                   </div>
                 )}
@@ -582,7 +622,7 @@ export function BrokerConnectionTab({
           </div>
 
           <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
-            <span className="text-muted-foreground text-[11px] block">API Type</span>
+            <span className="text-muted-foreground text-[11px] block">API Universe</span>
             <span className="font-semibold mt-0.5 flex items-center gap-1 text-foreground">
               {settings.apiType === 'crypto' ? (
                 <Bitcoin className="w-3 h-3 text-amber-400" />
@@ -636,420 +676,13 @@ export function BrokerConnectionTab({
         </div>
       </div>
 
-      {/* 4A. FYERS API v3 Setup & Credentials */}
-      {settings.provider === 'fyers' && (
-        <div className="space-y-4">
-          <div className="bg-card border border-sky-500/20 rounded-xl p-5 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-sky-400" />
-                How to Configure FYERS API v3 (3 Simple Steps)
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowSetupGuide(!showSetupGuide)}
-                className="text-xs text-sky-400 hover:underline font-medium cursor-pointer"
-              >
-                {showSetupGuide ? 'Hide Guide' : 'Show Instructions'}
-              </button>
-            </div>
-
-            {showSetupGuide && (
-              <div className="text-xs text-muted-foreground space-y-2.5 pt-2 border-t border-border/50">
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
-                      1
-                    </span>
-                    Create an App in Fyers Developer Portal
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Go to{' '}
-                    <a
-                      href="https://myapi.fyers.in/dashboard"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sky-400 hover:underline font-medium"
-                    >
-                      myapi.fyers.in/dashboard
-                    </a>
-                    , click <strong>Create App</strong>, and copy your <strong>App ID</strong> and <strong>Secret Key</strong>.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
-                      2
-                    </span>
-                    Set the Redirect URL in Fyers Portal
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Paste this exact Render callback URL:{' '}
-                    <code className="text-sky-300 bg-background/50 px-1 py-0.5 rounded">
-                      {settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`}
-                    </code>
-                  </p>
-                </div>
-
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
-                      3
-                    </span>
-                    Save Settings &amp; Perform Daily 2FA Login
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Click <strong>&quot;Save Changes&quot;</strong>, then click{' '}
-                    <strong>&quot;Login &amp; Authorize with FYERS&quot;</strong>.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <Key className="w-4 h-4 text-primary" />
-                Fyers API v3 Credentials
-              </h3>
-              <a
-                href="https://myapi.fyers.in/dashboard"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
-              >
-                <span>Fyers Developer Portal</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  Fyers App ID (Client ID)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. HVMUH3H2LQ-100"
-                  value={settings.fyers.appId}
-                  onChange={(e) =>
-                    onChange({ fyers: { ...settings.fyers, appId: e.target.value.trim() } })
-                  }
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-                <span className="text-[10px] text-muted-foreground mt-1 block">
-                  Must end with <code className="text-foreground">-100</code> for API apps.
-                </span>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">Secret Key</label>
-                <div className="relative">
-                  <input
-                    type={showSecret ? 'text' : 'password'}
-                    placeholder="Enter your Fyers Secret Key"
-                    value={settings.fyers.secret}
-                    onChange={(e) =>
-                      onChange({ fyers: { ...settings.fyers, secret: e.target.value.trim() } })
-                    }
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSecret(!showSecret)}
-                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  OAuth2 Redirect Callback URL (Render)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`}
-                    className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleCopyRedirect('fyers')}
-                    className="flex items-center gap-1 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                  >
-                    {copiedRedirect ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* OAuth Authorization Banner */}
-              <div className="sm:col-span-2 pt-3 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-primary/5 p-4 rounded-xl border border-primary/20">
-                <div>
-                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-primary" />
-                    Daily OAuth Authorization
-                  </p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Fyers tokens expire daily per SEBI rules. Log in to generate your 24-hour token.
-                  </p>
-                </div>
-                {fyersLoginUrl ? (
-                  <a
-                    href={fyersLoginUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
-                  >
-                    <span>Login &amp; Authorize with FYERS</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                ) : (
-                  <div className="text-[11px] text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-lg border border-amber-500/20">
-                    Enter App ID above to enable login
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 4B. FLATTRADE Setup & Credentials */}
-      {settings.provider === 'flattrade' && (
-        <div className="space-y-4">
-          <div className="bg-card border border-emerald-500/20 rounded-xl p-5 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-emerald-400" />
-                How to Configure Flattrade PiConnect (3 Simple Steps)
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowSetupGuide(!showSetupGuide)}
-                className="text-xs text-emerald-400 hover:underline font-medium cursor-pointer"
-              >
-                {showSetupGuide ? 'Hide Guide' : 'Show Instructions'}
-              </button>
-            </div>
-
-            {showSetupGuide && (
-              <div className="text-xs text-muted-foreground space-y-2.5 pt-2 border-t border-border/50">
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">
-                      1
-                    </span>
-                    Create API App in Flattrade WallConnect Portal
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Log in to{' '}
-                    <a
-                      href="https://wallconnect.flattrade.in/"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-emerald-400 hover:underline font-medium"
-                    >
-                      wallconnect.flattrade.in
-                    </a>
-                    , create an app, and copy your <strong>API Key (App Key)</strong> and <strong>API Secret</strong>.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">
-                      2
-                    </span>
-                    Set the Redirect URL in WallConnect Portal
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Paste this exact Render callback URL:{' '}
-                    <code className="text-emerald-300 bg-background/50 px-1 py-0.5 rounded">
-                      {flattradeCreds.redirectUri || `${REDIRECT_BASE}/flattrade/callback`}
-                    </code>
-                  </p>
-                </div>
-
-                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">
-                      3
-                    </span>
-                    Save Settings &amp; Authenticate Daily
-                  </div>
-                  <p className="pl-6.5 text-[11px] leading-relaxed">
-                    Click <strong>&quot;Save Changes&quot;</strong>, then click{' '}
-                    <strong>&quot;Login &amp; Authorize with Flattrade&quot;</strong>.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <Key className="w-4 h-4 text-emerald-500" />
-                Flattrade WallConnect Credentials
-              </h3>
-              <a
-                href="https://wallconnect.flattrade.in/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-medium"
-              >
-                <span>Flattrade WallConnect Portal</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  User ID / Client Code
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. FT012345"
-                  value={flattradeCreds.userId}
-                  onChange={(e) =>
-                    onChange({
-                      flattrade: { ...flattradeCreds, userId: e.target.value.trim() },
-                    })
-                  }
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-                <span className="text-[10px] text-muted-foreground mt-1 block">
-                  Your Flattrade trading account client ID.
-                </span>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  API Key (App Key)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter your Flattrade API Key"
-                  value={flattradeCreds.apiKey}
-                  onChange={(e) =>
-                    onChange({
-                      flattrade: { ...flattradeCreds, apiKey: e.target.value.trim() },
-                    })
-                  }
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-foreground block mb-1">API Secret</label>
-                <div className="relative">
-                  <input
-                    type={showSecret ? 'text' : 'password'}
-                    placeholder="Enter your Flattrade API Secret"
-                    value={flattradeCreds.apiSecret}
-                    onChange={(e) =>
-                      onChange({
-                        flattrade: { ...flattradeCreds, apiSecret: e.target.value.trim() },
-                      })
-                    }
-                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSecret(!showSecret)}
-                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                  >
-                    {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  OAuth2 Redirect Callback URL (Render)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={flattradeCreds.redirectUri || `${REDIRECT_BASE}/flattrade/callback`}
-                    className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleCopyRedirect('flattrade')}
-                    className="flex items-center gap-1 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                  >
-                    {copiedRedirect ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* OAuth Authorization Banner */}
-              <div className="sm:col-span-2 pt-3 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-emerald-500/5 p-4 rounded-xl border border-emerald-500/20">
-                <div>
-                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    Daily OAuth Authorization
-                  </p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Log in with Flattrade 2FA to generate your daily PiConnect session token.
-                  </p>
-                </div>
-                {flattradeLoginUrl ? (
-                  <a
-                    href={flattradeLoginUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-foreground text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
-                  >
-                    <span>Login &amp; Authorize with Flattrade</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                ) : (
-                  <div className="text-[11px] text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-lg border border-amber-500/20">
-                    Enter API Key above to enable login
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 5. Binance Crypto Credentials */}
+      {/* 5. Binance Crypto Details (if selected) */}
       {settings.provider === 'binance' && (
         <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Key className="w-4 h-4 text-primary" />
-              Binance Spot &amp; Futures API Configuration
+              Binance Spot &amp; Futures Gateway
             </h3>
             <a
               href="https://www.binance.com/en/my/settings/api-management"
@@ -1057,7 +690,7 @@ export function BrokerConnectionTab({
               rel="noreferrer"
               className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
             >
-              <span>Binance API Management</span>
+              <span>Binance Portal</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
@@ -1065,76 +698,119 @@ export function BrokerConnectionTab({
           <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300 flex items-start gap-2">
             <Info className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
-              <strong>Public Market Data is Free &amp; Active:</strong> Binance real-time Spot &amp; Futures tickers, Order Books, Candlesticks, and Funding Rates stream directly with zero authentication required. Optional API keys enable private account queries and paper execution.
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">
-                Binance API Key (Optional)
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. vmPUZE6mv9SD5VNH..."
-                value={settings.binance.apiKey}
-                onChange={(e) =>
-                  onChange({ binance: { ...settings.binance, apiKey: e.target.value.trim() } })
-                }
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Binance API Secret</label>
-              <div className="relative">
-                <input
-                  type={showSecret ? 'text' : 'password'}
-                  placeholder="Enter your Binance API Secret"
-                  value={settings.binance.apiSecret}
-                  onChange={(e) =>
-                    onChange({ binance: { ...settings.binance, apiSecret: e.target.value.trim() } })
-                  }
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSecret(!showSecret)}
-                  className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                >
-                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
+              <strong>Public Market Data is Free &amp; Active:</strong> Binance real-time Spot &amp; Futures tickers, Order Books, Candlesticks, and Funding Rates stream directly with zero authentication required.
             </div>
           </div>
         </div>
       )}
 
-      {/* 6. Live Stream Health */}
-      <div className="bg-card border border-border rounded-xl p-5 shadow-xs">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          Live Market Stream Status
-        </h3>
-        <div className="flex items-center gap-3 mt-3 text-xs">
-          <span
-            className={`w-2.5 h-2.5 rounded-full ${
-              providerMeta.connected ? 'bg-emerald-500 animate-pulse' : 'bg-destructive'
-            }`}
-          />
-          <span
-            className={`font-mono font-bold ${
-              providerMeta.connected ? 'text-emerald-400' : 'text-destructive'
-            }`}
-          >
-            {providerMeta.connected ? 'CONNECTED' : 'DISCONNECTED'}
+      {/* 6. Optional Advanced Override Drawer */}
+      <div className="border border-border/60 rounded-xl overflow-hidden bg-card/50">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="w-full flex items-center justify-between p-4 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+        >
+          <span className="flex items-center gap-2">
+            <Lock className="w-3.5 h-3.5" />
+            Advanced: Custom UI Override (Optional)
           </span>
-          <span className="text-muted-foreground">
-            · {providerMeta.connected ? `${reconnectCount} reconnects` : providerMeta.sub}
-          </span>
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            {activeProviderCard ? activeProviderCard.name : '—'} · {settings.apiType.toUpperCase()}
-          </span>
-        </div>
+          {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+
+        {showAdvanced && (
+          <div className="p-5 pt-0 border-t border-border/40 space-y-4 text-xs">
+            <p className="text-[11px] text-muted-foreground mt-3">
+              Leave empty to use credentials configured in Render Environment Variables. Enter values below only if you wish to override server defaults in this browser session.
+            </p>
+
+            {settings.provider === 'fyers' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Custom Fyers App ID (Override)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. HVMUH3H2LQ-100"
+                    value={settings.fyers.appId}
+                    onChange={(e) =>
+                      onChange({ fyers: { ...settings.fyers, appId: e.target.value.trim() } })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Custom Secret Key (Override)
+                  </label>
+                  <input
+                    type={showSecret ? 'text' : 'password'}
+                    placeholder="Enter Secret Key"
+                    value={settings.fyers.secret}
+                    onChange={(e) =>
+                      onChange({ fyers: { ...settings.fyers, secret: e.target.value.trim() } })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                </div>
+              </div>
+            )}
+
+            {settings.provider === 'flattrade' && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Client Code (Override)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. FT012345"
+                    value={flattradeCreds.userId}
+                    onChange={(e) =>
+                      onChange({
+                        flattrade: { ...flattradeCreds, userId: e.target.value.trim() },
+                      })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    API Key (Override)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter API Key"
+                    value={flattradeCreds.apiKey}
+                    onChange={(e) =>
+                      onChange({
+                        flattrade: { ...flattradeCreds, apiKey: e.target.value.trim() },
+                      })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    API Secret (Override)
+                  </label>
+                  <input
+                    type={showSecret ? 'text' : 'password'}
+                    placeholder="Enter API Secret"
+                    value={flattradeCreds.apiSecret}
+                    onChange={(e) =>
+                      onChange({
+                        flattrade: { ...flattradeCreds, apiSecret: e.target.value.trim() },
+                      })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

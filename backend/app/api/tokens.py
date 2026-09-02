@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Body, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from app.providers.registry import get_provider, reset_provider, stop_previous_provider_stream
 from app.core.broker_runtime import apply_app_settings, get_config
 from app.core.token_manager import ConnectionState, TokenInfo
@@ -149,6 +149,55 @@ async def refresh_token(payload: dict | None = Body(default=None)):
         "error": None,
         "meta": _make_meta().model_dump(),
     }
+
+
+@router.get("/fyers/login")
+async def fyers_oauth_login(request: Request):
+    """Redirect user to Fyers OAuth authorization using Render server credentials."""
+    broker_config = get_config()
+    creds = broker_config.credentials if broker_config.provider == "fyers" else {}
+    app_id = creds.get("app_id") or cfg.fyers_app_id
+    redirect_uri = creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback"
+    
+    if not app_id:
+        return HTMLResponse(
+            content="""
+            <html><body style="font-family:system-ui;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;">
+            <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;text-align:center;max-width:480px;">
+                <h3 style="color:#ef4444;margin-top:0;">FYERS_APP_ID Not Found in Render</h3>
+                <p style="color:#94a3b8;font-size:14px;">Please configure <code>FYERS_APP_ID</code> and <code>FYERS_SECRET_KEY</code> in Render Environment Variables.</p>
+            </div>
+            </body></html>
+            """,
+            status_code=400,
+        )
+    
+    url = f"https://api-t1.fyers.in/api/v3/generate-authcode?client_id={app_id}&redirect_uri={redirect_uri}&response_type=code&state=droid_fyers"
+    return RedirectResponse(url=url)
+
+
+@router.get("/flattrade/login")
+async def flattrade_oauth_login(request: Request):
+    """Redirect user to Flattrade OAuth authorization using Render server credentials."""
+    broker_config = get_config()
+    creds = broker_config.credentials if broker_config.provider == "flattrade" else {}
+    api_key = creds.get("api_key") or cfg.flattrade_api_key
+    
+    if not api_key:
+        return HTMLResponse(
+            content="""
+            <html><body style="font-family:system-ui;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;">
+            <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;text-align:center;max-width:480px;">
+                <h3 style="color:#ef4444;margin-top:0;">FLATTRADE_API_KEY Not Found in Render</h3>
+                <p style="color:#94a3b8;font-size:14px;">Please configure <code>FLATTRADE_API_KEY</code> and <code>FLATTRADE_API_SECRET</code> in Render Environment Variables.</p>
+            </div>
+            </body></html>
+            """,
+            status_code=400,
+        )
+    
+    url = f"https://auth.flattrade.in/?app_key={api_key}"
+    return RedirectResponse(url=url)
 
 
 @router.get("/fyers/callback")
