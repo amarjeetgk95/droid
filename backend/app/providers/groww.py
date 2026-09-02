@@ -47,16 +47,21 @@ class GrowwProvider(MarketDataProvider):
         api_key: str | None = None,
         api_secret: str | None = None,
         access_token: str | None = None,
+        totp: str | None = None,
         auth_mode: Literal["checksum", "totp"] = "checksum",
     ):
-        self.api_key = api_key or settings.groww_api_key
-        self.api_secret = api_secret or settings.groww_api_secret
+        self.api_key = (api_key or settings.groww_api_key or "").strip()
+        self.api_secret = (api_secret or settings.groww_api_secret or "").strip()
+        self.access_token = (access_token or settings.groww_access_token or "").strip()
+        self.totp = (totp or "").strip()
         self.auth_mode = auth_mode or settings.groww_auth_mode
 
         # Service layer — all licensed HTTP calls go through here.
         self.service = GrowwService(
             api_key=self.api_key,
             api_secret=self.api_secret,
+            access_token=self.access_token,
+            totp=self.totp,
             auth_mode=self.auth_mode,
         )
 

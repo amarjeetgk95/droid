@@ -42,7 +42,13 @@ _PROVIDER_SAVED_KEY: Dict[str, str] = {
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
     "upstox": {"api_key": "apiKey", "secret_key": "secret", "access_token": "access_token"},
-    "groww": {"api_key": "apiKey", "api_secret": "apiSecret", "access_token": "accessToken", "auth_mode": "authMode"},
+    "groww": {
+        "api_key": "apiKey",
+        "api_secret": "apiSecret",
+        "access_token": "accessToken",
+        "totp": "totp",
+        "auth_mode": "authMode",
+    },
     "kotak_neo": {
         "api_key": "apiKey",
         "api_secret": "apiSecret",

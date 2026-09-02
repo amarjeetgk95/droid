@@ -87,10 +87,14 @@ class GrowwService:
         self,
         api_key: str | None = None,
         api_secret: str | None = None,
+        access_token: str | None = None,
+        totp: str | None = None,
         auth_mode: Literal["checksum", "totp"] = "checksum",
     ):
-        self.api_key = api_key or ""
-        self.api_secret = api_secret or ""
+        self.api_key = (api_key or "").strip()
+        self.api_secret = (api_secret or "").strip()
+        self.access_token = (access_token or "").strip()
+        self.totp = (totp or "").strip()
         self.auth_mode = auth_mode
 
     # ---------- Auth ----------
@@ -102,13 +106,31 @@ class GrowwService:
     async def fetch_access_token(self) -> str:
         """Exchange API key + secret for a short-lived access token, or use direct token.
 
-        If api_key is already a JWT access token (starts with eyJ), returns it directly.
-        Otherwise performs the official Groww approval checksum exchange.
+        1. If explicit access_token is provided (e.g. from Groww console), uses it directly.
+        2. If api_key is already a JWT access token (starts with eyJ), returns it directly.
+        3. If TOTP mode is active, uses GrowwAPI.get_access_token with TOTP.
+        4. Otherwise performs the official Groww approval checksum exchange.
         """
-        # If API key is directly a JWT access token
+        # 1. Explicit Access Token
+        if self.access_token and (self.access_token.startswith("eyJ") or len(self.access_token) > 40):
+            logger.info("groww_explicit_access_token_used", key_prefix=self.access_token[:8] + "...")
+            return self.access_token
+
+        # 2. If API key is directly a JWT access token
         if self.api_key and (self.api_key.startswith("eyJ") or (len(self.api_key) > 40 and not self.api_secret)):
             logger.info("groww_direct_token_used", key_prefix=self.api_key[:8] + "...")
             return self.api_key
+
+        # 3. TOTP Flow
+        if self.totp or self.auth_mode == "totp":
+            try:
+                from growwapi import GrowwAPI  # type: ignore
+                token = GrowwAPI.get_access_token(api_key=self.api_key, totp=self.totp)
+                if token:
+                    logger.info("groww_totp_token_fetched", key_prefix=token[:8] + "...")
+                    return token
+            except Exception as e:
+                raise GrowwServiceError(f"Groww TOTP login failed: {e}") from e
 
         if not self.api_key or not self.api_secret:
             raise GrowwServiceError(
