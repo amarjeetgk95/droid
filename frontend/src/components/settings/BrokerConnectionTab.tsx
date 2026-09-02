@@ -17,10 +17,10 @@ import {
   Info,
   Bitcoin,
   TrendingUp,
-  Smartphone,
-  Building2,
   Landmark,
   Globe,
+  HelpCircle,
+  Lock,
 } from 'lucide-react';
 import { BrokerSettings, ApiType, BrokerProviderId, AppSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
@@ -47,24 +47,44 @@ type ProviderCard = {
 };
 
 const INDIAN_PROVIDERS: ProviderCard[] = [
-  { id: 'fyers',     name: 'Fyers API v3',     badge: 'Low Latency',    desc: 'WebSocket & Brokerage',         apiType: 'indian', icon: TrendingUp, portalUrl: 'https://myapi.fyers.in/dashboard' },
-  { id: 'upstox',    name: 'Upstox Pro',       badge: 'Official V2',    desc: 'Real-Time Tick Stream',         apiType: 'indian', icon: Building2,  portalUrl: 'https://developer.upstox.com/' },
-  { id: 'kotak_neo', name: 'Kotak Neo',        badge: 'Session-based',  desc: 'API Key + TOTP + MPIN',         apiType: 'indian', icon: Landmark,   portalUrl: 'https://www.kotaksecurities.com/platform/neo-trade-api/' },
+  {
+    id: 'fyers',
+    name: 'Fyers API v3',
+    badge: 'Low Latency',
+    desc: 'Official REST & WebSocket Feed',
+    apiType: 'indian',
+    icon: TrendingUp,
+    portalUrl: 'https://myapi.fyers.in/dashboard',
+  },
 ];
 
 const CRYPTO_PROVIDERS: ProviderCard[] = [
-  { id: 'binance', name: 'Binance API', badge: 'Crypto & Spot', desc: 'Public Spot & Futures', apiType: 'crypto', icon: Bitcoin, portalUrl: 'https://www.binance.com/en/my/settings/api-management' },
+  {
+    id: 'binance',
+    name: 'Binance API',
+    badge: 'Crypto & Spot',
+    desc: 'Public Spot & Futures',
+    apiType: 'crypto',
+    icon: Bitcoin,
+    portalUrl: 'https://www.binance.com/en/my/settings/api-management',
+  },
 ];
 
-export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, onChange, errors = [] }: Props) {
-  const getError = (field: string) => errors.find((e) => e.path === `broker.${field}`)?.message;
+export function BrokerConnectionTab({
+  settings,
+  fullSettings: propFullSettings,
+  onChange,
+  errors = [],
+}: Props) {
   const [tokenStatus, setTokenStatus] = useState<Record<string, any> | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
+  const [showAccessToken, setShowAccessToken] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [showSetupGuide, setShowSetupGuide] = useState(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     provider: string;
@@ -81,8 +101,8 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
     setTestResult(null);
     try {
       const creds =
-        settings.provider === 'kotak_neo'
-          ? settings.kotakNeo
+        settings.provider === 'fyers'
+          ? settings.fyers
           : (settings as any)[settings.provider] || {};
       const res = await api.testBrokerConnection({
         provider: settings.provider,
@@ -104,8 +124,6 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
 
   const { streamState, reconnectCount } = useMarketStream();
 
-  // Access full AppSettings from prop or context so Force Refresh can hot-sync the
-  // *dirty* local settings to the backend even if user hasn't clicked Save.
   let contextFullSettings: any = null;
   try {
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -132,21 +150,36 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
     const tokenConnected = tokenStatus?.is_token_valid === true;
     if (p === 'fyers') {
       const hasCreds = Boolean(settings.fyers.appId && settings.fyers.secret);
-      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
-      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter App ID + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
-    }
-    if (p === 'upstox') {
-      const hasCreds = Boolean(settings.upstox.apiKey && settings.upstox.secret);
-      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
-      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
-    }
-    if (p === 'kotak_neo') {
-      const hasCreds = Boolean(settings.kotakNeo.apiKey && settings.kotakNeo.apiSecret && settings.kotakNeo.mpin);
-      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
-      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to start a session') : 'Enter API Key + Secret + MPIN', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
+      if (tokenConnected) {
+        return {
+          connected: true,
+          label: 'CONNECTED',
+          sub: 'WebSocket • Live Feed Active',
+          tone: 'emerald' as const,
+          hasCreds,
+        };
+      }
+      return {
+        connected: false,
+        label: hasCreds
+          ? tokenStatus?.state === 'AUTH_EXPIRED'
+            ? 'AUTH EXPIRED'
+            : 'CREDENTIALS SAVED — AUTH REQUIRED'
+          : 'NOT CONFIGURED',
+        sub: hasCreds
+          ? tokenStatus?.last_error || 'Log in with Fyers to generate daily token'
+          : 'Enter App ID + Secret',
+        tone: hasCreds
+          ? tokenStatus?.state === 'AUTH_EXPIRED'
+            ? ('red' as const)
+            : ('amber' as const)
+          : ('red' as const),
+        hasCreds,
+      };
     }
     return { connected: false, label: 'UNKNOWN', sub: '', tone: 'red' as const, hasCreds: false };
   };
+
   const providerMeta = getProviderMeta();
 
   const fetchTokenStatus = async () => {
@@ -200,14 +233,10 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
     setRefreshing(true);
     setTokenMsg(null);
     try {
-      // Hot-sync dirty local settings to backend so provider switch (e.g. fyers -> groww)
-      // is immediate even if user hasn't clicked "Save Configuration" yet.
-      // Fixes "Re-authentication required for fyers" when input is groww.
       let payload: Record<string, unknown> | undefined = undefined;
       if (fullSettings) {
         payload = { app_settings: fullSettings };
       } else {
-        // Fallback: minimal app_settings from current BrokerSettings prop
         payload = { app_settings: { broker: settings } };
       }
       const res = await api.refreshToken(payload);
@@ -219,7 +248,9 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
       } else {
         setTokenMsg({
           type: 'error',
-          text: res.error || `Token refresh failed for ${res.data.provider.toUpperCase()}. Check your credentials.`,
+          text:
+            res.error ||
+            `Token refresh failed for ${res.data.provider.toUpperCase()}. Please authorize via Fyers OAuth.`,
         });
       }
       await fetchTokenStatus();
@@ -231,9 +262,7 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
   };
 
   const handleCopyRedirect = () => {
-    let uri = window.location.origin + '/api/v1/auth/callback';
-    if (settings.provider === 'fyers') uri = settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`;
-    if (settings.provider === 'upstox') uri = settings.upstox.redirectUri || `${REDIRECT_BASE}/upstox/callback`;
+    const uri = settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`;
     navigator.clipboard.writeText(uri);
     setCopiedRedirect(true);
     setTimeout(() => setCopiedRedirect(false), 2000);
@@ -244,7 +273,17 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
     onChange({ apiType: next, provider: defaultProvider });
   };
 
-  const activeProviderCard = [...INDIAN_PROVIDERS, ...CRYPTO_PROVIDERS].find((p) => p.id === settings.provider);
+  const activeProviderCard = [...INDIAN_PROVIDERS, ...CRYPTO_PROVIDERS].find(
+    (p) => p.id === settings.provider
+  );
+
+  const fyersLoginUrl = settings.fyers.appId
+    ? `https://api-t1.fyers.in/api/v3/generate-authcode?client_id=${encodeURIComponent(
+        settings.fyers.appId
+      )}&redirect_uri=${encodeURIComponent(
+        settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`
+      )}&response_type=code&state=droid_fyers`
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -253,18 +292,28 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Globe className="w-4 h-4 text-primary" />
-            API Type
+            Market Universe
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
-            Choose the asset universe you want to connect. Indian markets use SEBI-registered brokers; Crypto uses Binance public + private APIs.
+            Choose the asset universe you want to trade or analyze. Indian markets use FYERS API v3; Crypto uses Binance Spot &amp; Futures.
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {([
-            { id: 'indian' as ApiType, name: 'Indian Market', desc: 'NSE / BSE cash, F&O derivatives, indices (INR)', icon: Landmark },
-            { id: 'crypto' as ApiType, name: 'Crypto Market',  desc: 'Spot & Futures pairs on Binance (USDT-quoted)',   icon: Bitcoin },
-          ]).map((t) => {
+          {[
+            {
+              id: 'indian' as ApiType,
+              name: 'Indian Market (FYERS)',
+              desc: 'NSE / BSE cash, F&O derivatives, indices (INR)',
+              icon: Landmark,
+            },
+            {
+              id: 'crypto' as ApiType,
+              name: 'Crypto Market (Binance)',
+              desc: 'Spot & Futures pairs on Binance (USDT-quoted)',
+              icon: Bitcoin,
+            },
+          ].map((t) => {
             const isSelected = settings.apiType === t.id;
             const Icon = t.icon;
             return (
@@ -278,17 +327,23 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
                     : 'border-border bg-card hover:bg-secondary/40'
                 }`}
               >
-                <div className={`p-2 rounded-lg ${isSelected ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>
+                <div
+                  className={`p-2 rounded-lg ${
+                    isSelected ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                  }`}
+                >
                   <Icon className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground">{t.name}</div>
                   <div className="text-[11px] text-muted-foreground">{t.desc}</div>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-medium ${
-                  isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                }`}>
-                  {isSelected ? 'ACTIVE' : 'TAP'}
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded font-mono font-medium ${
+                    isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {isSelected ? 'ACTIVE' : 'SELECT'}
                 </span>
               </button>
             );
@@ -296,48 +351,40 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
         </div>
       </div>
 
-      {/* 2. Active Provider Switcher (filtered by apiType) */}
+      {/* 2. Active Provider Card */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
         <div>
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Radio className="w-4 h-4 text-primary" />
-            {settings.apiType === 'crypto' ? 'Crypto Provider' : 'Indian Broker'}
+            {settings.apiType === 'crypto' ? 'Crypto Gateway' : 'Indian Broker Gateway'}
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
-            Select the primary data provider for market feeds, order books, and real-time tick streaming.
+            {settings.apiType === 'crypto'
+              ? 'Binance provides real-time spot and futures market data.'
+              : 'FYERS API v3 is the exclusive gateway for Indian equities and F&O derivatives.'}
           </p>
         </div>
 
-        <div className={`grid grid-cols-1 ${settings.apiType === 'crypto' ? 'sm:grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-4'} gap-3`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {visibleProviders.map((p) => {
             const isSelected = settings.provider === p.id;
             const Icon = p.icon;
             return (
-              <button
+              <div
                 key={p.id}
-                type="button"
-                onClick={() => onChange({ provider: p.id })}
-                className={`flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
-                  isSelected
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border bg-card hover:bg-secondary/40'
-                }`}
+                className="flex flex-col text-left p-4 rounded-xl border border-primary bg-primary/10 ring-2 ring-primary/20"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
-                    <Icon className="w-3.5 h-3.5" />
+                  <span className="font-semibold text-sm text-foreground flex items-center gap-2">
+                    <Icon className="w-4 h-4 text-primary" />
                     {p.name}
                   </span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-medium ${
-                      isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                    }`}
-                  >
+                  <span className="text-[10px] px-2 py-0.5 rounded font-mono font-medium bg-primary text-primary-foreground">
                     {p.badge}
                   </span>
                 </div>
-                <span className="text-[11px] text-muted-foreground mt-2">{p.desc}</span>
-              </button>
+                <span className="text-xs text-muted-foreground mt-2">{p.desc}</span>
+              </div>
             );
           })}
         </div>
@@ -349,10 +396,10 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
           <div>
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              Broker Token & Authentication Telemetry
+              Broker Token &amp; Authentication Telemetry
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Live token lifecycle status managed by backend TokenManager worker.
+              Live token status managed by backend TokenManager.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -374,7 +421,7 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
               className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-              <span>{refreshing ? 'Refreshing Token...' : 'Force Refresh Token'}</span>
+              <span>{refreshing ? 'Refreshing...' : 'Force Refresh'}</span>
             </button>
           </div>
         </div>
@@ -407,14 +454,28 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
 
             {testResult.quote && (
               <div className="p-2.5 bg-background/40 rounded-lg border border-border/40 font-mono text-[11px] flex items-center justify-between text-foreground">
-                <span>Sample Probe: <strong>{testResult.quote.symbol}</strong></span>
-                <span className="text-emerald-400 font-bold">₹{testResult.quote.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <span>
+                  Sample Probe: <strong>{testResult.quote.symbol}</strong>
+                </span>
+                <span className="text-emerald-400 font-bold">
+                  ₹{testResult.quote.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
               </div>
             )}
 
             {testResult.error && (
-              <div className="text-[11px] bg-destructive/20 p-2.5 rounded-lg border border-destructive/30">
-                <strong>Error Details:</strong> {testResult.error}
+              <div className="text-[11px] bg-destructive/20 p-2.5 rounded-lg border border-destructive/30 space-y-1.5">
+                <div>
+                  <strong>Error Details:</strong> {testResult.error}
+                </div>
+                {testResult.error.includes('No Access Token') && (
+                  <div className="text-amber-300 flex items-center gap-2 pt-1 border-t border-destructive/20">
+                    <Info className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Fyers requires a daily OAuth login. Click <strong>&quot;Login &amp; Authorize with FYERS&quot;</strong> below to activate your access token.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -428,7 +489,11 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
                 : 'bg-destructive/10 text-destructive border border-destructive/20'
             }`}
           >
-            {tokenMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+            {tokenMsg.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0" />
+            )}
             <span>{tokenMsg.text}</span>
           </div>
         )}
@@ -444,39 +509,303 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
           <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
             <span className="text-muted-foreground text-[11px] block">API Type</span>
             <span className="font-semibold mt-0.5 flex items-center gap-1 text-foreground">
-              {settings.apiType === 'crypto' ? <Bitcoin className="w-3 h-3" /> : <Landmark className="w-3 h-3" />}
+              {settings.apiType === 'crypto' ? (
+                <Bitcoin className="w-3 h-3 text-amber-400" />
+              ) : (
+                <Landmark className="w-3 h-3 text-sky-400" />
+              )}
               {settings.apiType.toUpperCase()}
             </span>
           </div>
 
           <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
             <span className="text-muted-foreground text-[11px] block">Auth Status</span>
-            <span className={`font-semibold mt-0.5 flex items-center gap-1 ${providerMeta.tone === 'emerald' ? 'text-emerald-400' : providerMeta.tone === 'amber' ? 'text-amber-400' : 'text-destructive'}`}>
-              <span className={`w-2 h-2 rounded-full ${providerMeta.tone === 'emerald' ? 'bg-emerald-500 animate-pulse' : providerMeta.tone === 'amber' ? 'bg-amber-500' : 'bg-destructive'}`} />
+            <span
+              className={`font-semibold mt-0.5 flex items-center gap-1 ${
+                providerMeta.tone === 'emerald'
+                  ? 'text-emerald-400'
+                  : providerMeta.tone === 'amber'
+                  ? 'text-amber-400'
+                  : 'text-destructive'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  providerMeta.tone === 'emerald'
+                    ? 'bg-emerald-500 animate-pulse'
+                    : providerMeta.tone === 'amber'
+                    ? 'bg-amber-500'
+                    : 'bg-destructive'
+                }`}
+              />
               {providerMeta.label}
             </span>
-            <span className="text-[10px] text-muted-foreground block mt-0.5 truncate">{providerMeta.sub}</span>
+            <span className="text-[10px] text-muted-foreground block mt-0.5 truncate">
+              {providerMeta.sub}
+            </span>
           </div>
 
           <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
             <span className="text-muted-foreground text-[11px] block">Connection</span>
-            <span className={`font-mono mt-0.5 block font-semibold ${providerMeta.connected ? 'text-emerald-400' : 'text-destructive'}`}>
+            <span
+              className={`font-mono mt-0.5 block font-semibold ${
+                providerMeta.connected ? 'text-emerald-400' : 'text-destructive'
+              }`}
+            >
               {providerMeta.connected ? '● Connected' : '○ Disconnected'}
             </span>
-            <span className="text-[10px] text-muted-foreground block">{providerMeta.connected ? 'WebSocket • Live' : 'Enter credentials to connect'}</span>
+            <span className="text-[10px] text-muted-foreground block">
+              {providerMeta.connected ? 'WebSocket • Live' : 'Daily Auth Required'}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* 4. Provider Specific Credentials Configuration */}
+      {/* 4. FYERS API v3 Step-by-Step Setup Guide & Configuration */}
+      {settings.provider === 'fyers' && (
+        <div className="space-y-4">
+          {/* Quick Setup Instructions Collapsible Card */}
+          <div className="bg-card border border-sky-500/20 rounded-xl p-5 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-sky-400" />
+                How to Configure FYERS API v3 (3 Simple Steps)
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSetupGuide(!showSetupGuide)}
+                className="text-xs text-sky-400 hover:underline font-medium cursor-pointer"
+              >
+                {showSetupGuide ? 'Hide Guide' : 'Show Instructions'}
+              </button>
+            </div>
+
+            {showSetupGuide && (
+              <div className="text-xs text-muted-foreground space-y-2.5 pt-2 border-t border-border/50">
+                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
+                      1
+                    </span>
+                    Create an App in Fyers Developer Portal
+                  </div>
+                  <p className="pl-6.5 text-[11px] leading-relaxed">
+                    Go to{' '}
+                    <a
+                      href="https://myapi.fyers.in/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:underline font-medium"
+                    >
+                      myapi.fyers.in/dashboard
+                    </a>
+                    , click <strong>Create App</strong>, and copy your <strong>App ID</strong> (e.g.{' '}
+                    <code className="text-foreground">HVMUH3H2LQ-100</code>) and <strong>Secret Key</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
+                      2
+                    </span>
+                    Set the Redirect URL in Fyers Portal
+                  </div>
+                  <p className="pl-6.5 text-[11px] leading-relaxed">
+                    In your Fyers app settings on the portal, paste the exact callback URL:{' '}
+                    <code className="text-sky-300 bg-background/50 px-1 py-0.5 rounded">
+                      {settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`}
+                    </code>
+                  </p>
+                </div>
+
+                <div className="p-3 bg-secondary/40 rounded-lg border border-border/40 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
+                      3
+                    </span>
+                    Save Settings &amp; Perform Daily 2FA Login
+                  </div>
+                  <p className="pl-6.5 text-[11px] leading-relaxed">
+                    Click <strong>&quot;Save Changes&quot;</strong> in Droid, then click{' '}
+                    <strong>&quot;Login &amp; Authorize with FYERS&quot;</strong>. Enter your Fyers PIN/OTP to activate your daily access token.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Credentials Card */}
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Key className="w-4 h-4 text-primary" />
+                Fyers API v3 Credentials
+              </h3>
+              <a
+                href="https://myapi.fyers.in/dashboard"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+              >
+                <span>Fyers Developer Portal</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Fyers App ID (Client ID)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. HVMUH3H2LQ-100"
+                  value={settings.fyers.appId}
+                  onChange={(e) =>
+                    onChange({ fyers: { ...settings.fyers, appId: e.target.value.trim() } })
+                  }
+                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                />
+                <span className="text-[10px] text-muted-foreground mt-1 block">
+                  Must end with <code className="text-foreground">-100</code> for API apps.
+                </span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">Secret Key</label>
+                <div className="relative">
+                  <input
+                    type={showSecret ? 'text' : 'password'}
+                    placeholder="Enter your Fyers Secret Key"
+                    value={settings.fyers.secret}
+                    onChange={(e) =>
+                      onChange({ fyers: { ...settings.fyers, secret: e.target.value.trim() } })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret(!showSecret)}
+                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <span className="text-[10px] text-muted-foreground mt-1 block">
+                  Secret string generated in Fyers Developer Dashboard.
+                </span>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  OAuth2 Redirect Callback URL
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={settings.fyers.redirectUri || `${REDIRECT_BASE}/fyers/callback`}
+                    className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyRedirect}
+                    className="flex items-center gap-1 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    {copiedRedirect ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <span className="text-[11px] text-muted-foreground mt-1 block">
+                  Paste this exact callback URL into your App settings in the Fyers Developer Portal.
+                </span>
+              </div>
+
+              {/* Direct Access Token Input (Optional) */}
+              <div className="sm:col-span-2 pt-2 border-t border-border/40">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-muted-foreground" />
+                    Manual Access Token (Optional)
+                  </label>
+                  <span className="text-[10px] text-muted-foreground">For headless TOTP scripts / Postman</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showAccessToken ? 'text' : 'password'}
+                    placeholder="Paste access_token if generated externally (optional)"
+                    value={settings.fyers.accessToken || ''}
+                    onChange={(e) =>
+                      onChange({ fyers: { ...settings.fyers, accessToken: e.target.value.trim() } })
+                    }
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAccessToken(!showAccessToken)}
+                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    {showAccessToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* OAuth Authorization Banner */}
+              <div className="sm:col-span-2 pt-3 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-primary/5 p-4 rounded-xl border border-primary/20">
+                <div>
+                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-primary" />
+                    Daily OAuth Authorization
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Fyers tokens expire daily per SEBI rules. Log in to generate your 24-hour token.
+                  </p>
+                </div>
+                {fyersLoginUrl ? (
+                  <a
+                    href={fyersLoginUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    <span>Login &amp; Authorize with FYERS</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                ) : (
+                  <div className="text-[11px] text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-lg border border-amber-500/20">
+                    Enter App ID above to enable login
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Binance Crypto Credentials */}
       {settings.provider === 'binance' && (
         <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Key className="w-4 h-4 text-primary" />
-              Binance Spot & Futures API Configuration
+              Binance Spot &amp; Futures API Configuration
             </h3>
-            <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">
+            <a
+              href="https://www.binance.com/en/my/settings/api-management"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+            >
               <span>Binance API Management</span>
               <ExternalLink className="w-3 h-3" />
             </a>
@@ -485,18 +814,22 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
           <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300 flex items-start gap-2">
             <Info className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
-              <strong>Public Market Data is Free & Active:</strong> Binance real-time Spot & Futures tickers, Order Books, Candlesticks, and Funding Rates stream directly with zero authentication required. Optional API keys enable private account queries and paper execution.
+              <strong>Public Market Data is Free &amp; Active:</strong> Binance real-time Spot &amp; Futures tickers, Order Books, Candlesticks, and Funding Rates stream directly with zero authentication required. Optional API keys enable private account queries and paper execution.
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Binance API Key (Optional)</label>
+              <label className="text-xs font-semibold text-foreground block mb-1">
+                Binance API Key (Optional)
+              </label>
               <input
                 type="text"
                 placeholder="e.g. vmPUZE6mv9SD5VNH..."
                 value={settings.binance.apiKey}
-                onChange={(e) => onChange({ binance: { ...settings.binance, apiKey: e.target.value } })}
+                onChange={(e) =>
+                  onChange({ binance: { ...settings.binance, apiKey: e.target.value.trim() } })
+                }
                 className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
               />
             </div>
@@ -507,10 +840,16 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
                   type={showSecret ? 'text' : 'password'}
                   placeholder="Enter your Binance API Secret"
                   value={settings.binance.apiSecret}
-                  onChange={(e) => onChange({ binance: { ...settings.binance, apiSecret: e.target.value } })}
+                  onChange={(e) =>
+                    onChange({ binance: { ...settings.binance, apiSecret: e.target.value.trim() } })
+                  }
                   className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
                 />
-                <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(!showSecret)}
+                  className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                >
                   {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -519,255 +858,36 @@ export function BrokerConnectionTab({ settings, fullSettings: propFullSettings, 
         </div>
       )}
 
-      {settings.provider === 'fyers' && (
-        <IndianBrokerCredentials
-          title="Fyers API v3 Credentials"
-          portalUrl="https://myapi.fyers.in/dashboard"
-          portalLabel="Fyers Developer Portal"
-          appIdLabel="Fyers App ID (Client ID)"
-          appIdPlaceholder="e.g. XC12345-100"
-          appId={settings.fyers.appId}
-          onAppIdChange={(v) => onChange({ fyers: { ...settings.fyers, appId: v } })}
-          secret={settings.fyers.secret}
-          onSecretChange={(v) => onChange({ fyers: { ...settings.fyers, secret: v } })}
-          redirectUri={settings.fyers.redirectUri}
-          showSecret={showSecret}
-          setShowSecret={setShowSecret}
-          copied={copiedRedirect}
-          onCopy={handleCopyRedirect}
-          loginUrl={
-            settings.fyers.appId
-              ? `https://api-t1.fyers.in/api/v3/generate-authcode?client_id=${encodeURIComponent(settings.fyers.appId)}&redirect_uri=${encodeURIComponent(settings.fyers.redirectUri || 'https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback')}&response_type=code&state=droid_fyers`
-              : undefined
-          }
-          loginLabel="Login & Authorize with FYERS"
-        />
-      )}
-
-      {settings.provider === 'upstox' && (
-        <IndianBrokerCredentials
-          title="Upstox API v2 Credentials"
-          portalUrl="https://developer.upstox.com/"
-          portalLabel="Upstox Developer Console"
-          appIdLabel="Upstox API Key"
-          appIdPlaceholder="e.g. 849a9b..."
-          appId={settings.upstox.apiKey}
-          onAppIdChange={(v) => onChange({ upstox: { ...settings.upstox, apiKey: v } })}
-          secret={settings.upstox.secret}
-          onSecretChange={(v) => onChange({ upstox: { ...settings.upstox, secret: v } })}
-          redirectUri={settings.upstox.redirectUri}
-          showSecret={showSecret}
-          setShowSecret={setShowSecret}
-          copied={copiedRedirect}
-          onCopy={handleCopyRedirect}
-        />
-      )}
-
-      {settings.provider === 'kotak_neo' && (
-        <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Key className="w-4 h-4 text-primary" />
-              Kotak Neo (Neo API) Credentials
-            </h3>
-            <a href="https://www.kotaksecurities.com/platform/neo-trade-api/" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">
-              <span>Neo Trade API Docs</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 flex items-start gap-2">
-            <Info className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <strong>Two-step auth (UCC + TOTP + MPIN):</strong> Enter your Unique Client Code (UCC), the Access Token from the Neo API Dashboard, your registered mobile number, and your 6-digit MPIN. The backend performs TOTP login → MPIN validate to obtain a 6-hour trade token. <strong>TOPT code must be supplied at runtime</strong> — it changes every 30 seconds via Google/Microsoft Authenticator.
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">UCC — Unique Client Code</label>
-              <input
-                type="text"
-                placeholder="e.g. AB123 (5 chars)"
-                value={settings.kotakNeo.apiKey}
-                onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, apiKey: e.target.value } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Access Token (from Neo API Dashboard)</label>
-              <div className="relative">
-                <input
-                  type={showSecret ? 'text' : 'password'}
-                  placeholder="e.g. ec6a746c-e44b-455e-abf2-c13352b2fc45"
-                  value={settings.kotakNeo.apiSecret}
-                  onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, apiSecret: e.target.value } })}
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-                />
-                <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer">
-                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">Mobile Number (with country code)</label>
-              <input
-                type="text"
-                placeholder="+91XXXXXXXXXX"
-                value={settings.kotakNeo.mobileNumber}
-                onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, mobileNumber: e.target.value } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground block mb-1">MPIN (6 digits)</label>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="••••••"
-                value={settings.kotakNeo.mpin}
-                onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, mpin: e.target.value.replace(/\D/g, '') } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono tracking-widest"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="text-xs font-semibold text-foreground block mb-1">TOTP Code (runtime, rotates every 30s)</label>
-              <p className="text-[10px] text-muted-foreground mb-1">
-                Current 6-digit code from Google/Microsoft Authenticator. Enter a fresh code and click Force Refresh to log in (step 1 of 2).
-              </p>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="e.g. 123456"
-                value={settings.kotakNeo.totp}
-                onChange={(e) => onChange({ kotakNeo: { ...settings.kotakNeo, totp: e.target.value.replace(/\D/g, '') } })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono tracking-widest"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 5. Stream Health */}
+      {/* 6. Live Stream Health */}
       <div className="bg-card border border-border rounded-xl p-5 shadow-xs">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Activity className="w-4 h-4 text-primary" />
-          Live Market Stream
+          Live Market Stream Status
         </h3>
         <div className="flex items-center gap-3 mt-3 text-xs">
-          <span className={`w-2.5 h-2.5 rounded-full ${providerMeta.connected ? 'bg-emerald-500 animate-pulse' : 'bg-destructive'}`} />
-          <span className={`font-mono font-bold ${providerMeta.connected ? 'text-emerald-400' : 'text-destructive'}`}>
+          <span
+            className={`w-2.5 h-2.5 rounded-full ${
+              providerMeta.connected ? 'bg-emerald-500 animate-pulse' : 'bg-destructive'
+            }`}
+          />
+          <span
+            className={`font-mono font-bold ${
+              providerMeta.connected ? 'text-emerald-400' : 'text-destructive'
+            }`}
+          >
             {providerMeta.connected ? 'CONNECTED' : 'DISCONNECTED'}
           </span>
-          <span className="text-muted-foreground">· {providerMeta.connected ? `${reconnectCount} reconnects` : providerMeta.sub}</span>
+          <span className="text-muted-foreground">
+            · {providerMeta.connected ? `${reconnectCount} reconnects` : providerMeta.sub}
+          </span>
           <span className="ml-auto text-[11px] text-muted-foreground">
             {activeProviderCard ? activeProviderCard.name : '—'} · {settings.apiType.toUpperCase()}
           </span>
         </div>
-        {!providerMeta.connected && (
+        {!providerMeta.connected && settings.provider === 'fyers' && (
           <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mt-3">
-            Only the Binance public stream is connected without credentials. All Indian brokers and Binance private account queries require valid API credentials.
+            Fyers API v3 requires valid API credentials and a daily OAuth login. Click <strong>Login &amp; Authorize with FYERS</strong> above to connect.
           </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-interface IndianBrokerCredentialsProps {
-  title: string;
-  portalUrl: string;
-  portalLabel: string;
-  appIdLabel: string;
-  appIdPlaceholder: string;
-  appId: string;
-  onAppIdChange: (v: string) => void;
-  secret: string;
-  onSecretChange: (v: string) => void;
-  redirectUri: string;
-  showSecret: boolean;
-  setShowSecret: (b: boolean) => void;
-  copied: boolean;
-  onCopy: () => void;
-  loginUrl?: string;
-  loginLabel?: string;
-}
-
-function IndianBrokerCredentials(props: IndianBrokerCredentialsProps) {
-  return (
-    <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Key className="w-4 h-4 text-primary" />
-          {props.title}
-        </h3>
-        <a href={props.portalUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">
-          <span>{props.portalLabel}</span>
-          <ExternalLink className="w-3 h-3" />
-        </a>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="text-xs font-semibold text-foreground block mb-1">{props.appIdLabel}</label>
-          <input
-            type="text"
-            placeholder={props.appIdPlaceholder}
-            value={props.appId}
-            onChange={(e) => props.onAppIdChange(e.target.value)}
-            className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-foreground block mb-1">Secret Key</label>
-          <div className="relative">
-            <input
-              type={props.showSecret ? 'text' : 'password'}
-              placeholder="Enter your API Secret Key"
-              value={props.secret}
-              onChange={(e) => props.onSecretChange(e.target.value)}
-              className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 pr-10 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
-            />
-            <button type="button" onClick={() => props.setShowSecret(!props.showSecret)} className="absolute right-2 top-2 text-muted-foreground hover:text-foreground cursor-pointer">
-              {props.showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs font-semibold text-foreground block mb-1">OAuth2 Redirect Callback URL</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              readOnly
-              value={props.redirectUri}
-              className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground font-mono"
-            />
-            <button type="button" onClick={props.onCopy} className="flex items-center gap-1 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer">
-              {props.copied ? (<><Check className="w-3.5 h-3.5 text-emerald-400" /><span>Copied!</span></>) : (<><Copy className="w-3.5 h-3.5" /><span>Copy</span></>)}
-            </button>
-          </div>
-          <span className="text-[11px] text-muted-foreground mt-1 block">Paste this exact callback URL into your broker developer app configuration.</span>
-        </div>
-
-        {props.loginUrl && (
-          <div className="sm:col-span-2 pt-2 border-t border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold text-foreground">Authenticate & Generate Daily Token</p>
-              <p className="text-[11px] text-muted-foreground">Log in via official Fyers OAuth to activate live market data & trading.</p>
-            </div>
-            <a
-              href={props.loginUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
-            >
-              <span>{props.loginLabel || 'Login with Broker'}</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          </div>
         )}
       </div>
     </div>

@@ -28,26 +28,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # FYERS Settings (Phase 2)
+    # FYERS Settings (Indian Market Gateway)
     fyers_app_id: str = ""
     fyers_secret_key: str = ""
     fyers_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback"
     fyers_access_token: str = ""
-
-    # Upstox Settings (Phase 2)
-    upstox_api_key: str = ""
-    upstox_secret_key: str = ""
-    upstox_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback"
-    upstox_access_token: str = ""
-
-    # Kotak Neo (Neo API) Settings
-    # api_key = UCC (Unique Client Code, 5 chars), api_secret = dashboard access token
-    kotak_neo_api_key: str = ""
-    kotak_neo_api_secret: str = ""
-    kotak_neo_access_token: str = ""
-    kotak_neo_mobile_number: str = ""
-    kotak_neo_mpin: str = ""
-    kotak_neo_totp: str = ""
 
     # Binance (Crypto) Settings
     binance_api_key: str = ""
@@ -148,7 +133,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog
-        indian_providers = ("fyers", "upstox", "kotak_neo")
+        indian_providers = ("fyers",)
         crypto_providers = ("binance",)
 
         if self.api_type == "crypto":

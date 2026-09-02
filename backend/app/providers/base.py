@@ -15,7 +15,7 @@ from app.models.contracts import ContractMaster, TickEvent
 class MarketDataProvider(ABC):
     """Abstract market data provider interface.
     
-    All provider implementations (Mock, Fyers, Upstox) must conform
+    All provider implementations (Fyers, Binance) must conform
     to this interface. The quantitative engine and API layer depend
     only on these normalized methods — never on provider-specific
     response structures.

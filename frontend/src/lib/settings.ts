@@ -1,5 +1,5 @@
 export type ApiType = 'indian' | 'crypto';
-export type IndianProviderId = 'fyers' | 'upstox' | 'kotak_neo';
+export type IndianProviderId = 'fyers';
 export type CryptoProviderId = 'binance';
 export type BrokerProviderId = IndianProviderId | CryptoProviderId;
 
@@ -7,20 +7,7 @@ export interface FyersCredentials {
   appId: string;
   secret: string;
   redirectUri: string;
-}
-
-export interface UpstoxCredentials {
-  apiKey: string;
-  secret: string;
-  redirectUri: string;
-}
-
-export interface KotakNeoCredentials {
-  apiKey: string;      // UCC (Unique Client Code, 5 chars)
-  apiSecret: string;   // Access Token from Neo API Dashboard
-  mobileNumber: string;
-  mpin: string;
-  totp: string;        // Runtime TOTP from authenticator app (rotates every 30s)
+  accessToken?: string;
 }
 
 export interface BinanceCredentials {
@@ -32,8 +19,6 @@ export interface BrokerSettings {
   apiType: ApiType;
   provider: BrokerProviderId;
   fyers: FyersCredentials;
-  upstox: UpstoxCredentials;
-  kotakNeo: KotakNeoCredentials;
   binance: BinanceCredentials;
 }
 
@@ -166,18 +151,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       appId: '',
       secret: '',
       redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback',
-    },
-    upstox: {
-      apiKey: '',
-      secret: '',
-      redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/upstox/callback',
-    },
-    kotakNeo: {
-      apiKey: '',
-      apiSecret: '',
-      mobileNumber: '',
-      mpin: '',
-      totp: '',
+      accessToken: '',
     },
     binance: {
       apiKey: '',
@@ -255,10 +229,7 @@ const LEGACY_DEV_CONFIG_KEY = 'droid_developer_api_config';
 const SECRET_FIELDS: Record<string, string[]> = {
   broker: [
     'fyers.secret',
-    'upstox.secret',
-    'kotakNeo.apiSecret',
-    'kotakNeo.mpin',
-    'kotakNeo.totp',
+    'fyers.accessToken',
     'binance.apiSecret',
   ],
   ai: ['geminiApiKey', 'openRouterApiKey', 'openaiApiKey', 'novitaApiKey', 'nvidiaApiKey', 'customOpenaiApiKey'],
@@ -305,15 +276,6 @@ function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
     if (legacy.fyersRedirectUri) {
       merged.broker = { ...merged.broker, fyers: { ...merged.broker.fyers, redirectUri: legacy.fyersRedirectUri } };
     }
-    if (legacy.upstoxApiKey) {
-      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, apiKey: legacy.upstoxApiKey } };
-    }
-    if (legacy.upstoxSecretKey) {
-      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, secret: legacy.upstoxSecretKey } };
-    }
-    if (legacy.upstoxRedirectUri) {
-      merged.broker = { ...merged.broker, upstox: { ...merged.broker.upstox, redirectUri: legacy.upstoxRedirectUri } };
-    }
     if (legacy.binanceApiKey) {
       merged.broker = { ...merged.broker, binance: { ...merged.broker.binance, apiKey: legacy.binanceApiKey } };
     }
@@ -351,10 +313,9 @@ function migrateMockAI(settings: AppSettings): AppSettings {
 }
 
 function migrateMockProvider(settings: AppSettings): AppSettings {
-  // Legacy "mock" provider is no longer supported. Default any historical
-  // mock selection to a sensible Indian broker default.
-  const legacyProvider = (settings.broker as unknown as { provider?: string }).provider;
-  if (legacyProvider === 'mock' || legacyProvider === 'mock_ai') {
+  // Normalize any deprecated provider (upstox, kotak_neo, mock) to fyers
+  const legacyProvider = (settings.broker as unknown as { provider?: string })?.provider;
+  if (!legacyProvider || legacyProvider === 'mock' || legacyProvider === 'mock_ai' || legacyProvider === 'upstox' || legacyProvider === 'kotak_neo') {
     return {
       ...settings,
       broker: { ...settings.broker, provider: 'fyers' as BrokerProviderId },

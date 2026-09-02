@@ -1,7 +1,5 @@
 from app.providers.base import MarketDataProvider
 from app.providers.fyers import FyersProvider
-from app.providers.upstox import UpstoxProvider
-from app.providers.kotak_neo import KotakNeoProvider
 from app.providers.binance_provider import BinanceProvider
 from app.core.broker_runtime import get_config
 import asyncio
@@ -9,7 +7,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-INDIAN_PROVIDERS = ("fyers", "upstox", "kotak_neo")
+INDIAN_PROVIDERS = ("fyers",)
 CRYPTO_PROVIDERS = ("binance",)
 
 _provider_instance: MarketDataProvider | None = None
@@ -85,7 +83,7 @@ def get_provider() -> MarketDataProvider:
     """Get the configured market data provider (singleton).
 
     Provider selection is gated by api_type:
-      - "indian"  -> fyers | upstox | groww | kotak_neo
+      - "indian"  -> fyers
       - "crypto"  -> binance
 
     The active provider comes from app.core.broker_runtime, which honors the
@@ -179,23 +177,6 @@ def _create_provider() -> MarketDataProvider:
             app_id=creds.get("app_id"),
             secret_key=creds.get("secret_key"),
             access_token=creds.get("access_token"),
-        )
-    if provider_name == "upstox":
-        logger.info("provider_init", api_type=api_type, provider="upstox", live=bool(creds))
-        return UpstoxProvider(
-            api_key=creds.get("api_key"),
-            secret_key=creds.get("secret_key"),
-            access_token=creds.get("access_token"),
-        )
-    if provider_name == "kotak_neo":
-        logger.info("provider_init", api_type=api_type, provider="kotak_neo", live=bool(creds))
-        return KotakNeoProvider(
-            api_key=creds.get("api_key"),
-            api_secret=creds.get("api_secret"),
-            access_token=creds.get("access_token"),
-            mobile_number=creds.get("mobile_number"),
-            mpin=creds.get("mpin"),
-            totp=creds.get("totp"),
         )
     if provider_name == "binance":
         logger.info("provider_init", api_type=api_type, provider="binance", live=bool(creds))

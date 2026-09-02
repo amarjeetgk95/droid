@@ -13,10 +13,10 @@ to env/config when no saved settings exist. The settings endpoints call
 resets the provider singleton so changes take effect immediately (without a
 backend restart).
 
-Env (``MARKET_DATA_PROVIDER`` / ``API_TYPE`` + ``KOTAK_NEO_*`` / ``GROWW_*`` /
-``FYERS_*`` etc.) remains the source of truth when no user settings are saved,
-which keeps the single-broker-per-deployment model and Render env-driven config
-working out of the box.
+Env (``MARKET_DATA_PROVIDER`` / ``API_TYPE`` + ``FYERS_*`` etc.)
+remains the source of truth when no user settings are saved, which keeps
+the single-broker-per-deployment model and Render env-driven config working
+out of the box.
 """
 from __future__ import annotations
 
@@ -28,27 +28,14 @@ import structlog
 logger = structlog.get_logger()
 
 # Maps provider id -> the saved credential key under app_settings.broker AND the
-# mapping of provider-constructor arg -> saved field name. The frontend stores
-# credentials under camelCase/normalized keys, while the `provider` selector is
-# snake_case (e.g. provider "kotak_neo" but creds under "kotakNeo").
+# mapping of provider-constructor arg -> saved field name.
 _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "fyers": "fyers",
-    "upstox": "upstox",
-    "kotak_neo": "kotakNeo",
     "binance": "binance",
 }
 
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
-    "upstox": {"api_key": "apiKey", "secret_key": "secret", "access_token": "access_token"},
-    "kotak_neo": {
-        "api_key": "apiKey",
-        "api_secret": "apiSecret",
-        "access_token": "access_token",
-        "mobile_number": "mobileNumber",
-        "mpin": "mpin",
-        "totp": "totp",
-    },
     "binance": {"api_key": "apiKey", "api_secret": "apiSecret"},
 }
 
@@ -82,26 +69,6 @@ def _env_config() -> BrokerConfig:
             creds["secret_key"] = cfg.fyers_secret_key
         if cfg.fyers_access_token:
             creds["access_token"] = cfg.fyers_access_token
-    elif provider == "upstox":
-        if cfg.upstox_api_key:
-            creds["api_key"] = cfg.upstox_api_key
-        if cfg.upstox_secret_key:
-            creds["secret_key"] = cfg.upstox_secret_key
-        if cfg.upstox_access_token:
-            creds["access_token"] = cfg.upstox_access_token
-    elif provider == "kotak_neo":
-        if cfg.kotak_neo_api_key:
-            creds["api_key"] = cfg.kotak_neo_api_key
-        if cfg.kotak_neo_api_secret:
-            creds["api_secret"] = cfg.kotak_neo_api_secret
-        if cfg.kotak_neo_access_token:
-            creds["access_token"] = cfg.kotak_neo_access_token
-        if cfg.kotak_neo_mobile_number:
-            creds["mobile_number"] = cfg.kotak_neo_mobile_number
-        if cfg.kotak_neo_mpin:
-            creds["mpin"] = cfg.kotak_neo_mpin
-        if cfg.kotak_neo_totp:
-            creds["totp"] = cfg.kotak_neo_totp
 
     return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
 

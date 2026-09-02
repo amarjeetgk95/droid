@@ -1,6 +1,6 @@
 import pytest
 from app.providers.fyers import FyersProvider
-from app.providers.upstox import UpstoxProvider
+from app.providers.binance_provider import BinanceProvider
 from app.providers.registry import get_provider
 
 
@@ -14,12 +14,9 @@ class TestProviders:
         assert quote.provider == "fyers"
 
     @pytest.mark.asyncio
-    async def test_upstox_provider_structure(self):
-        upstox = UpstoxProvider()
-        assert upstox.provider_name == "upstox"
-        quote = await upstox.get_quote("BANKNIFTY")
-        assert quote.symbol == "BANKNIFTY"
-        assert quote.provider == "upstox"
+    async def test_binance_provider_structure(self):
+        binance = BinanceProvider()
+        assert binance.provider_name == "binance"
 
     def test_registry_singleton(self):
         p1 = get_provider()

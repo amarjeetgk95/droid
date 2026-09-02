@@ -36,8 +36,6 @@ export type DeskOption = {
 
 const BROKER_DESK_MAP: Record<string, { id: string; name: string; account: string }> = {
   fyers: { id: 'fyers-live', name: 'Fyers Live Desk', account: 'FYERS • Institutional' },
-  upstox: { id: 'upstox-live', name: 'Upstox Live Desk', account: 'UPSTOX • Official V2' },
-  kotak_neo: { id: 'kotak-live', name: 'Kotak Neo Desk', account: 'KOTAK NEO • Session' },
 };
 
 function getDeskOptions(provider: string = 'fyers'): DeskOption[] {

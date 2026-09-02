@@ -9,19 +9,7 @@ export const FyersCredentialsSchema = z.object({
   appId: z.string().trim().max(100),
   secret: z.string().trim().max(4096),
   redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
-});
-
-export const UpstoxCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(4096),
-  secret: z.string().trim().max(4096),
-  redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
-});
-
-export const KotakNeoCredentialsSchema = z.object({
-  apiKey: z.string().trim().max(4096),
-  apiSecret: z.string().trim().max(4096),
-  mobileNumber: z.string().trim().max(15).regex(/^\+?\d{0,15}$/, 'Must be a valid mobile number').or(z.literal('')),
-  mpin: z.string().trim().max(8).regex(/^\d{0,8}$/, 'MPIN must be up to 8 digits').or(z.literal('')),
+  accessToken: z.string().trim().max(8192).optional().default(''),
 });
 
 export const BinanceCredentialsSchema = z.object({
@@ -31,10 +19,8 @@ export const BinanceCredentialsSchema = z.object({
 
 export const BrokerSettingsSchema = z.object({
   apiType: z.enum(['indian', 'crypto']),
-  provider: z.enum(['fyers', 'upstox', 'kotak_neo', 'binance']),
+  provider: z.enum(['fyers', 'binance']),
   fyers: FyersCredentialsSchema,
-  upstox: UpstoxCredentialsSchema,
-  kotakNeo: KotakNeoCredentialsSchema,
   binance: BinanceCredentialsSchema,
 }).superRefine((data, ctx) => {
   if (data.apiType === 'indian' && data.provider === 'binance') {
@@ -48,7 +34,7 @@ export const BrokerSettingsSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['provider'],
-      message: 'Indian brokers require API type "indian"',
+      message: 'FYERS requires API type "indian"',
     });
   }
 });
