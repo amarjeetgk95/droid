@@ -167,15 +167,13 @@ class GrowwService:
     # ---------- Headers ----------
 
     def _build_headers(self, access_token: str) -> dict[str, str]:
+        tok = (access_token or "").strip()
+        if tok.startswith("Bearer "):
+            tok = tok[7:].strip()
         return {
-            "Authorization": f"Bearer {access_token}",
-            "X-API-VERSION": "1.0",
+            "Authorization": f"Bearer {tok}",
             "Accept": "application/json",
-            "Content-Type": "application/json",
-            "x-request-id": _gen_request_id(),
-            "x-client-id": "growwapi",
-            "x-client-platform": "growwapi-python-client",
-            "x-client-platform-version": "1.5.0",
+            "X-API-VERSION": "1.0",
         }
 
     # ---------- Live Data: Quote (full snapshot) ----------
@@ -215,6 +213,14 @@ class GrowwService:
                 return None, {"error": str(e)}, None
             status = resp.status_code
             raw_body = (resp.text or "")[:500]
+        if status in (401, 403):
+            logger.warning(
+                "groww_quote_auth_forbidden",
+                symbol=trading_symbol,
+                status=status,
+                body=raw_body,
+            )
+            return None, {"error": "forbidden", "status": status, "body": raw_body}, status
         if status != 200:
             logger.debug(
                 "groww_quote_http_non200",
