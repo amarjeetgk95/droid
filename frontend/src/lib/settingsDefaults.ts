@@ -1,0 +1,121 @@
+import { REDIRECT_BASE, CURRENT_SCHEMA_VERSION } from './settingsConstants';
+import type { AppSettings, SupportedModelOption } from './settingsTypes';
+
+export const SUPPORTED_GEMINI_MODELS: SupportedModelOption[] = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', tag: 'Fast & High IQ (Recommended)', description: 'Low latency, advanced reasoning, multimodal and structured JSON' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', tag: 'Deep Reasoning', description: 'Deep quantitative analysis, market thesis generation' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', tag: 'Realtime JSON', description: 'Ultra-fast structured outputs and live market feed analysis' },
+  { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: 'gemini', tag: 'Cost Effective', description: 'High throughput, cost-optimized streaming analysis' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', tag: '2M Context', description: 'Massive context window for full-day tick summaries' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini', tag: 'Balanced', description: 'Lightweight and fast standard model' },
+];
+
+export const SUPPORTED_OPENROUTER_MODELS: SupportedModelOption[] = [
+  { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', provider: 'openrouter', tag: 'Top Tier Reasoning', description: 'Hybrid reasoning and leading quantitative synthesis' },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'openrouter', tag: 'Industry Benchmark', description: 'State-of-the-art coding and financial analysis' },
+  { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', provider: 'openrouter', tag: 'Chain-of-Thought', description: 'Open weights reasoning model with deep mathematical thinking' },
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', provider: 'openrouter', tag: 'High Speed & Value', description: 'Ultra-fast and economical for high-frequency scan queries' },
+  { id: 'openai/gpt-4o', name: 'OpenAI GPT-4o', provider: 'openrouter', tag: 'Flagship Omni', description: 'Strong multi-modal and fast structured data extraction' },
+  { id: 'openai/gpt-4o-mini', name: 'OpenAI GPT-4o Mini', provider: 'openrouter', tag: 'Lightweight Fast', description: 'Extremely fast and budget-friendly' },
+  { id: 'google/gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (OpenRouter)', provider: 'openrouter', tag: 'Preview', description: 'Google flagship reasoning via OpenRouter API' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'openrouter', tag: 'Open Weight', description: 'Meta high-capacity open model' },
+  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', provider: 'openrouter', tag: 'Math & Quantitative', description: 'Superb numerical math and complex derivatives logic' },
+];
+
+export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
+  { id: 'deepseek-r1:8b', name: 'DeepSeek-R1 8B', provider: 'ollama', tag: 'Local CoT', description: 'High efficiency local reasoning model' },
+  { id: 'deepseek-r1:14b', name: 'DeepSeek-R1 14B', provider: 'ollama', tag: 'High Precision', description: 'Balanced memory footprint and analytical depth' },
+  { id: 'llama3.3:70b', name: 'Llama 3.3 70B', provider: 'ollama', tag: 'Full Local Power', description: 'Requires 40GB+ VRAM or quantized setup' },
+  { id: 'llama3.1:8b', name: 'Llama 3.1 8B', provider: 'ollama', tag: 'Light & Fast', description: 'Runs on standard consumer GPUs (8GB VRAM)' },
+  { id: 'qwen2.5:7b', name: 'Qwen 2.5 7B', provider: 'ollama', tag: 'Fast Math', description: 'Specialized in numbers, tables, and quantitative parsing' },
+  { id: 'qwen2.5:14b', name: 'Qwen 2.5 14B', provider: 'ollama', tag: 'Math Balanced', description: 'Robust local quantitative reasoning' },
+  { id: 'mistral:7b', name: 'Mistral 7B', provider: 'ollama', tag: 'Compact Fast', description: 'Fast local instruct model' },
+];
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  schemaVersion: CURRENT_SCHEMA_VERSION,
+  broker: {
+    apiType: 'indian',
+    provider: 'fyers',
+    fyers: {
+      appId: '',
+      secret: '',
+      redirectUri: `${REDIRECT_BASE}/fyers/callback`,
+      accessToken: '',
+    },
+    flattrade: {
+      userId: '',
+      apiKey: '',
+      apiSecret: '',
+      redirectUri: `${REDIRECT_BASE}/flattrade/callback`,
+      token: '',
+    },
+    binance: {
+      apiKey: '',
+      apiSecret: '',
+    },
+  },
+  quantitative: {
+    riskFreeRate: 0.0675,
+    timeConvention: 'ACT365',
+    defaultPricingModel: 'FUTURES_BLACK76',
+    ivMethod: 'BRENT',
+    brokeragePerOrder: 20,
+    slippagePct: 0.05,
+  },
+  ai: {
+    provider: 'gemini',
+    connectionMode: 'OpenRouter',
+    directProvider: 'OpenAI',
+    routingMode: 'Task Optimized',
+    geminiApiKey: '',
+    geminiModel: 'gemini-2.5-flash',
+    openRouterApiKey: '',
+    openRouterModel: 'anthropic/claude-3.7-sonnet',
+    ollamaBaseUrl: 'http://localhost:11434',
+    ollamaModel: 'deepseek-r1:8b',
+    openaiApiKey: '',
+    openaiModel: 'gpt-4o-mini',
+    novitaApiKey: '',
+    novitaModel: 'meta-llama/llama-3.3-70b-instruct',
+    nvidiaApiKey: '',
+    nvidiaModel: 'meta/llama-3.1-70b-instruct',
+    customOpenaiApiKey: '',
+    customOpenaiBaseUrl: '',
+    customOpenaiModel: 'custom-model',
+    taskModels: {
+      INTRADAY_ANALYSIS: 'auto',
+      NEWS_ANALYSIS: 'auto',
+      DEEP_RESEARCH: 'auto',
+      MTF_SYNTHESIS: 'auto',
+      CHART_EXPLANATION: 'auto',
+      FINAL_REVIEW: 'auto',
+    },
+    openaiBaseUrl: 'https://api.openai.com/v1',
+    novitaBaseUrl: 'https://api.novita.ai/v3/openai',
+    nvidiaBaseUrl: 'https://integrate.api.nvidia.com/v1',
+    geminiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    persona: 'INSTITUTIONAL',
+    temperature: 0.2,
+    cacheTtlSeconds: 60,
+    openRouterFreeOnly: true,
+    openRouterPricingFilter: 'FREE',
+    openRouterSelectedModel: 'auto',
+    openRouterAllowPaid: false,
+    fallbackEnabled: false,
+    fallbackOllamaModel: 'deepseek-r1:8b',
+  },
+  paper: {
+    initialCapital: 1000000,
+    autoSquareOffTime: '15:20',
+    maxCapitalPerTradePct: 20,
+    maxDailyDrawdownHaltPct: 10,
+    requireOrderConfirm: true,
+    allowOvernightPositions: true,
+  },
+  preferences: {
+    theme: 'dark',
+    numberFormat: 'INDIAN',
+    defaultIndexSymbol: 'NIFTY 50',
+  },
+};

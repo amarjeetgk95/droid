@@ -20,8 +20,11 @@ def test_fyers_login_redirect(client, monkeypatch):
 
 
 def test_flattrade_login_redirect(client, monkeypatch):
+    from app.core.broker_runtime import apply_app_settings
+    apply_app_settings({"broker": {"provider": "flattrade", "flattrade": {"apiKey": "FT_KEY_999"}}})
     monkeypatch.setattr(settings, "flattrade_api_key", "FT_KEY_999")
     
     resp = client.get("/api/v1/tokens/flattrade/login", follow_redirects=False)
     assert resp.status_code == 307 or resp.status_code == 302
     assert "auth.flattrade.in/?app_key=FT_KEY_999" in resp.headers["location"]
+

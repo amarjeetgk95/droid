@@ -150,6 +150,20 @@ def create_signal_endpoint(req: SignalCreateRequest):
     signal_fsm.register(sig)
     return sig.to_dict()
 
+@router.get("/signals/active")
+async def get_active_signals(
+    instrument: str | None = Query(None, description="Filter by NIFTY/BANKNIFTY/SENSEX/BTCUSD"),
+    status: str | None = Query(None, description="Filter by CONFIRMED/WATCH/POSSIBLE_BREAKOUT etc"),
+):
+    from app.institutional.signal_center import signal_center
+    data = await signal_center.active_setups(instrument=instrument, status=status)
+    return {"signals": data, "count": len(data), "generated_at_ms": time.time() * 1000}
+
+@router.get("/signals/history")
+async def get_signals_history(limit: int = 20):
+    from app.institutional.audit import audit_trail
+    return {"records": audit_trail.recent(limit)}
+
 @router.get("/signals/{signal_id}")
 def get_signal(signal_id: str):
     sig = signal_fsm.get(signal_id)
@@ -537,8 +551,150 @@ def dashboard_signal_ttl(signal_id: str):
         "fsm_state": sig.fsm_state,
         "validation_status": sig.validation_status,
         "risk_status": sig.risk_status,
-        "ai_status": sig.ai.get("status") if isinstance(sig.ai, dict) else None,
-        "freshness": "VALID" if not sig.is_expired() else "EXPIRED",
-        "expired_reason": sig.error if sig.is_expired() else None,
-        "order_submitted": sig.broker_order_id is not None,
     }
+
+
+# ── Consolidated Full Market Intelligence Endpoint ────────────────────
+@router.get("/market-intelligence/{instrument_id}/full")
+async def get_full_mi(instrument_id: str):
+    prof = asset_registry.get(instrument_id)
+    if not prof:
+        raise HTTPException(404, f"instrument {instrument_id} not found")
+    now_ms = int(time.time() * 1000)
+    iid = prof.instrument_id
+
+    # Determine spot price from latest buffer if available
+    latest = synchronized_buffer.get_latest(iid)
+    spot: Decimal | None = None
+    last_update_ms = now_ms
+    if latest:
+        try:
+            spot = D(latest.event.price) if latest.event.price else None
+            last_update_ms = latest.event.canonical_timestamp_utc
+        except Exception:
+            spot = None
+
+    # Fallback demo price when no live tick (still show workspace) — for BTC try LIVE Binance first
+    used_synthetic = False
+    is_synthetic_fallback = False
+    if spot is None:
+        if iid == "BTCUSD":
+            try:
+                from app.services.binance_service import binance_service
+                ticker = await binance_service.get_ticker("BTCUSDT")
+                if ticker and ticker.status.value == "LIVE" and ticker.price and ticker.price > 0:
+                    spot = D(str(ticker.price))
+                    last_update_ms = int(ticker.last_updated.timestamp() * 1000) if ticker.last_updated else now_ms
+                    try:
+                        from app.institutional.events import InstrumentEvent
+                        synth = InstrumentEvent.create(
+                            instrument_id=iid, asset_class="CRYPTO",
+                            symbol="BTCUSDT", price=spot,
+                            exchange_timestamp_utc=last_update_ms,
+                            canonical_timestamp_utc=last_update_ms,
+                            is_synthetic=False,
+                        )
+                        synchronized_buffer.push(synth)
+                    except Exception:
+                        pass
+                else:
+                    spot = D("63450.00")
+                    used_synthetic = True
+                    is_synthetic_fallback = True
+            except Exception:
+                spot = D("63450.00")
+                used_synthetic = True
+                is_synthetic_fallback = True
+        else:
+            default_map = {"NIFTY": D("24560.00"), "BANKNIFTY": D("51800.00"), "SENSEX": D("80500.00")}
+            spot = default_map.get(iid, D("24500.00"))
+            used_synthetic = True
+            is_synthetic_fallback = True
+
+    clock = get_session_clock(prof.asset_class)
+    clk_info = clock.session_info(now_ms) if hasattr(clock, "session_info") else {}
+    feed_snap = feed_circuit.snapshot(iid)
+    seq_val = get_sequence_validator(iid)
+
+    ctx = market_intelligence_engine.evaluate(instrument_id=iid, spot_price=spot)
+    sig = breakout_engine.evaluate(ctx)
+
+    atr = D("50") if prof.asset_class != "CRYPTO" else D("600")
+    short_out = short_horizon_strategy.evaluate(ctx, current_price=spot, atr=atr)
+    cont_out = continuation_strategy.evaluate(ctx, current_price=spot, atr=atr)
+
+    def cap_dict(c: Any):
+        if not c:
+            return {}
+        return {
+            "options": getattr(c, "options", False),
+            "futures": getattr(c, "futures", False),
+            "orderbook_l2": getattr(c, "orderbook_l2", False),
+            "greeks": getattr(c, "greeks", False),
+            "fii_dii": getattr(c, "fii_dii", False),
+            "ai_confirmation": getattr(c, "ai_confirmation", False),
+            "telegram_alerts": getattr(c, "telegram_alerts", False),
+            "multi_timeframe": getattr(c, "multi_timeframe", False),
+            "tick_size": float(getattr(c, "tick_size", 0.05)),
+            "lot_size": getattr(c, "lot_size", 25),
+            "max_leverage": getattr(c, "max_leverage", 1),
+        }
+
+    return {
+        "instrument": {
+            **prof.to_dict(),
+            "id": prof.instrument_id,
+            "symbol": getattr(prof, "symbol", prof.instrument_id),
+            "name": getattr(prof, "name", prof.display_name),
+            "capabilities": cap_dict(getattr(prof, "capabilities", None)),
+            "contract_spec": prof.contract_spec.to_dict() if prof.contract_spec else None,
+        },
+        "session": {
+            "is_open": clk_info.get("is_open", False),
+            "session_type": clk_info.get("session_state", "CLOSED"),
+            "time_to_close_seconds": None,
+            "time_to_open_seconds": None,
+            "clock_divergence_ms": 0,
+            "is_synchronized": True,
+        },
+        "feed_health": {
+            "health": getattr(feed_snap, "health", "HEALTHY"),
+            "error_count_last_min": 0,
+            "consecutive_timeouts": 0,
+            "circuit_state": "TRIPPED" if getattr(feed_snap, "suppress_candidates", False) else "CLOSED",
+            "staleness_ms": now_ms - last_update_ms,
+            "is_stale": (now_ms - last_update_ms) > 5000,
+            "used_synthetic_fallback": used_synthetic,
+            "is_synthetic_fallback": is_synthetic_fallback,
+        },
+        "sequence": {
+            "last_seq": getattr(seq_val, "_last_source_seq", None) or getattr(seq_val, "_internal_seq", 0),
+            "gap_detected": getattr(seq_val, "_gap_detected", False),
+            "gap_count": 0,
+            "out_of_order_count": 0,
+        },
+        "market_intelligence": {
+            "regime": ctx.technical.get("regime", "NEUTRAL"),
+            "price_action": ctx.price_action,
+            "bullish_score": ctx.scores.get("bullish_score", 50),
+            "bearish_score": ctx.scores.get("bearish_score", 50),
+            "breakout_pressure": ctx.scores.get("breakout_pressure", 50),
+            "false_breakout_risk": ctx.scores.get("false_breakout_risk", 20),
+            "cross_market": ctx.cross_market,
+            "synchronization_status": ctx.synchronization_status,
+            "spot_price": float(spot) if spot else None,
+            "last_update_ms": last_update_ms,
+        },
+        "breakout_candidate": {
+            "candidate": getattr(sig, "status", "WATCH"),
+            "status": getattr(sig, "status", "WATCH"),
+            "direction": getattr(sig, "direction", "BULLISH"),
+            "confidence": getattr(sig, "confidence", 50),
+            "trigger_level": float(sig.breakout_level) if getattr(sig, "breakout_level", None) else None,
+            "reasons": [getattr(sig, "reason", "")] if getattr(sig, "reason", None) else getattr(sig, "supporting", []),
+        },
+        "short_horizon": short_out.to_dict(),
+        "continuation": cont_out.to_dict(),
+        "generated_at_ms": now_ms,
+    }
+

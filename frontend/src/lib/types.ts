@@ -70,6 +70,7 @@ export interface MarketBreadthData {
 
 export interface MarketHealthStatus {
   status: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY';
+  is_healthy?: boolean;
   provider: string;
   mode: 'OFFLINE' | 'LIVE';
   last_update: string | null;

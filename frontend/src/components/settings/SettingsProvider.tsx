@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback, useReducer } from 'react';
 import {
   AppSettings,
   BrokerSettings,
@@ -15,32 +15,38 @@ import {
   exportSettingsJson,
   importSettingsJson,
 } from '@/lib/settings';
-import { validateSettings, ValidationError } from '@/lib/settingsValidation';
+import { validateSettings, validateSection, ValidationError } from '@/lib/settingsSchema';
 
-// ============================================================================
-// Settings Context — Single Source of Truth
-// ============================================================================
+// ── Context Value ────────────────────────────────────────────────────────────
+
+type SettingsSection = 'broker' | 'quantitative' | 'ai' | 'paper' | 'preferences';
 
 interface SettingsContextValue {
   // State
   settings: AppSettings;
   isDirty: boolean;
+  isDirtySections: Record<SettingsSection, boolean>;
   isSaving: boolean;
+  isSavingSection: Record<SettingsSection, boolean>;
   isLoading: boolean;
   validationErrors: ValidationError[];
+  sectionErrors: Record<SettingsSection, ValidationError[]>;
   lastSaved: Date | null;
   saveMessage: { type: 'success' | 'error'; text: string } | null;
 
-  // Section updaters
+  // Section updaters (backward-compatible)
   updateBroker: (updates: Partial<BrokerSettings>) => void;
   updateQuantitative: (updates: Partial<QuantitativeSettings>) => void;
   updateAI: (updates: Partial<AISettings>) => void;
   updatePaper: (updates: Partial<PaperTradingSettings>) => void;
   updatePreferences: (updates: Partial<PreferencesSettings>) => void;
+  // Generic patch
+  patchSection: <K extends SettingsSection>(section: K, updates: Partial<AppSettings[K]>) => void;
 
   // Full settings operations
   replaceAllSettings: (newSettings: AppSettings) => void;
   save: () => Promise<void>;
+  saveSection: (section: SettingsSection) => Promise<void>;
   reset: () => void;
   exportJson: (includeSecrets?: boolean) => string;
   importJson: (jsonStr: string) => { success: boolean; error?: string };
@@ -60,55 +66,118 @@ export function useSettings(): SettingsContextValue {
   return ctx;
 }
 
-// ============================================================================
-// Helper: read stored settings safely (only on client)
-// ============================================================================
-
 function getInitialSettings(): AppSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
   return getStoredSettings();
 }
 
-// ============================================================================
-// Settings Provider
-// ============================================================================
+// ── Reducer ────────────────────────────────────────────────────────────────
+
+type Action =
+  | { type: 'PATCH'; section: SettingsSection; updates: Record<string, unknown> }
+  | { type: 'REPLACE'; settings: AppSettings }
+  | { type: 'SET'; settings: AppSettings };
+
+function settingsReducer(state: AppSettings, action: Action): AppSettings {
+  switch (action.type) {
+    case 'PATCH': {
+      const prevSection = (state[action.section] as unknown) as Record<string, unknown>;
+      // deep merge for nested objects like broker.fyers / ai.taskModels
+      const nextSection: Record<string, unknown> = { ...prevSection };
+      for (const [k, v] of Object.entries(action.updates)) {
+        const prevVal = prevSection[k];
+        if (
+          prevVal &&
+          typeof prevVal === 'object' &&
+          !Array.isArray(prevVal) &&
+          v &&
+          typeof v === 'object' &&
+          !Array.isArray(v)
+        ) {
+          nextSection[k] = { ...(prevVal as object), ...(v as object) };
+        } else {
+          nextSection[k] = v;
+        }
+      }
+      return { ...state, [action.section]: nextSection };
+    }
+    case 'REPLACE':
+    case 'SET':
+      return action.settings;
+    default:
+      return state;
+  }
+}
+
+// ── Provider ───────────────────────────────────────────────────────────────
 
 interface SettingsProviderProps {
   children: React.ReactNode;
-  /**
-   * Optional async callback to persist settings to backend.
-   * Called during save() after localStorage write.
-   */
   onSaveToBackend?: (settings: AppSettings) => Promise<void>;
-  /**
-   * Optional async callback to load settings from backend (Supabase).
-   * RECTIFY: Supabase is now source of truth — if provided, settings are
-   * hydrated from Supabase on mount and Supabase wins over localStorage.
-   */
   onLoadFromBackend?: () => Promise<AppSettings | null>;
 }
 
 export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend }: SettingsProviderProps) {
-  // Initialize from localStorage directly (avoids cascading render from useEffect setState)
-  const [settings, setSettings] = useState<AppSettings>(getInitialSettings);
+  const [settings, dispatch] = useReducer(settingsReducer, undefined, getInitialSettings);
   const [savedSnapshot, setSavedSnapshot] = useState<string>(() => JSON.stringify(getInitialSettings()));
+  const savedRef = useRef<string>(savedSnapshot);
+  const settingsRef = useRef<AppSettings>(settings);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingSections, setIsSavingSections] = useState<Record<SettingsSection, boolean>>({
+    broker: false,
+    quantitative: false,
+    ai: false,
+    paper: false,
+    preferences: false,
+  });
   const [isLoading, setIsLoading] = useState<boolean>(() => !!onLoadFromBackend);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const [saveMessage, setSaveMessage] = useState<{
-    type: 'success' | 'error';
-    text: string;
-  } | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const messageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Compute dirty state by comparing current settings to last saved snapshot
-  const isDirty = JSON.stringify(settings) !== savedSnapshot;
+  // Keep refs in sync for stable save callback
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { savedRef.current = savedSnapshot; }, [savedSnapshot]);
 
-  // Compute validation inline (not in effect) — it's pure computation
+  // Dirty — global and per-section (memoised, per-section JSON only)
+  const { isDirty, isDirtySections } = useMemo(() => {
+    const dirtySections: Record<SettingsSection, boolean> = {
+      broker: false,
+      quantitative: false,
+      ai: false,
+      paper: false,
+      preferences: false,
+    };
+    try {
+      const saved = JSON.parse(savedRef.current) as AppSettings;
+      const sections: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
+      for (const s of sections) {
+        const a = JSON.stringify((settings as unknown as Record<string, unknown>)[s]);
+        const b = JSON.stringify((saved as unknown as Record<string, unknown>)[s]);
+        dirtySections[s] = a !== b;
+      }
+      const global = Object.values(dirtySections).some(Boolean) || JSON.stringify(settings) !== savedRef.current;
+      return { isDirty: global, isDirtySections: dirtySections };
+    } catch {
+      const global = JSON.stringify(settings) !== savedRef.current;
+      return { isDirty: global, isDirtySections: dirtySections };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, savedSnapshot]);
+
+  // Validation
   const validationResult = useMemo(() => validateSettings(settings), [settings]);
   const validationErrors = validationResult.errors;
+  const sectionErrors = useMemo(() => {
+    const map: Record<SettingsSection, ValidationError[]> = { broker: [], quantitative: [], ai: [], paper: [], preferences: [] };
+    for (const e of validationErrors) {
+      const sec = e.path.split('.')[0] as SettingsSection;
+      if (sec in map) map[sec].push(e);
+    }
+    return map;
+  }, [validationErrors]);
 
-  // RECTIFY: Hydrate from Supabase (source of truth) on mount
+  // Hydrate from Supabase
   useEffect(() => {
     if (!onLoadFromBackend) {
       setIsLoading(false);
@@ -120,14 +189,14 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
         setIsLoading(true);
         const remote = await onLoadFromBackend();
         if (!cancelled && remote) {
-          setSettings(remote);
+          dispatch({ type: 'SET', settings: remote });
           const snap = JSON.stringify(remote);
           setSavedSnapshot(snap);
-          // Keep localStorage as warm cache/mirror
+          savedRef.current = snap;
           saveStoredSettings(remote);
         }
       } catch {
-        // Keep localStorage fallback silently — offline/demo mode
+        // offline/demo — keep localStorage
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -138,97 +207,49 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
   // Warn before leaving with unsaved changes
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
-      // Read current state via the DOM-event closure; re-evaluate each time
-      // because we re-register the handler whenever isDirty changes
+      if (!isDirty) return;
       e.preventDefault();
+      e.returnValue = '';
     }
-
     if (isDirty) {
       window.addEventListener('beforeunload', handleBeforeUnload);
       return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }
   }, [isDirty]);
 
-  // Ctrl+S shortcut to save — uses a ref-free approach by re-registering
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        // Trigger save by dispatching a custom event — picked up below
-        window.dispatchEvent(new CustomEvent('droid-settings-save'));
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Listen for save custom event
-  useEffect(() => {
-    function handleSaveEvent() {
-      if (isDirty && !isSaving) {
-        save();
-      }
-    }
-    window.addEventListener('droid-settings-save', handleSaveEvent);
-    return () => window.removeEventListener('droid-settings-save', handleSaveEvent);
-  });
-
-  // Auto-dismiss messages helper
-  function showMessage(msg: { type: 'success' | 'error'; text: string }) {
+  // Message helper
+  const showMessage = useCallback((msg: { type: 'success' | 'error'; text: string }) => {
     if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
     setSaveMessage(msg);
     messageTimeoutRef.current = setTimeout(() => setSaveMessage(null), 6000);
-  }
+  }, []);
 
-  function clearMessage() {
+  const clearMessage = useCallback(() => {
     if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
     setSaveMessage(null);
-  }
+  }, []);
 
-  // --- Section updaters ---
-  function updateBroker(updates: Partial<BrokerSettings>) {
-    setSettings((prev) => ({
-      ...prev,
-      broker: { ...prev.broker, ...updates },
-    }));
-  }
+  // ── Patch helpers ────────────────────────────────────────────────────────
 
-  function updateQuantitative(updates: Partial<QuantitativeSettings>) {
-    setSettings((prev) => ({
-      ...prev,
-      quantitative: { ...prev.quantitative, ...updates },
-    }));
-  }
+  const patchSection = useCallback(<K extends SettingsSection>(section: K, updates: Partial<AppSettings[K]>) => {
+    dispatch({ type: 'PATCH', section, updates: updates as Record<string, unknown> });
+  }, []);
 
-  function updateAI(updates: Partial<AISettings>) {
-    setSettings((prev) => ({
-      ...prev,
-      ai: { ...prev.ai, ...updates },
-    }));
-  }
+  const updateBroker = useCallback((updates: Partial<BrokerSettings>) => patchSection('broker', updates), [patchSection]);
+  const updateQuantitative = useCallback((updates: Partial<QuantitativeSettings>) => patchSection('quantitative', updates), [patchSection]);
+  const updateAI = useCallback((updates: Partial<AISettings>) => patchSection('ai', updates), [patchSection]);
+  const updatePaper = useCallback((updates: Partial<PaperTradingSettings>) => patchSection('paper', updates), [patchSection]);
+  const updatePreferences = useCallback((updates: Partial<PreferencesSettings>) => patchSection('preferences', updates), [patchSection]);
 
-  function updatePaper(updates: Partial<PaperTradingSettings>) {
-    setSettings((prev) => ({
-      ...prev,
-      paper: { ...prev.paper, ...updates },
-    }));
-  }
+  const replaceAllSettings = useCallback((newSettings: AppSettings) => {
+    dispatch({ type: 'REPLACE', settings: newSettings });
+  }, []);
 
-  function updatePreferences(updates: Partial<PreferencesSettings>) {
-    setSettings((prev) => ({
-      ...prev,
-      preferences: { ...prev.preferences, ...updates },
-    }));
-  }
+  // ── Save ─────────────────────────────────────────────────────────────────
 
-  function replaceAllSettings(newSettings: AppSettings) {
-    setSettings(newSettings);
-  }
-
-  // --- Save ---
-  async function save() {
-    // Validate before saving — show first error in toast for actionability
-    const validation = validateSettings(settings);
+  const save = useCallback(async () => {
+    const current = settingsRef.current;
+    const validation = validateSettings(current);
     if (!validation.success) {
       const first = validation.errors[0];
       const detail = first ? `${first.path}: ${first.message}` : '';
@@ -238,91 +259,109 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
       });
       return;
     }
-
     setIsSaving(true);
     try {
-      // 1. Save to localStorage as cache/mirror
-      saveStoredSettings(settings);
-
-      // 2. Persist to Supabase via backend (RECTIFY: now required, Supabase is source of truth)
-      if (onSaveToBackend) {
-        await onSaveToBackend(settings);
-      }
-
-      const snapshot = JSON.stringify(settings);
-      setSavedSnapshot(snapshot);
+      saveStoredSettings(current);
+      if (onSaveToBackend) await onSaveToBackend(current);
+      const snap = JSON.stringify(current);
+      setSavedSnapshot(snap);
       setLastSaved(new Date());
       showMessage({ type: 'success', text: 'All settings saved successfully!' });
     } catch (err) {
-      showMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to save settings',
-      });
+      showMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save settings' });
     } finally {
       setIsSaving(false);
     }
-  }
+  }, [onSaveToBackend, showMessage]);
 
-  // --- Reset ---
-  async function reset() {
+  const saveSection = useCallback(async (section: SettingsSection) => {
+    const current = settingsRef.current;
+    const sectionValidation = validateSection(section, (current as unknown as Record<string, unknown>)[section]);
+    if (!sectionValidation.success) {
+      const first = sectionValidation.errors[0];
+      showMessage({ type: 'error', text: `Cannot save ${section}: ${first?.message ?? 'validation failed'}` });
+      return;
+    }
+    setIsSavingSections(prev => ({ ...prev, [section]: true }));
+    try {
+      // Save full settings (localStorage and backend expect full blob), but validate only section
+      saveStoredSettings(current);
+      if (onSaveToBackend) await onSaveToBackend(current);
+      const snap = JSON.stringify(current);
+      setSavedSnapshot(snap);
+      setLastSaved(new Date());
+      showMessage({ type: 'success', text: `${section} saved.` });
+    } catch (err) {
+      showMessage({ type: 'error', text: err instanceof Error ? err.message : `Failed to save ${section}` });
+    } finally {
+      setIsSavingSections(prev => ({ ...prev, [section]: false }));
+    }
+  }, [onSaveToBackend, showMessage]);
+
+  // Ctrl+S
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (!isSaving) save();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSaving, save]);
+
+  // ── Reset / Import / Export ──────────────────────────────────────────────
+
+  const reset = useCallback(async () => {
     const defaults = resetStoredSettings();
-    setSettings(defaults);
-    setSavedSnapshot(JSON.stringify(defaults));
+    dispatch({ type: 'REPLACE', settings: defaults });
+    const snap = JSON.stringify(defaults);
+    setSavedSnapshot(snap);
     setLastSaved(new Date());
-    // RECTIFY: also persist reset to Supabase so remote state matches
     if (onSaveToBackend) {
-      try { await onSaveToBackend(defaults); } catch { /* show local success anyway */ }
+      try { await onSaveToBackend(defaults); } catch {}
     }
     showMessage({ type: 'success', text: 'All settings restored to factory defaults.' });
-  }
+  }, [onSaveToBackend, showMessage]);
 
-  // --- Export ---
-  function exportJson(includeSecrets = false) {
-    return exportSettingsJson(settings, { includeSecrets });
-  }
+  const exportJson = useCallback((includeSecrets = false) => {
+    return exportSettingsJson(settingsRef.current, { includeSecrets });
+  }, []);
 
-  // --- Import ---
-  function importJson(jsonStr: string): { success: boolean; error?: string } {
+  const importJson = useCallback((jsonStr: string): { success: boolean; error?: string } => {
     try {
       const imported = importSettingsJson(jsonStr);
-
-      // Validate the imported settings
       const validation = validateSettings(imported);
+      dispatch({ type: 'REPLACE', settings: imported });
       if (!validation.success) {
-        // Still apply them but warn — they're merged with defaults so won't crash
-        setSettings(imported);
         showMessage({
           type: 'error',
           text: `Imported with ${validation.errors.length} warning(s). Review highlighted fields before saving.`,
         });
         return { success: true };
       }
-
-      setSettings(imported);
-      showMessage({
-        type: 'success',
-        text: 'Settings imported successfully! Click Save to persist.',
-      });
+      showMessage({ type: 'success', text: 'Settings imported successfully! Click Save to persist.' });
       return { success: true };
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Invalid JSON file';
+      const message = err instanceof Error ? err.message : 'Invalid JSON file';
       showMessage({ type: 'error', text: message });
       return { success: false, error: message };
     }
-  }
+  }, [showMessage]);
 
-  // --- Field error helper ---
-  function getFieldError(fieldPath: string): string | undefined {
+  const getFieldError = useCallback((fieldPath: string): string | undefined => {
     return validationErrors.find((e) => e.path === fieldPath)?.message;
-  }
+  }, [validationErrors]);
 
   const value: SettingsContextValue = {
     settings,
     isDirty,
+    isDirtySections,
     isSaving,
+    isSavingSection: isSavingSections,
     isLoading,
     validationErrors,
+    sectionErrors,
     lastSaved,
     saveMessage,
     updateBroker,
@@ -330,8 +369,10 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     updateAI,
     updatePaper,
     updatePreferences,
+    patchSection,
     replaceAllSettings,
     save,
+    saveSection,
     reset,
     exportJson,
     importJson,
@@ -339,7 +380,5 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     clearMessage,
   };
 
-  return (
-    <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
-  );
+  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
