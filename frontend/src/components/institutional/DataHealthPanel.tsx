@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 
 export function DataHealthPanel() {
   const [data, setData] = useState<any>(null);
@@ -7,13 +8,12 @@ export function DataHealthPanel() {
     let cancelled = false;
     async function fetchH() {
       try {
-        const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
-        const url = base ? `${base}/api/v1/institutional/health/data` : '/api/v1/institutional/health/data';
-        const res = await fetch(url);
-        const j = await res.json();
-        const payload = j.data ?? j;
-        if (!cancelled) setData(payload);
-      } catch { if (!cancelled) setData(null); }
+        const j = await api.getInstitutionalHealth();
+        const payload = j?.data ?? j;
+        if (!cancelled && payload) setData(payload);
+      } catch {
+        if (!cancelled) setData(null);
+      }
     }
     fetchH();
     const id = setInterval(() => { if (!document.hidden && !cancelled) fetchH(); }, 30000);

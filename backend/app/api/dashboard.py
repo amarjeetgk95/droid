@@ -270,29 +270,6 @@ async def _build_dashboard(sym: str) -> DashboardData:
     return data
 
 
-@router.get("/{symbol}")
-async def get_dashboard(symbol: str):
-    sym = _resolve_symbol(symbol)
-
-    cached = _cache.get(sym)
-    now = time.monotonic()
-    if cached is not None and now - cached[0] < CACHE_TTL_SECONDS:
-        return {
-            "data": cached[1].model_dump(),
-            "error": None,
-            "meta": _meta(degraded=cached[1].degraded).model_dump(),
-        }
-
-    data = await _build_dashboard(sym)
-    response = {
-        "data": data.model_dump(),
-        "error": None,
-        "meta": _meta(degraded=data.degraded).model_dump(),
-    }
-    _cache[sym] = (now, data)
-    return response
-
-
 class DashboardSummary(BaseModel):
     cards: list[dict[str, Any]] = []
     breadth: dict[str, Any] | None = None
@@ -413,4 +390,27 @@ async def get_dashboard_summary():
     }
 
     _summary_cache["default"] = (now, data)
+    return response
+
+
+@router.get("/{symbol}")
+async def get_dashboard(symbol: str):
+    sym = _resolve_symbol(symbol)
+
+    cached = _cache.get(sym)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < CACHE_TTL_SECONDS:
+        return {
+            "data": cached[1].model_dump(),
+            "error": None,
+            "meta": _meta(degraded=cached[1].degraded).model_dump(),
+        }
+
+    data = await _build_dashboard(sym)
+    response = {
+        "data": data.model_dump(),
+        "error": None,
+        "meta": _meta(degraded=data.degraded).model_dump(),
+    }
+    _cache[sym] = (now, data)
     return response

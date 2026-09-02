@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 
 type MiPanelProps = { instrument?: string };
 
@@ -27,16 +28,9 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
     let cancelled = false;
     async function fetchMi() {
       try {
-        const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
-        const url = base
-          ? `${base}/api/v1/institutional/dashboard/market-intelligence?instrument_id=${selected}`
-          : `/api/v1/institutional/dashboard/market-intelligence?instrument_id=${selected}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('fetch failed');
-        const json = await res.json();
-        // unwrap ApiResponse {data: ...} if present, else direct
-        const payload = json.data ?? json;
-        if (!cancelled) setData(payload);
+        const res = await api.getInstitutionalMIDashboard(selected);
+        const payload = res?.data ?? res;
+        if (!cancelled && payload) setData(payload);
       } catch {
         if (!cancelled) setData(null);
       } finally {

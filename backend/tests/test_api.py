@@ -89,3 +89,17 @@ class TestMarketEndpoints:
         assert "provider" in body["meta"]
         assert "timestamp" in body["meta"]
         assert "status" in body["meta"]
+
+    def test_dashboard_summary(self):
+        r = client.get("/api/v1/dashboard/summary")
+        assert r.status_code == 200
+        body = r.json()
+        assert "data" in body
+        assert "cards" in body["data"]
+
+    def test_dashboard_symbol(self):
+        r = client.get("/api/v1/dashboard/NIFTY")
+        assert r.status_code == 200
+        body = r.json()
+        assert "data" in body
+        assert body["data"]["market"]["symbol"] == "NIFTY"
