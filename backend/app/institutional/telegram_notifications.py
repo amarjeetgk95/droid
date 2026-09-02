@@ -118,6 +118,31 @@ class NotificationPolicy:
     """§12 — Do not send every internal signal state; honor user preferences."""
     def __init__(self) -> None:
         self._prefs: dict[str, NotificationPreferences] = {}
+        self._load_local_state()
+
+    def _load_local_state(self) -> None:
+        try:
+            from app.institutional.telegram_persistence import read_local_file
+            _, prefs_raw = read_local_file()
+            if prefs_raw:
+                for uid, p in prefs_raw.items():
+                    if isinstance(p, dict):
+                        self._prefs[uid] = NotificationPreferences(**p)
+        except Exception as e:
+            logger.warning("telegram_policy_local_load_failed", error=str(e))
+
+    async def restore_state(self) -> None:
+        """Full restore from DB and local snapshot on application startup."""
+        try:
+            from app.institutional.telegram_persistence import restore_telegram_state_from_db
+            _, prefs_raw = await restore_telegram_state_from_db()
+            if prefs_raw:
+                for uid, p in prefs_raw.items():
+                    if isinstance(p, dict):
+                        self._prefs[uid] = NotificationPreferences(**p)
+                logger.info("telegram_policy_restored", total_users=len(self._prefs))
+        except Exception as e:
+            logger.warning("telegram_policy_restore_failed", error=str(e))
 
     def get(self, user_id: str) -> NotificationPreferences:
         if user_id not in self._prefs:
@@ -126,10 +151,32 @@ class NotificationPolicy:
 
     def set(self, user_id: str, prefs: NotificationPreferences) -> NotificationPreferences:
         self._prefs[user_id] = prefs
+        try:
+            from app.institutional.telegram_persistence import write_local_file, persist_user_preferences_to_db
+            prefs_dict = {uid: p.model_dump() for uid, p in self._prefs.items()}
+            write_local_file(bindings={}, preferences=prefs_dict)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_user_preferences_to_db(user_id, prefs.model_dump()))
+            except RuntimeError:
+                pass
+        except Exception as e:
+            logger.warning("telegram_preferences_save_failed", error=str(e))
         return prefs
 
     def reset(self, user_id: str) -> NotificationPreferences:
         self._prefs.pop(user_id, None)
+        try:
+            from app.institutional.telegram_persistence import write_local_file, persist_user_preferences_to_db
+            prefs_dict = {uid: p.model_dump() for uid, p in self._prefs.items()}
+            write_local_file(bindings={}, preferences=prefs_dict)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_user_preferences_to_db(user_id, None))
+            except RuntimeError:
+                pass
+        except Exception as e:
+            logger.warning("telegram_preferences_reset_save_failed", error=str(e))
         return self.get(user_id)
 
 
@@ -153,6 +200,7 @@ def should_publish_instrument_event(instrument: str, event_type: str, min_interv
         return False
     _instrument_event_ts[key] = now
     return True
+
 
 # ── §11 Queue payload ────────────────────────────────────────────────
 class NotificationJob(BaseModel):

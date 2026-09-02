@@ -234,6 +234,38 @@ class TelegramLinkManager:
         self._tokens: dict[str, LinkToken] = {}  # hash -> token
         self._bindings: dict[str, dict] = {}  # user_id -> {telegram_chat_id, linked_at, status, permissions}
         self._by_chat: dict[str, str] = {}  # chat_id -> user_id
+        # Fast local initialization from cache if available
+        self._load_local_state()
+
+    def _load_local_state(self) -> None:
+        try:
+            from app.institutional.telegram_persistence import read_local_file
+            bindings, _ = read_local_file()
+            if bindings:
+                self._bindings = dict(bindings)
+                self._by_chat = {
+                    str(b["telegram_chat_id"]): uid
+                    for uid, b in bindings.items()
+                    if b.get("telegram_chat_id")
+                }
+        except Exception as e:
+            logger.warning("telegram_link_manager_local_load_failed", error=str(e))
+
+    async def restore_state(self) -> None:
+        """Full restore from DB and local snapshot on application startup."""
+        try:
+            from app.institutional.telegram_persistence import restore_telegram_state_from_db
+            bindings, _ = await restore_telegram_state_from_db()
+            if bindings:
+                self._bindings = dict(bindings)
+                self._by_chat = {
+                    str(b["telegram_chat_id"]): uid
+                    for uid, b in bindings.items()
+                    if b.get("telegram_chat_id")
+                }
+                logger.info("telegram_link_manager_restored", total_bindings=len(self._bindings))
+        except Exception as e:
+            logger.warning("telegram_link_manager_restore_failed", error=str(e))
 
     def generate_link_token(self, user_id: str, ttl_seconds: int = 600) -> str:
         # Cryptographically random, <=64 chars, A-Z a-z 0-9 _ -
@@ -258,9 +290,23 @@ class TelegramLinkManager:
         # Invalidate immediately after binding
         self._tokens.pop(h, None)
         now = time.time()
-        self._bindings[rec.user_id] = {"telegram_chat_id": telegram_chat_id, "linked_at": now, "status": "ACTIVE", "permissions": ["read"]}
+        binding_data = {"telegram_chat_id": telegram_chat_id, "linked_at": now, "status": "ACTIVE", "permissions": ["read"]}
+        self._bindings[rec.user_id] = binding_data
         self._by_chat[telegram_chat_id] = rec.user_id
         logger.info("telegram_linked", user_id=rec.user_id, chat_id=telegram_chat_id)
+
+        # Persist locally & schedule DB sync
+        try:
+            from app.institutional.telegram_persistence import write_local_file, persist_user_binding_to_db
+            write_local_file(self._bindings)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_user_binding_to_db(rec.user_id, binding_data))
+            except RuntimeError:
+                pass
+        except Exception as e:
+            logger.warning("telegram_binding_save_failed", error=str(e))
+
         return True, rec.user_id
 
     def is_authorized(self, telegram_chat_id: str) -> tuple[bool, str | None]:
@@ -275,7 +321,19 @@ class TelegramLinkManager:
 
     def revoke(self, user_id: str) -> None:
         b = self._bindings.pop(user_id, None)
-        if b: self._by_chat.pop(b["telegram_chat_id"], None)
+        if b:
+            self._by_chat.pop(b["telegram_chat_id"], None)
+        # Persist locally & schedule DB sync
+        try:
+            from app.institutional.telegram_persistence import write_local_file, persist_user_binding_to_db
+            write_local_file(self._bindings)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_user_binding_to_db(user_id, None))
+            except RuntimeError:
+                pass
+        except Exception as e:
+            logger.warning("telegram_revoke_save_failed", error=str(e))
 
     def all_bindings(self) -> dict[str, dict]:
         """Snapshot of all active bindings — used by the notification fan-out (§28)."""

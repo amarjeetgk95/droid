@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-09-02T15:25:03.846414Z",
+  "timestamp": "2026-09-02T17:02:48.770351Z",
   "version": "1.0",
   "quotes": [
     {
       "symbol": "NIFTY 50",
       "display_name": "NIFTY 50",
-      "timestamp": "2026-09-02T15:25:01.139535Z",
+      "timestamp": "2026-09-02T17:02:46.070027Z",
       "ltp": 0.0,
       "open": 0.0,
       "high": 0.0,
@@ -21,7 +21,7 @@
     {
       "symbol": "BANKNIFTY",
       "display_name": "BANKNIFTY",
-      "timestamp": "2026-09-02T15:25:01.436753Z",
+      "timestamp": "2026-09-02T17:02:46.367242Z",
       "ltp": 0.0,
       "open": 0.0,
       "high": 0.0,
@@ -37,7 +37,7 @@
     {
       "symbol": "FINNIFTY",
       "display_name": "FINNIFTY",
-      "timestamp": "2026-09-02T15:25:01.732558Z",
+      "timestamp": "2026-09-02T17:02:46.681945Z",
       "ltp": 0.0,
       "open": 0.0,
       "high": 0.0,
@@ -53,7 +53,7 @@
     {
       "symbol": "SENSEX",
       "display_name": "SENSEX",
-      "timestamp": "2026-09-02T15:25:02.028678Z",
+      "timestamp": "2026-09-02T17:02:46.979609Z",
       "ltp": 0.0,
       "open": 0.0,
       "high": 0.0,
@@ -69,7 +69,7 @@
     {
       "symbol": "INDIA VIX",
       "display_name": "INDIA VIX",
-      "timestamp": "2026-09-02T15:25:02.339961Z",
+      "timestamp": "2026-09-02T17:02:47.274139Z",
       "ltp": 0.0,
       "open": 0.0,
       "high": 0.0,
@@ -101,7 +101,7 @@
         0.0
       ],
       "status": "OFFLINE",
-      "timestamp": "2026-09-02T15:25:02.635087Z",
+      "timestamp": "2026-09-02T17:02:47.569207Z",
       "provider": "fyers"
     },
     {
@@ -121,7 +121,7 @@
         0.0
       ],
       "status": "OFFLINE",
-      "timestamp": "2026-09-02T15:25:02.936100Z",
+      "timestamp": "2026-09-02T17:02:47.868839Z",
       "provider": "fyers"
     },
     {
@@ -141,7 +141,7 @@
         0.0
       ],
       "status": "OFFLINE",
-      "timestamp": "2026-09-02T15:25:03.234721Z",
+      "timestamp": "2026-09-02T17:02:48.180162Z",
       "provider": "fyers"
     },
     {
@@ -161,7 +161,7 @@
         0.0
       ],
       "status": "OFFLINE",
-      "timestamp": "2026-09-02T15:25:03.530282Z",
+      "timestamp": "2026-09-02T17:02:48.475079Z",
       "provider": "fyers"
     },
     {
@@ -181,13 +181,13 @@
         0.0
       ],
       "status": "OFFLINE",
-      "timestamp": "2026-09-02T15:25:03.845758Z",
+      "timestamp": "2026-09-02T17:02:48.770052Z",
       "provider": "fyers"
     }
   ],
   "status": {
     "session": "CLOSED",
-    "market_time": "2026-09-02T15:25:03.846323Z",
+    "market_time": "2026-09-02T17:02:48.770314Z",
     "is_trading_day": true,
     "data_status": "CLOSED",
     "provider": "fyers"
@@ -201,12 +201,12 @@
     "sentiment": "BULLISH",
     "sentiment_score": 68.5,
     "status": "LIVE",
-    "timestamp": "2026-09-02T15:25:03.846389Z"
+    "timestamp": "2026-09-02T17:02:48.770341Z"
   },
   "subscriptions": [
-    "NIFTY 50",
-    "BANKNIFTY",
     "FINNIFTY",
-    "INDIA VIX"
+    "INDIA VIX",
+    "BANKNIFTY",
+    "NIFTY 50"
   ]
 }

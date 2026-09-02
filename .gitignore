@@ -57,6 +57,8 @@ htmlcov/
 
 # HPI runtime state (user's derivative data store)
 backend/hpi_state.json
+telegram_state.json
+backend/telegram_state.json
 
 # Firebase CLI deploy cache
 .firebase/

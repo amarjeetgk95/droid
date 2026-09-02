@@ -95,12 +95,24 @@ async def lifespan(app: FastAPI):
     # Start Pattern Outcome Worker (Historical Intelligence v2)
     await pattern_outcome_worker.start()
 
-    # Start Institutional Telegram outbound queue (central rate-limited sender)
+    # Start Institutional Telegram state restoration & outbound/update queues
     try:
-        from app.institutional.telegram import telegram_outbound_queue, telegram_update_queue
+        from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, telegram_update_queue, set_telegram_webhook
+        from app.institutional.telegram_notifications import notification_policy
+
+        # Restore Telegram user links & notification preferences from DB / persistent snapshot
+        await telegram_link_manager.restore_state()
+        await notification_policy.restore_state()
+
         await telegram_outbound_queue.start()
         await telegram_update_queue.start()
         logger.info("telegram_queue_started")
+
+        # Auto-register webhook with Telegram API on Render startup
+        if settings.telegram_bot_token and settings.backend_public_url:
+            webhook_url = f"{settings.backend_public_url.rstrip('/')}/api/v1/telegram/webhook"
+            res = await set_telegram_webhook(webhook_url)
+            logger.info("telegram_webhook_auto_registered", webhook_url=webhook_url, ok=res.get("ok"), description=res.get("description"))
     except Exception as e:
         logger.warning("telegram_queue_start_failed", error=str(e))
 

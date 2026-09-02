@@ -40,6 +40,18 @@ services:
         sync: false
       - key: BINANCE_API_SECRET
         sync: false
+      # Telegram Bot & Webhook Gateway
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: BACKEND_PUBLIC_URL
+        value: https://droid-backend-emeq.onrender.com
+      # Database
+      - key: DATABASE_URL
+        sync: false
 
   # 2. Frontend Next.js Static Site
   - type: static
