@@ -101,6 +101,7 @@ function SettingsPageInner() {
         return (
           <BrokerConnectionTab
             settings={settings.broker}
+            fullSettings={settings}
             onChange={updateBroker}
             errors={validationErrors}
           />

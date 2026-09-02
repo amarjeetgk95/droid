@@ -171,9 +171,13 @@ class GrowwService:
         if tok.startswith("Bearer "):
             tok = tok[7:].strip()
         return {
+            "x-request-id": _gen_request_id(),
             "Authorization": f"Bearer {tok}",
-            "Accept": "application/json",
-            "X-API-VERSION": "1.0",
+            "Content-Type": "application/json",
+            "x-client-id": "growwapi",
+            "x-client-platform": "growwapi-python-client",
+            "x-client-platform-version": "1.5.0",
+            "x-api-version": "1.0",
         }
 
     # ---------- Live Data: Quote (full snapshot) ----------

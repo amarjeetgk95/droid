@@ -1,17 +1,17 @@
 {
-  "timestamp": "2026-09-02T05:07:37.050046Z",
+  "timestamp": "2026-09-02T08:00:44.288042Z",
   "version": "1.0",
   "quotes": [
     {
       "symbol": "NIFTY 50",
       "display_name": "NIFTY 50",
-      "timestamp": "2026-09-02T05:07:35.219384Z",
-      "ltp": 23874.65,
+      "timestamp": "2026-09-02T08:00:40.954348Z",
+      "ltp": 23874.7,
       "open": 23858.0,
       "high": 23896.05,
       "low": 23786.8,
       "previous_close": 24055.8,
-      "change": -181.15,
+      "change": -181.1,
       "change_percent": -0.75,
       "volume": 0,
       "open_interest": null,
@@ -21,14 +21,14 @@
     {
       "symbol": "BANKNIFTY",
       "display_name": "BANKNIFTY",
-      "timestamp": "2026-09-02T05:07:34.629438Z",
-      "ltp": 57160.05,
+      "timestamp": "2026-09-02T08:00:41.563995Z",
+      "ltp": 57063.25,
       "open": 57006.45,
       "high": 57221.1,
       "low": 56823.2,
       "previous_close": 57409.6,
-      "change": -249.55,
-      "change_percent": -0.43,
+      "change": -346.35,
+      "change_percent": -0.6,
       "volume": 0,
       "open_interest": null,
       "status": "LIVE",
@@ -37,14 +37,14 @@
     {
       "symbol": "FINNIFTY",
       "display_name": "FINNIFTY",
-      "timestamp": "2026-09-02T05:07:35.518089Z",
-      "ltp": 25828.3,
+      "timestamp": "2026-09-02T08:00:41.858989Z",
+      "ltp": 25786.6,
       "open": 25777.2,
       "high": 25842.4,
       "low": 25670.85,
       "previous_close": 26003.9,
-      "change": -175.6,
-      "change_percent": -0.68,
+      "change": -217.3,
+      "change_percent": -0.84,
       "volume": 0,
       "open_interest": null,
       "status": "LIVE",
@@ -53,14 +53,14 @@
     {
       "symbol": "SENSEX",
       "display_name": "SENSEX",
-      "timestamp": "2026-09-02T05:07:34.925410Z",
-      "ltp": 76463.74,
+      "timestamp": "2026-09-02T08:00:41.265347Z",
+      "ltp": 76453.95,
       "open": 76471.32,
-      "high": 76521.67,
+      "high": 76532.93,
       "low": 76135.72,
-      "previous_close": 76944.28,
-      "change": -480.54,
-      "change_percent": -0.62,
+      "previous_close": 76957.3,
+      "change": -503.35,
+      "change_percent": -0.65,
       "volume": 0,
       "open_interest": null,
       "status": "LIVE",
@@ -69,14 +69,14 @@
     {
       "symbol": "INDIA VIX",
       "display_name": "INDIA VIX",
-      "timestamp": "2026-09-02T05:07:34.317945Z",
-      "ltp": 11.72,
+      "timestamp": "2026-09-02T08:00:40.658266Z",
+      "ltp": 11.58,
       "open": 11.49,
       "high": 12.11,
       "low": 10.55,
       "previous_close": 11.49,
-      "change": 0.23,
-      "change_percent": 2.0,
+      "change": 0.09,
+      "change_percent": 0.78,
       "volume": 0,
       "open_interest": null,
       "status": "LIVE",
@@ -87,9 +87,9 @@
     {
       "symbol": "NIFTY 50",
       "display_name": "NIFTY 50",
-      "ltp": 23877.0,
-      "change": -178.8,
-      "change_percent": -0.74,
+      "ltp": 23874.7,
+      "change": -181.1,
+      "change_percent": -0.75,
       "open": 23858.0,
       "high": 23896.05,
       "low": 23786.8,
@@ -98,18 +98,18 @@
       "open_interest": null,
       "sparkline": [
         24055.8,
-        23877.0
+        23874.7
       ],
       "status": "LIVE",
-      "timestamp": "2026-09-02T05:07:36.126877Z",
+      "timestamp": "2026-09-02T08:00:42.452045Z",
       "provider": "fyers"
     },
     {
       "symbol": "BANKNIFTY",
       "display_name": "BANKNIFTY",
-      "ltp": 57168.55,
-      "change": -241.05,
-      "change_percent": -0.42,
+      "ltp": 57063.25,
+      "change": -346.35,
+      "change_percent": -0.6,
       "open": 57006.45,
       "high": 57221.1,
       "low": 56823.2,
@@ -118,18 +118,18 @@
       "open_interest": null,
       "sparkline": [
         57409.6,
-        57168.55
+        57063.25
       ],
       "status": "LIVE",
-      "timestamp": "2026-09-02T05:07:36.715610Z",
+      "timestamp": "2026-09-02T08:00:43.054831Z",
       "provider": "fyers"
     },
     {
       "symbol": "FINNIFTY",
       "display_name": "FINNIFTY",
-      "ltp": 25828.3,
-      "change": -175.6,
-      "change_percent": -0.68,
+      "ltp": 25786.6,
+      "change": -217.3,
+      "change_percent": -0.84,
       "open": 25777.2,
       "high": 25842.4,
       "low": 25670.85,
@@ -138,38 +138,38 @@
       "open_interest": null,
       "sparkline": [
         26003.9,
-        25828.3
+        25786.6
       ],
       "status": "LIVE",
-      "timestamp": "2026-09-02T05:07:35.816316Z",
+      "timestamp": "2026-09-02T08:00:43.353007Z",
       "provider": "fyers"
     },
     {
       "symbol": "SENSEX",
       "display_name": "SENSEX",
-      "ltp": 76463.85,
-      "change": -480.43,
-      "change_percent": -0.62,
+      "ltp": 76449.01,
+      "change": -508.29,
+      "change_percent": -0.66,
       "open": 76471.32,
-      "high": 76521.67,
+      "high": 76532.93,
       "low": 76135.72,
-      "previous_close": 76944.28,
+      "previous_close": 76957.3,
       "volume": 0,
       "open_interest": null,
       "sparkline": [
-        76944.28,
-        76463.85
+        76957.3,
+        76449.01
       ],
       "status": "LIVE",
-      "timestamp": "2026-09-02T05:07:36.423453Z",
+      "timestamp": "2026-09-02T08:00:42.761629Z",
       "provider": "fyers"
     },
     {
       "symbol": "INDIA VIX",
       "display_name": "INDIA VIX",
-      "ltp": 11.75,
-      "change": 0.26,
-      "change_percent": 2.26,
+      "ltp": 11.55,
+      "change": 0.06,
+      "change_percent": 0.52,
       "open": 11.49,
       "high": 12.11,
       "low": 10.55,
@@ -178,16 +178,16 @@
       "open_interest": null,
       "sparkline": [
         11.49,
-        11.75
+        11.55
       ],
       "status": "LIVE",
-      "timestamp": "2026-09-02T05:07:37.028201Z",
+      "timestamp": "2026-09-02T08:00:42.157496Z",
       "provider": "fyers"
     }
   ],
   "status": {
     "session": "OPEN",
-    "market_time": "2026-09-02T05:07:37.049991Z",
+    "market_time": "2026-09-02T08:00:44.288010Z",
     "is_trading_day": true,
     "data_status": "STALE",
     "provider": "fyers"
@@ -201,12 +201,12 @@
     "sentiment": "BULLISH",
     "sentiment_score": 68.5,
     "status": "LIVE",
-    "timestamp": "2026-09-02T05:07:37.050027Z"
+    "timestamp": "2026-09-02T08:00:44.288031Z"
   },
   "subscriptions": [
     "INDIA VIX",
-    "BANKNIFTY",
     "FINNIFTY",
-    "NIFTY 50"
+    "NIFTY 50",
+    "BANKNIFTY"
   ]
 }
