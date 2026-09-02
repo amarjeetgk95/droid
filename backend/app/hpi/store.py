@@ -107,7 +107,16 @@ class HPIRecordStore:
             tmp = self.state_path.with_suffix(".tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
-            tmp.replace(self.state_path)
+            try:
+                tmp.replace(self.state_path)
+            except OSError:
+                with open(self.state_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
             logger.info("hpi_state_saved", path=str(self.state_path))
         except Exception as e:  # pragma: no cover — defensive
             logger.error("hpi_state_save_failed", error=str(e))

@@ -143,6 +143,26 @@ class HPIService:
             "audit": [a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
             "seeded": self._seeded,
         })
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                asyncio.create_task(self._sync_to_db())
+        except RuntimeError:
+            pass
+
+    async def _sync_to_db(self) -> None:
+        try:
+            from app.hpi.hpi_persistence import persist_hpi_to_db
+            await persist_hpi_to_db(
+                records_map=self.store._records,
+                deleted_ranges=self.store._deleted_ranges,
+                selection=[e.model_dump(mode="json") for e in self._selection.values() if e.symbol in C.HPI_UNIVERSE],
+                policies=[p.model_dump(mode="json") for p in self._policies.values() if p.instrument in C.HPI_UNIVERSE],
+                audit=[a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
+                seeded=self._seeded,
+            )
+        except Exception as e:
+            logger.warning("hpi_sync_to_db_error", error=str(e)[:200])
 
     # ------------------------------------------------------------------
     # §1/§2 — Derivative selection
@@ -761,6 +781,46 @@ class HPIService:
         if self._running:
             return
         self._running = True
+
+        # 1. Restore state and datasets from Supabase PostgreSQL
+        try:
+            from app.hpi.hpi_persistence import ensure_hpi_tables, restore_hpi_from_db
+            await ensure_hpi_tables()
+            db_state = await restore_hpi_from_db()
+            if db_state:
+                # Merge DB state into store
+                for key, recs in (db_state.get("records") or {}).items():
+                    sym, cat = key.split("|", 1)
+                    if sym in C.HPI_UNIVERSE:
+                        self.store._records[(sym, cat)] = [tuple(r) for r in recs]
+                for key, ranges in (db_state.get("deleted_ranges") or {}).items():
+                    sym, cat = key.split("|", 1)
+                    if sym in C.HPI_UNIVERSE:
+                        self.store._deleted_ranges[(sym, cat)] = ranges
+                for e in db_state.get("selection", []):
+                    entry = DerivativeSelectionEntry(**e)
+                    if entry.symbol in C.HPI_UNIVERSE:
+                        self._selection[entry.symbol] = entry
+                for p in db_state.get("policies", []):
+                    pol = RetentionPolicy(**p)
+                    if pol.instrument in C.HPI_UNIVERSE:
+                        self._policies[pol.policy_id] = pol
+                for a in db_state.get("audit", []):
+                    if a.get("derivative") in C.HPI_UNIVERSE:
+                        self._audit.append(DeletionAuditEntry(**a))
+                self._seeded = bool(db_state.get("seeded", False))
+                logger.info("hpi_db_state_restored_successfully", total_records=self.store.total_storage_bytes())
+        except Exception as e:
+            logger.warning("hpi_db_restore_failed_on_start", error=str(e)[:200])
+
+        # 2. Auto-bootstrap historical data if empty (guarantees data exists on startup/restart)
+        if self.store.total_storage_bytes() == 0:
+            try:
+                logger.info("hpi_auto_seeding_historical_datasets")
+                self.seed_defaults(force=True, sampling_interval="1h", retention_days=180)
+            except Exception as e:
+                logger.warning("hpi_auto_seed_failed", error=str(e)[:200])
+
         self._sweep_task = asyncio.create_task(self._sweep_loop())
         logger.info("hpi_service_started")
 

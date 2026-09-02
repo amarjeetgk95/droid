@@ -308,3 +308,31 @@ class PatternOutcomeDB(Base):
     outcome_source: Mapped[str] = mapped_column(Text, default="background_worker")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ============================================================
+# HPI Historical Pattern Intelligence Tables
+# ============================================================
+class HPIStateDB(Base):
+    __tablename__ = "hpi_state"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default="global")
+    selection_json: Mapped[Any] = mapped_column(JSONB, default=list)
+    policies_json: Mapped[Any] = mapped_column(JSONB, default=list)
+    audit_json: Mapped[Any] = mapped_column(JSONB, default=list)
+    deleted_ranges_json: Mapped[Any] = mapped_column(JSONB, default=dict)
+    seeded: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class HPIDatasetDB(Base):
+    __tablename__ = "hpi_datasets"
+
+    symbol: Mapped[str] = mapped_column(Text, primary_key=True)
+    category: Mapped[str] = mapped_column(Text, primary_key=True)
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    oldest_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    newest_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    records_json: Mapped[Any] = mapped_column(JSONB, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
