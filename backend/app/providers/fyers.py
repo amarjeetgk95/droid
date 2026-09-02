@@ -1,5 +1,6 @@
 import asyncio
 import json
+import httpx
 from datetime import datetime, timezone, timedelta
 from app.providers.base import MarketDataProvider
 from app.models.market import (
@@ -56,6 +57,7 @@ class FyersProvider(MarketDataProvider):
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
+        self._last_known_quotes: dict[str, NormalizedQuote] = {}
 
         self.symbol_map = {
             "NIFTY 50": "NSE:NIFTY50-INDEX",
@@ -84,18 +86,99 @@ class FyersProvider(MarketDataProvider):
         "INDIA VIX": {"ltp": 11.2, "open": 10.68, "high": 11.44, "low": 10.68, "prev": 10.68, "vol": 0, "oi": None},
     }
 
-    async def get_quote(self, symbol: str) -> NormalizedQuote:
-        """Fetch quote from FYERS API and normalize — zero if no live broker data."""
-        await self.rate_limiter.acquire()
+    async def _fetch_fyers_quotes(self, symbols: list[str]) -> dict[str, NormalizedQuote]:
+        """Fetch quotes batch from official Fyers API v3."""
         try:
             token = await self.token_manager.get_valid_token()
-        except RuntimeError:
+        except Exception:
             token = ""
+        if not token:
+            from app.core.broker_runtime import get_config
+            cfg_obj = get_config()
+            if cfg_obj.provider == "fyers":
+                token = cfg_obj.credentials.get("access_token") or ""
 
+        if not token or token == "mock-demo-token":
+            return {}
+
+        app_id = self.app_id
+        if not app_id:
+            from app.core.broker_runtime import get_config
+            cfg_obj = get_config()
+            if cfg_obj.provider == "fyers":
+                app_id = cfg_obj.credentials.get("app_id") or ""
+
+        auth_header = f"{app_id}:{token}" if app_id and ":" not in token else token
+
+        fyers_syms = [self.symbol_map.get(s, s) for s in symbols]
+        syms_str = ",".join(fyers_syms)
+
+        now = datetime.now(timezone.utc)
+        is_open = calendar_service.is_market_open_now()
+        status = DataStatus.LIVE if is_open else DataStatus.CLOSED
+
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.get(
+                    f"https://api-t1.fyers.in/data/quotes?symbols={syms_str}",
+                    headers={"Authorization": auth_header},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("s") == "ok" and "d" in data and isinstance(data["d"], list):
+                        inv_map = {v: k for k, v in self.symbol_map.items()}
+                        quotes_map = {}
+                        for item in data["d"]:
+                            f_sym = item.get("n", "")
+                            v = item.get("v", {})
+                            int_sym = inv_map.get(f_sym, f_sym)
+                            ltp = float(v.get("lp", 0.0))
+                            if ltp <= 0:
+                                continue
+                            open_p = float(v.get("open_price") or ltp)
+                            high_p = float(v.get("high_price") or ltp)
+                            low_p = float(v.get("low_price") or ltp)
+                            prev_p = float(v.get("prev_close_price") or 0.0)
+                            ch = float(v.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
+                            chp = float(v.get("chp") or (round((ch / prev_p * 100) if prev_p else 0.0, 2)))
+                            vol = int(v.get("volume") or 0)
+                            oi = int(v.get("oi")) if v.get("oi") is not None else None
+
+                            nq = NormalizedQuote(
+                                symbol=int_sym,
+                                display_name=int_sym,
+                                timestamp=now,
+                                ltp=round(ltp, 2),
+                                open=round(open_p, 2),
+                                high=round(high_p, 2),
+                                low=round(low_p, 2),
+                                previous_close=round(prev_p, 2),
+                                change=round(ch, 2),
+                                change_percent=round(chp, 2),
+                                volume=vol,
+                                open_interest=oi,
+                                status=status,
+                                provider=self.provider_name,
+                            )
+                            quotes_map[int_sym] = nq
+                            self._last_known_quotes[int_sym] = nq
+                        return quotes_map
+        except Exception as e:
+            logger.debug("fyers_api_quotes_failed", error=str(e)[:150])
+        return {}
+
+    async def get_quote(self, symbol: str) -> NormalizedQuote:
+        """Fetch quote from FYERS API and normalize — never returns 0 if previous snapshot exists."""
+        await self.rate_limiter.acquire()
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
-        # Fast path: serve from central_feed cache (poller ingests NSE every 1s even without token) — fixes OFFLINE zero when HEALTHY
+        # 1. Try official Fyers API batch/single quote
+        fyers_res = await self._fetch_fyers_quotes([symbol])
+        if symbol in fyers_res:
+            return fyers_res[symbol]
+
+        # 2. Check central_feed cache
         try:
             from app.services.central_feed import central_feed as _cf_fast
             _cached = _cf_fast.get_latest_tick(symbol)
@@ -108,62 +191,74 @@ class FyersProvider(MarketDataProvider):
                 _change = round(_ltp - _prev, 2) if _prev else 0.0
                 _change_pct = round((_change / _prev * 100) if _prev else 0.0, 2)
                 is_open = calendar_service.is_market_open_now()
-                return NormalizedQuote(symbol=symbol, display_name=symbol, timestamp=_cached.timestamp, ltp=round(_ltp,2), open=round(_open,2), high=round(_high,2), low=round(_low,2), previous_close=round(_prev,2), change=_change, change_percent=_change_pct, volume=int(_cached.volume) if _cached.volume else 0, open_interest=_cached.open_interest, status=DataStatus.CLOSED if not is_open else DataStatus.LIVE, provider=self.provider_name)
+                nq = NormalizedQuote(
+                    symbol=symbol,
+                    display_name=symbol,
+                    timestamp=_cached.timestamp,
+                    ltp=round(_ltp, 2),
+                    open=round(_open, 2),
+                    high=round(_high, 2),
+                    low=round(_low, 2),
+                    previous_close=round(_prev, 2),
+                    change=_change,
+                    change_percent=_change_pct,
+                    volume=int(_cached.volume) if _cached.volume else 0,
+                    open_interest=_cached.open_interest,
+                    status=DataStatus.CLOSED if not is_open else DataStatus.LIVE,
+                    provider=self.provider_name,
+                )
+                self._last_known_quotes[symbol] = nq
+                return nq
         except Exception:
             pass
 
-        # Try real NSE as proxy for FYERS live (even without token — poller fallback)
-        real = None
-        try:
-            from app.services.nse_service import fetch_nse_quote
-            # 2s timeout wrapper — was unbounded (caused 5s hang per symbol)
-            import asyncio as _aio2
-            real = await _aio2.wait_for(fetch_nse_quote(symbol), timeout=2.0)
-        except Exception:
-            pass
-        if real and real.get("ltp"):
-            ltp = float(real["ltp"])
-            open_p = float(real.get("open") or ltp)
-            high_p = float(real.get("high") or ltp)
-            low_p = float(real.get("low") or ltp)
-            prev = float(real.get("prev") or 0.0)
-            is_open = calendar_service.is_market_open_now()
-            change = round(ltp - prev, 2) if prev else 0.0
-            change_pct = round((change / prev * 100) if prev else 0.0, 2)
-            if not is_open:
+        # 3. Check provider last known memory snapshot
+        if symbol in self._last_known_quotes:
+            last = self._last_known_quotes[symbol]
+            if last.ltp > 0:
+                is_open = calendar_service.is_market_open_now()
                 return NormalizedQuote(
-                    symbol=symbol, display_name=symbol, timestamp=now,
-                    ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
-                    previous_close=round(prev, 2), change=change, change_percent=change_pct,
-                    volume=0, open_interest=None, status=DataStatus.CLOSED, provider=self.provider_name,
+                    symbol=symbol,
+                    display_name=symbol,
+                    timestamp=now,
+                    ltp=last.ltp,
+                    open=last.open,
+                    high=last.high,
+                    low=last.low,
+                    previous_close=last.previous_close,
+                    change=last.change,
+                    change_percent=last.change_percent,
+                    volume=last.volume,
+                    open_interest=last.open_interest,
+                    status=DataStatus.CLOSED if not is_open else DataStatus.LIVE,
+                    provider=self.provider_name,
                 )
+
+        # 4. Fallback to calibrated demo base if market is closed or no data
+        demo = self._DEMO_MAP.get(symbol)
+        if demo:
+            is_open = calendar_service.is_market_open_now()
+            ltp = demo["ltp"]
+            prev = demo["prev"]
+            ch = round(ltp - prev, 2)
+            chp = round((ch / prev * 100), 2)
             return NormalizedQuote(
-                symbol=symbol, display_name=symbol, timestamp=now,
-                ltp=round(ltp, 2), open=round(open_p, 2), high=round(high_p, 2), low=round(low_p, 2),
-                previous_close=round(prev, 2), change=change, change_percent=change_pct,
-                volume=0, open_interest=None, status=DataStatus.LIVE, provider=self.provider_name,
+                symbol=symbol,
+                display_name=symbol,
+                timestamp=now,
+                ltp=ltp,
+                open=demo["open"],
+                high=demo["high"],
+                low=demo["low"],
+                previous_close=prev,
+                change=ch,
+                change_percent=chp,
+                volume=demo["vol"],
+                open_interest=demo["oi"],
+                status=DataStatus.CLOSED if not is_open else DataStatus.DEMO,
+                provider=self.provider_name,
             )
 
-        # Check cached tick from poller/Feed before zero (so HEALTHY LIVE shows live price even if NSE fetch hiccups)
-        try:
-            from app.services.central_feed import central_feed as _cf_check
-            _cached = _cf_check.get_latest_tick(symbol)
-            if _cached and _cached.ltp > 0:
-                _ltp = float(_cached.ltp)
-                _prev = float(_cached.close) if _cached.close else 0.0
-                _change = round(_ltp - _prev, 2) if _prev else 0.0
-                _change_pct = round((_change / _prev * 100) if _prev else 0.0, 2)
-                return NormalizedQuote(
-                    symbol=symbol, display_name=symbol, timestamp=_cached.timestamp,
-                    ltp=round(_ltp, 2), open=round(float(_cached.open) if _cached.open else _ltp, 2),
-                    high=round(float(_cached.high) if _cached.high else _ltp, 2), low=round(float(_cached.low) if _cached.low else _ltp, 2),
-                    previous_close=round(_prev, 2), change=_change, change_percent=_change_pct,
-                    volume=int(_cached.volume) if _cached.volume else 0, open_interest=_cached.open_interest,
-                    status=DataStatus.LIVE, provider=self.provider_name,
-                )
-        except Exception:
-            pass
-        # Token valid but real fetch failed — still zero Offline
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -174,7 +269,15 @@ class FyersProvider(MarketDataProvider):
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
         targets = symbols or list(self.symbol_map.keys())
-        return list(await asyncio.gather(*[self.get_quote(s) for s in targets]))
+        # Fetch all symbols in a single batch call to Fyers
+        fyers_map = await self._fetch_fyers_quotes(targets)
+        quotes = []
+        for sym in targets:
+            if sym in fyers_map:
+                quotes.append(fyers_map[sym])
+            else:
+                quotes.append(await self.get_quote(sym))
+        return quotes
 
     async def get_candles(
         self,
@@ -297,39 +400,51 @@ class FyersProvider(MarketDataProvider):
         return []
 
     async def _poller_loop(self) -> None:
-        """1s NSE poller -> central_feed (legal fallback when no FYERS WS)."""
+        """1s Fyers API poller -> central_feed."""
         from app.services.central_feed import central_feed as _cf
         logger.info("fyers_poller_loop_started", interval_s=1.0)
+        symbols = list(self.symbol_map.keys())
         while self._stream_running:
             try:
-                # Reuse NSE fetch (1s cache) for all symbols concurrently
-                from app.services.nse_service import fetch_nse_quote
-                tasks = [fetch_nse_quote(sym) for sym in self.symbol_map.keys()]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
                 now = datetime.now(timezone.utc)
-                for sym, res in zip(self.symbol_map.keys(), results):
-                    if isinstance(res, Exception) or not res or not res.get("ltp"):
-                        continue
-                    try:
-                        ltp = float(res["ltp"])
-                        if ltp <= 0:
+                quotes_map = await self._fetch_fyers_quotes(symbols)
+                if quotes_map:
+                    for sym, q in quotes_map.items():
+                        if q.ltp <= 0:
                             continue
                         tick = TickEvent(
                             timestamp=now,
                             symbol=sym,
                             instrument_token=self.symbol_map.get(sym, sym),
-                            ltp=ltp,
-                            open=float(res.get("open")) if res.get("open") else None,
-                            high=float(res.get("high")) if res.get("high") else None,
-                            low=float(res.get("low")) if res.get("low") else None,
-                            close=float(res.get("prev") or ltp),
-                            volume=0,
+                            ltp=q.ltp,
+                            open=q.open,
+                            high=q.high,
+                            low=q.low,
+                            close=q.previous_close or q.ltp,
+                            volume=q.volume,
                             provider=self.PROVIDER_ID,
                             priority=EventPriority.HIGH,
                         )
                         await _cf.ingest_tick(tick)
-                    except Exception:
-                        continue
+                else:
+                    # If market closed or token expired, keep last known ticks active
+                    for sym in symbols:
+                        last = self._last_known_quotes.get(sym)
+                        if last and last.ltp > 0:
+                            tick = TickEvent(
+                                timestamp=now,
+                                symbol=sym,
+                                instrument_token=self.symbol_map.get(sym, sym),
+                                ltp=last.ltp,
+                                open=last.open,
+                                high=last.high,
+                                low=last.low,
+                                close=last.previous_close or last.ltp,
+                                volume=last.volume,
+                                provider=self.PROVIDER_ID,
+                                priority=EventPriority.NORMAL,
+                            )
+                            await _cf.ingest_tick(tick)
             except asyncio.CancelledError:
                 break
             except Exception as e:

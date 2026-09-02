@@ -72,7 +72,32 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
         };
 
         if (summaryData) {
-          if (summaryData.cards && mountedRef.current) setCards(summaryData.cards as IndexCard[]);
+          if (summaryData.cards && mountedRef.current) {
+            setCards((prevCards) => {
+              const newCards = summaryData.cards as IndexCard[];
+              if (!prevCards || prevCards.length === 0) return newCards;
+              return newCards.map((nc) => {
+                const old = prevCards.find((o) => o.symbol === nc.symbol);
+                if (old && Number(nc.ltp) <= 0 && Number(old.ltp) > 0) {
+                  return {
+                    ...nc,
+                    ltp: old.ltp,
+                    open: old.open || nc.open,
+                    high: old.high || nc.high,
+                    low: old.low || nc.low,
+                    previous_close: old.previous_close || nc.previous_close,
+                    change: old.change || nc.change,
+                    change_percent: old.change_percent || nc.change_percent,
+                    volume: old.volume || nc.volume,
+                    open_interest: old.open_interest || nc.open_interest,
+                    sparkline: old.sparkline && old.sparkline.length > 0 ? old.sparkline : nc.sparkline,
+                    status: nc.status === 'OFFLINE' ? old.status : nc.status,
+                  };
+                }
+                return nc;
+              });
+            });
+          }
           if (summaryData.breadth && mountedRef.current) setBreadth(summaryData.breadth as MarketBreadthData);
           if (summaryData.health && mountedRef.current) setHealth(summaryData.health as MarketHealthStatus);
           if (summaryData.market_status && mountedRef.current) setMarketStatus(summaryData.market_status as MarketStatusResponse);
@@ -95,7 +120,32 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
           marketStatus: statusRes.status === 'rejected' ? errMessage(statusRes.reason) : null,
         };
 
-        if (cardsRes.status === 'fulfilled') setCards(cardsRes.value.data);
+        if (cardsRes.status === 'fulfilled') {
+          setCards((prevCards) => {
+            const newCards = cardsRes.value.data;
+            if (!prevCards || prevCards.length === 0) return newCards;
+            return newCards.map((nc) => {
+              const old = prevCards.find((o) => o.symbol === nc.symbol);
+              if (old && Number(nc.ltp) <= 0 && Number(old.ltp) > 0) {
+                return {
+                  ...nc,
+                  ltp: old.ltp,
+                  open: old.open || nc.open,
+                  high: old.high || nc.high,
+                  low: old.low || nc.low,
+                  previous_close: old.previous_close || nc.previous_close,
+                  change: old.change || nc.change,
+                  change_percent: old.change_percent || nc.change_percent,
+                  volume: old.volume || nc.volume,
+                  open_interest: old.open_interest || nc.open_interest,
+                  sparkline: old.sparkline && old.sparkline.length > 0 ? old.sparkline : nc.sparkline,
+                  status: nc.status === 'OFFLINE' ? old.status : nc.status,
+                };
+              }
+              return nc;
+            });
+          });
+        }
         if (breadthRes.status === 'fulfilled') setBreadth(breadthRes.value.data);
         if (healthRes.status === 'fulfilled') setHealth(healthRes.value);
         if (statusRes.status === 'fulfilled') setMarketStatus(statusRes.value.data);
@@ -149,7 +199,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
       if (!tick) return card;
 
       const newLtp = Number(tick.ltp);
-      if (!Number.isFinite(newLtp)) return card;
+      if (!Number.isFinite(newLtp) || newLtp <= 0) return card;
       const change = newLtp - card.previous_close;
       const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
       const sparkline = [...card.sparkline];
