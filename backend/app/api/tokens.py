@@ -306,6 +306,20 @@ async def test_connection(payload: dict = Body(...)):
                 "meta": _make_meta().model_dump(),
             }
 
+        user_info = None
+        # 1. Probe user profile to confirm token validity
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r_user = await client.get(
+                    f"{service.API_BASE}/user/detail",
+                    headers=service._build_headers(tok),
+                )
+                if r_user.status_code == 200:
+                    user_info = r_user.json()
+        except Exception:
+            pass
+
         try:
             norm, raw, status = await service._get_quote_with_raw(tok, "NSE", "CASH", "NIFTY")
             latency = round((time.time() - start) * 1000, 1)
@@ -313,9 +327,19 @@ async def test_connection(payload: dict = Body(...)):
             err_msg = None
             if not is_ok:
                 if status in (401, 403):
-                    err_msg = f"HTTP {status}: Access forbidden by Groww (Daily approval or API subscription required)"
+                    if user_info:
+                        err_msg = (
+                            f"HTTP 403 Forbidden: Authenticated successfully, but Live Market Data API is forbidden. "
+                            f"Your Groww account requires the active Trade API Market Data / F&O subscription in the Groww Console."
+                        )
+                    else:
+                        err_msg = (
+                            f"HTTP 403 Forbidden: Access forbidden by Groww. "
+                            f"Please verify that your API Key is approved for today on https://groww.in/trade-api/api-keys, "
+                            f"or paste your active Daily Access Token directly into the Access Token field."
+                        )
                 else:
-                    err_msg = f"HTTP {status} from Groww live data endpoint"
+                    err_msg = f"HTTP {status} from Groww live data endpoint: {raw}"
 
             return {
                 "data": {
@@ -324,6 +348,7 @@ async def test_connection(payload: dict = Body(...)):
                     "latency_ms": latency,
                     "token_valid": True,
                     "token_prefix": tok[:10] + "..." if tok else "",
+                    "user_info": user_info,
                     "quote": norm,
                     "raw_response": raw,
                     "error": err_msg,
