@@ -23,9 +23,8 @@ class MLPredictor:
         """Calculate multi-class probabilities (Bullish, Neutral, Bearish) and trend strength."""
         underlying = symbol.upper().replace(" 50", "")
 
-        # 1. Fetch multi-factor inputs in parallel
         quote = await self.market_service.get_quote(underlying)
-        spot_price = quote.ltp
+        spot_price = quote.ltp if quote.ltp > 0 else (75000.0 if "SENSEX" in underlying else 50000.0 if "BANK" in underlying else 24000.0)
 
         indicators = await regime_service.get_technical_indicators(underlying)
         key_levels = await regime_service.get_key_levels(underlying)

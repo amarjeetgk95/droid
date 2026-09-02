@@ -77,15 +77,6 @@ class FyersProvider(MarketDataProvider):
     def get_rate_limiter(self) -> TokenBucketRateLimiter:
         return self.rate_limiter
 
-    # Calibrated demo bases (NSE/BSE 28-Aug-2026) — keeps TradingView alignment
-    _DEMO_MAP: dict[str, dict] = {
-        "NIFTY 50": {"ltp": 24034.7, "open": 24117.55, "high": 24128.7, "low": 23993.6, "prev": 24175.65, "vol": 1450000, "oi": 450000},
-        "BANKNIFTY": {"ltp": 57348.95, "open": 57353.75, "high": 57576.25, "low": 57187.35, "prev": 57496.3, "vol": 980000, "oi": 320000},
-        "FINNIFTY": {"ltp": 26102.15, "open": 26204.4, "high": 26271.2, "low": 26052.25, "prev": 26286.5, "vol": 620000, "oi": 180000},
-        "SENSEX": {"ltp": 76826.23, "open": 77130.73, "high": 77177.27, "low": 76751.32, "prev": 77264.51, "vol": 410000, "oi": 90000},
-        "INDIA VIX": {"ltp": 11.2, "open": 10.68, "high": 11.44, "low": 10.68, "prev": 10.68, "vol": 0, "oi": None},
-    }
-
     async def _fetch_fyers_quotes(self, symbols: list[str]) -> dict[str, NormalizedQuote]:
         """Fetch quotes batch from official Fyers API v3."""
         try:
@@ -167,8 +158,84 @@ class FyersProvider(MarketDataProvider):
             logger.debug("fyers_api_quotes_failed", error=str(e)[:150])
         return {}
 
+    async def _fetch_fyers_history(
+        self,
+        symbol: str,
+        resolution: str = "5",
+        range_from: int | None = None,
+        range_to: int | None = None,
+    ) -> list[NormalizedCandle]:
+        """Fetch historical candles directly from official FYERS History API v3."""
+        try:
+            token = await self.token_manager.get_valid_token()
+        except Exception:
+            token = ""
+        if not token:
+            from app.core.broker_runtime import get_config
+            cfg_obj = get_config()
+            if cfg_obj.provider == "fyers":
+                token = cfg_obj.credentials.get("access_token") or ""
+
+        if not token or token == "mock-demo-token":
+            return []
+
+        app_id = self.app_id
+        if not app_id:
+            from app.core.broker_runtime import get_config
+            cfg_obj = get_config()
+            if cfg_obj.provider == "fyers":
+                app_id = cfg_obj.credentials.get("app_id") or ""
+
+        auth_header = f"{app_id}:{token}" if app_id and ":" not in token else token
+        fyers_sym = self.symbol_map.get(symbol, symbol)
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        from_ts = range_from or (now_ts - 86400 * 5)
+        to_ts = range_to or now_ts
+
+        res_map = {
+            "1m": "1", "1": "1",
+            "5m": "5", "5": "5",
+            "15m": "15", "15": "15",
+            "30m": "30", "30": "30",
+            "1h": "60", "60m": "60", "60": "60",
+            "1D": "D", "1d": "D", "D": "D",
+        }
+        res_str = res_map.get(resolution, "5")
+
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                url = (
+                    f"https://api-t1.fyers.in/data/history"
+                    f"?symbol={fyers_sym}&resolution={res_str}&date_format=0"
+                    f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
+                )
+                resp = await client.get(url, headers={"Authorization": auth_header})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("s") == "ok" and "candles" in data and isinstance(data["candles"], list):
+                        candles = []
+                        for c in data["candles"]:
+                            if len(c) >= 5:
+                                ts = datetime.fromtimestamp(c[0], tz=timezone.utc)
+                                candles.append(
+                                    NormalizedCandle(
+                                        timestamp=ts,
+                                        open=float(c[1]),
+                                        high=float(c[2]),
+                                        low=float(c[3]),
+                                        close=float(c[4]),
+                                        volume=int(c[5]) if len(c) > 5 else 0,
+                                        vwap=None,
+                                    )
+                                )
+                        return candles
+        except Exception as e:
+            logger.debug("fyers_history_failed", symbol=symbol, error=str(e)[:150])
+        return []
+
     async def get_quote(self, symbol: str) -> NormalizedQuote:
-        """Fetch quote from FYERS API and normalize — never returns 0 if previous snapshot exists."""
+        """Fetch quote from FYERS API — returns OFFLINE if unauthenticated or unavailable."""
         await self.rate_limiter.acquire()
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
@@ -178,7 +245,7 @@ class FyersProvider(MarketDataProvider):
         if symbol in fyers_res:
             return fyers_res[symbol]
 
-        # 2. Check central_feed cache
+        # 2. Check central_feed cache (from active broker stream)
         try:
             from app.services.central_feed import central_feed as _cf_fast
             _cached = _cf_fast.get_latest_tick(symbol)
@@ -212,7 +279,7 @@ class FyersProvider(MarketDataProvider):
         except Exception:
             pass
 
-        # 3. Check provider last known memory snapshot
+        # 3. Check provider last known memory snapshot from broker
         if symbol in self._last_known_quotes:
             last = self._last_known_quotes[symbol]
             if last.ltp > 0:
@@ -234,31 +301,7 @@ class FyersProvider(MarketDataProvider):
                     provider=self.provider_name,
                 )
 
-        # 4. Fallback to calibrated demo base if market is closed or no data
-        demo = self._DEMO_MAP.get(symbol)
-        if demo:
-            is_open = calendar_service.is_market_open_now()
-            ltp = demo["ltp"]
-            prev = demo["prev"]
-            ch = round(ltp - prev, 2)
-            chp = round((ch / prev * 100), 2)
-            return NormalizedQuote(
-                symbol=symbol,
-                display_name=symbol,
-                timestamp=now,
-                ltp=ltp,
-                open=demo["open"],
-                high=demo["high"],
-                low=demo["low"],
-                previous_close=prev,
-                change=ch,
-                change_percent=chp,
-                volume=demo["vol"],
-                open_interest=demo["oi"],
-                status=DataStatus.CLOSED if not is_open else DataStatus.DEMO,
-                provider=self.provider_name,
-            )
-
+        # 4. No fake demo data — explicit OFFLINE
         return NormalizedQuote(
             symbol=symbol, display_name=symbol, timestamp=now,
             ltp=0.0, open=0.0, high=0.0, low=0.0,
@@ -269,7 +312,6 @@ class FyersProvider(MarketDataProvider):
 
     async def get_quotes(self, symbols: list[str] | None = None) -> list[NormalizedQuote]:
         targets = symbols or list(self.symbol_map.keys())
-        # Fetch all symbols in a single batch call to Fyers
         fyers_map = await self._fetch_fyers_quotes(targets)
         quotes = []
         for sym in targets:
@@ -287,32 +329,9 @@ class FyersProvider(MarketDataProvider):
         end: datetime | None = None,
     ) -> list[NormalizedCandle]:
         await self.rate_limiter.acquire()
-        try:
-            token = await self.token_manager.get_valid_token()
-        except RuntimeError:
-            token = ""
-        if not token or token == "mock-demo-token" or self.token_manager.is_token_expired():
-            now = datetime.now(timezone.utc)
-            return [
-                NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
-                NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
-            ]
-        try:
-            from app.services.nse_service import fetch_nse_candles
-            count = 75 if timeframe == "5m" else 30
-            real = await fetch_nse_candles(symbol, timeframe, count)
-            if real:
-                return [
-                    NormalizedCandle(timestamp=r["timestamp"], open=r["open"], high=r["high"], low=r["low"], close=r["close"], volume=r["volume"], vwap=None)
-                    for r in real
-                ]
-        except Exception as e:
-            logger.debug("fyers_candles_real_fetch_failed", symbol=symbol, error=str(e)[:150])
-        now = datetime.now(timezone.utc)
-        return [
-            NormalizedCandle(timestamp=now - timedelta(minutes=5), open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
-            NormalizedCandle(timestamp=now, open=0.0, high=0.0, low=0.0, close=0.0, volume=0, vwap=None),
-        ]
+        from_ts = int(start.timestamp()) if start else None
+        to_ts = int(end.timestamp()) if end else None
+        return await self._fetch_fyers_history(symbol, timeframe, from_ts, to_ts)
 
     async def get_index_cards(self) -> list[IndexCard]:
         quotes = await self.get_quotes()

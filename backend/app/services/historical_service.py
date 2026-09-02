@@ -109,7 +109,7 @@ class HistoricalService:
         """Derive multi-session historical shifts for PCR, Max Pain, and ATM IV."""
         underlying = symbol.upper().replace(" 50", "")
         quote = await self.market_service.get_quote(underlying)
-        spot_p = quote.ltp
+        spot_p = quote.ltp if quote.ltp > 0 else (50000.0 if "BANK" in underlying else 24000.0)
 
         shifts: list[HistoricalShiftPoint] = []
         today = datetime.now(timezone.utc).date()
