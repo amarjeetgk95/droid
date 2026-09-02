@@ -59,9 +59,12 @@ function SettingsPageInner() {
   const {
     settings,
     isDirty,
+    isDirtySections,
     isSaving,
+    isSavingSection,
     isLoading,
     validationErrors,
+    sectionErrors,
     lastSaved,
     saveMessage,
     updateBroker,
@@ -71,8 +74,29 @@ function SettingsPageInner() {
     updatePreferences,
     replaceAllSettings,
     save,
+    saveSection,
     reset,
-  } = useSettings();
+  } = useSettings() as unknown as {
+    settings: import('@/lib/settings').AppSettings;
+    isDirty: boolean;
+    isDirtySections: Record<string, boolean>;
+    isSaving: boolean;
+    isSavingSection: Record<string, boolean>;
+    isLoading: boolean;
+    validationErrors: { path: string; message: string }[];
+    sectionErrors: Record<string, { path: string; message: string }[]>;
+    lastSaved: Date | null;
+    saveMessage: { type: 'success' | 'error'; text: string } | null;
+    updateBroker: (u: Partial<import('@/lib/settings').BrokerSettings>) => void;
+    updateQuantitative: (u: Partial<import('@/lib/settings').QuantitativeSettings>) => void;
+    updateAI: (u: Partial<import('@/lib/settings').AISettings>) => void;
+    updatePaper: (u: Partial<import('@/lib/settings').PaperTradingSettings>) => void;
+    updatePreferences: (u: Partial<import('@/lib/settings').PreferencesSettings>) => void;
+    replaceAllSettings: (s: import('@/lib/settings').AppSettings) => void;
+    save: () => Promise<void>;
+    saveSection: (s: string) => Promise<void>;
+    reset: () => void;
+  };
 
   // --- Render loading state ---
   if (isLoading) {
@@ -204,6 +228,19 @@ function SettingsPageInner() {
             </span>
           )}
 
+          {/* Per-section quick save for active tab */}
+          {activeTab !== 'telegram' && isDirtySections?.[activeTab] && (
+            <button
+              type="button"
+              onClick={() => saveSection(activeTab)}
+              disabled={isSavingSection?.[activeTab] || isSaving}
+              title={`Save only ${activeTab} section`}
+              className="flex items-center gap-1.5 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground border border-border rounded-xl text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isSavingSection?.[activeTab] ? <div className="w-3.5 h-3.5 border-2 border-foreground border-t-transparent rounded-full animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              <span>Save {activeTab}</span>
+            </button>
+          )}
           {/* Save button */}
           <button
             type="button"
@@ -229,11 +266,8 @@ function SettingsPageInner() {
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
-
-          // Count validation errors for this tab section
-          const tabErrorCount = validationErrors.filter((e) =>
-            e.path.startsWith(tab.id === 'ai' ? 'ai.' : tab.id === 'broker' ? 'broker.' : tab.id + '.')
-          ).length;
+          const tabErrorCount = (sectionErrors?.[tab.id]?.length ?? validationErrors.filter((e) => e.path.startsWith(tab.id + '.')).length);
+          const isTabDirty = !!(isDirtySections as Record<string, boolean>)?.[tab.id];
 
           return (
             <button
@@ -248,6 +282,9 @@ function SettingsPageInner() {
             >
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
+              {isTabDirty && tab.id !== 'telegram' && (
+                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse ml-1" title="Unsaved changes in this section" />
+              )}
               {tabErrorCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full text-[9px] font-bold flex items-center justify-center">
                   {tabErrorCount}

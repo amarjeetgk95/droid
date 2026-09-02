@@ -15,7 +15,6 @@ const ROUTE_LABELS: Record<string, string> = {
   '/markets': 'Markets',
   '/crypto': 'Crypto',
   '/options': 'Options',
-  '/chart-analysis': 'Chart Analysis',
   '/historical-intelligence': 'Historical Intelligence',
   '/ai-analysis': 'AI Analysis',
   '/paper-trading': 'Paper Trading',

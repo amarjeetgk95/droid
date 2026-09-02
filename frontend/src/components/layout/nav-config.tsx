@@ -2,7 +2,6 @@
 
 import {
   LayoutDashboard,
-  LineChart,
   Star,
   Coins,
   Settings,
@@ -89,21 +88,12 @@ export const NAV_GROUPS: NavGroup[] = [
     defaultOpen: true,
     items: [
       {
-        id: 'chart-terminal',
-        href: '/chart-analysis',
-        label: 'Pro Chart Terminal',
-        icon: LineChart,
-        description: 'Full-screen canvas, multi-timeframe & tools',
-        shortcut: '⌘2',
-        keywords: ['chart', 'candle', 'tradingview', 'canvas', 'technical', 'indicators'],
-      },
-      {
         id: 'options-desk',
         href: '/options',
         label: 'Options & Greeks',
         icon: Layers,
         description: 'Live option chain, Black-76, Max Pain & PCR',
-        shortcut: '⌘3',
+        shortcut: '⌘2',
         keywords: ['options', 'chain', 'oi', 'greeks', 'iv', 'delta', 'gamma', 'straddle'],
       },
       {
@@ -113,7 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Radio,
         description: 'Real-time multi-strategy alpha alerts',
         badgeKey: 'signals',
-        shortcut: '⌘4',
+        shortcut: '⌘3',
         keywords: ['signals', 'alerts', 'momentum', 'breakout', 'mean-reversion'],
       },
       {
@@ -131,7 +121,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Bot,
         description: 'Automated strategy runners & risk guards',
         badgeKey: 'algo',
-        shortcut: '⌘5',
+        shortcut: '⌘4',
         keywords: ['algo', 'automation', 'bot', 'strategies', 'runners', 'execution'],
       },
     ],

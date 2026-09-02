@@ -572,16 +572,12 @@ class ApiClient {
     );
   }
 
-  // Chart Analysis & Multi-Timeframe (forecast removed)
+  // Instruments Search
   async searchInstruments(q: string, asset_class?: string, fno_only?: boolean) {
     const params = new URLSearchParams({ q });
     if (asset_class) params.set('asset_class', asset_class);
     if (fno_only) params.set('fno_only', 'true');
     return this.request<{ data: { query: string; results: any[]; total: number }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/instruments/search?${params.toString()}`);
-  }
-  async getChartAnalysis(symbol: string, timeframe?: string) {
-    const qs = timeframe ? `?timeframe=${timeframe}` : '';
-    return this.request<{ data: any; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/chart-analysis/${encodeURIComponent(symbol)}${qs}`);
   }
 
   // Watchlists (new Supabase-backed endpoints)

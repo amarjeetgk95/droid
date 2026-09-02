@@ -25,7 +25,6 @@ from pydantic import BaseModel
 
 from app.models.market import ApiMeta, DataStatus
 from app.services.regime_service import regime_service
-from app.chart_analysis.service import analyze_instrument
 from app.services.paper_service import paper_service
 from app.services.market_service import MarketService
 
@@ -173,27 +172,6 @@ async def _build_dashboard(sym: str) -> DashboardData:
     except Exception:
         logger.exception("dashboard.regime_failed", symbol=sym)
         errors["regime"] = "Regime classification unavailable"
-
-    # Chart analysis — only real MTF biases are surfaced. No fabricated
-    # probabilities or price bands (forecast module removed).
-    if current_price is not None:
-        try:
-            chart = await analyze_instrument(sym)
-            mtf_data = chart.get("multi_timeframe", {})
-            if mtf_data and "timeframe_bias" in mtf_data:
-                mtf_placeholder = {
-                    k: (v.get("bias", "NEUTRAL") if isinstance(v, dict) else str(v))
-                    for k, v in mtf_data.get("timeframe_bias", {}).items()
-                }
-            elif mtf_data and "per_timeframe" in mtf_data:
-                mtf_placeholder = {
-                    k: v.get("bias", "NEUTRAL")
-                    for k, v in mtf_data.get("per_timeframe", {}).items()
-                    if isinstance(v, dict)
-                }
-        except Exception:
-            logger.exception("dashboard.chart_analysis_failed", symbol=sym)
-            errors["chart_analysis"] = "Chart analysis unavailable"
 
     # Futures/options quick
     fno_available = False

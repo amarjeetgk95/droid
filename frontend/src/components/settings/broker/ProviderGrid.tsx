@@ -13,11 +13,11 @@ type ProviderCard = {
 };
 
 const INDIAN_PROVIDERS: ProviderCard[] = [
-  { id: 'fyers', name: 'Fyers API v3', badge: 'Low Latency', desc: 'Official REST & WebSocket Gateway', apiType: 'indian', icon: TrendingUp, portalUrl: '' },
-  { id: 'flattrade', name: 'Flattrade PiConnect', badge: 'Zero Brokerage', desc: 'WallConnect API & Realtime Feed', apiType: 'indian', icon: Landmark, portalUrl: '' },
+  { id: 'fyers', name: 'Fyers API v3', badge: 'Low Latency', desc: 'Official REST & WebSocket Gateway', apiType: 'indian', icon: TrendingUp },
+  { id: 'flattrade', name: 'Flattrade PiConnect', badge: 'Zero Brokerage', desc: 'WallConnect API & Realtime Feed', apiType: 'indian', icon: Landmark },
 ];
 const CRYPTO_PROVIDERS: ProviderCard[] = [
-  { id: 'binance', name: 'Binance API', badge: 'Crypto & Spot', desc: 'Public Spot & Futures Gateway', apiType: 'crypto', icon: Bitcoin, portalUrl: '' },
+  { id: 'binance', name: 'Binance API', badge: 'Crypto & Spot', desc: 'Public Spot & Futures Gateway', apiType: 'crypto', icon: Bitcoin },
 ];
 
 interface Props {

@@ -9,7 +9,7 @@ import { ALL_NAV_ITEMS, isActivePath, NavItem } from '../nav-config';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const PINNED_STORAGE_KEY = 'droid:sidebar:pinned_workspaces';
-const DEFAULT_PINNED = ['/chart-analysis', '/options', '/signals'];
+const DEFAULT_PINNED = ['/options', '/signals', '/algo-trading'];
 
 interface SidebarFavoritesProps {
   collapsed: boolean;

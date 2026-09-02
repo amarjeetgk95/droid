@@ -20,7 +20,6 @@ export default function AIAnalysisPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [analysisMeta, setAnalysisMeta] = useState<{ model_used?: string; latency_ms?: number } | null>(null);
-  const [chartMulti, setChartMulti] = useState<any | null>(null);
   const [triggerMode, setTriggerMode] = useState<string>('manual');
   const [autoInterval, setAutoInterval] = useState<number>(60);
 
@@ -33,17 +32,6 @@ export default function AIAnalysisPage() {
       if (s.ai.provider) setSelectedProvider(s.ai.provider === 'mock_ai' ? 'mock_ai' : s.ai.provider);
     } catch {}
   }, []);
-
-  const fetchChartMulti = async (symbol: string) => {
-    try {
-      const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
-      const res = await fetch(`${base}/api/v1/chart-analysis/${encodeURIComponent(symbol)}`);
-      if (res.ok) {
-        const j = await res.json();
-        setChartMulti(j.data);
-      }
-    } catch {}
-  };
 
   // helper to get key from Settings — no hardcode, primary source is Settings UI
   const getKeysForProvider = (prov: string) => {
@@ -87,7 +75,6 @@ export default function AIAnalysisPage() {
           setAnalysisMeta({ model_used: res.model_used, latency_ms: res.latency_ms });
           setHistory(histRes.data);
           setError(null);
-          fetchChartMulti(selectedSymbol);
         }
       } catch (err) {
         if (isMounted) {
@@ -139,7 +126,6 @@ export default function AIAnalysisPage() {
         setError(null);
         const h = await api.getAIHistory(selectedSymbol);
         setHistory(h.data);
-        fetchChartMulti(selectedSymbol);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to generate AI analysis');
       } finally {
@@ -315,22 +301,6 @@ export default function AIAnalysisPage() {
                 <div className="font-mono text-xs truncate">{analysisMeta?.model_used || insight.provider_used}</div>
               </div>
             </div>
-            {/* Multi-timeframe snapshot */}
-            {chartMulti?.multi_timeframe && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                {['1m', '5m', '15m', '1h'].map((tf) => {
-                  const tfData = chartMulti.multi_timeframe?.timeframes?.[tf] || chartMulti.timeframes?.[tf];
-                  const bias = tfData?.bias || '—';
-                  return (
-                    <div key={tf} className="bg-secondary/20 p-2 rounded border text-center">
-                      <div className="text-[10px] font-mono text-muted-foreground">{tf}</div>
-                      <div className="font-semibold">{typeof bias === 'object' ? JSON.stringify(bias) : String(bias).slice(0, 20)}</div>
-                      {tfData?.score !== undefined && <div className="text-[10px] text-muted-foreground">score {tfData.score}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-2 border-t border-border/50">
               <div>
                 <div className="font-semibold text-foreground">Key Reasons</div>

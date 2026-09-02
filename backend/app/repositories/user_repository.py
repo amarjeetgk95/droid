@@ -61,23 +61,42 @@ class SettingsRepository:
         return settings
 
     @staticmethod
+    def _deep_merge_dict(base: dict, patch: dict, max_depth: int = 4) -> dict:
+        """Recursively merge patch into base — preserves sibling keys at every nesting level."""
+        out = dict(base)
+        for k, v in patch.items():
+            prev = out.get(k)
+            if isinstance(v, dict) and isinstance(prev, dict) and max_depth > 0:
+                out[k] = SettingsRepository._deep_merge_dict(prev, v, max_depth - 1)
+            else:
+                out[k] = v
+        return out
+
+    @staticmethod
     async def update(session: AsyncSession, user_id: UUID, **kwargs) -> Optional[UserSettings]:
         settings = await SettingsRepository.get_by_user(session, user_id)
         if settings is None:
             return None
         for key, value in kwargs.items():
             if hasattr(settings, key):
-                # For app_settings JSONB: deep-merge instead of blind replace so PATCH is safe
                 if key == "app_settings" and isinstance(value, dict):
+                    # Guard: refuse absurdly large blobs (16KB)
+                    import json as _json
+                    try:
+                        if len(_json.dumps(value)) > 16 * 1024:
+                            logger.warning("app_settings_payload_too_large", user_id=str(user_id), size=len(_json.dumps(value)))
+                            # still allow but log — frontend already guards
+                            pass
+                    except Exception:
+                        pass
                     existing = getattr(settings, "app_settings", None) or {}
                     if isinstance(existing, dict) and existing:
-                        # shallow merge top-level keys; nested dicts merged one level deep
-                        merged = dict(existing)
-                        for k, v in value.items():
-                            if isinstance(v, dict) and isinstance(merged.get(k), dict):
-                                merged[k] = {**merged[k], **v}
-                            else:
-                                merged[k] = v
+                        merged = SettingsRepository._deep_merge_dict(existing, value)
+                        # ensure schemaVersion preserved
+                        if "schemaVersion" not in merged and "schemaVersion" in existing:
+                            merged["schemaVersion"] = existing["schemaVersion"]
+                        if "schemaVersion" not in merged:
+                            merged["schemaVersion"] = value.get("schemaVersion", 2)
                         setattr(settings, key, merged)
                     else:
                         setattr(settings, key, value)
