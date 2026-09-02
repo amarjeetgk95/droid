@@ -18,31 +18,46 @@ jobs:
             exit 1
           fi
 
-      - name: Ping Supabase REST API & Database
+      - name: Ping Supabase REST API
         run: |
+          # Strip trailing slash from SUPABASE_URL if present
+          BASE_URL="${{ secrets.SUPABASE_URL }}"
+          BASE_URL="${BASE_URL%/}"
+          
           echo "Pinging Supabase REST API at $(date -u)..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET "${BASE_URL}/rest/v1/" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}")
+          
+          BODY=$(echo "$RESPONSE" | sed -e '$d')
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d':' -f2)
           
           echo "REST API HTTP Status: $HTTP_STATUS"
           if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
             echo "Successfully pinged Supabase REST API."
           else
             echo "::warning::Unexpected HTTP status $HTTP_STATUS from REST API"
+            echo "Response details: $BODY"
           fi
 
       - name: Ping Supabase Auth Service
         run: |
+          BASE_URL="${{ secrets.SUPABASE_URL }}"
+          BASE_URL="${BASE_URL%/}"
+          
           echo "Pinging Supabase Auth Health..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X GET "${{ secrets.SUPABASE_URL }}/auth/v1/health" \
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET "${BASE_URL}/auth/v1/health" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          
+          BODY=$(echo "$RESPONSE" | sed -e '$d')
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d':' -f2)
           
           echo "Auth Service HTTP Status: $HTTP_STATUS"
           if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
             echo "Successfully pinged Supabase Auth Service."
           else
             echo "::warning::Unexpected HTTP status $HTTP_STATUS from Auth Service"
+            echo "Response details: $BODY"
           fi
