@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
 
         # Restore Telegram user links & notification preferences from DB / persistent snapshot
         await telegram_link_manager.restore_state()
+        logger.info("telegram_restore_complete", restored_bindings=len(telegram_link_manager.all_bindings()))
         await notification_policy.restore_state()
 
         await telegram_outbound_queue.start()

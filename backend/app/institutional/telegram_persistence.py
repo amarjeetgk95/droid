@@ -62,28 +62,42 @@ async def restore_telegram_state_from_db() -> tuple[dict[str, dict], dict[str, d
     try:
         from app.core.database import get_async_session_factory
         factory = get_async_session_factory()
-        if factory is not None:
-            async with factory() as session:
-                from sqlalchemy import text
-                res = await session.execute(
-                    text("SELECT user_id, app_settings FROM user_settings WHERE app_settings IS NOT NULL")
-                )
-                for row in res.fetchall():
-                    uid = str(row[0])
-                    settings_blob = row[1]
-                    if isinstance(settings_blob, str):
-                        try:
-                            settings_blob = json.loads(settings_blob)
-                        except Exception:
-                            settings_blob = {}
-                    if isinstance(settings_blob, dict):
-                        if "telegram_binding" in settings_blob and isinstance(settings_blob["telegram_binding"], dict):
-                            db_bindings[uid] = settings_blob["telegram_binding"]
-                        if "telegram_preferences" in settings_blob and isinstance(settings_blob["telegram_preferences"], dict):
-                            db_preferences[uid] = settings_blob["telegram_preferences"]
+        if factory is None:
+            logger.warning("telegram_db_restore_no_factory", hint="DATABASE_URL may not be set")
+            return file_bindings, file_preferences
+        async with factory() as session:
+            from sqlalchemy import text
+            # First check if the table exists
+            table_check = await session.execute(
+                text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_settings')")
+            )
+            table_exists = table_check.scalar()
+            if not table_exists:
+                logger.warning("telegram_db_restore_no_table", hint="user_settings table does not exist — run migrations")
+                return file_bindings, file_preferences
+
+            res = await session.execute(
+                text("SELECT user_id, app_settings FROM user_settings WHERE app_settings IS NOT NULL")
+            )
+            rows = res.fetchall()
+            logger.info("telegram_db_restore_query", rows_with_settings=len(rows))
+            for row in rows:
+                uid = str(row[0])
+                settings_blob = row[1]
+                if isinstance(settings_blob, str):
+                    try:
+                        settings_blob = json.loads(settings_blob)
+                    except Exception:
+                        settings_blob = {}
+                if isinstance(settings_blob, dict):
+                    if "telegram_binding" in settings_blob and isinstance(settings_blob["telegram_binding"], dict):
+                        db_bindings[uid] = settings_blob["telegram_binding"]
+                        logger.info("telegram_db_restore_binding_found", user_id=uid, chat_id=settings_blob["telegram_binding"].get("telegram_chat_id"))
+                    if "telegram_preferences" in settings_blob and isinstance(settings_blob["telegram_preferences"], dict):
+                        db_preferences[uid] = settings_blob["telegram_preferences"]
             logger.info("telegram_db_state_restored", binding_count=len(db_bindings), pref_count=len(db_preferences))
     except Exception as e:
-        logger.warning("telegram_db_state_restore_failed", error=str(e))
+        logger.warning("telegram_db_state_restore_failed", error=str(e), error_type=type(e).__name__)
 
     # Merge: DB takes priority, file supplies offline/fallback entries
     final_bindings = {**file_bindings, **db_bindings}
@@ -98,41 +112,56 @@ async def restore_telegram_state_from_db() -> tuple[dict[str, dict], dict[str, d
 async def persist_user_binding_to_db(user_id: str, binding: dict | None) -> None:
     """
     Persist or remove a single user's Telegram binding in DB and local file cache.
+    Auto-creates user_settings row if it doesn't exist.
     """
     try:
         from app.core.database import get_async_session_factory
         factory = get_async_session_factory()
-        if factory is not None:
-            async with factory() as session:
-                from sqlalchemy import text
-                try:
-                    uid_val = UUID(str(user_id))
-                except Exception:
-                    uid_val = user_id
+        if factory is None:
+            logger.warning("persist_telegram_binding_no_db", user_id=user_id)
+            return
+        async with factory() as session:
+            from sqlalchemy import text
+            try:
+                uid_val = UUID(str(user_id))
+            except Exception:
+                uid_val = user_id
 
-                res = await session.execute(
-                    text("SELECT app_settings FROM user_settings WHERE user_id = :uid"),
-                    {"uid": uid_val}
+            # Check if user_settings row exists
+            res = await session.execute(
+                text("SELECT app_settings FROM user_settings WHERE user_id = :uid"),
+                {"uid": uid_val}
+            )
+            row = res.first()
+            if row:
+                settings_blob = row[0] or {}
+                if isinstance(settings_blob, str):
+                    try:
+                        settings_blob = json.loads(settings_blob)
+                    except Exception:
+                        settings_blob = {}
+                if binding:
+                    settings_blob["telegram_binding"] = binding
+                else:
+                    settings_blob.pop("telegram_binding", None)
+                await session.execute(
+                    text("UPDATE user_settings SET app_settings = :settings, updated_at = NOW() WHERE user_id = :uid"),
+                    {"settings": json.dumps(settings_blob), "uid": uid_val}
                 )
-                row = res.first()
-                if row:
-                    settings_blob = row[0] or {}
-                    if isinstance(settings_blob, str):
-                        try:
-                            settings_blob = json.loads(settings_blob)
-                        except Exception:
-                            settings_blob = {}
-                    if binding:
-                        settings_blob["telegram_binding"] = binding
-                    else:
-                        settings_blob.pop("telegram_binding", None)
-                    await session.execute(
-                        text("UPDATE user_settings SET app_settings = :settings, updated_at = NOW() WHERE user_id = :uid"),
-                        {"settings": json.dumps(settings_blob), "uid": uid_val}
-                    )
-                    await session.commit()
+            else:
+                # Auto-create user_settings row with telegram_binding
+                app_settings = {}
+                if binding:
+                    app_settings["telegram_binding"] = binding
+                await session.execute(
+                    text("INSERT INTO user_settings (user_id, app_settings) VALUES (:uid, :settings) ON CONFLICT (user_id) DO UPDATE SET app_settings = :settings, updated_at = NOW()"),
+                    {"uid": uid_val, "settings": json.dumps(app_settings)}
+                )
+                logger.info("persist_telegram_binding_created_settings_row", user_id=user_id)
+            await session.commit()
+            logger.info("persist_telegram_binding_ok", user_id=user_id, has_binding=binding is not None)
     except Exception as e:
-        logger.warning("persist_telegram_binding_db_failed", user_id=user_id, error=str(e))
+        logger.warning("persist_telegram_binding_db_failed", user_id=user_id, error=str(e), error_type=type(e).__name__)
 
 
 async def persist_user_preferences_to_db(user_id: str, preferences: dict | None) -> None:
