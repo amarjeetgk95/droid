@@ -214,6 +214,41 @@ export interface MaxPainResult {
   payouts: number[];
 }
 
+export interface InstitutionalStrikeFlow {
+  strike: number;
+  is_atm: boolean;
+  call_oi: number;
+  put_oi: number;
+  call_oi_change: number;
+  put_oi_change: number;
+  call_volume: number;
+  put_volume: number;
+  call_ltp: number;
+  put_ltp: number;
+  call_buildup: 'LONG_BUILDUP' | 'SHORT_BUILDUP' | 'SHORT_COVERING' | 'LONG_UNWINDING' | 'NEUTRAL';
+  put_buildup: 'LONG_BUILDUP' | 'SHORT_BUILDUP' | 'SHORT_COVERING' | 'LONG_UNWINDING' | 'NEUTRAL';
+  net_flow: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+}
+
+export interface InstitutionalFlowResponse {
+  symbol: string;
+  expiry: string;
+  spot_price: number;
+  atm_strike: number;
+  pcr_oi: number;
+  pcr_volume: number;
+  max_pain_strike: number;
+  call_wall_strike: number;
+  put_floor_strike: number;
+  institutional_sentiment: 'STRONG_BULLISH' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'STRONG_BEARISH';
+  institutional_score: number;
+  total_call_oi: number;
+  total_put_oi: number;
+  total_call_volume: number;
+  total_put_volume: number;
+  strike_flows: InstitutionalStrikeFlow[];
+}
+
 export interface TechnicalIndicators {
   rsi_14: number;
   adx_14: number;

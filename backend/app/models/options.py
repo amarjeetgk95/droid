@@ -80,3 +80,41 @@ class MaxPainResult(BaseModel):
     total_loss_at_max_pain: float
     strikes: list[float] = Field(default_factory=list)
     payouts: list[float] = Field(default_factory=list)
+
+
+class InstitutionalStrikeFlow(BaseModel):
+    """Strike-level institutional buildup and unwinding metrics."""
+    strike: float
+    is_atm: bool = False
+    call_oi: int = 0
+    put_oi: int = 0
+    call_oi_change: int = 0
+    put_oi_change: int = 0
+    call_volume: int = 0
+    put_volume: int = 0
+    call_ltp: float = 0.0
+    put_ltp: float = 0.0
+    call_buildup: Literal["LONG_BUILDUP", "SHORT_BUILDUP", "SHORT_COVERING", "LONG_UNWINDING", "NEUTRAL"] = "NEUTRAL"
+    put_buildup: Literal["LONG_BUILDUP", "SHORT_BUILDUP", "SHORT_COVERING", "LONG_UNWINDING", "NEUTRAL"] = "NEUTRAL"
+    net_flow: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "NEUTRAL"
+
+
+class InstitutionalFlowResponse(BaseModel):
+    """Aggregated Institutional Options Flow Response."""
+    symbol: str
+    expiry: str
+    spot_price: float
+    atm_strike: float
+    pcr_oi: float
+    pcr_volume: float
+    max_pain_strike: float
+    call_wall_strike: float
+    put_floor_strike: float
+    institutional_sentiment: Literal["STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"]
+    institutional_score: float = Field(description="Score from 0 (extreme bearish) to 100 (extreme bullish)")
+    total_call_oi: int
+    total_put_oi: int
+    total_call_volume: int
+    total_put_volume: int
+    strike_flows: list[InstitutionalStrikeFlow] = Field(default_factory=list)
+

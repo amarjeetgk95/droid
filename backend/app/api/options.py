@@ -63,3 +63,21 @@ async def get_max_pain(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{symbol}/institutional-flow")
+async def get_institutional_flow(
+    symbol: str,
+    expiry: str | None = Query(default=None, description="Expiry date in YYYY-MM-DD format"),
+):
+    """Retrieve strike-by-strike institutional build-ups, unwinding, and net flow sentiment."""
+    try:
+        flow = await options_service.get_institutional_oi_flow(symbol, expiry)
+        return {
+            "data": flow.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

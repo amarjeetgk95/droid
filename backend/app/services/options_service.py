@@ -2,7 +2,8 @@ import math
 from datetime import datetime, date, timezone
 from app.models.options import (
     OptionGreeks, OptionSide, OptionChainStrikeRow,
-    OptionChainResponse, OptionsAnalytics, MaxPainResult
+    OptionChainResponse, OptionsAnalytics, MaxPainResult,
+    InstitutionalStrikeFlow, InstitutionalFlowResponse
 )
 from app.models.market import NormalizedOptionQuote
 from app.services.market_service import MarketService
@@ -306,5 +307,141 @@ class OptionsService:
             payouts=payouts,
         )
 
+    async def get_institutional_oi_flow(
+        self,
+        symbol: str = "NIFTY",
+        expiry_str: str | None = None,
+    ) -> InstitutionalFlowResponse:
+        """Analyze strike-by-strike institutional build-ups, unwinding, and net flow sentiment."""
+        chain = await self.get_option_chain_matrix(symbol, expiry_str)
+        spot = chain.spot_price
+        atm = chain.analytics.atm_strike
+        pcr_oi = chain.analytics.pcr_oi
+        pcr_vol = chain.analytics.pcr_volume
+
+        strike_flows: list[InstitutionalStrikeFlow] = []
+        highest_call_oi = 0
+        call_wall_k = atm
+        highest_put_oi = 0
+        put_floor_k = atm
+
+        bullish_weights = 0.0
+        bearish_weights = 0.0
+
+        for row in chain.strikes:
+            k = row.strike
+            ce = row.call
+            pe = row.put
+
+            ce_oi = ce.open_interest if ce else 0
+            pe_oi = pe.open_interest if pe else 0
+            ce_vol = ce.volume if ce else 0
+            pe_vol = pe.volume if pe else 0
+            ce_ltp = ce.ltp if ce else 0.0
+            pe_ltp = pe.ltp if pe else 0.0
+            ce_chg = ce.change if ce else 0.0
+            pe_chg = pe.change if pe else 0.0
+
+            ce_oi_chg = ce.oi_change if ce and ce.oi_change != 0 else int(ce_vol * 0.15) if ce_chg >= 0 else -int(ce_vol * 0.12)
+            pe_oi_chg = pe.oi_change if pe and pe.oi_change != 0 else int(pe_vol * 0.15) if pe_chg >= 0 else -int(pe_vol * 0.12)
+
+            if ce_oi > highest_call_oi:
+                highest_call_oi = ce_oi
+                call_wall_k = k
+            if pe_oi > highest_put_oi:
+                highest_put_oi = pe_oi
+                put_floor_k = k
+
+            # Call Buildup Classification
+            if ce_chg > 0 and ce_oi_chg > 0:
+                ce_build = "LONG_BUILDUP"
+                bullish_weights += 1.0
+            elif ce_chg < 0 and ce_oi_chg > 0:
+                ce_build = "SHORT_BUILDUP"
+                bearish_weights += 1.5  # Call writing is strong resistance
+            elif ce_chg > 0 and ce_oi_chg < 0:
+                ce_build = "SHORT_COVERING"
+                bullish_weights += 1.5  # Call short covering is explosive
+            elif ce_chg < 0 and ce_oi_chg < 0:
+                ce_build = "LONG_UNWINDING"
+                bearish_weights += 1.0
+            else:
+                ce_build = "NEUTRAL"
+
+            # Put Buildup Classification
+            if pe_chg > 0 and pe_oi_chg > 0:
+                pe_build = "LONG_BUILDUP"
+                bearish_weights += 1.0
+            elif pe_chg < 0 and pe_oi_chg > 0:
+                pe_build = "SHORT_BUILDUP"
+                bullish_weights += 1.5  # Put writing is strong support
+            elif pe_chg > 0 and pe_oi_chg < 0:
+                pe_build = "SHORT_COVERING"
+                bearish_weights += 1.5
+            elif pe_chg < 0 and pe_oi_chg < 0:
+                pe_build = "LONG_UNWINDING"
+                bullish_weights += 1.0
+            else:
+                pe_build = "NEUTRAL"
+
+            # Net strike flow
+            net_f = "BULLISH" if (ce_build in ("LONG_BUILDUP", "SHORT_COVERING") or pe_build == "SHORT_BUILDUP") else "BEARISH" if (ce_build in ("SHORT_BUILDUP", "LONG_UNWINDING") or pe_build == "LONG_BUILDUP") else "NEUTRAL"
+
+            strike_flows.append(
+                InstitutionalStrikeFlow(
+                    strike=k,
+                    is_atm=row.is_atm,
+                    call_oi=ce_oi,
+                    put_oi=pe_oi,
+                    call_oi_change=ce_oi_chg,
+                    put_oi_change=pe_oi_chg,
+                    call_volume=ce_vol,
+                    put_volume=pe_vol,
+                    call_ltp=ce_ltp,
+                    put_ltp=pe_ltp,
+                    call_buildup=ce_build,
+                    put_buildup=pe_build,
+                    net_flow=net_f,
+                )
+            )
+
+        # Composite Institutional Score (0-100)
+        total_weights = (bullish_weights + bearish_weights) or 1.0
+        raw_score = (bullish_weights / total_weights) * 100.0
+        # Adjust with PCR
+        pcr_adj = min(15.0, max(-15.0, (pcr_oi - 1.0) * 20.0))
+        final_score = round(min(100.0, max(0.0, raw_score + pcr_adj)), 1)
+
+        if final_score >= 70.0:
+            sentiment = "STRONG_BULLISH"
+        elif final_score >= 55.0:
+            sentiment = "BULLISH"
+        elif final_score <= 30.0:
+            sentiment = "STRONG_BEARISH"
+        elif final_score <= 45.0:
+            sentiment = "BEARISH"
+        else:
+            sentiment = "NEUTRAL"
+
+        return InstitutionalFlowResponse(
+            symbol=chain.underlying,
+            expiry=chain.expiry,
+            spot_price=spot,
+            atm_strike=atm,
+            pcr_oi=pcr_oi,
+            pcr_volume=pcr_vol,
+            max_pain_strike=chain.analytics.max_pain_strike,
+            call_wall_strike=call_wall_k,
+            put_floor_strike=put_floor_k,
+            institutional_sentiment=sentiment,
+            institutional_score=final_score,
+            total_call_oi=chain.analytics.total_call_oi,
+            total_put_oi=chain.analytics.total_put_oi,
+            total_call_volume=chain.analytics.total_call_volume,
+            total_put_volume=chain.analytics.total_put_volume,
+            strike_flows=strike_flows,
+        )
+
 
 options_service = OptionsService()
+

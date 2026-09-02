@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { OrderPayload, BasketOrderPayload } from '@/lib/types';
-import { Send, Zap, PlusCircle } from 'lucide-react';
+import { Send, Zap, PlusCircle, Shield, AlertTriangle } from 'lucide-react';
+import { getStoredSettings } from '@/lib/settings';
 
 export function OrderEntryTicket({
   onPlaceOrder,
@@ -14,6 +15,17 @@ export function OrderEntryTicket({
   loading: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<'SINGLE' | 'BASKET'>('SINGLE');
+  const [executionMode, setExecutionMode] = useState<'PAPER' | 'LIVE'>('PAPER');
+  const [activeBroker, setActiveBroker] = useState('fyers');
+
+  useEffect(() => {
+    try {
+      const stored = getStoredSettings();
+      if (stored?.broker?.provider) {
+        setActiveBroker(stored.broker.provider);
+      }
+    } catch {}
+  }, []);
 
   // Single order state
   const [symbol, setSymbol] = useState('NIFTY24800CE');
@@ -71,8 +83,8 @@ export function OrderEntryTicket({
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
-      {/* Sub Tabs */}
-      <div className="flex items-center justify-between border-b border-border pb-3">
+      {/* Sub Tabs & Live / Paper Mode Selector */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -97,7 +109,43 @@ export function OrderEntryTicket({
             1-Click Strategy Baskets
           </button>
         </div>
+
+        <div className="flex items-center gap-1.5 bg-secondary/60 p-1 rounded-lg border border-border/60 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setExecutionMode('PAPER')}
+            className={`px-2.5 py-1 rounded font-semibold transition-all cursor-pointer ${
+              executionMode === 'PAPER'
+                ? 'bg-background text-foreground shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Virtual Paper
+          </button>
+          <button
+            type="button"
+            onClick={() => setExecutionMode('LIVE')}
+            className={`px-2.5 py-1 rounded font-bold transition-all cursor-pointer flex items-center gap-1 ${
+              executionMode === 'LIVE'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Shield className="w-3 h-3" />
+            <span>Live {activeBroker.toUpperCase()}</span>
+          </button>
+        </div>
       </div>
+
+      {executionMode === 'LIVE' && (
+        <div className="p-2.5 bg-amber-500/10 border border-amber-500/25 rounded-lg text-xs text-amber-300 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+          <span>
+            <strong>Live Order Routing Enabled:</strong> Orders will be submitted directly to{' '}
+            <strong>{activeBroker.toUpperCase()}</strong> ({activeBroker === 'flattrade' ? 'Zero Brokerage' : 'Low Latency'}).
+          </span>
+        </div>
+      )}
 
       {activeTab === 'SINGLE' ? (
         <form onSubmit={handleSingleSubmit} className="space-y-3 text-xs">
@@ -215,11 +263,21 @@ export function OrderEntryTicket({
             type="submit"
             disabled={loading}
             className={`w-full py-2.5 rounded-lg text-white font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 ${
-              side === 'BUY' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'
+              executionMode === 'LIVE'
+                ? side === 'BUY'
+                  ? 'bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400/40'
+                  : 'bg-rose-600 hover:bg-rose-500 ring-2 ring-rose-400/40'
+                : side === 'BUY'
+                ? 'bg-emerald-600 hover:bg-emerald-500'
+                : 'bg-rose-600 hover:bg-rose-500'
             }`}
           >
             <Send className="w-4 h-4" />
-            <span>Place Virtual {side} Order</span>
+            <span>
+              {executionMode === 'LIVE'
+                ? `Submit LIVE ${side} Order (${activeBroker.toUpperCase()})`
+                : `Place Virtual ${side} Order`}
+            </span>
           </button>
         </form>
       ) : (

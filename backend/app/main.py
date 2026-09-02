@@ -112,9 +112,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("telegram_notification_queue_start_failed", error=str(e))
 
+    # Start Morning Briefing Service (08:50 AM IST pre-market brief)
+    try:
+        from app.services.morning_briefing_service import morning_briefing_service
+        await morning_briefing_service.start()
+        logger.info("morning_briefing_service_started")
+    except Exception as e:
+        logger.warning("morning_briefing_service_start_failed", error=str(e))
+
     yield
     
     # Shutdown in reverse order
+    try:
+        from app.services.morning_briefing_service import morning_briefing_service
+        await morning_briefing_service.stop()
+    except Exception:
+        pass
     try:
         from app.institutional.telegram import telegram_outbound_queue, telegram_update_queue
         await telegram_update_queue.stop()

@@ -226,6 +226,11 @@ class ApiClient {
     return this.request<{ data: import('./types').MaxPainResult; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/options/${encodeURIComponent(symbol)}/max-pain${query}`);
   }
 
+  async getInstitutionalFlow(symbol: string, expiry?: string) {
+    const query = expiry ? `?expiry=${expiry}` : '';
+    return this.request<{ data: import('./types').InstitutionalFlowResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/options/${encodeURIComponent(symbol)}/institutional-flow${query}`);
+  }
+
   // Market Regime & Technical Analytics (Phase 6)
   async getRegimeOverview(symbol: string) {
     return this.request<{ data: import('./types').MarketRegimeOverview; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/regime/${encodeURIComponent(symbol)}/overview`);

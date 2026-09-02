@@ -262,6 +262,49 @@ def format_test_message(environment: str) -> str:
     )
 
 
+def format_morning_briefing(data: dict) -> str:
+    """Format an institutional morning pre-market briefing."""
+    date_str = data.get("date_str", "")
+    bias = data.get("bias", "NEUTRAL").upper()
+    bias_emoji = "🟢" if "BULL" in bias else "🔴" if "BEAR" in bias else "⚪"
+    
+    nifty_spot = data.get("nifty_spot", "—")
+    nifty_range = data.get("nifty_range", "—")
+    nifty_max_pain = data.get("nifty_max_pain", "—")
+    nifty_pcr = data.get("nifty_pcr", "—")
+    
+    bank_spot = data.get("bank_spot", "—")
+    bank_range = data.get("bank_range", "—")
+    bank_max_pain = data.get("bank_max_pain", "—")
+    
+    call_wall = data.get("call_wall", "—")
+    put_floor = data.get("put_floor", "—")
+    vix = data.get("india_vix", "—")
+    
+    radar_stocks = data.get("radar_stocks", [])
+    radar_str = "\n".join([f"  • {s}" for s in radar_stocks]) if radar_stocks else "  • Monitoring NIFTY 50 Leaders"
+    
+    return (
+        f"☀️ *DROID PRE-MARKET BRIEFING*\n"
+        f"📅 *{date_str}* | Market Open: *09:15 IST*\n\n"
+        f"🌐 *Global Bias:* {bias_emoji} *{bias}*\n"
+        f"⚡ *India VIX:* `{vix}`\n\n"
+        f"📊 *NIFTY 50 Key Levels:*\n"
+        f"• Reference: `{nifty_spot}`\n"
+        f"• Expected Range: `{nifty_range}`\n"
+        f"• Max Pain: `{nifty_max_pain}` | PCR: `{nifty_pcr}`\n"
+        f"• Key Resistance Wall: `{call_wall}`\n"
+        f"• Key Support Floor: `{put_floor}`\n\n"
+        f"🏦 *BANKNIFTY Key Levels:*\n"
+        f"• Reference: `{bank_spot}`\n"
+        f"• Expected Range: `{bank_range}`\n"
+        f"• Max Pain: `{bank_max_pain}`\n\n"
+        f"🎯 *Top Breakout Radar:*\n"
+        f"{radar_str}\n\n"
+        f"💡 _Live market feed and 1M/5M breakout engine will activate at 09:15 IST._"
+    )
+
+
 def format_link_success(bot_username: str) -> str:
     return (
         "✅ Telegram Connected\n\n"
@@ -269,7 +312,7 @@ def format_link_success(bot_username: str) -> str:
         "You will receive 1M/5M breakout signal notifications here.\n\n"
         f"Bot: @{bot_username}\n\n"
         "Available commands:\n"
-        "/status /market /signal /positions /pnl /risk /alerts /settings"
+        "/briefing /auth /status /market /signal /positions /pnl /risk /alerts /settings"
     )
 
 

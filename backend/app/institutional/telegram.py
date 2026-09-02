@@ -305,6 +305,8 @@ telegram_link_manager = TelegramLinkManager()
 # ── Commands §61 ─────────────────────────────────────────────────────
 TELEGRAM_COMMANDS = [
     "/start",
+    "/briefing",
+    "/morning",
     "/auth",
     "/login",
     "/connect",
@@ -476,6 +478,12 @@ class TelegramUpdateQueue:
         if not telegram_link_manager.check_command_permission(chat_id, command):
             await telegram_outbound_queue.enqueue(TelegramOutbound(
                 chat_id=chat_id, text="⛔ Not authorized for this command.", parse_mode=""))
+            return
+
+        # ── /briefing or /morning — on-demand morning briefing ──
+        if command in ("/briefing", "/morning"):
+            from app.services.morning_briefing_service import morning_briefing_service
+            await morning_briefing_service.send_briefing_to_chat(chat_id)
             return
 
         # ── /auth or /login command — 1-click broker authorization ──

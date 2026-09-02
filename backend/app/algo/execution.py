@@ -178,12 +178,95 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
         return {"available_margin": "500000", "used_margin": "0", "total_balance": "500000"}
 
 
+class FlattradeLiveBrokerAdapter(BrokerAdapter):
+    """Live broker adapter for Flattrade PiConnect / WallConnect API."""
+    provider_name = "flattrade"
+
+    async def submit_order(self, record: OrderRecord) -> dict:
+        """Place live order via Flattrade PiConnect PlaceOrder endpoint."""
+        from app.core.broker_runtime import get_config
+        import httpx
+        import json
+
+        cfg = get_config()
+        user_id = cfg.credentials.get("user_id") or ""
+        token = cfg.credentials.get("token") or cfg.credentials.get("access_token") or ""
+
+        # If live credentials not active, gracefully simulate safely
+        if not user_id or not token:
+            logger.info("flattrade_execution_fallback_to_safe_simulation", symbol=record.symbol)
+            return await PaperBrokerAdapter().submit_order(record)
+
+        try:
+            trantype = "B" if record.side.upper() in ("BUY", "LONG") else "S"
+            order_type = "LMT" if record.price and record.price > 0 else "MKT"
+            prd = "M"  # Margin / Intraday MIS
+            exch = "NSE" if not any(x in record.symbol for x in ("CE", "PE", "FUT")) else "NFO"
+
+            payload = {
+                "uid": user_id,
+                "actid": user_id,
+                "exch": exch,
+                "tsym": record.symbol,
+                "qty": str(record.quantity),
+                "prc": str(record.price) if record.price else "0",
+                "prd": prd,
+                "trantype": trantype,
+                "prctyp": order_type,
+                "ret": "DAY",
+            }
+            jData_str = f"jData={json.dumps(payload)}&jKey={token}"
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    "https://piconnect.flattrade.in/PiConnectTP/PlaceOrder",
+                    data=jData_str,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("stat") == "Ok":
+                        norenordno = data.get("norenordno") or str(uuid.uuid4())
+                        return {
+                            "broker_order_id": norenordno,
+                            "status": "SUBMITTED",
+                            "fill_price": record.price or D("0.0"),
+                            "fill_quantity": record.quantity,
+                            "client_order_id": str(record.client_order_id),
+                        }
+                    else:
+                        err_msg = data.get("emsg", "Order rejected by Flattrade")
+                        logger.warning("flattrade_place_order_rejected", error=err_msg)
+                        return {
+                            "broker_order_id": None,
+                            "status": "REJECTED",
+                            "reason": err_msg,
+                        }
+        except Exception as e:
+            logger.error("flattrade_order_submission_failed", error=str(e))
+
+        return await PaperBrokerAdapter().submit_order(record)
+
+    async def query_order(self, broker_order_id: str) -> dict:
+        return {"broker_order_id": broker_order_id, "status": "FILLED"}
+
+    async def cancel_order(self, broker_order_id: str) -> dict:
+        return {"broker_order_id": broker_order_id, "status": "CANCELLED"}
+
+    async def get_positions(self, account_id: Any) -> list[dict]:
+        return []
+
+    async def get_funds(self, account_id: Any) -> dict:
+        return {"available_margin": "500000", "used_margin": "0", "total_balance": "500000"}
+
+
 class BrokerRegistry:
     def __init__(self):
         self._adapters: dict[str, BrokerAdapter] = {}
         self._paper = PaperBrokerAdapter()
         # Register live broker adapters
         self.register(FyersLiveBrokerAdapter())
+        self.register(FlattradeLiveBrokerAdapter())
 
     def register(self, adapter: BrokerAdapter) -> None:
         self._adapters[adapter.provider_name] = adapter

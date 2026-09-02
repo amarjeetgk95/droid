@@ -7,13 +7,14 @@ import { OptionsHeader } from '@/components/options/OptionsHeader';
 import { OptionChainTable } from '@/components/options/OptionChainTable';
 import { PayoffChart } from '@/components/options/PayoffChart';
 import { IVSmileChart } from '@/components/options/IVSmileChart';
-import { Layers, Target, Activity } from 'lucide-react';
+import { InstitutionalFlowTracker } from '@/components/options/InstitutionalFlowTracker';
+import { Layers, Target, Activity, ShieldAlert } from 'lucide-react';
 
 export default function OptionsPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
   const [selectedExpiry, setSelectedExpiry] = useState<string>('');
   const [viewMode, setViewMode] = useState<'standard' | 'greeks'>('standard');
-  const [activeTab, setActiveTab] = useState<'chain' | 'max_pain' | 'iv_smile'>('chain');
+  const [activeTab, setActiveTab] = useState<'chain' | 'institutional_flow' | 'max_pain' | 'iv_smile'>('chain');
 
   const [chainData, setChainData] = useState<OptionChainResponse | null>(null);
   const [maxPainData, setMaxPainData] = useState<MaxPainResult | null>(null);
@@ -85,6 +86,18 @@ export default function OptionsPage() {
         </button>
 
         <button
+          onClick={() => setActiveTab('institutional_flow')}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'institutional_flow'
+              ? 'bg-primary text-primary-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+          }`}
+        >
+          <ShieldAlert className="w-3.5 h-3.5" />
+          Institutional Flow &amp; OI
+        </button>
+
+        <button
           onClick={() => setActiveTab('max_pain')}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             activeTab === 'max_pain'
@@ -105,7 +118,7 @@ export default function OptionsPage() {
           }`}
         >
           <Activity className="w-3.5 h-3.5" />
-          IV Smile & Skew
+          IV Smile &amp; Skew
         </button>
       </div>
 
@@ -126,6 +139,13 @@ export default function OptionsPage() {
               strikes={chainData?.strikes || []}
               viewMode={viewMode}
               spotPrice={chainData?.spot_price || 25000}
+            />
+          )}
+
+          {activeTab === 'institutional_flow' && (
+            <InstitutionalFlowTracker
+              symbol={selectedSymbol}
+              expiry={selectedExpiry || chainData?.expiry}
             />
           )}
 
