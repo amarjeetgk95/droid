@@ -80,7 +80,7 @@ def _env_config() -> BrokerConfig:
     if cfg.api_type == "crypto" and provider != "binance":
         provider = "binance"
     elif cfg.api_type != "crypto" and provider not in _PROVIDER_CRED_KEYS:
-        provider = "fyers"
+        provider = "groww"
 
     # Auto-select Groww when Groww creds are present but provider is still default fyers
     if cfg.api_type != "crypto":

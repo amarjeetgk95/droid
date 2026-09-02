@@ -122,12 +122,7 @@ def reset_provider() -> None:
 
 
 async def stop_previous_provider_stream() -> None:
-    """Stop the stream of the provider that was active before the last reset.
-
-    Called by settings/token refresh flows after swapping providers, so the
-    old (Fyers/Groww/etc.) stream task is cancelled cleanly. Best-effort:
-    any error is logged but does not block the new provider from starting.
-    """
+    """Stop the stream of the provider that was active before the last reset."""
     global _previous_provider
     prev = _previous_provider
     if prev is None:
@@ -138,6 +133,11 @@ async def stop_previous_provider_stream() -> None:
         logger.debug("registry_stop_previous_stream_failed", provider=prev.provider_name, error=str(e)[:200])
     finally:
         _previous_provider = None
+
+
+def get_active_provider_name() -> str:
+    """Return the name of the active market data provider."""
+    return get_provider().provider_name
 
 
 def _create_provider() -> MarketDataProvider:

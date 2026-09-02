@@ -208,7 +208,7 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
   };
 
   const handleApiTypeChange = (next: ApiType) => {
-    const defaultProvider: BrokerProviderId = next === 'crypto' ? 'binance' : 'fyers';
+    const defaultProvider: BrokerProviderId = next === 'crypto' ? 'binance' : 'groww';
     onChange({ apiType: next, provider: defaultProvider });
   };
 

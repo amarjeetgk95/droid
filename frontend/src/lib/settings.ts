@@ -168,7 +168,7 @@ export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
 export const DEFAULT_SETTINGS: AppSettings = {
   broker: {
     apiType: 'indian',
-    provider: 'fyers',
+    provider: 'groww',
     fyers: {
       appId: '',
       secret: '',
@@ -371,7 +371,7 @@ function migrateMockProvider(settings: AppSettings): AppSettings {
   if (legacyProvider === 'mock' || legacyProvider === 'mock_ai') {
     return {
       ...settings,
-      broker: { ...settings.broker, provider: 'fyers' as BrokerProviderId },
+      broker: { ...settings.broker, provider: 'groww' as BrokerProviderId },
     };
   }
   return settings;

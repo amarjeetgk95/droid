@@ -67,6 +67,8 @@ class OptionsService:
             strikes_map[q.strike][q.option_type] = q
 
         if not strikes_map:
+            from app.providers import get_provider
+            active_p = get_provider().provider_name
             # Fallback calibrated option chain around spot price
             step = 50.0 if "NIFTY" in underlying and "BANK" not in underlying else 100.0
             base_strike = round(spot_price / step) * step if spot_price > 0 else 24000.0
@@ -75,7 +77,7 @@ class OptionsService:
                 ce_g = black76_greeks("CE", futures_price, s, t, r, 0.145)
                 ce_ltp = max(0.05, round(ce_g.theoretical_price, 2))
                 ce_q = NormalizedOptionQuote(
-                    provider="fyers",
+                    provider=active_p,
                     instrument="OPT",
                     contract_id=f"{underlying}{target_expiry_date.strftime('%y%b').upper()}{int(s)}CE",
                     symbol=underlying,
@@ -93,7 +95,7 @@ class OptionsService:
                 pe_g = black76_greeks("PE", futures_price, s, t, r, 0.155)
                 pe_ltp = max(0.05, round(pe_g.theoretical_price, 2))
                 pe_q = NormalizedOptionQuote(
-                    provider="fyers",
+                    provider=active_p,
                     instrument="OPT",
                     contract_id=f"{underlying}{target_expiry_date.strftime('%y%b').upper()}{int(s)}PE",
                     symbol=underlying,

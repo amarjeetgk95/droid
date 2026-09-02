@@ -32,7 +32,7 @@ def _mock_settings(user_id: str) -> UserSettingsResponse:
         default_symbol=stored.get("default_symbol", "NIFTY"),
         default_timeframe=stored.get("default_timeframe", "5m"),
         default_expiry=stored.get("default_expiry"),
-        preferred_market_provider=stored.get("preferred_market_provider", "fyers"),
+        preferred_market_provider=stored.get("preferred_market_provider", "groww"),
         preferred_ai_provider=stored.get("preferred_ai_provider", "openrouter"),
         preferred_ai_model=stored.get("preferred_ai_model"),
         notification_enabled=stored.get("notification_enabled", True),

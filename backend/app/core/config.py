@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # Market Data — api_type gates Indian vs Crypto universes
     api_type: str = "indian"
-    market_data_provider: str = "fyers"
+    market_data_provider: str = "groww"
 
     # Logging
     log_level: str = "INFO"
@@ -174,9 +174,9 @@ class Settings(BaseSettings):
                     "config_provider_fallback",
                     api_type=self.api_type,
                     requested=self.market_data_provider,
-                    using="fyers",
+                    using="groww",
                 )
-                self.market_data_provider = "fyers"
+                self.market_data_provider = "groww"
         return self
 
     model_config = {

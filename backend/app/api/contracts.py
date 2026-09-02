@@ -9,11 +9,13 @@ router = APIRouter(prefix="/api/v1/contracts", tags=["contracts"])
 
 
 def _make_meta() -> ApiMeta:
+    from app.providers import get_provider
+    p = get_provider()
     return ApiMeta(
-        provider="fyers",
+        provider=p.provider_name,
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.OFFLINE,
-     )
+        status=p.get_status(),
+    )
 
 
 @router.get("/search")

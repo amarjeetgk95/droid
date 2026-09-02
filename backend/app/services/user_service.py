@@ -57,7 +57,7 @@ class SettingsService:
                         "defaultIndexSymbol": getattr(settings, "default_symbol", "NIFTY"),
                         "numberFormat": "INDIAN",
                     },
-                    "broker": {"provider": getattr(settings, "preferred_market_provider", "fyers")},
+                    "broker": {"provider": getattr(settings, "preferred_market_provider", "groww")},
                     "ai": {
                         "provider": getattr(settings, "preferred_ai_provider", "openrouter"),
                         "geminiModel": getattr(settings, "preferred_ai_model", "gemini-2.5-flash"),
