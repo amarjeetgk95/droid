@@ -297,6 +297,151 @@ async def fyers_webhook_post_callback():
     return {"s": "ok", "code": 200, "message": "Callback received"}
 
 
+@router.get("/flattrade/callback")
+async def flattrade_oauth_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    auth_code: str | None = Query(default=None),
+    request_code: str | None = Query(default=None),
+):
+    """Handle Flattrade OAuth redirect after user authentication.
+    
+    Exchanges code with API Secret Hash via POST https://authapi.flattrade.in/trade/token.
+    Hash formula: SHA-256(api_key + code + api_secret)
+    """
+    effective_code = code or auth_code or request_code
+    if not effective_code:
+        return HTMLResponse(
+            content="""
+            <!DOCTYPE html>
+            <html>
+            <head><title>Flattrade OAuth Callback</title></head>
+            <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #334155;max-width:480px;text-align:center;">
+                    <h2 style="color:#38bdf8;margin-top:0;">Flattrade OAuth Callback Ready</h2>
+                    <p style="color:#94a3b8;font-size:14px;">This endpoint is active and waiting for Flattrade authentication redirects.</p>
+                </div>
+            </body>
+            </html>
+            """,
+            status_code=200,
+        )
+
+    # Get active Flattrade credentials
+    broker_config = get_config()
+    creds = broker_config.credentials if broker_config.provider == "flattrade" else {}
+    api_key = creds.get("api_key") or cfg.flattrade_api_key
+    api_secret = creds.get("api_secret") or cfg.flattrade_api_secret
+    user_id = creds.get("user_id") or cfg.flattrade_user_id
+
+    if not api_key or not api_secret:
+        error_html = """
+        <!DOCTYPE html>
+        <html>
+        <head><title>Flattrade Auth Error</title></head>
+        <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+            <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;max-width:480px;text-align:center;">
+                <h2 style="color:#ef4444;margin-top:0;">Flattrade API Key or Secret Missing</h2>
+                <p style="color:#94a3b8;font-size:14px;">Received auth code, but API Key and Secret are not configured in Droid Settings. Please save your Flattrade credentials first.</p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=error_html, status_code=400)
+
+    # Compute SHA-256 hash: SHA256(api_key + code + api_secret)
+    hash_raw = f"{api_key}{effective_code}{api_secret}"
+    api_secret_hash = hashlib.sha256(hash_raw.encode("utf-8")).hexdigest()
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://authapi.flattrade.in/trade/token",
+                json={
+                    "api_key": api_key,
+                    "request_code": effective_code,
+                    "api_secret": api_secret_hash,
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("stat") == "Ok" and data.get("token"):
+                session_token = data["token"]
+
+                # Apply new token
+                new_settings = {
+                    "broker": {
+                        "provider": "flattrade",
+                        "flattrade": {
+                            "userId": user_id,
+                            "apiKey": api_key,
+                            "apiSecret": api_secret,
+                            "token": session_token,
+                        },
+                    }
+                }
+                apply_app_settings(new_settings)
+                reset_provider()
+                provider = get_provider()
+                token_mgr = provider.get_token_manager()
+                token_mgr.set_token(TokenInfo(
+                    access_token=session_token,
+                    token_type="Bearer",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                ))
+                await provider.start_stream()
+
+                logger.info("flattrade_oauth_exchange_success", user_id=user_id)
+                success_html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Flattrade Authentication Successful</title>
+                    <meta http-equiv="refresh" content="3;url=/" />
+                </head>
+                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="background:#1e293b;padding:2.5rem;border-radius:12px;border:1px solid #10b981;max-width:500px;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                        <div style="font-size:48px;margin-bottom:12px;">✅</div>
+                        <h2 style="color:#10b981;margin-top:0;">Flattrade Connected Successfully!</h2>
+                        <p style="color:#94a3b8;font-size:14px;line-height:1.5;">Your trading session token has been generated and activated in Droid.</p>
+                        <p style="color:#64748b;font-size:12px;margin-top:20px;">Redirecting back to Droid in 3 seconds...</p>
+                        <a href="/" style="display:inline-block;margin-top:12px;padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:600;border-radius:6px;font-size:13px;">Return to Dashboard</a>
+                    </div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(content=success_html, status_code=200)
+            else:
+                err_text = data.get("emsg") or data.get("message") or str(data)
+                logger.warning("flattrade_oauth_exchange_failed", response=data)
+                fail_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>Flattrade Authentication Failed</title></head>
+                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;max-width:480px;text-align:center;">
+                        <h2 style="color:#ef4444;margin-top:0;">Flattrade Token Exchange Failed</h2>
+                        <p style="color:#94a3b8;font-size:14px;">Flattrade returned: <code>{err_text}</code></p>
+                        <p style="color:#64748b;font-size:12px;">Please check that your API Key and Secret match your WallConnect app.</p>
+                    </div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(content=fail_html, status_code=400)
+    except Exception as e:
+        logger.error("flattrade_oauth_exception", error=str(e))
+        return HTMLResponse(
+            content=f"<h3>Authentication error: {e}</h3>",
+            status_code=500,
+        )
+
+
+@router.post("/flattrade/callback")
+async def flattrade_webhook_post_callback():
+    """Handle postbacks / webhook pings from Flattrade with HTTP 200 OK."""
+    return {"s": "ok", "code": 200, "message": "Flattrade callback received"}
+
+
 @router.post("/test-connection")
 async def test_connection(payload: dict = Body(...)):
     """Test broker credentials in real time and return roundtrip diagnostics."""
@@ -401,6 +546,85 @@ async def test_connection(payload: dict = Body(...)):
                     "quote": None,
                     "raw_response": None,
                     "error": f"Fyers connection failed: {e}",
+                },
+                "error": str(e),
+                "meta": _make_meta().model_dump(),
+            }
+
+    elif prov_name == "flattrade":
+        user_id = raw_creds.get("userId") or raw_creds.get("user_id") or cfg.flattrade_user_id or ""
+        token = raw_creds.get("token") or raw_creds.get("access_token") or cfg.flattrade_token or ""
+        api_key = raw_creds.get("apiKey") or raw_creds.get("api_key") or cfg.flattrade_api_key or ""
+
+        if not token:
+            broker_config = get_config()
+            if broker_config.provider == "flattrade":
+                token = broker_config.credentials.get("token") or broker_config.credentials.get("access_token") or ""
+
+        if not token:
+            latency = round((time.time() - start) * 1000, 1)
+            return {
+                "data": {
+                    "success": False,
+                    "provider": "flattrade",
+                    "latency_ms": latency,
+                    "token_valid": False,
+                    "quote": None,
+                    "raw_response": None,
+                    "error": "No Flattrade Session Token found. Please log in via Flattrade OAuth or provide an active Token.",
+                },
+                "error": "Session token required for Flattrade live probe",
+                "meta": _make_meta().model_dump(),
+            }
+
+        try:
+            payload_data = {"uid": user_id, "actid": user_id, "exch": "NSE", "token": "26000"}
+            jData_str = f"jData={json.dumps(payload_data)}&jKey={token}"
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.post(
+                    "https://piconnect.flattrade.in/PiConnectTP/GetQuotes",
+                    data=jData_str,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                latency = round((time.time() - start) * 1000, 1)
+                data = r.json() if r.status_code == 200 else None
+                is_ok = r.status_code == 200 and data and data.get("stat") == "Ok"
+                
+                norm_quote = None
+                if is_ok and data:
+                    norm_quote = {
+                        "symbol": data.get("tsym", "NIFTY 50"),
+                        "ltp": float(data.get("lp", 0.0)),
+                        "change": float(data.get("c", 0.0)),
+                        "percent_change": float(data.get("pc", 0.0)),
+                    }
+
+                err_msg = None if is_ok else (data.get("emsg") if data else f"HTTP {r.status_code}")
+                return {
+                    "data": {
+                        "success": is_ok,
+                        "provider": "flattrade",
+                        "latency_ms": latency,
+                        "token_valid": is_ok,
+                        "token_prefix": token[:10] + "..." if token else "",
+                        "quote": norm_quote,
+                        "raw_response": data,
+                        "error": err_msg,
+                    },
+                    "error": err_msg,
+                    "meta": _make_meta().model_dump(),
+                }
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {
+                "data": {
+                    "success": False,
+                    "provider": "flattrade",
+                    "latency_ms": latency,
+                    "token_valid": False,
+                    "quote": None,
+                    "raw_response": None,
+                    "error": f"Flattrade connection failed: {e}",
                 },
                 "error": str(e),
                 "meta": _make_meta().model_dump(),

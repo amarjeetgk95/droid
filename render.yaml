@@ -1,0 +1,56 @@
+# Render Blueprint for DROID Platform
+# Accommodates FastAPI Backend & Next.js Frontend with Dual Broker Support (FYERS & Flattrade)
+services:
+  # 1. Backend FastAPI Service (Docker Web Service)
+  - type: web
+    name: droid-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: API_TYPE
+        value: indian
+      - key: MARKET_DATA_PROVIDER
+        value: fyers  # 'fyers' or 'flattrade'
+      # FYERS Gateway
+      - key: FYERS_APP_ID
+        sync: false
+      - key: FYERS_SECRET_KEY
+        sync: false
+      - key: FYERS_REDIRECT_URI
+        value: https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback
+      - key: FYERS_ACCESS_TOKEN
+        sync: false
+      # FLATTRADE Gateway
+      - key: FLATTRADE_USER_ID
+        sync: false
+      - key: FLATTRADE_API_KEY
+        sync: false
+      - key: FLATTRADE_API_SECRET
+        sync: false
+      - key: FLATTRADE_REDIRECT_URI
+        value: https://droid-backend-emeq.onrender.com/api/v1/tokens/flattrade/callback
+      - key: FLATTRADE_TOKEN
+        sync: false
+      # Binance Gateway (Crypto)
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+
+  # 2. Frontend Next.js Static Site
+  - type: static
+    name: droid-frontend
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: out
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://droid-backend-emeq.onrender.com

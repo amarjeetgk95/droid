@@ -1,5 +1,5 @@
 export type ApiType = 'indian' | 'crypto';
-export type IndianProviderId = 'fyers';
+export type IndianProviderId = 'fyers' | 'flattrade';
 export type CryptoProviderId = 'binance';
 export type BrokerProviderId = IndianProviderId | CryptoProviderId;
 
@@ -8,6 +8,14 @@ export interface FyersCredentials {
   secret: string;
   redirectUri: string;
   accessToken?: string;
+}
+
+export interface FlattradeCredentials {
+  userId: string;
+  apiKey: string;
+  apiSecret: string;
+  redirectUri: string;
+  token?: string;
 }
 
 export interface BinanceCredentials {
@@ -19,6 +27,7 @@ export interface BrokerSettings {
   apiType: ApiType;
   provider: BrokerProviderId;
   fyers: FyersCredentials;
+  flattrade: FlattradeCredentials;
   binance: BinanceCredentials;
 }
 
@@ -153,6 +162,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
       redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback',
       accessToken: '',
     },
+    flattrade: {
+      userId: '',
+      apiKey: '',
+      apiSecret: '',
+      redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/flattrade/callback',
+      token: '',
+    },
     binance: {
       apiKey: '',
       apiSecret: '',
@@ -230,6 +246,8 @@ const SECRET_FIELDS: Record<string, string[]> = {
   broker: [
     'fyers.secret',
     'fyers.accessToken',
+    'flattrade.apiSecret',
+    'flattrade.token',
     'binance.apiSecret',
   ],
   ai: ['geminiApiKey', 'openRouterApiKey', 'openaiApiKey', 'novitaApiKey', 'nvidiaApiKey', 'customOpenaiApiKey'],

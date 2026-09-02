@@ -12,6 +12,14 @@ export const FyersCredentialsSchema = z.object({
   accessToken: z.string().trim().max(8192).optional().default(''),
 });
 
+export const FlattradeCredentialsSchema = z.object({
+  userId: z.string().trim().max(100),
+  apiKey: z.string().trim().max(4096),
+  apiSecret: z.string().trim().max(4096),
+  redirectUri: z.string().trim().url('Invalid redirect URI').or(z.literal('')),
+  token: z.string().trim().max(8192).optional().default(''),
+});
+
 export const BinanceCredentialsSchema = z.object({
   apiKey: z.string().trim().max(4096),
   apiSecret: z.string().trim().max(4096),
@@ -19,8 +27,15 @@ export const BinanceCredentialsSchema = z.object({
 
 export const BrokerSettingsSchema = z.object({
   apiType: z.enum(['indian', 'crypto']),
-  provider: z.enum(['fyers', 'binance']),
+  provider: z.enum(['fyers', 'flattrade', 'binance']),
   fyers: FyersCredentialsSchema,
+  flattrade: FlattradeCredentialsSchema.optional().default({
+    userId: '',
+    apiKey: '',
+    apiSecret: '',
+    redirectUri: 'https://droid-backend-emeq.onrender.com/api/v1/tokens/flattrade/callback',
+    token: '',
+  }),
   binance: BinanceCredentialsSchema,
 }).superRefine((data, ctx) => {
   if (data.apiType === 'indian' && data.provider === 'binance') {
@@ -34,7 +49,7 @@ export const BrokerSettingsSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['provider'],
-      message: 'FYERS requires API type "indian"',
+      message: 'Indian brokers (FYERS, Flattrade) require API type "indian"',
     });
   }
 });

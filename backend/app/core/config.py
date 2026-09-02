@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     fyers_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback"
     fyers_access_token: str = ""
 
+    # Flattrade Settings (Indian Market Gateway)
+    flattrade_user_id: str = ""
+    flattrade_api_key: str = ""
+    flattrade_api_secret: str = ""
+    flattrade_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/flattrade/callback"
+    flattrade_token: str = ""
+
     # Binance (Crypto) Settings
     binance_api_key: str = ""
     binance_api_secret: str = ""
@@ -133,7 +140,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog
-        indian_providers = ("fyers",)
+        indian_providers = ("fyers", "flattrade")
         crypto_providers = ("binance",)
 
         if self.api_type == "crypto":
