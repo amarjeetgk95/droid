@@ -7,7 +7,7 @@ import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
 import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink } from 'lucide-react';
-import { useSettings } from '@/components/settings/SettingsProvider';
+import { getStoredSettings } from '@/lib/settings';
 
 // Route label map for breadcrumb
 const ROUTE_LABELS: Record<string, string> = {
@@ -127,6 +127,21 @@ export function TopHeader({
   const pathname = usePathname();
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [now, setNow] = useState<Date>(() => new Date());
+  const [activeBroker, setActiveBroker] = useState<string>('fyers');
+  const [isIndian, setIsIndian] = useState<boolean>(true);
+
+  useEffect(() => {
+    try {
+      const stored = getStoredSettings();
+      if (stored?.broker) {
+        setActiveBroker(stored.broker.provider || 'fyers');
+        setIsIndian(stored.broker.apiType !== 'crypto');
+      }
+    } catch {
+      setActiveBroker('fyers');
+      setIsIndian(true);
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -154,27 +169,14 @@ export function TopHeader({
   const modeCfg = getModeConfig(health?.mode);
   const isDemo = health?.mode === 'OFFLINE';
 
-  let activeBroker = 'fyers';
-  let isIndian = true;
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const settingsCtx = useSettings();
-    activeBroker = settingsCtx?.settings?.broker?.provider || 'fyers';
-    isIndian = settingsCtx?.settings?.broker?.apiType !== 'crypto';
-  } catch {
-    // Graceful fallback if rendered outside provider context
-  }
-
-  const showQuickAuth = isIndian && streamState !== 'CONNECTED';
   const authLoginUrl = `https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`;
+  const isHealthy = health?.is_healthy === true && health?.mode !== 'OFFLINE';
 
   // Keyboard shortcut hint for search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        // Future: open command palette
-        // For now, no-op but keeps hint functional
       }
     };
     window.addEventListener('keydown', handler);
@@ -229,23 +231,8 @@ export function TopHeader({
           </div>
         </div>
 
-        {/* CENTER — System Status Capsule + Quick Connect */}
+        {/* CENTER — System Status Capsule */}
         <div className="flex items-center justify-center gap-2 shrink-0">
-          {/* 1-Click Quick Connect Pill (Only shown when daily auth is required) */}
-          {showQuickAuth && (
-            <a
-              href={authLoginUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 dark:text-amber-300 border border-amber-500/40 shadow-xs animate-pulse transition-all cursor-pointer whitespace-nowrap"
-              title={`1-Click connect ${activeBroker.toUpperCase()} daily session via Render`}
-            >
-              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
-              <span>1-Click Connect {activeBroker.toUpperCase()}</span>
-              <ExternalLink className="w-3 h-3 opacity-70" />
-            </a>
-          )}
-
           {/* Desktop capsule */}
           <div className="hidden md:flex items-center gap-1 p-1 rounded-full bg-muted/60 border border-border/60 shadow-sm">
             {/* Session */}
@@ -291,12 +278,38 @@ export function TopHeader({
           </div>
         </div>
 
-        {/* RIGHT — Actions */}
-        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-1 justify-end">
+        {/* RIGHT — Actions & Quick 1-Click Connect Button */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-1 justify-end">
+          {/* 1-Click Connect Button (Always accessible in Top Nav) */}
+          {isIndian && (
+            <a
+              href={authLoginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap shadow-xs ${
+                !isHealthy
+                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 ring-2 ring-amber-400/40 animate-pulse'
+                  : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              }`}
+              title={
+                !isHealthy
+                  ? `Daily Auth Required. Click to 1-Click Authorize ${activeBroker.toUpperCase()} via Render`
+                  : `Connected to ${activeBroker.toUpperCase()}. Click to re-authorize.`
+              }
+            >
+              <Zap className={`w-3.5 h-3.5 ${!isHealthy ? 'fill-current text-slate-950' : 'text-emerald-400 fill-emerald-400/30'}`} />
+              <span className="font-bold">
+                {!isHealthy
+                  ? `1-Click Auth (${activeBroker.toUpperCase()})`
+                  : `${activeBroker.toUpperCase()} Active`}
+              </span>
+              <ExternalLink className="w-3 h-3 opacity-70" />
+            </a>
+          )}
+
           {/* Search — desktop */}
           <button
             onClick={() => {
-              // placeholder: in future open command palette
               const el = document.getElementById('global-search-trigger');
               el?.click();
             }}
@@ -338,8 +351,6 @@ export function TopHeader({
             aria-label="Notifications"
           >
             <Bell className="w-4 h-4" />
-            {/* Dot indicator — only if needed; hidden for now but ready for count */}
-            {/* <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-card" /> */}
           </button>
 
           <div className="h-6 w-px bg-border mx-1 hidden sm:block" />
