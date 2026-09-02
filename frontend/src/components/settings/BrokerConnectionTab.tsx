@@ -64,6 +64,43 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
   const [tokenMsg, setTokenMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    provider: string;
+    latency_ms: number;
+    token_valid: boolean;
+    token_prefix?: string;
+    quote?: { symbol: string; ltp: number; high?: number; low?: number; status?: string };
+    raw_response?: unknown;
+    error?: string | null;
+  } | null>(null);
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const creds =
+        settings.provider === 'kotak_neo'
+          ? settings.kotakNeo
+          : (settings as any)[settings.provider] || {};
+      const res = await api.testBrokerConnection({
+        provider: settings.provider,
+        credentials: creds,
+      });
+      setTestResult(res.data);
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        provider: settings.provider,
+        latency_ms: 0,
+        token_valid: false,
+        error: err?.message || 'Connection test probe failed to reach backend',
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const { streamState, reconnectCount } = useMarketStream();
 
@@ -323,17 +360,70 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
               Live token lifecycle status managed by backend TokenManager worker.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleRefreshToken}
-            disabled={refreshing || loadingToken || !providerMeta.hasCreds}
-            title={!providerMeta.hasCreds ? 'Enter API credentials first' : 'Refresh token'}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-            <span>{refreshing ? 'Refreshing Token...' : 'Force Refresh Token'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testing || !providerMeta.hasCreds}
+              title={!providerMeta.hasCreds ? 'Enter API credentials first' : 'Test broker connection in real time'}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Activity className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+              <span>{testing ? 'Testing Live...' : 'Test Connection'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleRefreshToken}
+              disabled={refreshing || loadingToken || !providerMeta.hasCreds}
+              title={!providerMeta.hasCreds ? 'Enter API credentials first' : 'Refresh token'}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+              <span>{refreshing ? 'Refreshing Token...' : 'Force Refresh Token'}</span>
+            </button>
+          </div>
         </div>
+
+        {testResult && (
+          <div
+            className={`p-4 rounded-xl border text-xs space-y-2 ${
+              testResult.success
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-destructive/10 border-destructive/30 text-destructive'
+            }`}
+          >
+            <div className="flex items-center justify-between font-semibold">
+              <div className="flex items-center gap-2">
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-destructive" />
+                )}
+                <span>
+                  {testResult.success
+                    ? `Connection Verified for ${testResult.provider.toUpperCase()}`
+                    : `Connection Failed for ${testResult.provider.toUpperCase()}`}
+                </span>
+              </div>
+              <span className="font-mono text-[11px] bg-background/50 px-2 py-0.5 rounded">
+                Latency: {testResult.latency_ms}ms
+              </span>
+            </div>
+
+            {testResult.quote && (
+              <div className="p-2.5 bg-background/40 rounded-lg border border-border/40 font-mono text-[11px] flex items-center justify-between text-foreground">
+                <span>Sample Probe: <strong>{testResult.quote.symbol}</strong></span>
+                <span className="text-emerald-400 font-bold">₹{testResult.quote.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+
+            {testResult.error && (
+              <div className="text-[11px] bg-destructive/20 p-2.5 rounded-lg border border-destructive/30">
+                <strong>Error Details:</strong> {testResult.error}
+              </div>
+            )}
+          </div>
+        )}
 
         {tokenMsg && (
           <div

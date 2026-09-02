@@ -262,3 +262,137 @@ async def refresh_token(payload: dict | None = Body(default=None)):
         "error": None,
         "meta": _make_meta().model_dump(),
     }
+
+
+@router.post("/test-connection")
+async def test_connection(payload: dict = Body(...)):
+    """Test broker credentials in real time and return roundtrip diagnostics."""
+    import time
+    start = time.time()
+    prov_name = (payload.get("provider") or "groww").lower()
+    raw_creds = payload.get("credentials") or {}
+    
+    if prov_name == "groww":
+        from app.services.groww_service import GrowwService
+        api_key = raw_creds.get("apiKey") or raw_creds.get("api_key") or ""
+        api_secret = raw_creds.get("apiSecret") or raw_creds.get("api_secret") or ""
+        access_token = raw_creds.get("accessToken") or raw_creds.get("access_token") or ""
+        totp = raw_creds.get("totp") or ""
+        auth_mode = raw_creds.get("authMode") or "checksum"
+
+        service = GrowwService(
+            api_key=api_key,
+            api_secret=api_secret,
+            access_token=access_token,
+            totp=totp,
+            auth_mode=auth_mode,
+        )
+
+        try:
+            tok = await service.fetch_access_token()
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {
+                "data": {
+                    "success": False,
+                    "provider": "groww",
+                    "latency_ms": latency,
+                    "token_valid": False,
+                    "quote": None,
+                    "raw_response": None,
+                    "error": f"Authentication failed: {e}",
+                },
+                "error": str(e),
+                "meta": _make_meta().model_dump(),
+            }
+
+        try:
+            norm, raw, status = await service._get_quote_with_raw(tok, "NSE", "CASH", "NIFTY")
+            latency = round((time.time() - start) * 1000, 1)
+            is_ok = status == 200 and norm is not None and (norm.get("ltp") or 0) > 0
+            err_msg = None
+            if not is_ok:
+                if status in (401, 403):
+                    err_msg = f"HTTP {status}: Access forbidden by Groww (Daily approval or API subscription required)"
+                else:
+                    err_msg = f"HTTP {status} from Groww live data endpoint"
+
+            return {
+                "data": {
+                    "success": is_ok,
+                    "provider": "groww",
+                    "latency_ms": latency,
+                    "token_valid": True,
+                    "token_prefix": tok[:10] + "..." if tok else "",
+                    "quote": norm,
+                    "raw_response": raw,
+                    "error": err_msg,
+                },
+                "error": err_msg,
+                "meta": _make_meta().model_dump(),
+            }
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {
+                "data": {
+                    "success": False,
+                    "provider": "groww",
+                    "latency_ms": latency,
+                    "token_valid": True,
+                    "quote": None,
+                    "raw_response": None,
+                    "error": f"Quote probe failed: {e}",
+                },
+                "error": str(e),
+                "meta": _make_meta().model_dump(),
+            }
+    
+    elif prov_name == "binance":
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+                latency = round((time.time() - start) * 1000, 1)
+                data = r.json() if r.status_code == 200 else None
+                return {
+                    "data": {
+                        "success": r.status_code == 200,
+                        "provider": "binance",
+                        "latency_ms": latency,
+                        "token_valid": True,
+                        "quote": {"symbol": "BTC/USDT", "ltp": float(data["price"])} if data else None,
+                        "raw_response": data,
+                        "error": None if r.status_code == 200 else f"HTTP {r.status_code}",
+                    },
+                    "error": None,
+                    "meta": _make_meta().model_dump(),
+                }
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {
+                "data": {
+                    "success": False,
+                    "provider": "binance",
+                    "latency_ms": latency,
+                    "token_valid": False,
+                    "error": str(e),
+                },
+                "error": str(e),
+                "meta": _make_meta().model_dump(),
+            }
+
+    # Generic fallback
+    latency = round((time.time() - start) * 1000, 1)
+    return {
+        "data": {
+            "success": True,
+            "provider": prov_name,
+            "latency_ms": latency,
+            "token_valid": True,
+            "quote": None,
+            "raw_response": None,
+            "error": None,
+        },
+        "error": None,
+        "meta": _make_meta().model_dump(),
+    }

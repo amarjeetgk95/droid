@@ -159,6 +159,26 @@ class ApiClient {
     });
   }
 
+  async testBrokerConnection(payload: { provider: string; credentials: Record<string, unknown> }) {
+    return this.request<{
+      data: {
+        success: boolean;
+        provider: string;
+        latency_ms: number;
+        token_valid: boolean;
+        token_prefix?: string;
+        quote?: { symbol: string; ltp: number; high?: number; low?: number; status?: string };
+        raw_response?: unknown;
+        error?: string | null;
+      };
+      error: string | null;
+      meta: import('./types').ApiMeta;
+    }>('/api/v1/tokens/test-connection', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // Cache & Performance (Phase 3)
   async getCacheStats() {
     return this.request<{ data: Record<string, unknown>; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/cache/stats');
