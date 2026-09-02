@@ -309,6 +309,25 @@ async def test_connection(payload: dict = Body(...)):
         app_id = raw_creds.get("appId") or raw_creds.get("app_id") or cfg.fyers_app_id or ""
         access_token = raw_creds.get("access_token") or raw_creds.get("accessToken") or raw_creds.get("token") or cfg.fyers_access_token or ""
         
+        # Fallback to active runtime token if not explicitly provided in test payload
+        if not access_token:
+            broker_config = get_config()
+            if broker_config.provider == "fyers":
+                access_token = broker_config.credentials.get("access_token") or ""
+            if not access_token:
+                try:
+                    provider = get_provider()
+                    token_mgr = provider.get_token_manager()
+                    if token_mgr.token_info and token_mgr.token_info.access_token:
+                        access_token = token_mgr.token_info.access_token
+                except Exception:
+                    pass
+
+        if not app_id:
+            broker_config = get_config()
+            if broker_config.provider == "fyers":
+                app_id = broker_config.credentials.get("app_id") or ""
+
         if not access_token:
             latency = round((time.time() - start) * 1000, 1)
             return {
