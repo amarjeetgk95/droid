@@ -270,6 +270,7 @@ export function Sidebar({
   );
 
   const [apiType, setApiType] = useState<string>('indian');
+  const [brokerProvider, setBrokerProvider] = useState<string>('groww');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   // Dynamic Telemetry Badges
@@ -285,7 +286,9 @@ export function Sidebar({
   // Hydrate settings and group state
   useEffect(() => {
     try {
-      setApiType(getStoredSettings().broker.apiType);
+      const s = getStoredSettings();
+      setApiType(s.broker.apiType);
+      setBrokerProvider(s.broker.provider);
     } catch {}
     const stored = loadGroupState();
     if (stored) {
@@ -311,6 +314,7 @@ export function Sidebar({
         try {
           const s = getStoredSettings();
           setApiType(s.broker.apiType);
+          setBrokerProvider(s.broker.provider);
         } catch {}
       }
     };
@@ -510,6 +514,7 @@ export function Sidebar({
         collapsed={isCollapsed}
         isMobile={isMobile}
         apiType={apiType}
+        provider={brokerProvider}
         streamState={streamState}
         onExpand={() => setCollapsed(false)}
         onNavigate={handleNavigate}

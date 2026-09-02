@@ -58,10 +58,14 @@ class GrowwProvider(MarketDataProvider):
             max_backoff=settings.ws_reconnect_max_seconds,
             enable_jitter=settings.ws_reconnect_jitter,
         )
-        if access_token or settings.groww_access_token:
+        direct_token = access_token or settings.groww_access_token
+        if not direct_token and self.api_key and (self.api_key.startswith("eyJ") or (len(self.api_key) > 40 and not self.api_secret)):
+            direct_token = self.api_key
+
+        if direct_token:
             self.token_manager.set_token(
                 TokenInfo(
-                    access_token=access_token or settings.groww_access_token,
+                    access_token=direct_token,
                     provider=self.PROVIDER_ID,
                 )
             )
@@ -120,11 +124,6 @@ class GrowwProvider(MarketDataProvider):
     async def ensure_access_token(self) -> str | None:
         """Public helper: ensure we have a valid access token, fetching one
         via the checksum flow if needed. Returns the token string or None.
-
-        Unlike :meth:`_refresh_callback`, this method is callable directly
-        from Settings-save and diagnostics flows without the 30-second rate
-        limit guard (the guard exists to prevent refresh storms during
-        streaming, not for explicit one-shot requests).
         """
         if self.token_manager.token_info and self.token_manager.token_info.access_token and not self.token_manager.is_token_expired():
             return self.token_manager.token_info.access_token
@@ -259,6 +258,27 @@ class GrowwProvider(MarketDataProvider):
                 return norm
         except Exception as e:
             logger.debug("groww_live_quote_failed", symbol=symbol, error=str(e)[:200])
+
+        # Secondary fallback: try bulk LTP / OHLC endpoints if direct quote didn't return
+        exch_sym = INDEX_EXCHANGE_SYMBOLS.get(symbol)
+        if exch_sym:
+            try:
+                ltp_map = await self.service.get_ltp_bulk(token, "CASH", [exch_sym])
+                if ltp_map and ltp_map.get(exch_sym):
+                    val = float(ltp_map[exch_sym])
+                    if val > 0:
+                        return {
+                            "ltp": val,
+                            "open": val,
+                            "high": val,
+                            "low": val,
+                            "prev": val,
+                            "volume": 0,
+                            "oi": None,
+                        }
+            except Exception:
+                pass
+
         return None
 
     async def get_quote(self, symbol: str) -> NormalizedQuote:
@@ -267,6 +287,8 @@ class GrowwProvider(MarketDataProvider):
             token = await self.token_manager.get_valid_token()
         except RuntimeError:
             token = ""
+        if not token and (self.api_key and self.api_secret):
+            token = await self.ensure_access_token() or ""
         now = datetime.now(timezone.utc)
         self.token_manager.record_message()
 
@@ -673,6 +695,8 @@ class GrowwProvider(MarketDataProvider):
                     token = await self.token_manager.get_valid_token()
                 except Exception:
                     token = ""
+                if not token and (self.api_key and self.api_secret):
+                    token = await self.ensure_access_token() or ""
                 token_str = token or ""
                 # Fetch all symbols concurrently
                 tasks = [self._fetch_live_quote(sym, token_str) for sym in self.symbol_map.keys()]

@@ -18,6 +18,7 @@ export interface UpstoxCredentials {
 export interface GrowwCredentials {
   apiKey: string;
   apiSecret: string;
+  accessToken?: string;
 }
 
 export interface KotakNeoCredentials {
@@ -181,6 +182,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     groww: {
       apiKey: '',
       apiSecret: '',
+      accessToken: '',
     },
     kotakNeo: {
       apiKey: '',
@@ -267,6 +269,7 @@ const SECRET_FIELDS: Record<string, string[]> = {
     'fyers.secret',
     'upstox.secret',
     'groww.apiSecret',
+    'groww.accessToken',
     'kotakNeo.apiSecret',
     'kotakNeo.mpin',
     'kotakNeo.totp',

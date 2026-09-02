@@ -11,6 +11,7 @@ interface SidebarStatusDockProps {
   collapsed: boolean;
   isMobile?: boolean;
   apiType: string;
+  provider?: string;
   streamState?: StreamConnectionState;
   onExpand?: () => void;
   onNavigate?: () => void;
@@ -20,6 +21,7 @@ export function SidebarStatusDock({
   collapsed,
   isMobile,
   apiType,
+  provider = 'groww',
   streamState = 'CONNECTED',
   onExpand,
   onNavigate,
@@ -28,6 +30,11 @@ export function SidebarStatusDock({
   const isSettingsActive = pathname === '/settings';
 
   const isStreamLive = streamState === 'CONNECTED';
+
+  const gatewayLabel =
+    apiType === 'crypto'
+      ? 'BINANCE FUTURES'
+      : `${(provider || 'groww').replace('_', ' ').toUpperCase()} GATEWAY`;
 
   if (collapsed && !isMobile) {
     return (
@@ -93,7 +100,7 @@ export function SidebarStatusDock({
           </span>
           <div className="flex flex-col min-w-0">
             <span className="text-[10px] font-bold tracking-wider uppercase text-foreground/90 truncate">
-              {apiType === 'crypto' ? 'BINANCE FUTURES' : 'FYERS GATEWAY'}
+              {gatewayLabel}
             </span>
             <span className="text-[9px] text-muted-foreground font-mono">
               {isStreamLive ? 'Live Feed • 14ms' : 'Connecting...'}

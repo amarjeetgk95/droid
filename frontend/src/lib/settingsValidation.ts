@@ -20,6 +20,7 @@ export const UpstoxCredentialsSchema = z.object({
 export const GrowwCredentialsSchema = z.object({
   apiKey: z.string().trim().max(4096),
   apiSecret: z.string().trim().max(4096),
+  accessToken: z.string().trim().max(4096).optional().default(''),
 });
 
 export const KotakNeoCredentialsSchema = z.object({

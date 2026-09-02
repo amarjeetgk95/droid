@@ -34,32 +34,42 @@ export type DeskOption = {
   icon: typeof Building2;
 };
 
-const DESK_OPTIONS: DeskOption[] = [
-  {
-    id: 'paper-sim',
-    name: 'Paper Sim Desk',
-    badge: 'SIM',
-    type: 'paper',
-    account: 'ACC-9842 • ₹10.0L',
-    icon: Wallet,
-  },
-  {
-    id: 'fyers-live',
-    name: 'Fyers Live Desk',
-    badge: 'LIVE',
-    type: 'live',
-    account: 'FYERS • Institutional',
-    icon: Building2,
-  },
-  {
-    id: 'binance-crypto',
-    name: 'Binance USDT-M',
-    badge: 'CRYPTO',
-    type: 'crypto',
-    account: 'BINANCE • Live Sub',
-    icon: Coins,
-  },
-];
+const BROKER_DESK_MAP: Record<string, { id: string; name: string; account: string }> = {
+  groww: { id: 'groww-live', name: 'Groww Live Desk', account: 'GROWW • Trade API' },
+  fyers: { id: 'fyers-live', name: 'Fyers Live Desk', account: 'FYERS • Institutional' },
+  upstox: { id: 'upstox-live', name: 'Upstox Live Desk', account: 'UPSTOX • Official V2' },
+  kotak_neo: { id: 'kotak-live', name: 'Kotak Neo Desk', account: 'KOTAK NEO • Session' },
+};
+
+function getDeskOptions(provider: string = 'groww'): DeskOption[] {
+  const liveInfo = BROKER_DESK_MAP[provider] || BROKER_DESK_MAP.groww;
+  return [
+    {
+      id: 'paper-sim',
+      name: 'Paper Sim Desk',
+      badge: 'SIM',
+      type: 'paper',
+      account: 'ACC-9842 • ₹10.0L',
+      icon: Wallet,
+    },
+    {
+      id: liveInfo.id,
+      name: liveInfo.name,
+      badge: 'LIVE',
+      type: 'live',
+      account: liveInfo.account,
+      icon: Building2,
+    },
+    {
+      id: 'binance-crypto',
+      name: 'Binance USDT-M',
+      badge: 'CRYPTO',
+      type: 'crypto',
+      account: 'BINANCE • Live Sub',
+      icon: Coins,
+    },
+  ];
+}
 
 interface SidebarHeaderProps {
   collapsed: boolean;
@@ -74,16 +84,39 @@ export function SidebarHeader({
   onToggleCollapse,
   onCloseMobile,
 }: SidebarHeaderProps) {
-  const [selectedDeskId, setSelectedDeskId] = useState<string>('fyers-live');
+  const [provider, setProvider] = useState<string>('groww');
+  const [selectedDeskId, setSelectedDeskId] = useState<string>('groww-live');
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(DESK_STORAGE_KEY);
-      if (saved && DESK_OPTIONS.some((d) => d.id === saved)) {
-        setSelectedDeskId(saved);
+      const s = localStorage.getItem('droid_app_settings_v1');
+      if (s) {
+        const parsed = JSON.parse(s);
+        const p = parsed?.broker?.provider || 'groww';
+        setProvider(p);
+        const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.groww;
+        const saved = localStorage.getItem(DESK_STORAGE_KEY);
+        setSelectedDeskId(saved && (saved === 'paper-sim' || saved === 'binance-crypto') ? saved : liveInfo.id);
       }
     } catch {}
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'droid_app_settings_v1' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          const p = parsed?.broker?.provider || 'groww';
+          setProvider(p);
+          const liveInfo = BROKER_DESK_MAP[p] || BROKER_DESK_MAP.groww;
+          const saved = localStorage.getItem(DESK_STORAGE_KEY);
+          setSelectedDeskId(saved && (saved === 'paper-sim' || saved === 'binance-crypto') ? saved : liveInfo.id);
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  const deskOptions = getDeskOptions(provider);
 
   const handleSelectDesk = (id: string) => {
     setSelectedDeskId(id);
@@ -92,7 +125,7 @@ export function SidebarHeader({
     } catch {}
   };
 
-  const currentDesk = DESK_OPTIONS.find((d) => d.id === selectedDeskId) || DESK_OPTIONS[1];
+  const currentDesk = deskOptions.find((d) => d.id === selectedDeskId) || deskOptions[1];
   const DeskIcon = currentDesk.icon;
 
   return (
@@ -147,7 +180,7 @@ export function SidebarHeader({
               Select Trading Desk
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {DESK_OPTIONS.map((desk) => {
+            {deskOptions.map((desk) => {
               const Icon = desk.icon;
               const isSelected = desk.id === selectedDeskId;
               return (

@@ -100,15 +100,16 @@ class GrowwService:
         return hashlib.sha256((self.api_secret + timestamp).encode("utf-8")).hexdigest()
 
     async def fetch_access_token(self) -> str:
-        """Exchange API key + secret for a short-lived access token.
+        """Exchange API key + secret for a short-lived access token, or use direct token.
 
-        Raises :class:`GrowwServiceError` with a descriptive message on
-        failure (missing creds, HTTP error, or response without a token).
-        The error message includes the actual Groww response body so the
-        Settings UI / diagnostics endpoint can show the user why their
-        token is invalid (e.g. "API key not approved", "wrong secret",
-        "TOTP required", etc.).
+        If api_key is already a JWT access token (starts with eyJ), returns it directly.
+        Otherwise performs the official Groww approval checksum exchange.
         """
+        # If API key is directly a JWT access token
+        if self.api_key and (self.api_key.startswith("eyJ") or (len(self.api_key) > 40 and not self.api_secret)):
+            logger.info("groww_direct_token_used", key_prefix=self.api_key[:8] + "...")
+            return self.api_key
+
         if not self.api_key or not self.api_secret:
             raise GrowwServiceError(
                 "missing API key or API secret — set both in Settings → Broker"
@@ -148,7 +149,12 @@ class GrowwService:
         except Exception as e:
             raise GrowwServiceError(f"non-JSON auth response: {body}") from e
 
-        token = data.get("token") or data.get("access_token")
+        token = (
+            data.get("token")
+            or data.get("access_token")
+            or (data.get("data") and isinstance(data["data"], dict) and data["data"].get("token"))
+            or (data.get("payload") and isinstance(data["payload"], dict) and data["payload"].get("token"))
+        )
         if not token:
             raise GrowwServiceError(
                 f"HTTP 200 but no token in response: {body}",
@@ -184,8 +190,7 @@ class GrowwService:
         """GET /v1/live-data/quote?exchange=…&segment=…&trading_symbol=…
 
         Returns a normalized dict {ltp, open, high, low, prev, volume, oi} or
-        None if Groww returns an error / empty payload. The Groww response
-        includes a STRING-form ``ohlc`` field (their quirk) — we parse it.
+        None if Groww returns an error / empty payload.
         """
         result, _, _ = await self._get_quote_with_raw(access_token, exchange, segment, trading_symbol)
         return result
@@ -193,9 +198,7 @@ class GrowwService:
     async def _get_quote_with_raw(
         self, access_token, exchange, segment, trading_symbol
     ) -> tuple[dict | None, dict | None, int | None]:
-        """Like :meth:`get_quote` but also returns the raw Groww response body
-        and HTTP status code — used by the diagnostics endpoint so we can see
-        exactly what Groww returned (vs what the parser normalized)."""
+        """Like :meth:`get_quote` but also returns raw body and HTTP status code."""
         url = f"{self.API_BASE}{self.QUOTE_ENDPOINT}"
         params = {
             "exchange": exchange,
@@ -225,7 +228,10 @@ class GrowwService:
         except Exception as e:
             logger.debug("groww_quote_json_failed", symbol=trading_symbol, error=str(e)[:200])
             return None, {"error": f"json parse: {e}", "raw": raw_body}, status
-        if data.get("status") != "SUCCESS":
+
+        # Handle flexible status check (SUCCESS, success, OK, 200, True, or missing if payload exists)
+        st = data.get("status")
+        if st is not None and str(st).upper() not in ("SUCCESS", "OK", "200", "TRUE"):
             logger.debug(
                 "groww_quote_status_not_success",
                 symbol=trading_symbol,
@@ -233,7 +239,7 @@ class GrowwService:
                 payload=data,
             )
             return None, data, status
-        payload = data.get("payload") or data
+        payload = data.get("payload") or data.get("data") or data
         # Some responses wrap the quote dict under payload.quote
         if isinstance(payload, dict) and "last_price" not in payload and "ltp" not in payload:
             inner = payload.get("quote")
@@ -257,11 +263,9 @@ class GrowwService:
         if not exchange_symbols:
             return {}
         url = f"{self.API_BASE}{self.LTP_ENDPOINT}"
-        # Per Groww docs, exchange_symbols is a comma-separated string in the
-        # query string: ?segment=CASH&exchange_symbols=NSE_NIFTY,BSE_SENSEX
         params = {
             "segment": segment,
-            "exchange_symbols": ",".join(exchange_symbols),
+            "exchange_symbols": ",".join(exchange_symbols) if isinstance(exchange_symbols, list) else str(exchange_symbols),
         }
         async with httpx.AsyncClient(timeout=self.DEFAULT_TIMEOUT_SECONDS) as client:
             try:
@@ -281,14 +285,17 @@ class GrowwService:
         except Exception as e:
             logger.debug("groww_ltp_json_failed", error=str(e)[:200])
             return {}
-        if data.get("status") != "SUCCESS":
+        st = data.get("status")
+        if st is not None and str(st).upper() not in ("SUCCESS", "OK", "200", "TRUE"):
             return {}
-        payload = data.get("payload") or {}
+        payload = data.get("payload") or data.get("data") or data or {}
         result: dict[str, float] = {}
         if not isinstance(payload, dict):
             return result
         for sym in exchange_symbols:
             val = payload.get(sym)
+            if isinstance(val, dict):
+                val = val.get("ltp") or val.get("last_price")
             if val is None:
                 continue
             try:
@@ -316,7 +323,7 @@ class GrowwService:
         url = f"{self.API_BASE}{self.OHLC_ENDPOINT}"
         params = {
             "segment": segment,
-            "exchange_symbols": ",".join(exchange_symbols),
+            "exchange_symbols": ",".join(exchange_symbols) if isinstance(exchange_symbols, list) else str(exchange_symbols),
         }
         async with httpx.AsyncClient(timeout=self.DEFAULT_TIMEOUT_SECONDS) as client:
             try:
@@ -331,9 +338,10 @@ class GrowwService:
         except Exception as e:
             logger.debug("groww_ohlc_json_failed", error=str(e)[:200])
             return {}
-        if data.get("status") != "SUCCESS":
+        st = data.get("status")
+        if st is not None and str(st).upper() not in ("SUCCESS", "OK", "200", "TRUE"):
             return {}
-        payload = data.get("payload") or {}
+        payload = data.get("payload") or data.get("data") or data or {}
         result: dict[str, dict] = {}
         if not isinstance(payload, dict):
             return result
@@ -359,12 +367,7 @@ def _gen_request_id() -> str:
 
 def _parse_ohlc_string(ohlc_val: Any) -> dict | None:
     """Groww returns ``ohlc`` as a string like
-    ``'{open: 149.50,high: 150.50,low: 148.50,close: 149.50}'``.
-
-    Parse it into ``{open, high, low, close}`` (floats). Handles:
-      - String form (the documented Groww quirk)
-      - Dict form (some endpoints / SDKs return a real dict)
-      - Garbage → None
+    ``'{open: 149.50,high: 150.50,low: 148.50,close: 149.50}'`` or dict.
     """
     if isinstance(ohlc_val, dict):
         return ohlc_val
@@ -378,8 +381,8 @@ def _parse_ohlc_string(ohlc_val: Any) -> dict | None:
         if ":" not in part:
             continue
         k, _, v = part.partition(":")
-        k = k.strip()
-        v = v.strip()
+        k = k.strip().strip("'\"")
+        v = v.strip().strip("'\"")
         try:
             result[k] = float(v)
         except (ValueError, TypeError):
@@ -397,9 +400,12 @@ def _normalize_quote_payload(payload: dict) -> dict | None:
         return None
 
     # last_price is the LTP — source of truth
-    ltp = payload.get("last_price")
-    if ltp is None:
-        ltp = payload.get("ltp")
+    ltp = (
+        payload.get("last_price")
+        or payload.get("ltp")
+        or payload.get("price")
+        or payload.get("close")
+    )
     if ltp is None:
         return None
     try:
@@ -410,11 +416,11 @@ def _normalize_quote_payload(payload: dict) -> dict | None:
         return None
 
     # OHLC: parse the string form, then layer in high_trade_range/low_trade_range
-    ohlc = _parse_ohlc_string(payload.get("ohlc"))
-    open_p = ohlc.get("open") if ohlc else None
-    high_p = ohlc.get("high") if ohlc else None
-    low_p = ohlc.get("low") if ohlc else None
-    prev_p = ohlc.get("close") if ohlc else None  # ohlc.close == previous close
+    ohlc = _parse_ohlc_string(payload.get("ohlc")) or {}
+    open_p = ohlc.get("open") or payload.get("open")
+    high_p = ohlc.get("high") or payload.get("high")
+    low_p = ohlc.get("low") or payload.get("low")
+    prev_p = ohlc.get("close") or payload.get("previous_close") or payload.get("prev_close")
 
     htr = payload.get("high_trade_range")
     ltr = payload.get("low_trade_range")
@@ -429,13 +435,13 @@ def _normalize_quote_payload(payload: dict) -> dict | None:
         except (ValueError, TypeError):
             pass
 
-    vol = payload.get("volume")
+    vol = payload.get("volume") or payload.get("vol")
     try:
         vol = int(vol) if vol is not None else 0
     except (ValueError, TypeError):
         vol = 0
 
-    oi_val = payload.get("open_interest")
+    oi_val = payload.get("open_interest") or payload.get("oi")
     try:
         oi = int(oi_val) if oi_val is not None else None
     except (ValueError, TypeError):
@@ -443,9 +449,9 @@ def _normalize_quote_payload(payload: dict) -> dict | None:
 
     return {
         "ltp": ltp_f,
-        "open": float(open_p) if open_p is not None else None,
-        "high": float(high_p) if high_p is not None else None,
-        "low": float(low_p) if low_p is not None else None,
+        "open": float(open_p) if open_p is not None else ltp_f,
+        "high": float(high_p) if high_p is not None else ltp_f,
+        "low": float(low_p) if low_p is not None else ltp_f,
         "prev": float(prev_p) if prev_p is not None else None,
         "volume": vol,
         "oi": oi,

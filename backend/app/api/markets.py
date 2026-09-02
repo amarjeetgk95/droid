@@ -12,7 +12,13 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/markets", tags=["markets"])
 
 
-def _make_meta(provider: str = "fyers", status: DataStatus = DataStatus.OFFLINE) -> ApiMeta:
+def _make_meta(provider: str | None = None, status: DataStatus = DataStatus.LIVE) -> ApiMeta:
+    if provider is None:
+        from app.providers.registry import get_provider
+        try:
+            provider = get_provider().provider_name
+        except Exception:
+            provider = "market_data"
     return ApiMeta(
         provider=provider,
         timestamp=datetime.now(timezone.utc),
@@ -26,10 +32,12 @@ async def get_all_quotes():
     service = MarketService()
     try:
         quotes = await service.get_quotes()
+        active_p = service._provider.provider_name
+        active_status = quotes[0].status if quotes else DataStatus.OFFLINE
         return {
             "data": [q.model_dump() for q in quotes],
             "error": None,
-            "meta": _make_meta().model_dump(),
+            "meta": _make_meta(provider=active_p, status=active_status).model_dump(),
         }
     except Exception as e:
         logger.error("get_quotes_failed", error=str(e))
@@ -63,10 +71,11 @@ async def get_candles(
     service = MarketService()
     try:
         candles = await service.get_candles(symbol, timeframe)
+        active_p = service._provider.provider_name
         return {
             "data": [c.model_dump() for c in candles],
             "error": None,
-            "meta": _make_meta().model_dump(),
+            "meta": _make_meta(provider=active_p, status=DataStatus.LIVE if candles else DataStatus.OFFLINE).model_dump(),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -83,7 +92,7 @@ async def get_market_status():
     return {
         "data": status.model_dump(),
         "error": None,
-        "meta": _make_meta().model_dump(),
+        "meta": _make_meta(provider=status.provider, status=status.data_status).model_dump(),
     }
 
 
@@ -95,7 +104,7 @@ async def get_market_breadth():
     return {
         "data": breadth.model_dump(),
         "error": None,
-        "meta": _make_meta().model_dump(),
+        "meta": _make_meta(provider=service._provider.provider_name, status=breadth.status).model_dump(),
     }
 
 
@@ -104,8 +113,10 @@ async def get_index_cards():
     """Get dashboard index cards."""
     service = MarketService()
     cards = await service.get_index_cards()
+    active_p = service._provider.provider_name
+    active_status = cards[0].status if cards else DataStatus.OFFLINE
     return {
         "data": [c.model_dump() for c in cards],
         "error": None,
-        "meta": _make_meta().model_dump(),
+        "meta": _make_meta(provider=active_p, status=active_status).model_dump(),
     }

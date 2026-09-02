@@ -104,9 +104,9 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
       return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'groww') {
-      const hasCreds = Boolean(settings.groww.apiKey && settings.groww.apiSecret);
-      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live', tone: 'emerald' as const, hasCreds };
-      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate') : 'Enter API Key + API Secret', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
+      const hasCreds = Boolean((settings.groww.apiKey && settings.groww.apiSecret) || settings.groww.accessToken);
+      if (tokenConnected) return { connected: true, label: 'CONNECTED', sub: 'WebSocket • Live Feed', tone: 'emerald' as const, hasCreds };
+      return { connected: false, label: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'AUTH EXPIRED' : 'CREDENTIALS SAVED — AUTH REQUIRED') : 'NOT CONFIGURED', sub: hasCreds ? (tokenStatus?.last_error || 'Click Force Refresh to authenticate with Groww') : 'Enter API Key + Secret or Access Token', tone: hasCreds ? (tokenStatus?.state === 'AUTH_EXPIRED' ? 'red' as const : 'amber' as const) : 'red' as const, hasCreds };
     }
     if (p === 'kotak_neo') {
       const hasCreds = Boolean(settings.kotakNeo.apiKey && settings.kotakNeo.apiSecret && settings.kotakNeo.mpin);
@@ -488,7 +488,11 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
           <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 flex items-start gap-2">
             <Info className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
-              <strong>Authentication:</strong> Groww uses API Key + API Secret pairs. Generate these from the Groww Trade API dashboard. The backend will exchange them for a short-lived access token on Force Refresh.
+              <strong>Authentication:</strong> You can connect Groww in two ways:
+              <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                <li><strong>API Key + API Secret:</strong> Backend automatically computes SHA256 checksum and fetches access token on Force Refresh.</li>
+                <li><strong>Direct Access Token:</strong> Paste a pre-generated daily access token directly below.</li>
+              </ul>
             </div>
           </div>
 
@@ -519,6 +523,20 @@ export function BrokerConnectionTab({ settings, onChange, errors = [] }: Props) 
                 </button>
               </div>
               {getError('groww.apiSecret') && <p className="text-[10px] text-destructive mt-1">{getError('groww.apiSecret')}</p>}
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="text-xs font-semibold text-foreground block mb-1">Groww Access Token (Optional / Direct Token)</label>
+              <input
+                type="text"
+                placeholder="Paste pre-generated JWT / Access Token (optional if API Key + Secret provided)"
+                value={settings.groww.accessToken || ''}
+                onChange={(e) => onChange({ groww: { ...settings.groww, accessToken: e.target.value } })}
+                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono"
+              />
+              <span className="text-[11px] text-muted-foreground mt-1 block">
+                If you generated an Access Token on Groww Developer Console, paste it here for instant live access.
+              </span>
             </div>
           </div>
         </div>
