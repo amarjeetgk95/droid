@@ -574,42 +574,50 @@ async def get_full_mi(instrument_id: str):
         except Exception:
             spot = None
 
-    # Fallback demo price when no live tick (still show workspace) — for BTC try LIVE Binance first
+    # Live fetch — no synthetic demo. Try MarketService live quote, then Binance for BTC.
     used_synthetic = False
     is_synthetic_fallback = False
     if spot is None:
-        if iid == "BTCUSD":
+        try:
+            from app.services.market_service import MarketService
+            from app.models.market import DataStatus
+            svc = MarketService()
+            q = await svc.get_quote(iid)
+            if q and getattr(q, 'ltp', None) is not None and getattr(q, 'status', None) != DataStatus.OFFLINE and getattr(q, 'provider', '') != 'fallback':
+                spot = D(str(q.ltp))
+                try:
+                    last_update_ms = int(q.timestamp.timestamp() * 1000) if getattr(q, 'timestamp', None) else now_ms
+                except Exception:
+                    pass
+            elif iid == "BTCUSD":
+                # Secondary: Binance ticker for crypto
+                try:
+                    from app.services.binance_service import binance_service
+                    ticker = await binance_service.get_ticker("BTCUSDT")
+                    if ticker and getattr(ticker, 'price', None) and ticker.price > 0 and getattr(getattr(ticker, 'status', None), 'value', '') == "LIVE":
+                        spot = D(str(ticker.price))
+                        try:
+                            last_update_ms = int(ticker.last_updated.timestamp() * 1000) if getattr(ticker, 'last_updated', None) else now_ms
+                        except Exception:
+                            pass
+                        try:
+                            from app.institutional.events import InstrumentEvent
+                            synth = InstrumentEvent.create(instrument_id=iid, asset_class="CRYPTO", symbol="BTCUSDT", price=spot, exchange_timestamp_utc=last_update_ms, canonical_timestamp_utc=last_update_ms, is_synthetic=False)
+                            synchronized_buffer.push(synth)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception as e:
             try:
-                from app.services.binance_service import binance_service
-                ticker = await binance_service.get_ticker("BTCUSDT")
-                if ticker and ticker.status.value == "LIVE" and ticker.price and ticker.price > 0:
-                    spot = D(str(ticker.price))
-                    last_update_ms = int(ticker.last_updated.timestamp() * 1000) if ticker.last_updated else now_ms
-                    try:
-                        from app.institutional.events import InstrumentEvent
-                        synth = InstrumentEvent.create(
-                            instrument_id=iid, asset_class="CRYPTO",
-                            symbol="BTCUSDT", price=spot,
-                            exchange_timestamp_utc=last_update_ms,
-                            canonical_timestamp_utc=last_update_ms,
-                            is_synthetic=False,
-                        )
-                        synchronized_buffer.push(synth)
-                    except Exception:
-                        pass
-                else:
-                    spot = D("63450.00")
-                    used_synthetic = True
-                    is_synthetic_fallback = True
+                import structlog as _sl
+                _sl.get_logger().warning("mi_live_fetch_failed", instrument=iid, error=str(e)[:150])
             except Exception:
-                spot = D("63450.00")
-                used_synthetic = True
-                is_synthetic_fallback = True
-        else:
-            default_map = {"NIFTY": D("24560.00"), "BANKNIFTY": D("51800.00"), "SENSEX": D("80500.00")}
-            spot = default_map.get(iid, D("24500.00"))
-            used_synthetic = True
-            is_synthetic_fallback = True
+                pass
+        if spot is None:
+            # No live data available — keep None, frontend will show STALE/— (no legacy 24560 demo)
+            used_synthetic = False
+            is_synthetic_fallback = False
 
     clock = get_session_clock(iid)
     clk_info = clock.session_info(now_ms) if hasattr(clock, "session_info") else {}
@@ -620,8 +628,24 @@ async def get_full_mi(instrument_id: str):
     sig = breakout_engine.evaluate(ctx)
 
     atr = D("50") if prof.asset_class != "CRYPTO" else D("600")
-    short_out = short_horizon_strategy.evaluate(ctx, current_price=spot, atr=atr)
-    cont_out = continuation_strategy.evaluate(ctx, current_price=spot, atr=atr)
+    # Short/continuation require live price — if no live, return WATCH (no synthetic)
+    if spot is not None:
+        try:
+            short_out = short_horizon_strategy.evaluate(ctx, current_price=spot, atr=atr)
+            cont_out = continuation_strategy.evaluate(ctx, current_price=spot, atr=atr)
+        except Exception as _e:
+            # Fallback to WATCH on evaluation error (e.g. no price)
+            class _WatchFallback:
+                def to_dict(self_inner):
+                    return {"status": "WATCH", "reason": f"no live price: {_e}", "confidence": 0, "direction": "NEUTRAL", "horizon_minutes": 10, "entry_zone": [], "stop_loss": "0", "target_zone": [], "false_breakout_risk": 0, "max_holding_minutes": 120, "invalidation": "—"}
+            short_out = _WatchFallback()
+            cont_out = _WatchFallback()
+    else:
+        class _NoLiveFallback:
+            def to_dict(self_inner):
+                return {"status": "WATCH", "reason": "no live price — feed disconnected", "confidence": 0, "direction": "NEUTRAL", "horizon_minutes": 10, "entry_zone": [], "stop_loss": "0", "target_zone": [], "false_breakout_risk": 0, "max_holding_minutes": 120, "invalidation": "—"}
+        short_out = _NoLiveFallback()
+        cont_out = _NoLiveFallback()
 
     def cap_dict(c: Any):
         if not c:
@@ -658,12 +682,12 @@ async def get_full_mi(instrument_id: str):
             "is_synchronized": True,
         },
         "feed_health": {
-            "health": getattr(feed_snap, "health", "HEALTHY"),
+            "health": getattr(feed_snap, "health", "HEALTHY") if spot is not None else "STALE",
             "error_count_last_min": 0,
             "consecutive_timeouts": 0,
             "circuit_state": "TRIPPED" if getattr(feed_snap, "suppress_candidates", False) else "CLOSED",
-            "staleness_ms": now_ms - last_update_ms,
-            "is_stale": (now_ms - last_update_ms) > 5000,
+            "staleness_ms": now_ms - last_update_ms if spot is not None else 999999,
+            "is_stale": True if spot is None else (now_ms - last_update_ms) > 5000,
             "used_synthetic_fallback": used_synthetic,
             "is_synthetic_fallback": is_synthetic_fallback,
         },
