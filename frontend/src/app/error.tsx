@@ -8,7 +8,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
   }, [error]);
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body className="flex items-center justify-center h-screen bg-background text-foreground">
         <div className="text-center p-8 max-w-md">
           <h2 className="text-2xl font-bold mb-4 text-destructive">Application Error</h2>

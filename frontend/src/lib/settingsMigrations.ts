@@ -152,11 +152,20 @@ export function migrateSchemaVersion(settings: AppSettings): AppSettings {
   return out;
 }
 
+function migrateThemeToLight(settings: AppSettings): AppSettings {
+  const t = (settings.preferences as unknown as { theme?: string })?.theme;
+  if (t !== 'light') {
+    return { ...settings, preferences: { ...settings.preferences, theme: 'light' as const } };
+  }
+  return settings;
+}
+
 export function applyAllMigrations(settings: AppSettings): AppSettings {
   let s = migrateLegacyDevConfig(settings);
   s = migrateMockProvider(s);
   s = migrateMockAI(s);
   s = migrateConnectionMode(s);
   s = migrateSchemaVersion(s);
+  s = migrateThemeToLight(s);
   return s;
 }

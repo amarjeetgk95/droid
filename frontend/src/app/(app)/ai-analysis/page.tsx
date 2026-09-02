@@ -3,35 +3,25 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { AIInsightResponse, AIHistoryItem } from '@/lib/types';
-import { AIBiasBanner } from '@/components/ai/AIBiasBanner';
-import { AIInsightSections } from '@/components/ai/AIInsightSections';
-import { AIRiskDisclaimer } from '@/components/ai/AIRiskDisclaimer';
+import { AIExecutiveHero } from '@/components/ai/AIExecutiveHero';
+import { AIQuantPillars } from '@/components/ai/AIQuantPillars';
+import { AITradePlaybook } from '@/components/ai/AITradePlaybook';
 import { AIOptionsArchitect } from '@/components/ai/AIOptionsArchitect';
 import { AITradeValidator } from '@/components/ai/AITradeValidator';
 import { OpenRouterModelSelector } from '@/components/settings/OpenRouterModelSelector';
 import { getStoredSettings } from '@/lib/settings';
 import {
-  History,
   Brain,
-  Clock,
-  TrendingUp,
-  AlertTriangle,
-  Activity,
+  RefreshCw,
+  History,
   Layers,
   ShieldCheck,
-  Bot,
-  FileText,
-  Send,
-  Square,
-  Sparkles,
   ChevronDown,
   ChevronUp,
-  Wrench,
-  RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
 
 export default function AIAnalysisPage() {
-  const [activeTab, setActiveTab] = useState<'dossier' | 'options' | 'validator' | 'copilot'>('dossier');
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
   const [selectedProvider, setSelectedProvider] = useState<string>('openrouter');
   const [selectedModel, setSelectedModel] = useState<string>('auto');
@@ -40,24 +30,14 @@ export default function AIAnalysisPage() {
   const [history, setHistory] = useState<AIHistoryItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [analysisMeta, setAnalysisMeta] = useState<{ model_used?: string; latency_ms?: number } | null>(null);
-  const [triggerMode, setTriggerMode] = useState<string>('manual');
-  const [autoInterval, setAutoInterval] = useState<number>(60);
 
-  // Copilot Console Tab State
-  const [copilotMessages, setCopilotMessages] = useState<any[]>([
-    {
-      role: 'assistant',
-      content: `Welcome to the DROID AI Interactive Console. I am calibrated for Indian F&O quantitative derivatives analysis for **${selectedSymbol}**. Ask any question or request a scenario audit.`,
-    },
-  ]);
-  const [copilotInput, setCopilotInput] = useState('');
-  const [copilotStreaming, setCopilotStreaming] = useState(false);
-  const [copilotStreamingReasoning, setCopilotStreamingReasoning] = useState('');
-  const [copilotStreamingContent, setCopilotStreamingContent] = useState('');
-  const [copilotActiveTool, setCopilotActiveTool] = useState<string | null>(null);
+  // Expandable Utility Tools
+  const [showOptionsArchitect, setShowOptionsArchitect] = useState<boolean>(false);
+  const [showTradeValidator, setShowTradeValidator] = useState<boolean>(false);
 
-  // hydrate from stored settings
+  const symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
+
+  // Hydrate settings
   useEffect(() => {
     try {
       const s = getStoredSettings();
@@ -118,118 +98,25 @@ export default function AIAnalysisPage() {
     }
   };
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchAnalysis = async () => {
-      try {
-        const payload = buildUnifiedPayload(selectedSymbol, selectedProvider);
-        const res: any = await api.generateAIAnalysisWithModel(payload as any);
-        const histRes = await api.getAIHistory(selectedSymbol);
-        if (isMounted) {
-          setInsight(res.data);
-          setAnalysisMeta({ model_used: res.model_used, latency_ms: res.latency_ms });
-          setHistory(histRes.data);
-          setError(null);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to generate AI analysis');
-        }
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchAnalysis();
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedSymbol, selectedProvider]);
-
-  const handleGenerate = () => {
+  const fetchAnalysis = async () => {
     setLoading(true);
     setError(null);
-    const doGenerate = async () => {
-      try {
-        const payload = buildUnifiedPayload(selectedSymbol, selectedProvider);
-        const res: any = await api.generateAIAnalysisWithModel(payload as any);
-        setInsight(res.data);
-        setAnalysisMeta({ model_used: res.model_used, latency_ms: res.latency_ms });
-        setError(null);
-        const h = await api.getAIHistory(selectedSymbol);
-        setHistory(h.data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to generate AI analysis');
-      } finally {
-        setLoading(false);
-      }
-    };
-    doGenerate();
+    try {
+      const payload = buildUnifiedPayload(selectedSymbol, selectedProvider);
+      const res: any = await api.generateAIAnalysisWithModel(payload as any);
+      setInsight(res.data);
+      const histRes = await api.getAIHistory(selectedSymbol);
+      setHistory(histRes.data);
+    } catch (err: any) {
+      setError(err instanceof Error ? err.message : 'Failed to generate market intelligence');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSendCopilot = async (overrideText?: string) => {
-    const text = (overrideText || copilotInput).trim();
-    if (!text || copilotStreaming) return;
-
-    const userMsg = { role: 'user', content: text };
-    const newMessages = [...copilotMessages, userMsg];
-    setCopilotMessages(newMessages);
-    setCopilotInput('');
-    setCopilotStreaming(true);
-    setCopilotStreamingContent('');
-    setCopilotStreamingReasoning('');
-    setCopilotActiveTool(null);
-
-    const settings = getStoredSettings();
-    let currentReasoning = '';
-    let currentContent = '';
-
-    await api.streamAIChat(
-      {
-        messages: newMessages,
-        symbol: selectedSymbol,
-        provider: selectedProvider,
-        model: selectedModel,
-        context_page: 'AI Workspace Console',
-        enable_tools: true,
-        openrouter_api_key: settings.ai.openRouterApiKey || undefined,
-        gemini_api_key: settings.ai.geminiApiKey || undefined,
-      },
-      (chunk) => {
-        if (chunk.type === 'reasoning' && chunk.reasoning_delta) {
-          currentReasoning += chunk.reasoning_delta;
-          setCopilotStreamingReasoning(currentReasoning);
-        } else if (chunk.type === 'content' && chunk.delta) {
-          currentContent += chunk.delta;
-          setCopilotStreamingContent(currentContent);
-        } else if (chunk.type === 'tool_call' && chunk.tool_call) {
-          setCopilotActiveTool(chunk.tool_call.function?.name || 'quant_engine');
-        } else if (chunk.type === 'tool_result') {
-          setCopilotActiveTool(null);
-        }
-      },
-      (err) => {
-        setCopilotStreaming(false);
-        setCopilotMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: currentContent ? `${currentContent}\n\n⚠️ *${err}*` : `⚠️ **Error:** ${err}` },
-        ]);
-        setCopilotStreamingContent('');
-        setCopilotStreamingReasoning('');
-      },
-      () => {
-        setCopilotStreaming(false);
-        if (currentContent || currentReasoning) {
-          setCopilotMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: currentContent || 'Completed.', reasoning_content: currentReasoning || null },
-          ]);
-        }
-        setCopilotStreamingContent('');
-        setCopilotStreamingReasoning('');
-      }
-    );
-  };
+  useEffect(() => {
+    fetchAnalysis();
+  }, [selectedSymbol, selectedProvider]);
 
   const handleModelChange = (modelId: string) => {
     setSelectedModel(modelId);
@@ -244,313 +131,191 @@ export default function AIAnalysisPage() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Top Workspace Tab Navigation */}
-      <div className="flex items-center justify-between border-b border-border pb-2 overflow-x-auto no-scrollbar">
+    <div className="space-y-5 max-w-7xl mx-auto pb-8">
+      {/* Top Header Bar */}
+      <div className="bg-card border border-border rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-4">
+        {/* Symbol Selector Chips */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab('dossier')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'dossier'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary/60 text-muted-foreground hover:text-foreground hover:bg-secondary'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Market Intelligence Dossier
-          </button>
-
-          <button
-            onClick={() => setActiveTab('options')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'options'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary/60 text-muted-foreground hover:text-foreground hover:bg-secondary'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Options Strategy Architect
-          </button>
-
-          <button
-            onClick={() => setActiveTab('validator')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'validator'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary/60 text-muted-foreground hover:text-foreground hover:bg-secondary'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            Trade Thesis Auditor
-          </button>
-
-          <button
-            onClick={() => setActiveTab('copilot')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'copilot'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary/60 text-muted-foreground hover:text-foreground hover:bg-secondary'
-            }`}
-          >
-            <Bot className="w-4 h-4" />
-            Interactive Copilot Console
-          </button>
+          {symbols.map((sym) => (
+            <button
+              key={sym}
+              onClick={() => setSelectedSymbol(sym)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                selectedSymbol === sym
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'bg-secondary/70 hover:bg-secondary text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {sym}
+            </button>
+          ))}
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground">Active Ticker:</span>
+        {/* Engine Selector & Refresh Action */}
+        <div className="flex items-center gap-3">
           <select
-            value={selectedSymbol}
-            onChange={(e) => setSelectedSymbol(e.target.value)}
-            className="bg-secondary/80 border border-border rounded-lg px-2.5 py-1.5 font-bold font-mono text-xs cursor-pointer focus:outline-hidden"
-          >
-            <option value="NIFTY">NIFTY 50</option>
-            <option value="BANKNIFTY">BANK NIFTY</option>
-            <option value="FINNIFTY">FIN NIFTY</option>
-            <option value="MIDCPNIFTY">MIDCAP NIFTY</option>
-            <option value="SENSEX">SENSEX</option>
-          </select>
-        </div>
-      </div>
-
-      {/* TAB 1: Market Intelligence Dossier */}
-      {activeTab === 'dossier' && (
-        <div className="space-y-4">
-          <AIBiasBanner
-            insight={insight}
-            selectedSymbol={selectedSymbol}
-            onSelectSymbol={(sym) => setSelectedSymbol(sym)}
-            selectedProvider={selectedProvider}
-            onSelectProvider={(prov) => {
-              setSelectedProvider(prov);
+            value={selectedProvider}
+            onChange={(e) => {
+              setSelectedProvider(e.target.value);
               try {
                 const s = getStoredSettings();
-                s.ai.provider = prov as any;
+                s.ai.provider = e.target.value as any;
                 localStorage.setItem('droid_app_settings_v1', JSON.stringify(s));
               } catch {}
             }}
-            onGenerate={handleGenerate}
-            loading={loading}
-          />
+            className="bg-secondary/80 text-xs px-3 py-2 rounded-xl border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
+          >
+            <option value="openrouter">OpenRouter — DeepSeek / Llama</option>
+            <option value="gemini">Google Gemini 2.0 Flash</option>
+            <option value="openai">OpenAI GPT-4o</option>
+            <option value="ollama">Local Ollama</option>
+            <option value="mock_ai">DROID Quant Engine (Offline)</option>
+          </select>
 
-          {selectedProvider === 'openrouter' && (
-            <div className="space-y-3">
-              <OpenRouterModelSelector
-                settings={{
-                  ...getStoredSettings().ai,
-                  openRouterSelectedModel: selectedModel,
-                  openRouterAllowPaid: allowPaid,
-                  openRouterFreeOnly: !allowPaid,
-                } as any}
-                onChange={(upd: any) => {
-                  if (upd.openRouterSelectedModel !== undefined) handleModelChange(upd.openRouterSelectedModel);
-                  if (upd.openRouterModel !== undefined) handleModelChange(upd.openRouterModel);
-                  if (upd.openRouterAllowPaid !== undefined) setAllowPaid(upd.openRouterAllowPaid);
-                  if (upd.openRouterFreeOnly !== undefined) setAllowPaid(!upd.openRouterFreeOnly);
-                }}
-              />
-            </div>
-          )}
+          <button
+            onClick={fetchAnalysis}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh Analysis</span>
+          </button>
+        </div>
+      </div>
 
-          {error ? (
-            <div className="p-6 text-center bg-card border border-destructive/20 rounded-xl text-destructive space-y-2">
-              <p className="font-semibold text-sm">Error generating market intelligence</p>
-              <p className="text-xs mt-1 opacity-80">{error}</p>
-            </div>
-          ) : loading && !insight ? (
-            <div className="bg-card border border-border rounded-xl p-12 text-center text-muted-foreground animate-pulse space-y-2">
-              <Brain className="w-8 h-8 text-primary mx-auto animate-bounce" />
-              <p className="font-semibold text-sm">Synthesizing quantitative derivatives dossier...</p>
-              <p className="text-xs text-muted-foreground">
-                Analyzing PCR, Max Pain, Futures Basis, Buildup, S/R Pivots, and India VIX.
-              </p>
-            </div>
-          ) : insight ? (
-            <div className="space-y-4">
-              <div className="bg-card border border-primary/20 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-primary" />
-                    Probabilistic Outlook
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">Not Guaranteed</span>
-                  </h3>
-                  <span className="text-[11px] font-mono text-muted-foreground">
-                    {new Date(insight.timestamp).toLocaleTimeString()} • {insight.provider_used}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                  <div className="bg-secondary/30 p-2.5 rounded-lg border">
-                    <div className="text-muted-foreground text-[11px]">Current Direction</div>
-                    <div className="font-bold text-sm">{insight.market_bias}</div>
+      {/* Model Selector (When OpenRouter is active) */}
+      {selectedProvider === 'openrouter' && (
+        <OpenRouterModelSelector
+          settings={{
+            ...getStoredSettings().ai,
+            openRouterSelectedModel: selectedModel,
+            openRouterAllowPaid: allowPaid,
+            openRouterFreeOnly: !allowPaid,
+          } as any}
+          onChange={(upd: any) => {
+            if (upd.openRouterSelectedModel !== undefined) handleModelChange(upd.openRouterSelectedModel);
+            if (upd.openRouterModel !== undefined) handleModelChange(upd.openRouterModel);
+            if (upd.openRouterAllowPaid !== undefined) setAllowPaid(upd.openRouterAllowPaid);
+            if (upd.openRouterFreeOnly !== undefined) setAllowPaid(!upd.openRouterFreeOnly);
+          }}
+        />
+      )}
+
+      {/* Error state */}
+      {error ? (
+        <div className="p-6 text-center bg-card border border-destructive/20 rounded-2xl text-destructive space-y-2 shadow-xs">
+          <p className="font-semibold text-sm">Failed to generate market intelligence</p>
+          <p className="text-xs opacity-80">{error}</p>
+        </div>
+      ) : loading && !insight ? (
+        <div className="bg-card border border-border rounded-2xl p-14 text-center text-muted-foreground animate-pulse space-y-3">
+          <Brain className="w-10 h-10 text-primary mx-auto animate-bounce" />
+          <p className="font-bold text-sm text-foreground">Synthesizing quantitative market dossier...</p>
+          <p className="text-xs text-muted-foreground">
+            Evaluating {selectedSymbol} price action, option open interest walls, and institutional flow.
+          </p>
+        </div>
+      ) : insight ? (
+        <div className="space-y-5 animate-in fade-in duration-300">
+          {/* 1. Executive Market Bias & Conviction Hero */}
+          <AIExecutiveHero insight={insight} symbol={selectedSymbol} />
+
+          {/* 2. Three At-A-Glance Quantitative Decision Pillars */}
+          <AIQuantPillars insight={insight} />
+
+          {/* 3. Actionable Trade Setup & Playbook */}
+          <AITradePlaybook insight={insight} />
+
+          {/* 4. Specialized Utility Tools (Collapsible for zero clutter) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            {/* Options Strategy Structurer Card */}
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
+                    <Layers className="w-4 h-4" />
                   </div>
-                  <div className="bg-secondary/30 p-2.5 rounded-lg border">
-                    <div className="text-muted-foreground text-[11px]">Confidence</div>
-                    <div className="font-bold text-sm">{insight.confidence}%</div>
-                  </div>
-                  <div className="bg-secondary/30 p-2.5 rounded-lg border">
-                    <div className="text-muted-foreground text-[11px]">Risk</div>
-                    <div className="font-medium text-xs line-clamp-2">{insight.risk_management_notes?.slice(0, 80) || 'MEDIUM'}</div>
-                  </div>
-                  <div className="bg-secondary/30 p-2.5 rounded-lg border">
-                    <div className="text-muted-foreground text-[11px]">Model</div>
-                    <div className="font-mono text-xs truncate">{analysisMeta?.model_used || insight.provider_used}</div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-2 border-t border-border/50">
                   <div>
-                    <div className="font-semibold text-foreground">Key Reasons</div>
-                    <div className="text-muted-foreground line-clamp-3">{insight.executive_summary?.slice(0, 240)}</div>
-                  </div>
-                  <div>
-                    <div className="font-semibold text-foreground">Support / Resistance</div>
-                    <div className="text-muted-foreground line-clamp-3">{insight.regime_and_levels?.slice(0, 200) || '—'}</div>
-                  </div>
-                  <div>
-                    <div className="font-semibold text-foreground">Warnings</div>
-                    <div className="text-muted-foreground line-clamp-3">{insight.risk_management_notes?.slice(0, 200) || '—'}</div>
+                    <h3 className="text-xs font-bold text-foreground">Options Strategy Architect</h3>
+                    <p className="text-[11px] text-muted-foreground">Structure multi-leg defined-risk spreads</p>
                   </div>
                 </div>
+                <button
+                  onClick={() => setShowOptionsArchitect((prev) => !prev)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:bg-secondary/80 border border-border cursor-pointer transition-colors"
+                >
+                  {showOptionsArchitect ? 'Hide' : 'Open Tool'}
+                  {showOptionsArchitect ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
 
-              <AIInsightSections insight={insight} />
-              <AIRiskDisclaimer riskNotes={insight.risk_management_notes} disclaimer={insight.disclaimer} />
-
-              {history.length > 1 && (
-                <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
-                  <div className="flex items-center gap-2">
-                    <History className="w-4 h-4 text-primary" />
-                    <h3 className="font-bold text-xs text-foreground uppercase tracking-wider">
-                      Recent Intelligence Reports ({history.length})
-                    </h3>
-                  </div>
-                  <div className="space-y-2">
-                    {history.slice(1, 5).map((h) => (
-                      <div
-                        key={h.id}
-                        className="bg-secondary/30 p-2.5 rounded-lg border border-border flex items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="space-y-0.5">
-                          <span className="font-mono font-semibold text-muted-foreground text-[10px]">
-                            {new Date(h.timestamp).toLocaleTimeString('en-IN')}
-                          </span>
-                          <p className="text-foreground text-xs line-clamp-1">{h.executive_summary}</p>
-                        </div>
-                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded font-bold bg-secondary text-primary border border-border">
-                          {h.market_bias} ({h.confidence}%)
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+              {showOptionsArchitect && (
+                <div className="pt-2 border-t border-border/60">
+                  <AIOptionsArchitect selectedSymbol={selectedSymbol} />
                 </div>
               )}
             </div>
-          ) : null}
-        </div>
-      )}
 
-      {/* TAB 2: Options Strategy Architect */}
-      {activeTab === 'options' && (
-        <AIOptionsArchitect selectedSymbol={selectedSymbol} />
-      )}
-
-      {/* TAB 3: Trade Setup Auditor */}
-      {activeTab === 'validator' && (
-        <AITradeValidator selectedSymbol={selectedSymbol} />
-      )}
-
-      {/* TAB 4: Interactive Copilot Console */}
-      {activeTab === 'copilot' && (
-        <div className="bg-card border border-border rounded-xl shadow-xs flex flex-col h-[700px] overflow-hidden">
-          <div className="p-4 border-b border-border bg-secondary/30 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Bot className="w-5 h-5 text-primary" />
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Interactive Copilot Console</h3>
-                <p className="text-[11px] text-muted-foreground">Direct quantitative reasoning loop with live tool execution</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setCopilotMessages([{ role: 'assistant', content: `Chat reset for ${selectedSymbol}.` }])}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-xs font-semibold rounded-lg hover:bg-secondary/80 border border-border cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Console
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-            {copilotMessages.map((m, idx) => (
-              <div key={idx} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 space-y-2 ${
-                    m.role === 'user'
-                      ? 'bg-primary text-primary-foreground font-medium rounded-br-xs'
-                      : 'bg-secondary/40 border border-border text-foreground rounded-bl-xs'
-                  }`}
-                >
-                  {m.reasoning_content && (
-                    <div className="p-2 bg-secondary/60 rounded border border-border font-mono text-[10.5px] text-muted-foreground whitespace-pre-wrap">
-                      <div className="font-bold text-primary mb-1 flex items-center gap-1">
-                        <Brain className="w-3.5 h-3.5" /> Reasoning Chain
-                      </div>
-                      {m.reasoning_content}
-                    </div>
-                  )}
-                  <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
-                </div>
-              </div>
-            ))}
-
-            {copilotStreaming && (
-              <div className="flex gap-3 justify-start">
-                <div className="max-w-[80%] rounded-2xl px-4 py-3 space-y-2 bg-secondary/40 border border-primary/30 text-foreground rounded-bl-xs">
-                  {copilotActiveTool && (
-                    <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 text-amber-600 text-[11px] font-mono animate-pulse">
-                      <Wrench className="w-3.5 h-3.5 animate-spin" /> Calling: {copilotActiveTool}...
-                    </div>
-                  )}
-                  {copilotStreamingReasoning && (
-                    <div className="p-2 bg-secondary/60 rounded border border-border font-mono text-[10.5px] text-muted-foreground whitespace-pre-wrap">
-                      <div className="font-bold text-primary mb-1 flex items-center gap-1">
-                        <Brain className="w-3.5 h-3.5 animate-bounce" /> Reasoning...
-                      </div>
-                      {copilotStreamingReasoning}
-                    </div>
-                  )}
-                  <div className="whitespace-pre-wrap leading-relaxed">
-                    {copilotStreamingContent}
-                    <span className="inline-block w-2 h-3.5 ml-1 bg-primary animate-pulse" />
+            {/* Trade Thesis Auditor Card */}
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-500">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-foreground">Trade Thesis Auditor</h3>
+                    <p className="text-[11px] text-muted-foreground">Pre-flight risk score & trap detection</p>
                   </div>
                 </div>
+                <button
+                  onClick={() => setShowTradeValidator((prev) => !prev)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-secondary text-xs font-semibold text-foreground hover:bg-secondary/80 border border-border cursor-pointer transition-colors"
+                >
+                  {showTradeValidator ? 'Hide' : 'Open Tool'}
+                  {showTradeValidator ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
-            )}
-          </div>
 
-          <div className="p-3 border-t border-border bg-card">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={copilotInput}
-                onChange={(e) => setCopilotInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSendCopilot();
-                }}
-                placeholder={`Query ${selectedSymbol} derivatives, Greeks, or scenarios...`}
-                className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary"
-                disabled={copilotStreaming}
-              />
-              <button
-                onClick={() => handleSendCopilot()}
-                disabled={copilotStreaming || !copilotInput.trim()}
-                className="px-4 py-2.5 bg-primary text-primary-foreground font-semibold rounded-xl text-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-              >
-                <Send className="w-4 h-4" />
-                Send
-              </button>
+              {showTradeValidator && (
+                <div className="pt-2 border-t border-border/60">
+                  <AITradeValidator selectedSymbol={selectedSymbol} />
+                </div>
+              )}
             </div>
           </div>
+
+          {/* 5. Recent Intelligence Reports */}
+          {history.length > 1 && (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-3 shadow-xs">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-primary" />
+                <h3 className="font-bold text-xs text-foreground uppercase tracking-wider">
+                  Past Intelligence Snapshots ({history.length})
+                </h3>
+              </div>
+              <div className="space-y-2">
+                {history.slice(1, 4).map((h) => (
+                  <div
+                    key={h.id}
+                    className="bg-secondary/30 p-2.5 rounded-xl border border-border flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-0.5">
+                      <span className="font-mono font-semibold text-muted-foreground text-[10px]">
+                        {new Date(h.timestamp).toLocaleTimeString('en-IN')}
+                      </span>
+                      <p className="text-foreground text-xs line-clamp-1">{h.executive_summary}</p>
+                    </div>
+                    <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold bg-secondary text-primary border border-border">
+                      {h.market_bias} ({h.confidence}%)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -6,7 +6,6 @@ import { TopHeader } from '@/components/layout/TopHeader';
 import { MarketTicker } from '@/components/layout/MarketTicker';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { MarketDataProvider, useMarketDataContext } from '@/context/MarketDataContext';
-import { AICopilotDrawer } from '@/components/ai/AICopilotDrawer';
 
 const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
 
@@ -42,8 +41,6 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
           <main className="flex-1 overflow-auto p-4">
             {children}
           </main>
-          {/* Universal Global AI Copilot */}
-          <AICopilotDrawer currentSymbol="NIFTY" currentPageContext="Trading Terminal" />
         </div>
       </div>
   );

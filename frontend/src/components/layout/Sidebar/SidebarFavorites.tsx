@@ -112,7 +112,7 @@ export function SidebarFavorites({ collapsed, onNavigate }: SidebarFavoritesProp
               className={cn(
                 'group relative flex items-center justify-between gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all duration-150',
                 active
-                  ? 'bg-primary/10 text-primary ring-1 ring-primary/15 dark:bg-primary/15'
+                  ? 'bg-primary/10 text-primary ring-1 ring-primary/15'
                   : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
               )}
             >

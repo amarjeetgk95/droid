@@ -58,20 +58,20 @@ export function SignalCard({
   const borderClass = isExpired
     ? 'border-border bg-muted/30 opacity-60'
     : isConfirmed
-      ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 border-2'
+      ? 'border-emerald-500 bg-emerald-50 border-2'
       : isTriggered
-        ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/20 border-2'
+        ? 'border-amber-400 bg-amber-50 border-2'
         : isPossible
-          ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/10 border-2'
+          ? 'border-sky-500 bg-sky-50 border-2'
           : isNoSetup
             ? 'border-border bg-muted/30 opacity-75'
             : 'bg-card border-border';
 
   const directionColor =
     signal.direction === 'BULLISH' || signal.direction === 'LONG'
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : signal.direction === 'BEARISH' || signal.direction === 'SHORT'
-        ? 'text-red-600 dark:text-red-400'
+        ? 'text-red-600'
         : 'text-muted-foreground';
 
   const ttlRemaining = signal.expires_at_utc ? Math.max(0, signal.expires_at_utc - Date.now()) : null;
@@ -155,7 +155,7 @@ export function SignalCard({
       </div>
 
       {isConfirmed && !isExpired && (
-        <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+        <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-700">
           <Zap className="w-3 h-3" /> Executable — Telegram will be notified
         </div>
       )}

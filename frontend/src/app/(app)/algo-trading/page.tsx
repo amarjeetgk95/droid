@@ -204,7 +204,7 @@ function CapitalPanel({ refreshKey }: { refreshKey: number }) {
         <Card><CardContent className="pt-4"><div className="text-xs text-muted-foreground">Available</div><div className="text-lg font-bold text-emerald-600">₹{data.available}</div><div className="text-xs">{data.utilization_pct}% used</div></CardContent></Card>
       </div>
       {confirmNeeded && (
-        <div className="rounded border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+        <div className="rounded border border-amber-500 bg-amber-50 p-3 text-sm">
           <p className="font-semibold">Confirm Live Risk-Setting Change — §76</p>
           <p>Current Algo Limit: ₹{confirmNeeded.current} → New Algo Limit: ₹{confirmNeeded.new}. This increases capital available to live algorithmic trading.</p>
           <div className="mt-2 flex gap-2">

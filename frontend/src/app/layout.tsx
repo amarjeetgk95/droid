@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/auth/AuthProvider';
-import { ThemeSync } from '@/components/ThemeSync';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -26,21 +25,15 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: '#f8fafc',
-  colorScheme: 'light dark',
+  colorScheme: 'light',
   width: 'device-width',
   initialScale: 1,
 };
 
-const themeInit = `(function(){try{var v2=localStorage.getItem('droid_app_settings_v2');var v1=localStorage.getItem('droid_app_settings_v1');var t=null;if(v2){try{t=JSON.parse(v2).preferences.theme}catch{}}if(!t&&v1){try{t=JSON.parse(v1).preferences.theme}catch{}}var r=t==='dark'||t==='light'?t:(t==='system'||!t)&&(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(!r)r='light';document.documentElement.setAttribute('data-theme',r);document.documentElement.style.colorScheme=r;document.documentElement.classList.toggle('dark',r==='dark');}catch(e){}})();`;
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
-      </head>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <body className={`${inter.className} antialiased bg-background text-foreground`}>
-        <ThemeSync />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

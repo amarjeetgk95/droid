@@ -242,8 +242,8 @@ export default function MarketIntelligencePage() {
 
           {/* FE-degraded prominent banner (§25/§17) */}
           {isDegraded && (
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 rounded-lg p-4">
-              <p className="font-bold text-sm flex items-center gap-2 text-amber-800 dark:text-amber-300"><AlertTriangle className="w-4 h-4" /> ⚠ FEED DEGRADED</p>
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+              <p className="font-bold text-sm flex items-center gap-2 text-amber-800"><AlertTriangle className="w-4 h-4" /> ⚠ FEED DEGRADED</p>
               <p className="text-xs text-muted-foreground mt-1">Sequence integrity failure detected.</p>
               <ul className="text-xs mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1 list-disc pl-4">
                 <li>Breakout candidates: DISABLED</li>
@@ -277,7 +277,7 @@ export default function MarketIntelligencePage() {
               <div className="lg:col-span-4 bg-card border rounded-lg p-4 space-y-3">
                 <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Layers className="w-4 h-4" /> Market State</h3>
                 <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Regime</span><span className="font-bold text-emerald-600 dark:text-emerald-400">{data.market_state.regime || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Regime</span><span className="font-bold text-emerald-600">{data.market_state.regime || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Price Action</span><span className="font-mono text-xs">{data.market_state.price_action?.structure} / {data.market_state.price_action?.trend}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Momentum</span><span className="font-medium text-xs">{data.market_state.momentum || data.price_action.momentum || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Participation</span><span className="font-medium text-xs">{data.market_state.participation?.volume || '—'}</span></div>
@@ -333,7 +333,7 @@ export default function MarketIntelligencePage() {
           {(secondary === 'overview' || secondary === 'price-action') && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-card border rounded-lg p-4">
-                <h3 className="font-bold text-xs tracking-widest uppercase text-emerald-700 dark:text-emerald-400">Supporting Evidence</h3>
+                <h3 className="font-bold text-xs tracking-widest uppercase text-emerald-700">Supporting Evidence</h3>
                 <ul className="mt-2 space-y-1.5">
                   {(data.evidence.supporting.length ? data.evidence.supporting : [{ signal: 'No strong supporting evidence', detail: '' } as any]).map((e, idx) => (
                     <li key={idx} className="text-xs flex gap-2"><span className="text-emerald-500">✓</span><span><span className="font-medium">{e.signal}</span>{e.detail ? <span className="text-muted-foreground"> — {e.detail}</span> : null}</span></li>
@@ -342,7 +342,7 @@ export default function MarketIntelligencePage() {
                 {data.evidence.missing.length > 0 && <p className="text-[11px] text-muted-foreground mt-2">Missing: {data.evidence.missing.join(', ')}</p>}
               </div>
               <div className="bg-card border rounded-lg p-4">
-                <h3 className="font-bold text-xs tracking-widest uppercase text-amber-700 dark:text-amber-400">Conflicting Evidence</h3>
+                <h3 className="font-bold text-xs tracking-widest uppercase text-amber-700">Conflicting Evidence</h3>
                 <ul className="mt-2 space-y-1.5">
                   {(data.evidence.conflicting.length ? data.evidence.conflicting : [{ signal: 'No major conflicts', detail: '' } as any]).map((e, idx) => (
                     <li key={idx} className="text-xs flex gap-2"><span className="text-amber-500">!</span><span><span className="font-medium">{e.signal}</span>{e.detail ? <span className="text-muted-foreground"> — {e.detail}</span> : null}</span></li>
@@ -394,7 +394,7 @@ export default function MarketIntelligencePage() {
           {/* 10-Minute + Continuation (§11, §12) */}
           {(secondary === 'overview' || secondary === '10-min' || secondary === 'continuation') && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className={`border-2 rounded-lg p-4 ${data.short_horizon.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : data.short_horizon.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
+              <div className={`border-2 rounded-lg p-4 ${data.short_horizon.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : data.short_horizon.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
                 <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Zap className="w-4 h-4" /> 10-Minute Trade</h3>
                 <div className="mt-2 space-y-1 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Direction</span><span className="font-bold">{data.short_horizon.direction}</span></div>
@@ -407,7 +407,7 @@ export default function MarketIntelligencePage() {
                   {data.short_horizon.status === 'REJECTED' && <p className="text-xs text-muted-foreground mt-2">Not actionable — {data.short_horizon.reason}</p>}
                 </div>
               </div>
-              <div className={`border-2 rounded-lg p-4 ${data.continuation.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : data.continuation.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
+              <div className={`border-2 rounded-lg p-4 ${data.continuation.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : data.continuation.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
                 <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Clock className="w-4 h-4" /> Intraday Continuation</h3>
                 <div className="mt-2 space-y-1 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Direction</span><span className="font-bold">{data.continuation.direction}</span></div>
@@ -446,7 +446,7 @@ export default function MarketIntelligencePage() {
               </div>
               {/* Conflict state */}
               {data.breakout.confidence > 75 && data.ai.short_horizon.decision === 'REJECT' && (
-                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 rounded p-3">
+                <div className="bg-amber-50 border border-amber-300 rounded p-3">
                   <p className="text-xs font-bold flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> ⚠ SIGNAL CONFLICT</p>
                   <p className="text-xs mt-1">Quantitative: {data.breakout.direction} — {data.breakout.confidence} <span className="text-muted-foreground">vs</span> AI: REJECT</p>
                   <p className="text-xs font-bold">Final: NO TRADE</p>
@@ -465,7 +465,7 @@ export default function MarketIntelligencePage() {
 
           {/* Risk Status (§15) */}
           {(secondary === 'overview' || secondary === 'risk') && (
-            <div className={`border rounded-lg p-4 ${data.risk.portfolio === 'REJECTED' ? 'bg-red-50 dark:bg-red-950/20 border-red-300' : 'bg-card'}`}>
+            <div className={`border rounded-lg p-4 ${data.risk.portfolio === 'REJECTED' ? 'bg-red-50 border-red-300' : 'bg-card'}`}>
               <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Shield className="w-4 h-4" /> Risk Status</h3>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 text-xs">
                 <div className="border rounded p-2">Strategy <div className={`font-bold ${data.risk.strategy === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{data.risk.strategy}</div></div>
@@ -529,7 +529,7 @@ export default function MarketIntelligencePage() {
 
           {/* Data Health (§17) */}
           {(secondary === 'overview' || secondary === 'data-health') && (
-            <div className={`border rounded-lg p-4 ${isDegraded ? 'bg-red-50 dark:bg-red-950/20 border-red-300' : 'bg-card'}`}>
+            <div className={`border rounded-lg p-4 ${isDegraded ? 'bg-red-50 border-red-300' : 'bg-card'}`}>
               <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Database className="w-4 h-4" /> Data Health</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3 text-xs">
                 <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.feed === 'HEALTHY' ? 'bg-emerald-500' : 'bg-red-500'}`} /> Market Feed: {data.data_health.feed}</div>
@@ -540,7 +540,7 @@ export default function MarketIntelligencePage() {
                 <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.synchronization === 'VALID' || data.data_health.synchronization === 'UNKNOWN' ? 'bg-emerald-500' : 'bg-red-500'}`} /> Synchronization: {data.data_health.synchronization}</div>
               </div>
               {isDegraded && (
-                <div className="mt-3 p-3 bg-amber-100 dark:bg-amber-900/30 rounded text-xs">
+                <div className="mt-3 p-3 bg-amber-100 rounded text-xs">
                   <p className="font-bold">⚠ FEED DEGRADED</p>
                   <p>Breakout candidates: DISABLED • AI: DISABLED • Execution: DISABLED — Waiting for clean resynchronization.</p>
                 </div>
@@ -609,7 +609,7 @@ export default function MarketIntelligencePage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {breakoutSignals.filter(s => breakoutFilter === 'ALL' || s.instrument_id === breakoutFilter).map(sig => (
-                  <div key={sig.signal_id} className={`border-2 rounded-lg p-4 space-y-2 ${sig.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : sig.status === 'TRIGGERED' ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/20' : sig.status.includes('POSSIBLE') ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/10' : sig.status === 'NO_SETUP' ? 'border-border bg-muted/30 opacity-75' : 'bg-card border-border'}`}>
+                  <div key={sig.signal_id} className={`border-2 rounded-lg p-4 space-y-2 ${sig.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : sig.status === 'TRIGGERED' ? 'border-amber-400 bg-amber-50' : sig.status.includes('POSSIBLE') ? 'border-sky-500 bg-sky-50' : sig.status === 'NO_SETUP' ? 'border-border bg-muted/30 opacity-75' : 'bg-card border-border'}`}>
                     <div className="flex justify-between items-start">
                       <div><div className="font-bold text-sm">{sig.display_name} <span className="font-mono text-xs text-muted-foreground">{sig.instrument_id}</span></div><div className="text-xs font-mono">{sig.price_formatted ? `Price ${sig.price_formatted}` : ''} • Session {sig.session} • {sig.data_health}</div></div>
                       <Badge status={sig.status} />

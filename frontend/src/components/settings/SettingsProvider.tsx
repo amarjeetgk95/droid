@@ -268,27 +268,6 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     return () => { cancelled = true; };
   }, [onLoadFromBackend]);
 
-  // Sync theme from external toggle (TopHeader) — keep provider state in sync with localStorage
-  useEffect(() => {
-    const syncTheme = () => {
-      try {
-        const raw = localStorage.getItem('droid_app_settings_v2') || localStorage.getItem('droid_app_settings_v1');
-        if (!raw) return;
-        const p = JSON.parse(raw) as AppSettings;
-        const t = (p.preferences as unknown as { theme?: string })?.theme;
-        if (t && t !== settings.preferences.theme) {
-          dispatch({ type: 'PATCH', section: 'preferences', updates: { theme: t } as unknown as Record<string, unknown> });
-        }
-      } catch {}
-    };
-    window.addEventListener('droid-theme-changed', syncTheme as unknown as EventListener);
-    window.addEventListener('storage', syncTheme as unknown as EventListener);
-    return () => {
-      window.removeEventListener('droid-theme-changed', syncTheme as unknown as EventListener);
-      window.removeEventListener('storage', syncTheme as unknown as EventListener);
-    };
-  }, [settings.preferences.theme]);
-
   // Warn before leaving with unsaved changes
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
@@ -347,7 +326,6 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     setIsSaving(true);
     try {
       saveStoredSettings(current);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('droid-theme-changed'));
       if (onSaveToBackend) await onSaveToBackend(current);
       const snap = JSON.stringify(current);
       setSavedSnapshot(snap);
@@ -371,7 +349,6 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     setIsSavingSections(prev => ({ ...prev, [section]: true }));
     try {
       saveStoredSettings(current);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('droid-theme-changed'));
       if (onSaveToBackend) await onSaveToBackend(current);
       const snap = JSON.stringify(current);
       setSavedSnapshot(snap);

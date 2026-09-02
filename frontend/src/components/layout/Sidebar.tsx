@@ -110,7 +110,7 @@ const NavLink = memo(function NavLink({
         active
           ? collapsed
             ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30'
-            : 'bg-primary/10 text-primary font-semibold ring-1 ring-primary/15 dark:bg-primary/15'
+            : 'bg-primary/10 text-primary font-semibold ring-1 ring-primary/15'
           : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
       )}
     >

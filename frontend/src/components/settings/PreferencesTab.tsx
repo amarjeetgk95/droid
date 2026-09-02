@@ -96,15 +96,11 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
             <label className="font-semibold text-foreground block mb-1">
               Terminal Visual Theme
             </label>
-            <select
-              value={settings.theme}
-              onChange={(e) => onChange({ theme: e.target.value as any })}
-              className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden"
-            >
-              <option value="light">Daylight Light (Default)</option>
-              <option value="dark">Midnight Dark</option>
-              <option value="system">Follow Operating System</option>
-            </select>
+            <div className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              Daylight Light — clean, airy
+            </div>
+            <span className="text-[10px] text-muted-foreground mt-1 block">Light-only (dark removed)</span>
           </div>
 
           <div>

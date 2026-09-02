@@ -137,9 +137,9 @@ export const PaperTradingSettingsSchema = z.object({
   allowOvernightPositions: z.boolean(),
 });
 
-// --- Preferences Settings ---
+// --- Preferences Settings --- light only (dark removed)
 export const PreferencesSettingsSchema = z.object({
-  theme: z.enum(['dark', 'light', 'system']),
+  theme: z.enum(['light']).default('light'),
   numberFormat: z.enum(['INDIAN', 'INTERNATIONAL']),
   defaultIndexSymbol: z.string().trim().min(1).max(50),
 });

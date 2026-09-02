@@ -284,7 +284,7 @@ export function AITradeValidator({ selectedSymbol }: AITradeValidatorProps) {
 
           {/* Warning Traps */}
           {result.warning_traps.length > 0 && (
-            <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs flex items-start gap-2.5 text-rose-700 dark:text-rose-400">
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs flex items-start gap-2.5 text-rose-700">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
                 <span className="font-bold">Detected Warning Traps:</span>

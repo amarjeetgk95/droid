@@ -358,7 +358,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-foreground truncate">{m.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 rounded font-mono border border-emerald-500/20">FREE</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/15 text-emerald-700 rounded font-mono border border-emerald-500/20">FREE</span>
                           {m.recommended_for_trading && <span className="text-[10px]">⭐ Recommended</span>}
                           {m.category === 'Fast' && <span className="text-[10px]">⚡</span>}
                           {m.category === 'Reasoning' && <span className="text-[10px]">🧠</span>}

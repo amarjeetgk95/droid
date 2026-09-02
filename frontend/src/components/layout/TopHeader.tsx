@@ -6,8 +6,8 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink, Sun, Moon } from 'lucide-react';
-import { getStoredSettings, saveStoredSettings } from '@/lib/settings';
+import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink } from 'lucide-react';
+import { getStoredSettings } from '@/lib/settings';
 import { ClockDate } from './Clock';
 
 // Route label map for breadcrumb
@@ -141,51 +141,6 @@ export function TopHeader({
       setIsIndian(true);
     }
   }, [pathname]);
-
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  useEffect(() => {
-    const syncTheme = () => {
-      try {
-        const s = getStoredSettings();
-        const t = (s.preferences.theme as 'light' | 'dark' | 'system') || 'light';
-        const resolved = t === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
-        setTheme(resolved);
-      } catch { setTheme(document.documentElement.getAttribute('data-theme') as 'light' | 'dark' || 'light'); }
-    };
-    syncTheme();
-    window.addEventListener('storage', syncTheme);
-    window.addEventListener('droid-theme-changed', syncTheme as EventListener);
-    return () => { window.removeEventListener('storage', syncTheme); window.removeEventListener('droid-theme-changed', syncTheme as EventListener); };
-  }, [pathname]);
-
-  const toggleTheme = () => {
-    const next: 'light' | 'dark' = theme === 'dark' ? 'light' : 'dark';
-    try {
-      const rawV2 = localStorage.getItem('droid_app_settings_v2');
-      const rawV1 = localStorage.getItem('droid_app_settings_v1');
-      let parsed: Record<string, unknown> | null = null;
-      let key = 'droid_app_settings_v2';
-      if (rawV2) { parsed = JSON.parse(rawV2); }
-      else if (rawV1) { parsed = JSON.parse(rawV1); key = 'droid_app_settings_v1'; }
-      if (parsed && typeof parsed === 'object') {
-        const prefs = (parsed.preferences as Record<string, unknown>) || {};
-        prefs.theme = next;
-        parsed.preferences = prefs;
-        localStorage.setItem(key, JSON.stringify(parsed));
-        if (key === 'droid_app_settings_v2') localStorage.setItem('droid_app_settings_v1', JSON.stringify(parsed));
-        else localStorage.setItem('droid_app_settings_v2', JSON.stringify(parsed));
-      } else {
-        // no stored settings yet — create minimal
-        const minimal = { preferences: { theme: next, numberFormat: 'INDIAN', defaultIndexSymbol: 'NIFTY 50' } } as Record<string, unknown>;
-        localStorage.setItem('droid_app_settings_v2', JSON.stringify(minimal));
-      }
-    } catch {}
-    document.documentElement.setAttribute('data-theme', next);
-    document.documentElement.style.colorScheme = next;
-    document.documentElement.classList.toggle('dark', next === 'dark');
-    setTheme(next);
-    window.dispatchEvent(new CustomEvent('droid-theme-changed'));
-  };
 
   const breadcrumb = (ROUTE_LABELS[pathname] ?? pathname.replace('/', '').replace(/-/g, ' ')) || 'Dashboard';
   const sessionCfg = getSessionConfig(marketStatus?.session);
@@ -343,16 +298,6 @@ export function TopHeader({
           </button>
 
           <div className="hidden sm:block h-5 w-px bg-border mx-0.5" />
-
-          {/* Theme toggle */}
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
 
           {/* Telemetry */}
           <button

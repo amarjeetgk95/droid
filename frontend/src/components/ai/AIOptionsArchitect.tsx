@@ -188,11 +188,11 @@ export function AIOptionsArchitect({ selectedSymbol }: AIOptionsArchitectProps) 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div className="bg-secondary/40 p-3 rounded-lg border border-border">
               <div className="text-muted-foreground text-[11px]">Max Profit</div>
-              <div className="font-bold text-sm text-emerald-600 dark:text-emerald-400">{recommendation.max_profit_pts}</div>
+              <div className="font-bold text-sm text-emerald-600">{recommendation.max_profit_pts}</div>
             </div>
             <div className="bg-secondary/40 p-3 rounded-lg border border-border">
               <div className="text-muted-foreground text-[11px]">Max Loss</div>
-              <div className="font-bold text-sm text-rose-600 dark:text-rose-400">{recommendation.max_loss_pts}</div>
+              <div className="font-bold text-sm text-rose-600">{recommendation.max_loss_pts}</div>
             </div>
             <div className="bg-secondary/40 p-3 rounded-lg border border-border">
               <div className="text-muted-foreground text-[11px]">Net Premium Points</div>
@@ -291,7 +291,7 @@ export function AIOptionsArchitect({ selectedSymbol }: AIOptionsArchitectProps) 
 
           {/* Risk Management Banner */}
           {recommendation.risk_management && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs flex items-start gap-2.5 text-amber-700 dark:text-amber-400">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs flex items-start gap-2.5 text-amber-700">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
                 <span className="font-bold">Risk Management Directive:</span> {recommendation.risk_management}

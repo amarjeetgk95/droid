@@ -59,7 +59,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               </div>
               <button
                 onClick={() => dismiss(t.id)}
-                className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10"
+                className="p-0.5 rounded hover:bg-black/10"
                 aria-label="Dismiss notification"
               >
                 <X className="w-3.5 h-3.5" />

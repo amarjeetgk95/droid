@@ -115,7 +115,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
         <CardContent className="space-y-4">
           {/* Telegram link banner */}
           {isLinked === false && (
-            <div className="rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-xs flex items-start gap-2">
+            <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
               <div>
                 <p className="font-semibold">Telegram not linked</p>
@@ -124,7 +124,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
             </div>
           )}
           {isLinked === true && (
-            <div className="rounded border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 p-2 text-xs flex items-center gap-2">
+            <div className="rounded border border-emerald-300 bg-emerald-50 p-2 text-xs flex items-center gap-2">
               <Zap className="w-3 h-3 text-emerald-600" /> Telegram linked — notifications will be sent per your preferences (see Settings → Telegram).
             </div>
           )}
@@ -225,7 +225,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
           )}
 
           {result && (
-            <div className="rounded border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 p-3 space-y-2">
+            <div className="rounded border border-emerald-300 bg-emerald-50 p-3 space-y-2">
               <div className="text-sm font-semibold flex items-center gap-2">
                 ✅ Signal Generated <Badge variant="outline">{result.signal?.signal_id?.slice(0, 8)}…</Badge>{' '}
                 <Badge className="bg-emerald-600 text-white">{result.signal?.status}</Badge>
@@ -245,7 +245,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
                 </div>
               )}
               {result.telegram?.skipped_reason && (
-                <div className="text-xs text-amber-700 dark:text-amber-400">Telegram note: {result.telegram.skipped_reason}</div>
+                <div className="text-xs text-amber-700">Telegram note: {result.telegram.skipped_reason}</div>
               )}
               <p className="text-[11px] text-muted-foreground">
                 Check Settings → Telegram → Audit for delivery status (SENT / FAILED / SKIPPED / DEDUPED). Re-generating same signal within 60s is throttled per

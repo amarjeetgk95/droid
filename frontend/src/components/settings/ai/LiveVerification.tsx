@@ -118,7 +118,7 @@ export function LiveVerification({ settings }: Props) {
         </h3>
         <p className="text-xs text-muted-foreground leading-relaxed">Resolves <span className="font-mono">Auto</span> to current eligible free model, uses <strong>real live NIFTY context</strong>, measures latency, validates JSON schema. Fails honestly if key missing/invalid. <span className="font-semibold">FREE-only guard</span> hard-fails paid models with hint; catalog falls back to cached list and UI offers <span className="font-mono">Refresh Models</span> retry.</p>
         {connectionMode === 'Local Ollama' && (
-          <div className="text-[11px] p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 space-y-1">
+          <div className="text-[11px] p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-700 space-y-1">
             <p className="font-semibold">Ollama local-only behavior</p>
             <p className="leading-relaxed">
               Ollama runs on <span className="font-mono">http://localhost:11434</span> on your machine. The hosted backend on Render <strong>cannot</strong> reach <span className="font-mono">localhost</span>/<span className="font-mono">127.0.0.1</span>.
@@ -154,7 +154,7 @@ export function LiveVerification({ settings }: Props) {
         </div>
       )}
       {testResult && (
-        <div className={`p-3.5 rounded-lg text-xs space-y-3 border ${testResult.success ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20' : 'bg-destructive/10 text-destructive border-destructive/20'}`}>
+        <div className={`p-3.5 rounded-lg text-xs space-y-3 border ${testResult.success ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' : 'bg-destructive/10 text-destructive border-destructive/20'}`}>
           <div className="flex items-start gap-2 font-semibold">{testResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}<span className="leading-relaxed flex-1">{testResult.message}</span></div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
             <div className="bg-card/60 p-2 rounded border"><div className="text-muted-foreground">Latency</div><div className="font-semibold text-foreground">{testResult.latency ?? '—'} ms</div>{testResult.clientLatency && <div className="text-[10px] text-muted-foreground">client {testResult.clientLatency}ms</div>}</div>
