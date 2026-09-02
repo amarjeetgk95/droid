@@ -120,16 +120,22 @@ class GrowwService:
                 "(checksum flow only — TOTP requires runtime code from authenticator)"
             )
 
+        # 1. Try official SDK first
+        try:
+            from growwapi import GrowwAPI  # type: ignore
+            token = GrowwAPI.get_access_token(api_key=self.api_key, secret=self.api_secret)
+            if token:
+                logger.info("groww_sdk_token_fetched", key_prefix=token[:8] + "...")
+                return token
+        except Exception as e:
+            logger.debug("groww_sdk_auth_attempt_failed", error=str(e)[:150])
+
+        # 2. Async HTTP fallback with official header structure
         timestamp = str(int(time.time()))
         checksum = self._generate_checksum(timestamp)
         url = f"{self.API_BASE}{self.AUTH_ENDPOINT}"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "X-API-VERSION": "1.0",
-        }
-        payload = {"key_type": "approval", "checksum": checksum, "timestamp": timestamp}
+        headers = self._build_headers(self.api_key)
+        payload = {"key_type": "approval", "checksum": checksum, "timestamp": int(timestamp)}
 
         async with httpx.AsyncClient(timeout=self.AUTH_TIMEOUT_SECONDS) as client:
             try:

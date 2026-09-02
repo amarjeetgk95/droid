@@ -35,19 +35,19 @@ async def get_token_status():
 @router.post("/diagnostics")
 async def run_token_diagnostics(payload: dict | None = Body(default=None)):
     """Run a live Groww API call with the saved credentials and return the
-    actual response — useful when the dashboard shows OFFLINE/0 and you want
-    to know whether it's a token problem, an endpoint problem, or something
-    else.
-
-    For Groww specifically, this:
-      1. Eagerly fetches a fresh access token (bypasses the 30s rate-limit
-         guard used by the streaming refresh callback).
-      2. Calls /v1/live-data/quote for NIFTY 50 with that token.
-      3. Returns the raw Groww response so the caller can see exactly what
-         Groww returned (or why it failed).
-
-    For other providers, falls back to a generic refresh test.
+    actual response.
     """
+    if payload and isinstance(payload, dict):
+        incoming_app = payload.get("app_settings")
+        if incoming_app is None and "broker" in payload:
+            incoming_app = payload
+        if isinstance(incoming_app, dict) and incoming_app:
+            try:
+                apply_app_settings(incoming_app)
+                reset_provider()
+            except Exception as e:
+                logger.warning("token_diagnostics_hot_sync_failed", error=str(e)[:200])
+
     provider = get_provider()
     token_mgr = provider.get_token_manager()
     diag = token_mgr.get_diagnostics()
@@ -81,7 +81,7 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
             "meta": _make_meta().model_dump(),
         }
 
-    token = await ensure_fn()
+    token = await ensure_fn(force_refresh=True)
     if not token:
         return {
             "data": {

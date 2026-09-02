@@ -129,11 +129,11 @@ class GrowwProvider(MarketDataProvider):
             self.token_manager.token_info and self.token_manager.token_info.access_token
         )
 
-    async def ensure_access_token(self) -> str | None:
+    async def ensure_access_token(self, force_refresh: bool = False) -> str | None:
         """Public helper: ensure we have a valid access token, fetching one
         via the checksum flow if needed. Returns the token string or None.
         """
-        if self.token_manager.token_info and self.token_manager.token_info.access_token and not self.token_manager.is_token_expired():
+        if not force_refresh and self.token_manager.token_info and self.token_manager.token_info.access_token and not self.token_manager.is_token_expired():
             return self.token_manager.token_info.access_token
         try:
             token = await self.service.fetch_access_token()
