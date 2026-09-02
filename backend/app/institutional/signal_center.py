@@ -62,27 +62,38 @@ class SignalCenterService:
             except:
                 spot = None
         if spot is None:
-            if iid == "BTCUSD":
-                try:
-                    from app.services.binance_service import binance_service
-                    ticker = await binance_service.get_ticker("BTCUSDT")
-                    if ticker and ticker.price and ticker.price > 0:
-                        spot = D(str(ticker.price))
-                        last_update_ms = int(ticker.last_updated.timestamp()*1000) if ticker.last_updated else now_ms
-                        # seed buffer
-                        try:
-                            from app.institutional.events import InstrumentEvent
-                            synth = InstrumentEvent.create(instrument_id=iid, asset_class="CRYPTO", canonical_timestamp_utc=last_update_ms, sequence_id=int(time.time()*1000)%1000000, price=str(spot), source_id="binance_live")
-                            synchronized_buffer.ingest_sync(synth)
-                        except Exception:
-                            pass
-                    else:
-                        spot = D("65000")
-                except:
-                    spot = D("65000")
-            else:
-                demo = {"NIFTY": "24885", "BANKNIFTY": "52100", "SENSEX": "81500"}
-                spot = D(demo.get(iid, "10000"))
+            # Live fallback — MarketService, then Binance for BTC, no demo
+            try:
+                from app.services.market_service import MarketService
+                from app.models.market import DataStatus
+                svc = MarketService()
+                q = await svc.get_quote(iid)
+                if q and getattr(q, 'ltp', None) is not None and getattr(q, 'status', None) != DataStatus.OFFLINE and getattr(q, 'provider', '') != 'fallback':
+                    spot = D(str(q.ltp))
+                    try:
+                        last_update_ms = int(q.timestamp.timestamp()*1000) if getattr(q, 'timestamp', None) else now_ms
+                    except Exception:
+                        pass
+                elif iid == "BTCUSD":
+                    try:
+                        from app.services.binance_service import binance_service
+                        ticker = await binance_service.get_ticker("BTCUSDT")
+                        if ticker and getattr(ticker, 'price', None) and ticker.price > 0:
+                            spot = D(str(ticker.price))
+                            try:
+                                last_update_ms = int(ticker.last_updated.timestamp()*1000) if getattr(ticker, 'last_updated', None) else now_ms
+                            except Exception:
+                                pass
+                            try:
+                                from app.institutional.events import InstrumentEvent
+                                synth = InstrumentEvent.create(instrument_id=iid, asset_class="CRYPTO", canonical_timestamp_utc=last_update_ms, sequence_id=int(time.time()*1000)%1000000, price=str(spot), source_id="binance_live")
+                                synchronized_buffer.ingest_sync(synth)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         if spot is None:
             return None
