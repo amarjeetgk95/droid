@@ -20,7 +20,7 @@ class TestHealthEndpoints:
         r = client.get("/api/v1/health/market-data")
         assert r.status_code == 200
         data = r.json()
-        assert data["provider"] in ("fyers", "upstox", "kotak_neo", "binance")
+        assert data["provider"] in ("fyers", "binance")
         assert data["mode"] in ("OFFLINE", "LIVE", "DEMO")
 
 

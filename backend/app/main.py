@@ -158,6 +158,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
+    # Root endpoint
+    @app.get("/", tags=["root"])
+    async def root():
+        return {
+            "app": settings.app_name,
+            "status": "online",
+            "version": settings.app_version,
+            "docs_url": "/docs",
+            "frontend_url": "https://fo-droid.web.app",
+        }
+
     # Register routers
     app.include_router(health.router)
     app.include_router(auth.router)
