@@ -276,8 +276,9 @@ class TelegramNotificationQueue:
 
     # ── Worker ───────────────────────────────────────────────────────
     async def start(self) -> None:
-        if self._running:
+        if self._running and self._worker_task and not self._worker_task.done():
             return
+        self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
 
@@ -287,8 +288,9 @@ class TelegramNotificationQueue:
             self._worker_task.cancel()
             try:
                 await self._worker_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
+            self._worker_task = None
 
     async def _loop(self) -> None:
         while self._running:

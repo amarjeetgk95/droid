@@ -46,6 +46,8 @@ class MarketService:
             "VIX": "INDIA VIX",
             "INDIAVIX": "INDIA VIX",
         }
+        if symbol_upper not in symbol_map and not any(k in symbol_upper for k in ("NIFTY", "SENSEX", "BANK", "FIN", "VIX", "BTC", "ETH", "SOL")):
+            raise ValueError(f"Invalid or unsupported symbol: {symbol}")
         resolved = symbol_map.get(symbol_upper, symbol)
 
         async def _fetch():

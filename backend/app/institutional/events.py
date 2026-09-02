@@ -55,6 +55,12 @@ class InstrumentEvent(BaseModel):
     volume: int | None = None
     bid: str | None = None
     ask: str | None = None
+    # Distributed Tracing & Causality (§55)
+    schema_version: str = "1.0"
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
     # Extra telemetry
     metadata: dict[str, Any] = Field(default_factory=dict)
 

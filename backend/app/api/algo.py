@@ -1650,3 +1650,25 @@ async def test_alert(
     fp = alert_deduper.fingerprint(title, metric_name, _uid(user))
     should, reason = alert_deduper.should_send(fp, severity)
     return {"data": {"fingerprint": fp, "should_send": should, "reason": reason, "severity": severity}, "error": None, "meta": _meta().model_dump()}
+
+
+# ─── Production SLO & Capability Endpoints (§14, §57, §75) ─────────────
+
+@router.get("/slo-dashboard")
+async def get_slo_dashboard():
+    """Production SLO compliance and latency metrics dashboard (§75)."""
+    from app.services.slo_metrics import slo_metrics_service
+    metrics = slo_metrics_service.get_dashboard_metrics()
+    return {"data": metrics, "error": None, "meta": _meta().model_dump()}
+
+
+@router.get("/broker-capabilities")
+async def get_broker_capabilities(broker: Optional[str] = Query(default=None)):
+    """Broker capability registry limits, rates, and operational constraints (§14, §78)."""
+    from app.algo.broker_capabilities import broker_capability_registry
+    if broker:
+        caps = broker_capability_registry.get(broker)
+        return {"data": caps.__dict__, "error": None, "meta": _meta().model_dump()}
+    all_caps = {k: v.__dict__ for k, v in broker_capability_registry.all_capabilities().items()}
+    return {"data": all_caps, "error": None, "meta": _meta().model_dump()}
+

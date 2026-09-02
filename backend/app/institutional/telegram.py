@@ -64,6 +64,12 @@ class TelegramRateLimiter:
             await asyncio.sleep(0.05)
         return False
 
+    def reset(self) -> None:
+        self._global_tokens = float(self.burst)
+        self._global_last = time.time()
+        self._per_chat_tokens.clear()
+        self._per_chat_last.clear()
+
     async def handle_429(self, retry_after: int, chat_id: str) -> None:
         logger.warning("telegram_429", chat_id=chat_id, retry_after=retry_after)
         await asyncio.sleep(retry_after)
@@ -98,7 +104,9 @@ class TelegramOutboundQueue:
         logger.debug("telegram_enqueued", chat_id=msg.chat_id)
 
     async def start(self) -> None:
-        if self._running: return
+        if self._running and self._worker_task and not self._worker_task.done():
+            return
+        self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
 
@@ -106,8 +114,11 @@ class TelegramOutboundQueue:
         self._running = False
         if self._worker_task:
             self._worker_task.cancel()
-            try: await self._worker_task
-            except asyncio.CancelledError: pass
+            try:
+                await self._worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._worker_task = None
 
     async def _loop(self) -> None:
         while self._running:

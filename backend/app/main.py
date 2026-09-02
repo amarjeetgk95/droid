@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, historical, paper, ml, fii_dii, crypto, instruments, chart_analysis
+from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, historical, paper, ml, fii_dii, crypto, instruments, chart_analysis, futures, strategy
 from app.api import settings as settings_api
 from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
@@ -191,6 +191,8 @@ def create_app() -> FastAPI:
     app.include_router(institutional_api.router)
     app.include_router(institutional_mi_full_api)
     app.include_router(telegram_api.router)
+    app.include_router(futures.router)
+    app.include_router(strategy.router)
     
     return app
 

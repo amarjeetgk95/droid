@@ -98,26 +98,17 @@ async def train_ensemble(n_samples: int = 2000) -> dict:
     xgb_model = xgb.XGBClassifier(
         n_estimators=100,
         max_depth=5,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        learning_rate=0.05,
         objective="multi:softprob",
         num_class=3,
-        eval_metric="mlogloss",
         random_state=42,
-        n_jobs=2,
+        eval_metric="mlogloss",
     )
-    xgb_model.fit(X_train, y_train)
-    xgb_pred = xgb_model.predict(X_test)
-    xgb_proba = xgb_model.predict_proba(X_test)
-    xgb_acc = accuracy_score(y_test, xgb_pred)
-    xgb_ll = log_loss(y_test, xgb_proba)
+    xgb_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
     # LightGBM
     lgb_model = lgb.LGBMClassifier(
         n_estimators=100,
-        max_depth=6,
-        learning_rate=0.1,
         subsample=0.8,
         colsample_bytree=0.8,
         objective="multiclass",

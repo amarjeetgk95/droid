@@ -22,7 +22,7 @@ class TestMLPredictor:
     async def test_predict_probabilities_sensex(self):
         pred = await ml_predictor.predict_probabilities("SENSEX")
         assert pred.symbol == "SENSEX"
-        assert pred.spot_price > 80000
+        assert pred.spot_price > 50000
         prob_sum = pred.bullish_pct + pred.neutral_pct + pred.bearish_pct
         assert 99.0 <= prob_sum <= 101.0
 

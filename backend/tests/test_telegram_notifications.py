@@ -321,34 +321,36 @@ class TestEndToEnd:
         tg.telegram_link_manager._by_chat[chat_id] = user_id
         return chat_id
 
-    def test_signal_event_to_sent(self):
+    @pytest.mark.asyncio
+    async def test_signal_event_to_sent(self):
         """§41: signal event → queue → worker → rate limiter → SENT."""
         from app.institutional import telegram as tg
 
         self._link_user()
+        tg.telegram_rate_limiter.reset()
+        telegram_notification_queue._audit.clear()
+        telegram_notification_queue._dedup_keys.clear()
         sent: list = []
 
         async def fake_send(self, msg):
             sent.append(msg)
 
-        async def run():
-            orig = tg.TelegramOutboundQueue._send_via_httpx
-            tg.TelegramOutboundQueue._send_via_httpx = fake_send
-            try:
-                await telegram_outbound_queue.start()
-                await telegram_notification_queue.start()
-                ids = await telegram_notification_queue.publish_signal_event(_event())
-                assert len(ids) == 1
-                for _ in range(100):
-                    if telegram_notification_queue.stats()["statuses"].get("SENT"):
-                        break
-                    await asyncio.sleep(0.05)
-                await telegram_notification_queue.stop()
-                await telegram_outbound_queue.stop()
-            finally:
-                tg.TelegramOutboundQueue._send_via_httpx = orig
+        orig = tg.TelegramOutboundQueue._send_via_httpx
+        tg.TelegramOutboundQueue._send_via_httpx = fake_send
+        try:
+            await telegram_outbound_queue.start()
+            await telegram_notification_queue.start()
+            ids = await telegram_notification_queue.publish_signal_event(_event())
+            assert len(ids) == 1
+            for _ in range(100):
+                if telegram_notification_queue.stats()["statuses"].get("SENT"):
+                    break
+                await asyncio.sleep(0.05)
+            await telegram_notification_queue.stop()
+            await telegram_outbound_queue.stop()
+        finally:
+            tg.TelegramOutboundQueue._send_via_httpx = orig
 
-        asyncio.run(run())
         assert telegram_notification_queue.stats()["statuses"].get("SENT") == 1
         assert len(sent) == 1
         assert "NIFTY 5M BREAKOUT CONFIRMED" in sent[0].text
@@ -359,34 +361,28 @@ class TestEndToEnd:
         assert audit[0].signal_id == "sig_123"
         assert audit[0].notification_id is not None
 
-    def test_notification_dedup_same_signal_event(self):
+    @pytest.mark.asyncio
+    async def test_notification_dedup_same_signal_event(self):
         """§33 — same signal_id + event_type + user_id delivered once."""
         self._link_user("user_dup", "555002")
-
-        async def run():
-            ids1 = await telegram_notification_queue.publish_signal_event(_event())
-            ids2 = await telegram_notification_queue.publish_signal_event(_event())
-            return ids1, ids2
-
-        ids1, ids2 = asyncio.run(run())
+        ids1 = await telegram_notification_queue.publish_signal_event(_event())
+        ids2 = await telegram_notification_queue.publish_signal_event(_event())
         assert len(ids1) == 1
         assert ids2 == []  # duplicate suppressed
 
-    def test_preferences_skip_records_audit(self):
+    @pytest.mark.asyncio
+    async def test_preferences_skip_records_audit(self):
         self._link_user("user_skip", "555003")
         from app.institutional.telegram_notifications import notification_policy
         prefs = notification_policy.get("user_skip")
         prefs.events["SIGNAL_CONFIRMED"] = False
-
-        async def run():
-            return await telegram_notification_queue.publish_signal_event(_event())
-
-        ids = asyncio.run(run())
+        ids = await telegram_notification_queue.publish_signal_event(_event())
         assert ids == []
         audit = telegram_notification_queue.audit_for_user("user_skip")
         assert audit and audit[0].delivery_status == "SKIPPED"
 
-    def test_publish_never_raises(self):
+    @pytest.mark.asyncio
+    async def test_publish_never_raises(self):
         """§35 — Telegram failure must not propagate to the Signal Engine."""
         from app.institutional import telegram as tg
         orig = tg.telegram_link_manager.all_bindings
@@ -396,18 +392,15 @@ class TestEndToEnd:
 
         tg.telegram_link_manager.all_bindings = boom
         try:
-            async def run():
-                return await telegram_notification_queue.publish_signal_event(_event())
-            ids = asyncio.run(run())
+            ids = await telegram_notification_queue.publish_signal_event(_event())
         finally:
             tg.telegram_link_manager.all_bindings = orig
         assert ids == []  # swallowed, not raised
 
-    def test_unlinked_user_gets_nothing(self):
-        async def run():
-            return await telegram_notification_queue.publish_signal_event(_event())
-
-        assert asyncio.run(run()) == []
+    @pytest.mark.asyncio
+    async def test_unlinked_user_gets_nothing(self):
+        ids = await telegram_notification_queue.publish_signal_event(_event())
+        assert ids == []
 
 
 # ── §3/§6/§29/§30 API endpoints ──────────────────────────────────────
