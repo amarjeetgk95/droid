@@ -106,6 +106,7 @@ class HPIService:
         self._pending_deletes: dict[str, DeleteRequest] = {}
         self._running = False
         self._sweep_task: asyncio.Task | None = None
+        self._sync_task: asyncio.Task | None = None
         self._seeded: bool = False
         self._load()
 
@@ -146,21 +147,29 @@ class HPIService:
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                asyncio.create_task(self._sync_to_db())
+                if self._sync_task and not self._sync_task.done():
+                    self._sync_task.cancel()
+                self._sync_task = asyncio.create_task(self._debounced_sync_to_db())
         except RuntimeError:
             pass
 
-    async def _sync_to_db(self) -> None:
+    async def _debounced_sync_to_db(self) -> None:
         try:
+            await asyncio.sleep(1.0)
             from app.hpi.hpi_persistence import persist_hpi_to_db
-            await persist_hpi_to_db(
-                records_map=self.store._records,
-                deleted_ranges=self.store._deleted_ranges,
-                selection=[e.model_dump(mode="json") for e in self._selection.values() if e.symbol in C.HPI_UNIVERSE],
-                policies=[p.model_dump(mode="json") for p in self._policies.values() if p.instrument in C.HPI_UNIVERSE],
-                audit=[a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
-                seeded=self._seeded,
+            await asyncio.wait_for(
+                persist_hpi_to_db(
+                    records_map=dict(self.store._records),
+                    deleted_ranges=dict(self.store._deleted_ranges),
+                    selection=[e.model_dump(mode="json") for e in self._selection.values() if e.symbol in C.HPI_UNIVERSE],
+                    policies=[p.model_dump(mode="json") for p in self._policies.values() if p.instrument in C.HPI_UNIVERSE],
+                    audit=[a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
+                    seeded=self._seeded,
+                ),
+                timeout=15.0,
             )
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             logger.warning("hpi_sync_to_db_error", error=str(e)[:200])
 
