@@ -1020,6 +1020,15 @@ class ApiClient {
       body: JSON.stringify(payload),
     });
   }
+  async executeSignalPaper(signalId: string, quantity?: number) {
+    return this.request<{ success: boolean; signal_id: string; paper_order: any; message: string }>(
+      `/api/v1/signals/${encodeURIComponent(signalId)}/execute-paper`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ quantity }),
+      },
+    );
+  }
 }
 
 export const api = new ApiClient(API_BASE);

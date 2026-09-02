@@ -49,6 +49,16 @@ def _label(event: SignalEvent) -> str:
     return f"{event.instrument} {event.candle_timeframe.upper()} {setup}"
 
 
+def _format_ist_timestamp(ts_ms: int | None) -> str:
+    from datetime import datetime, timezone, timedelta
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    if not ts_ms:
+        dt = datetime.now(ist_tz)
+    else:
+        dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=ist_tz)
+    return dt.strftime("%d %b %Y, %H:%M:%S IST")
+
+
 def _options_block(event: SignalEvent) -> list[str]:
     lines: list[str] = []
     if event.options_status:
@@ -66,17 +76,19 @@ def _options_block(event: SignalEvent) -> list[str]:
 
 # ── §14 Developing setup ─────────────────────────────────────────────
 def format_possible_setup(event: SignalEvent) -> str:
+    ts_str = _format_ist_timestamp(event.created_at_utc)
     lines = [
         f"🟡 {_label(event)} DEVELOPING",
+        f"📅 {ts_str}",
         "",
         f"Direction: {_direction_word(event.direction)}",
     ]
     if event.current_price is not None:
-        lines.append(f"\nCurrent Price: {_fmt(event.current_price)}")
+        lines.append(f"Current Price: {_fmt(event.current_price)}")
     if event.trigger_level is not None:
         lines.append(f"Trigger: {_fmt(event.trigger_level)}")
     if event.breakout_pressure is not None:
-        lines.append(f"\nBreakout Pressure: {event.breakout_pressure}/100")
+        lines.append(f"Breakout Pressure: {event.breakout_pressure}/100")
     if event.false_breakout_risk is not None:
         lines.append(f"False Breakout Risk: {_fmt(event.false_breakout_risk)}%")
     lines.append("")
@@ -91,37 +103,52 @@ def format_signal_state(event: SignalEvent) -> str:
     """TRIGGERED / CONFIRMED / INVALIDATED / EXPIRED states."""
     emoji = _header_emoji(event)
     status = (event.status or event.event_type.replace("SIGNAL_", "")).upper()
-    lines = [f"{emoji} {_label(event)} {status}", "", f"Direction:\n{_direction_word(event.direction)}"]
+    ts_str = _format_ist_timestamp(event.created_at_utc)
+    lines = [
+        f"{emoji} {_label(event)} {status}",
+        f"📅 {ts_str}",
+        "",
+        f"Direction: {_direction_word(event.direction)}",
+    ]
     if event.status:
-        lines.append(f"\nStatus:\n{event.status.upper()}")
+        lines.append(f"Status: {event.status.upper()}")
     if event.trigger_level is not None:
-        lines.append(f"\nTrigger:\n{_fmt(event.trigger_level)}")
+        lines.append(f"Trigger: {_fmt(event.trigger_level)}")
     if event.current_price is not None:
-        lines.append(f"Current:\n{_fmt(event.current_price)}")
+        lines.append(f"Current: {_fmt(event.current_price)}")
     # Entry/Stop/Target ONLY when present in the authoritative signal (§15)
     if event.entry_low is not None or event.entry_high is not None:
         lo, hi = _fmt(event.entry_low), _fmt(event.entry_high)
-        lines.append(f"\nEntry:\n{lo}–{hi}" if hi and hi != lo else f"\nEntry:\n{lo}")
+        lines.append(f"🎯 Entry: {lo}–{hi}" if hi and hi != lo else f"🎯 Entry: {lo}")
     if event.stop_loss is not None:
-        lines.append(f"Stop:\n{_fmt(event.stop_loss)}")
+        lines.append(f"🛑 Stop Loss: {_fmt(event.stop_loss)}")
     if event.target_low is not None or event.target_high is not None:
         lo, hi = _fmt(event.target_low), _fmt(event.target_high)
-        lines.append(f"Target:\n{lo}–{hi}" if hi and hi != lo else f"Target:\n{lo}")
+        lines.append(f"🏁 Target: {lo}–{hi}" if hi and hi != lo else f"🏁 Target: {lo}")
     if event.confidence is not None:
-        lines.append(f"\nConfidence:\n{event.confidence}%")
+        lines.append(f"Confidence: {event.confidence}%")
+
+    # Paper Trading Execution Receipt
+    if event.paper_order_id:
+        side_word = event.paper_side or _direction_word(event.direction)
+        qty_str = f"{event.paper_filled_qty} Qty" if event.paper_filled_qty else ""
+        price_str = f"@ ₹{_fmt(event.paper_fill_price)}" if event.paper_fill_price else ""
+        lines.append(f"\n⚡ Paper Trade: {event.paper_status or 'FILLED'} ({side_word} {qty_str} {price_str})")
+        lines.append(f"📋 Order ID: {event.paper_order_id}")
+
     opt_lines = _options_block(event)
     if opt_lines:
         lines.append("")
         lines.extend(opt_lines)
     if event.ai_status:
-        lines.append(f"\nAI:\n{event.ai_status.upper()}")
+        lines.append(f"\nAI: {event.ai_status.upper()}")
     if event.risk_status:
-        lines.append(f"Risk:\n{event.risk_status.upper()}")
+        lines.append(f"Risk: {event.risk_status.upper()}")
     if event.breakout_pressure is not None:
-        lines.append(f"\nBreakout Pressure:\n{event.breakout_pressure}/100")
+        lines.append(f"Breakout Pressure: {event.breakout_pressure}/100")
     if event.false_breakout_risk is not None:
-        lines.append(f"False Breakout Risk:\n{_fmt(event.false_breakout_risk)}%")
-    lines.append(f"\nSignal ID:\n{event.signal_id}")
+        lines.append(f"False Breakout Risk: {_fmt(event.false_breakout_risk)}%")
+    lines.append(f"\nSignal ID: {event.signal_id}")
     return "\n".join(lines)
 
 

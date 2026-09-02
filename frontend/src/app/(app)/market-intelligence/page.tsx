@@ -67,38 +67,136 @@ export default function MarketIntelligencePage() {
   const cacheRef = useRef<Map<InstrumentId, FullMiResponse>>(new Map());
 
   const fetchFor = useCallback(async (iid: InstrumentId, showLoading = false) => {
-    if (iid === 'BREAKOUT_SETUPS') return; // handled separately
+    if (iid === 'BREAKOUT_SETUPS') return;
     if (showLoading) setLoading(prev => ({ ...prev, [iid]: true }));
     try {
-      const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
-      const url = base ? `${base}/api/v1/institutional/market-intelligence/${iid}/full` : `/api/v1/institutional/market-intelligence/${iid}/full`;
+      const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
+      const url = `${base}/api/v1/institutional/market-intelligence/${iid}/full`;
       const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const json = await res.json();
-      let payload = (json.data ?? json) as FullMiResponse;
-      // BTC realtime override: if backend still serving stale demo 65000, fetch live Binance directly in frontend to show realtime
-      if (iid === 'BTCUSD') {
-        const isDemo = payload.header.price === '65000' || payload.header.price === '65000.00' || payload.header.data_quality === 'STALE' || payload.header.price_formatted === '65,000.00';
-        if (isDemo || payload.data_health.data_health === 'STALE') {
-          try {
-            const br = await fetch('https://data-api.binance.vision/api/v3/ticker/24hr?symbol=BTCUSDT', { cache: 'no-store' });
-            if (br.ok) {
-              const bj = await br.json();
-              const livePrice = parseFloat(bj.lastPrice);
-              if (livePrice && livePrice > 0) {
-                const liveStr = livePrice.toFixed(2);
-                const liveFormatted = livePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                payload = {
-                  ...payload,
-                  header: { ...payload.header, price: liveStr, price_formatted: liveFormatted, live_status: 'LIVE', data_quality: 'LIVE' },
-                  data_health: { ...payload.data_health, data_health: 'LIVE', feed: 'HEALTHY' },
-                };
-              }
-            }
-          } catch {}
-        }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`${res.status} ${res.statusText}${txt ? ` — ${txt.slice(0,120)}` : ''}`);
       }
-      // Never mutate other instrument's cache
+      const json = await res.json();
+      const raw = (json.data ?? json) as any;
+      // Adapter: new backend returns flattened {instrument,session,feed_health,market_intelligence,breakout_candidate,short_horizon,continuation}
+      // Old frontend expects header/market_state etc — map with safe fallbacks so UI never crashes
+      let payload: FullMiResponse;
+      if (raw.header && raw.market_state) {
+        payload = raw as FullMiResponse;
+      } else {
+        const spot = raw.market_intelligence?.spot_price ?? raw.spot_price ?? null;
+        const spotStr = spot != null ? String(spot) : null;
+        const spotFmt = spot != null ? Number(spot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+        const feedHealth = raw.feed_health?.health ?? raw.feed_health ?? 'HEALTHY';
+        const dataQuality = raw.feed_health?.is_stale ? 'STALE' : 'LIVE';
+        const sess = raw.session?.session_type ?? raw.session ?? 'UNKNOWN';
+        const lastMs = raw.market_intelligence?.last_update_ms ?? raw.generated_at_ms ?? Date.now();
+        const instId = raw.instrument?.id ?? raw.instrument?.instrument_id ?? iid;
+        const displayName = raw.instrument?.name ?? raw.instrument?.display_name ?? iid;
+        const regime = raw.market_intelligence?.regime ?? 'NEUTRAL';
+        const priceAction = raw.market_intelligence?.price_action ?? {};
+        const bullish = raw.market_intelligence?.bullish_score ?? 50;
+        const bearish = raw.market_intelligence?.bearish_score ?? 50;
+        const breakoutPressure = raw.market_intelligence?.breakout_pressure ?? 50;
+        const falseRisk = raw.market_intelligence?.false_breakout_risk ?? 20;
+        const bc = raw.breakout_candidate ?? raw.breakout ?? {};
+        const sh = raw.short_horizon ?? {};
+        const cont = raw.continuation ?? {};
+        payload = {
+          instrument_id: instId,
+          asset_class: raw.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX'),
+          pipeline: raw.instrument?.pipeline ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDIAN_EQUITY'),
+          header: {
+            instrument: instId,
+            display_name: displayName,
+            live_status: feedHealth,
+            price: spotStr,
+            price_formatted: spotFmt,
+            session: sess,
+            session_label: sess,
+            last_update_utc: lastMs,
+            last_update_iso: new Date(lastMs).toISOString(),
+            data_quality: dataQuality,
+            feed_health: feedHealth,
+          },
+          market_state: {
+            regime,
+            price_action: priceAction,
+            momentum: priceAction?.momentum ?? 'NEUTRAL',
+            participation: priceAction?.participation ?? {},
+            volatility: priceAction?.volatility ?? '—',
+            vwap: priceAction?.vwap ?? '—',
+            scores: { bullish_score: bullish, bearish_score: bearish, breakout_pressure: breakoutPressure, breakdown_pressure: bearish, false_breakout_risk: falseRisk },
+          },
+          price_action: {
+            structure: priceAction?.structure ?? '—',
+            trend: priceAction?.trend ?? 'NEUTRAL',
+            momentum: priceAction?.momentum ?? 'NEUTRAL',
+            location: priceAction?.location ?? '—',
+            vwap: priceAction?.vwap ?? '—',
+            volume: priceAction?.volume ?? '—',
+            breadth: priceAction?.breadth ?? '—',
+          },
+          evidence: raw.evidence ?? { supporting: [], conflicting: [], missing: [], stale: [], invalid: [] },
+          levels: raw.levels ?? { support: [], resistance: [], breakout_trigger: bc.trigger_level ? String(bc.trigger_level) : null, breakdown_trigger: null, invalidation: '—', nearest_support: null, nearest_resistance: null },
+          breakout: {
+            direction: bc.direction ?? 'NEUTRAL',
+            status: bc.status ?? bc.candidate ?? 'WATCH',
+            confidence: bc.confidence ?? 50,
+            breakout_level: bc.trigger_level ? String(bc.trigger_level) : null,
+            breakout_pressure: breakoutPressure,
+            breakdown_pressure: bearish,
+            false_breakout_risk: falseRisk,
+            breakout_quality: bc.confidence ?? 50,
+            supporting: bc.reasons ?? [],
+            conflicts: [],
+            reason: (bc.reasons ?? []).join(', ') || '',
+          },
+          short_horizon: {
+            strategy: sh.strategy ?? 'BREAKOUT',
+            instrument: sh.instrument ?? instId,
+            direction: sh.direction ?? 'NEUTRAL',
+            status: sh.status ?? 'WATCH',
+            confidence: sh.confidence ?? 50,
+            horizon_minutes: sh.horizon_minutes ?? 10,
+            entry_zone: sh.entry_zone ?? [],
+            stop_loss: sh.stop_loss ?? '0',
+            target_zone: sh.target_zone ?? [],
+            false_breakout_risk: sh.false_breakout_risk ?? falseRisk,
+            reason: sh.reason ?? '',
+          },
+          continuation: {
+            strategy: cont.strategy ?? 'CONTINUATION',
+            instrument: cont.instrument ?? instId,
+            direction: cont.direction ?? 'NEUTRAL',
+            status: cont.status ?? 'WATCH',
+            confidence: cont.confidence ?? 50,
+            max_holding_minutes: cont.max_holding_minutes ?? 120,
+            reason: cont.reason ?? '',
+            invalidation: cont.invalidation ?? '—',
+          },
+          ai: raw.ai ?? { status: 'UNAVAILABLE', short_horizon: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, continuation: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, overall: {} },
+          risk: raw.risk ?? { strategy: 'APPROVED', portfolio: 'APPROVED', exposure: '—', margin: '—', correlation: '—', reason: null },
+          signal: raw.signal ?? null,
+          data_health: {
+            feed: feedHealth,
+            feed_reason: raw.feed_health?.is_synthetic_fallback ? 'synthetic' : null,
+            data_health: dataQuality,
+            clock_sync: 'VALID',
+            sequence: raw.sequence?.gap_detected ? 'GAP' : 'VALID',
+            contract: raw.instrument?.contract_spec ? 'VALID' : 'UNKNOWN',
+            snapshot: raw.instrument ? 'VALID' : 'MISSING',
+            synchronization: raw.market_intelligence?.synchronization_status ?? 'UNKNOWN',
+            last_event_age_ms: raw.feed_health?.staleness_ms ?? null,
+          },
+          capabilities: raw.instrument?.capabilities ? Object.keys(raw.instrument.capabilities).filter((k: string) => (raw.instrument.capabilities as Record<string, unknown>)[k]) : [],
+          instrument_specific: {
+            is_crypto: (raw.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX')) === 'CRYPTO',
+            fields: raw.instrument?.capabilities ? Object.keys(raw.instrument.capabilities) : [],
+          },
+        } as FullMiResponse;
+      }
       cacheRef.current.set(iid, payload);
       setDataByInstrument(prev => ({ ...prev, [iid]: payload }));
       setErrorByInstrument(prev => ({ ...prev, [iid]: undefined }));
@@ -112,8 +210,8 @@ export default function MarketIntelligencePage() {
   const fetchBreakoutSetups = useCallback(async (showLoading = true) => {
     if (showLoading) setBreakoutLoading(true);
     try {
-      const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
-      const url = base ? `${base}/api/v1/institutional/signals/active` : `/api/v1/institutional/signals/active`;
+      const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
+      const url = `${base}/api/v1/institutional/signals/active`;
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
@@ -127,11 +225,11 @@ export default function MarketIntelligencePage() {
     }
   }, []);
 
-  // Throttled unified polling: 30s with jitter + hidden-tab pause (was 4s/7s)
+  // Polling: 7s with jitter for MI workspace (was throttled to 30s, too stale) + hidden-tab pause
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = (fn: () => void) => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      const jittered = 7000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
         if (!document.hidden) fn();
         schedule(fn);

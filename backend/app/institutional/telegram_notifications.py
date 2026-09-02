@@ -75,8 +75,12 @@ class SignalEvent(BaseModel):
     theoretical_pnl_points: float | None = None
     holding_time: str | None = None
     # §24 theoretical vs actual kept separate
-    theoretical_pnl_amount: float | None = None
-    actual_pnl_amount: float | None = None
+    # Paper Trading Execution fields
+    paper_order_id: str | None = None
+    paper_fill_price: float | None = None
+    paper_filled_qty: int | None = None
+    paper_status: str | None = None
+    paper_side: str | None = None
 
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
 

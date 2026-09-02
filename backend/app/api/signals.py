@@ -27,6 +27,8 @@ from app.institutional.signal import signal_fsm, create_signal
 from app.institutional.signal_center import signal_center
 from app.institutional.instrument_registry import asset_registry
 from app.institutional.audit import audit_trail
+from app.services.paper_service import paper_service
+from app.models.paper import OrderPayload
 
 import structlog
 
@@ -59,6 +61,9 @@ class GenerateRequest(BaseModel):
     regime: dict[str, Any] | None = None
     event_risk: dict[str, Any] | None = None
     weights: dict[str, Any] | None = None
+    # Paper Trading Auto-Execution
+    execute_paper: bool = Field(default=True, description="Instantly execute paper trade on signal generation")
+    quantity: int | None = Field(default=None, description="Optional custom lot size")
     # Telegram
     notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification after generation")
     setup_type: str | None = Field(default=None, description="BREAKOUT | BREAKDOWN — auto-derived from direction if omitted")
@@ -149,6 +154,60 @@ def cas_execution(signal_id: str):
         raise HTTPException(status_code=400, detail=err or "CAS failed")
     sig = signal_fsm.get(signal_id)
     return {"status": "EXECUTION_PENDING", "signal": sig.to_dict() if sig else None}
+
+
+class ExecutePaperRequest(BaseModel):
+    quantity: int | None = Field(default=None, description="Optional custom lot size")
+
+
+@router.post("/{signal_id}/execute-paper")
+async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None = None):
+    """
+    1-Click manual execution of any active signal into the Paper Trading Engine.
+    """
+    sig = signal_fsm.get(signal_id)
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    
+    iid = sig.instrument_id.upper()
+    direction = sig.direction.upper()
+    if direction not in ("BULLISH", "BEARISH", "LONG", "SHORT"):
+        raise HTTPException(status_code=400, detail=f"Cannot execute paper trade for non-directional signal ({direction})")
+
+    side = "BUY" if direction in ("BULLISH", "LONG") else "SELL"
+    default_lots = {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "BTCUSD": 1}
+    qty = (req.quantity if req and req.quantity else None) or default_lots.get(iid, 1)
+
+    # Estimate price from snapshot or default
+    fill_price = 100.0
+    try:
+        from app.institutional.snapshot_buffer import synchronized_buffer
+        latest = synchronized_buffer.get_latest(iid)
+        if latest and latest.event.price:
+            fill_price = float(latest.event.price)
+    except Exception:
+        pass
+
+    try:
+        order_payload = OrderPayload(
+            symbol=f"{iid}_FUT",
+            underlying=iid,
+            side=side,
+            order_type="MARKET",
+            product="INTRADAY",
+            quantity=qty,
+            price=fill_price,
+        )
+        paper_order = await paper_service.place_order(order_payload)
+        return {
+            "success": True,
+            "signal_id": signal_id,
+            "paper_order": paper_order.model_dump(),
+            "message": f"Paper trade {paper_order.status}: {side} {qty} {iid} @ ₹{paper_order.fill_price or fill_price:,.2f}",
+        }
+    except Exception as e:
+        logger.error("signal_execute_paper_failed", signal_id=signal_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Paper trade execution failed: {str(e)}")
 
 
 # ── Preview (render without enqueue) ──────────────────────────────
@@ -294,6 +353,29 @@ async def generate_signal(req: GenerateRequest):
     except Exception as e:
         logger.warning("signals_audit_append_failed", error=str(e))
 
+    # ── Paper Trading Auto-Execution (on the spot) ───────────────────
+    paper_order_result: dict[str, Any] | None = None
+    if req.execute_paper and direction in ("BULLISH", "BEARISH") and status != "NO_SETUP":
+        side = "BUY" if direction == "BULLISH" else "SELL"
+        default_lots = {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "BTCUSD": 1}
+        qty = req.quantity or default_lots.get(iid, 1)
+        fill_p = float(current_price) if current_price is not None else (float(req.trigger_level) if req.trigger_level else 100.0)
+        try:
+            order_payload = OrderPayload(
+                symbol=f"{iid}_FUT",
+                underlying=iid,
+                side=side,
+                order_type="MARKET",
+                product="INTRADAY",
+                quantity=qty,
+                price=fill_p,
+            )
+            paper_order = await paper_service.place_order(order_payload)
+            paper_order_result = paper_order.model_dump()
+            logger.info("signal_auto_paper_trade_executed", signal_id=signal_obj.signal_id, order_id=paper_order.order_id, status=paper_order.status)
+        except Exception as pe:
+            logger.warning("signal_auto_paper_trade_failed", signal_id=signal_obj.signal_id, error=str(pe))
+
     # ── Telegram fan-out (downstream, never blocks creation, §35) ──
     telegram_result: dict[str, Any] = {"enqueued": 0, "notification_ids": [], "skipped_reason": None}
     if req.notify_telegram and status != "NO_SETUP":
@@ -347,6 +429,12 @@ async def generate_signal(req: GenerateRequest):
                     breakout_pressure=req.breakout_pressure,
                     false_breakout_risk=req.false_breakout_risk,
                     ai_status=(signal_obj.ai or {}).get("status") if isinstance(signal_obj.ai, dict) else None,
+                    paper_order_id=paper_order_result.get("order_id") if paper_order_result else None,
+                    paper_fill_price=paper_order_result.get("fill_price") if paper_order_result else None,
+                    paper_filled_qty=paper_order_result.get("quantity") if paper_order_result else None,
+                    paper_status=paper_order_result.get("status") if paper_order_result else None,
+                    paper_side=paper_order_result.get("side") if paper_order_result else None,
+                    created_at_utc=signal_obj.created_at_utc,
                 )
                 ids = await telegram_notification_queue.publish_signal_event(ev)
                 telegram_result["enqueued"] = len(ids)
@@ -400,6 +488,7 @@ async def generate_signal(req: GenerateRequest):
         "short_horizon": signal_obj.short_horizon,
         "continuation": signal_obj.continuation,
         "algo_fusion": algo_fusion_result,
+        "paper_order": paper_order_result,
         "backend_authoritative": True,
     }
 
@@ -407,6 +496,7 @@ async def generate_signal(req: GenerateRequest):
         "signal": dto,
         "signal_obj": signal_obj.to_dict(),
         "telegram": telegram_result,
+        "paper_order": paper_order_result,
         "is_expired": signal_obj.is_expired(),
         "ttl_remaining_ms": signal_obj.ttl_remaining_ms(),
     }

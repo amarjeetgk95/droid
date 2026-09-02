@@ -611,7 +611,7 @@ async def get_full_mi(instrument_id: str):
             used_synthetic = True
             is_synthetic_fallback = True
 
-    clock = get_session_clock(prof.asset_class)
+    clock = get_session_clock(iid)
     clk_info = clock.session_info(now_ms) if hasattr(clock, "session_info") else {}
     feed_snap = feed_circuit.snapshot(iid)
     seq_val = get_sequence_validator(iid)

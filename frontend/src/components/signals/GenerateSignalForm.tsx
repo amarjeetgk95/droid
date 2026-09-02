@@ -30,6 +30,8 @@ export function GenerateSignalForm({ onGenerated }: Props) {
   const [breakoutPressure, setBreakoutPressure] = useState<string>('78');
   const [stopLoss, setStopLoss] = useState<string>('');
   const [notifyTelegram, setNotifyTelegram] = useState<boolean>(true);
+  const [executePaper, setExecutePaper] = useState<boolean>(true);
+  const [quantity, setQuantity] = useState<string>('');
   const [isLinked, setIsLinked] = useState<boolean | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -87,6 +89,8 @@ export function GenerateSignalForm({ onGenerated }: Props) {
         current_price: triggerLevel ? Number(triggerLevel) : undefined,
         confidence: confidence ? Number(confidence) : undefined,
         breakout_pressure: breakoutPressure ? Number(breakoutPressure) : undefined,
+        execute_paper: executePaper,
+        quantity: quantity ? Number(quantity) : undefined,
         notify_telegram: notifyTelegram,
       };
       if (stopLoss) payload.short_horizon = { stop_loss: Number(stopLoss), status, confidence: Number(confidence) || 75 };
@@ -189,16 +193,25 @@ export function GenerateSignalForm({ onGenerated }: Props) {
               <label className="text-xs font-medium text-muted-foreground">Confidence %</label>
               <input value={confidence} onChange={(e) => setConfidence(e.target.value)} placeholder="82" className="h-8 rounded border px-2 text-sm" />
             </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Qty / Lots (optional)</label>
+              <input value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="e.g. 75" className="h-8 rounded border px-2 text-sm" />
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 rounded border p-2 bg-secondary/30">
-            <input id="notify-telegram" type="checkbox" checked={notifyTelegram} onChange={(e) => setNotifyTelegram(e.target.checked)} className="h-4 w-4" />
-            <label htmlFor="notify-telegram" className="text-sm font-medium flex items-center gap-1.5">
-              <Send className="w-3.5 h-3.5" /> Send to Telegram after generation
-            </label>
-            <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">
-              Uses <code className="bg-muted px-1 rounded">should_publish_instrument_event 60s</code> + per-user prefs + dedup
-            </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="flex items-center gap-2 rounded border p-2 bg-emerald-500/10 border-emerald-500/20">
+              <input id="execute-paper" type="checkbox" checked={executePaper} onChange={(e) => setExecutePaper(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+              <label htmlFor="execute-paper" className="text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+                <Zap className="w-3.5 h-3.5 text-emerald-600" /> Execute Paper Trade on the spot
+              </label>
+            </div>
+            <div className="flex items-center gap-2 rounded border p-2 bg-secondary/30">
+              <input id="notify-telegram" type="checkbox" checked={notifyTelegram} onChange={(e) => setNotifyTelegram(e.target.checked)} className="h-4 w-4" />
+              <label htmlFor="notify-telegram" className="text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+                <Send className="w-3.5 h-3.5" /> Send to Telegram
+              </label>
+            </div>
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -208,7 +221,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
             </Button>
             <Button size="sm" onClick={doGenerate} disabled={generating}>
               <Zap className="w-4 h-4 mr-1" />
-              {generating ? 'Generating…' : 'Generate & Notify'}
+              {generating ? 'Generating…' : 'Generate & Execute'}
             </Button>
           </div>
 
@@ -238,6 +251,11 @@ export function GenerateSignalForm({ onGenerated }: Props) {
                 </div>
                 <div>Telegram enqueued: {result.telegram?.enqueued ?? 0}</div>
               </div>
+              {result.paper_order && (
+                <div className="rounded border border-emerald-400 bg-emerald-100/70 p-2 text-xs font-mono text-emerald-900">
+                  <span className="font-bold">⚡ Paper Trade Executed:</span> {result.paper_order.status} {result.paper_order.side} {result.paper_order.quantity} {result.paper_order.symbol} @ ₹{result.paper_order.fill_price ? Number(result.paper_order.fill_price).toLocaleString('en-IN') : '—'} (Order: {result.paper_order.order_id})
+                </div>
+              )}
               {result.telegram?.notification_ids?.length > 0 && (
                 <div className="text-xs">
                   <span className="font-semibold">Notification IDs:</span>{' '}
@@ -248,8 +266,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
                 <div className="text-xs text-amber-700">Telegram note: {result.telegram.skipped_reason}</div>
               )}
               <p className="text-[11px] text-muted-foreground">
-                Check Settings → Telegram → Audit for delivery status (SENT / FAILED / SKIPPED / DEDUPED). Re-generating same signal within 60s is throttled per
-                instrument.
+                Check Settings → Telegram → Audit for delivery status. Check Paper Trading tab for live MTM & P&L.
               </p>
             </div>
           )}
