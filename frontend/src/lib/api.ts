@@ -31,8 +31,9 @@ class ApiClient {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.baseUrl}${cleanPath}`;
 
-    // Adaptive timeout: 60s for AI inference / test / strategy / validation endpoints; 15s for high-frequency market data
-    const timeoutMs = options?.timeoutMs ?? (cleanPath.includes('/ai/') ? 60_000 : 15_000);
+    // Adaptive timeout: 90s for AI inference / import / historical scans; 60s for standard requests (accommodates cloud cold-starts)
+    const isHeavy = cleanPath.includes('/ai/') || cleanPath.includes('/hpi/import') || cleanPath.includes('/historical/analogs') || cleanPath.includes('/hpi/seed');
+    const timeoutMs = options?.timeoutMs ?? (isHeavy ? 90_000 : 60_000);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -47,7 +48,7 @@ class ApiClient {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         const timeoutSec = Math.round(timeoutMs / 1000);
-        throw new Error(`Request to ${this.baseUrl} timed out after ${timeoutSec}s. (The AI model may be initializing or experiencing high load)`);
+        throw new Error(`Request to ${this.baseUrl} timed out after ${timeoutSec}s. (The server may be waking up from idle sleep or processing a large dataset — please retry)`);
       }
       throw new Error(`Cannot reach backend at ${this.baseUrl}. Make sure the backend server is running.`);
     } finally {
