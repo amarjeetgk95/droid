@@ -1013,14 +1013,46 @@ class ApiClient {
     return this.request<any>(`/api/v1/institutional/audit/recent?limit=${limit}`);
   }
 
-  // Unified Signals Facade — dedicated Signal Generation module
-  async getSignalsActive(params?: { instrument?: string; status?: string; engine?: string }) {
+  // Unified Signals Facade — Institutional Quantitative Signals Engine
+  async getSignalsActive(params?: { instrument?: string; status?: string; strategy?: string }) {
     const qs = new URLSearchParams();
     if (params?.instrument) qs.set('instrument', params.instrument);
     if (params?.status) qs.set('status', params.status);
-    if (params?.engine) qs.set('engine', params.engine);
+    if (params?.strategy) qs.set('strategy', params.strategy);
     const q = qs.toString() ? `?${qs.toString()}` : '';
-    return this.request<{ signals: any[]; count: number; generated_at_ms: number }>(`/api/v1/signals/active${q}`);
+    return this.request<{ signals: any[]; count: number; timestamp_ms: number }>(`/api/v1/signals/active${q}`);
+  }
+  async getSignalsScanner() {
+    return this.request<{ scanned_underlyings: string[]; total_candidates: number; new_signals: any[]; active_signals: any[]; timestamp_ms: number }>(
+      `/api/v1/signals/scanner`
+    );
+  }
+  async getSignalsPerformance() {
+    return this.request<{
+      total_signals: number;
+      active_signals: number;
+      completed_signals: number;
+      winning_signals: number;
+      losing_signals: number;
+      win_rate_pct: number;
+      profit_factor: number;
+      average_rr: number;
+      expectancy_r: number;
+      target_1_hits: number;
+      target_2_hits: number;
+      stop_loss_hits: number;
+      strategy_breakdown: Record<string, any>;
+      underlying_breakdown: Record<string, any>;
+    }>(`/api/v1/signals/performance`);
+  }
+  async getSignalDeepDive(signalId: string) {
+    return this.request<any>(`/api/v1/signals/${encodeURIComponent(signalId)}/deep-dive`);
+  }
+  async autoDetectSignal(payload: { underlying: string; strategy?: string; timeframe?: string }) {
+    return this.request<{ detected: boolean; candidate: any; message: string }>(`/api/v1/signals/auto-detect`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
   async getSignalsHistory(limit = 20) {
     return this.request<{ records: any[] }>(`/api/v1/signals/history?limit=${limit}`);
@@ -1029,10 +1061,10 @@ class ApiClient {
     return this.request<any>(`/api/v1/signals/${encodeURIComponent(signalId)}`);
   }
   async getSignalEngines() {
-    return this.request<{ engines: any[] }>(`/api/v1/signals/engines`);
+    return this.request<{ approved_universe: string[]; broker: string; strategies: any[] }>(`/api/v1/signals/engines`);
   }
   async generateSignal(payload: Record<string, any>) {
-    return this.request<{ signal: any; signal_obj: any; telegram: { enqueued: number; notification_ids: string[]; skipped_reason?: string | null }; is_expired: boolean; ttl_remaining_ms: number }>(
+    return this.request<{ success: boolean; signal: any; paper_order: any; telegram: { enqueued: number } }>(
       `/api/v1/signals/generate`,
       { method: 'POST', body: JSON.stringify(payload) },
     );
@@ -1043,12 +1075,12 @@ class ApiClient {
       body: JSON.stringify(payload),
     });
   }
-  async executeSignalPaper(signalId: string, quantity?: number) {
-    return this.request<{ success: boolean; signal_id: string; paper_order: any; message: string }>(
+  async executeSignalPaper(signalId: string, lots?: number, riskPercent?: number) {
+    return this.request<{ success: boolean; signal_id: string; quantity: number; lots: number; fill_price: number; order_id: string; message: string }>(
       `/api/v1/signals/${encodeURIComponent(signalId)}/execute-paper`,
       {
         method: 'POST',
-        body: JSON.stringify({ quantity }),
+        body: JSON.stringify({ lots, risk_percent: riskPercent }),
       },
     );
   }

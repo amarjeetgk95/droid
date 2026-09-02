@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Settings, ShieldCheck, Wifi, Sparkles, Activity, PanelLeftOpen } from 'lucide-react';
+import { Settings, PanelLeftOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
@@ -10,7 +10,7 @@ import { StreamConnectionState } from '@/hooks/useMarketStream';
 interface SidebarStatusDockProps {
   collapsed: boolean;
   isMobile?: boolean;
-  apiType: string;
+  apiType?: string;
   provider?: string;
   streamState?: StreamConnectionState;
   onExpand?: () => void;
@@ -20,7 +20,7 @@ interface SidebarStatusDockProps {
 export function SidebarStatusDock({
   collapsed,
   isMobile,
-  apiType,
+  apiType = 'indian',
   provider = 'fyers',
   streamState = 'CONNECTED',
   onExpand,
@@ -28,25 +28,26 @@ export function SidebarStatusDock({
 }: SidebarStatusDockProps) {
   const pathname = usePathname();
   const isSettingsActive = pathname === '/settings';
-
   const isStreamLive = streamState === 'CONNECTED';
 
   const gatewayLabel =
     apiType === 'crypto'
-      ? 'BINANCE FUTURES'
-      : `${(provider || 'fyers').replace('_', ' ').toUpperCase()} GATEWAY`;
+      ? 'BINANCE'
+      : `${(provider || 'fyers').toUpperCase()}`;
 
+  // Collapsed Mode Dock (Icon Stack)
   if (collapsed && !isMobile) {
     return (
-      <div className="flex flex-col items-center gap-2 p-2 border-t border-border/80">
+      <div className="flex flex-col items-center gap-1.5 p-2 border-t border-border/80 shrink-0 select-none">
         {/* Settings button */}
-        <Tooltip delayDuration={150}>
+        <Tooltip delayDuration={100}>
           <TooltipTrigger asChild>
             <Link
               href="/settings"
               onClick={onNavigate}
+              aria-label="Settings & Gateways"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors',
+                'flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors cursor-pointer',
                 isSettingsActive
                   ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
                   : 'hover:bg-accent hover:text-foreground',
@@ -56,37 +57,36 @@ export function SidebarStatusDock({
             </Link>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={10}>
-            <div className="flex flex-col gap-0.5">
-              <span className="font-semibold text-xs">Settings & Gateways</span>
-              <span className="text-[10px] text-muted-foreground">Broker, AI & Quant configuration</span>
-            </div>
+            <span className="font-semibold text-xs">Settings & Gateways</span>
           </TooltipContent>
         </Tooltip>
 
         {/* Expand button */}
-        <Tooltip delayDuration={150}>
+        <Tooltip delayDuration={100}>
           <TooltipTrigger asChild>
             <button
               type="button"
               onClick={onExpand}
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary/80 hover:bg-accent border border-border/60 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Expand sidebar (⌘B)"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
             >
               <PanelLeftOpen className="w-4 h-4" />
             </button>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={10}>
-            Expand sidebar (⌘B)
+            Expand sidebar <kbd className="ml-1 text-[10px] font-mono opacity-70">⌘B</kbd>
           </TooltipContent>
         </Tooltip>
       </div>
     );
   }
 
+  // Expanded Mode Dock
   return (
-    <div className="flex flex-col gap-2 p-3 border-t border-border/80 bg-secondary/20">
-      {/* Real-time Gateway Telemetry Pill */}
-      <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-card/60 border border-border/50 shadow-sm">
-        <div className="flex items-center gap-2 min-w-0">
+    <div className="flex flex-col gap-1.5 p-2.5 border-t border-border/80 shrink-0 select-none bg-secondary/15">
+      {/* Live Gateway Telemetry Pill */}
+      <div className="flex items-center justify-between px-2 py-1 rounded-md bg-card border border-border/60 shadow-2xs">
+        <div className="flex items-center gap-1.5 min-w-0">
           <span className="relative flex h-2 w-2 shrink-0">
             {isStreamLive && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -98,19 +98,14 @@ export function SidebarStatusDock({
               )}
             />
           </span>
-          <div className="flex flex-col min-w-0">
-            <span className="text-[10px] font-bold tracking-wider uppercase text-foreground/90 truncate">
-              {gatewayLabel}
-            </span>
-            <span className="text-[9px] text-muted-foreground font-mono">
-              {isStreamLive ? 'Live Feed • 14ms' : 'Connecting...'}
-            </span>
-          </div>
+          <span className="text-[10px] font-bold tracking-wider uppercase text-foreground/85 truncate">
+            {gatewayLabel} GATEWAY
+          </span>
         </div>
 
         <span
           className={cn(
-            'text-[9px] font-bold px-1.5 py-0.5 rounded border',
+            'text-[9px] font-bold px-1.5 py-0.2 rounded border uppercase tracking-wider',
             isStreamLive
               ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
               : 'bg-amber-500/10 text-amber-600 border-amber-500/20',
@@ -125,17 +120,17 @@ export function SidebarStatusDock({
         href="/settings"
         onClick={onNavigate}
         className={cn(
-          'group flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
+          'group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer',
           isSettingsActive
-            ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+            ? 'bg-primary/10 text-primary font-semibold'
             : 'text-muted-foreground hover:bg-accent hover:text-foreground',
         )}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Settings className="w-3.5 h-3.5 shrink-0 group-hover:rotate-45 transition-transform duration-200" />
+          <Settings className="w-3.5 h-3.5 shrink-0 opacity-75 group-hover:opacity-100 group-hover:rotate-45 transition-transform duration-200" />
           <span className="truncate">Settings & Gateways</span>
         </div>
-        <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-muted/70 border border-border/40 text-muted-foreground">
+        <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-muted text-muted-foreground border border-border/40">
           ⚙
         </kbd>
       </Link>

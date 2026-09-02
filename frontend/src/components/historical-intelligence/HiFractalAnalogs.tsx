@@ -121,12 +121,12 @@ export function HiFractalAnalogs({ defaultSymbol = 'NIFTY' }: Props) {
       {/* Top Metrics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {/* Card 1: Directional Probabilities */}
-        <Panel title="Empirical Direction Probabilities" icon={TrendingUp}>
+        <Panel title={<span className="flex items-center gap-1.5"><TrendingUp className="w-4 h-4 text-primary" /> Empirical Direction Probabilities</span>}>
           <div className="space-y-2 mt-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Sample Confidence:</span>
               <StatusPill
-                status={analogsData?.sample_confidence === 'HIGH' ? 'OK' : analogsData?.sample_confidence === 'MEDIUM' ? 'ACTIVE' : 'DEGRADED'}
+                tone={analogsData?.sample_confidence === 'HIGH' ? 'ok' : analogsData?.sample_confidence === 'MEDIUM' ? 'warn' : 'danger'}
                 label={`${analogsData?.sample_confidence || 'INSUFFICIENT'} (${analogsData?.valid_analogs_found || 0} analogs)`}
               />
             </div>
@@ -161,7 +161,7 @@ export function HiFractalAnalogs({ defaultSymbol = 'NIFTY' }: Props) {
         </Panel>
 
         {/* Card 2: Empirical Target & Stop Loss */}
-        <Panel title="Empirical Levels (MFE / MAE)" icon={Target}>
+        <Panel title={<span className="flex items-center gap-1.5"><Target className="w-4 h-4 text-primary" /> Empirical Levels (MFE / MAE)</span>}>
           <div className="space-y-2 mt-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Expected Target:</span>
@@ -194,7 +194,7 @@ export function HiFractalAnalogs({ defaultSymbol = 'NIFTY' }: Props) {
         </Panel>
 
         {/* Card 3: Historical Intelligence Score */}
-        <Panel title="Historical Score & Cache" icon={Cpu}>
+        <Panel title={<span className="flex items-center gap-1.5"><Cpu className="w-4 h-4 text-primary" /> Historical Score & Cache</span>}>
           <div className="space-y-2 mt-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Historical Score:</span>

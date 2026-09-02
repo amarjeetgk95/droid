@@ -1,502 +1,400 @@
 """
-Unified Signals Facade — dedicated Signal Generation module.
-
-Wraps institutional SignalCenter + algo signal_fusion behind a single
-authoritative API. Every generated signal can fan out to Telegram via
-the existing downstream pipeline (never blocks creation, §35).
-
-Endpoints:
-  POST /api/v1/signals/generate
-  GET  /api/v1/signals/active   (alias to institutional active)
-  GET  /api/v1/signals/history
-  GET  /api/v1/signals/{signal_id}
-  GET  /api/v1/signals/engines
-  POST /api/v1/signals/{signal_id}/cas-execution
-  POST /api/v1/telegram/dev/preview already exists for preview
+Unified Signal Centre API Router
+Institutional-Grade Endpoints for Indian Index Options (NIFTY, BANKNIFTY, SENSEX) on FYERS.
 """
 from __future__ import annotations
 
 import time
 import uuid
+from decimal import Decimal
 from typing import Literal, Any, Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-
-from app.institutional.signal import signal_fsm, create_signal
-from app.institutional.signal_center import signal_center
-from app.institutional.instrument_registry import asset_registry
-from app.institutional.audit import audit_trail
-from app.services.paper_service import paper_service
-from app.models.paper import OrderPayload
-
 import structlog
+
+from app.signals.contract_resolver import (
+    APPROVED_UNDERLYINGS,
+    validate_underlying,
+    resolve_option_contract,
+    calculate_position_sizing,
+    normalize_price,
+)
+from app.signals.strategies import STRATEGY_REGISTRY
+from app.signals.strategies.base import StrategyContext, SignalCandidate
+from app.signals.confluence import confluence_engine
+from app.signals.fsm import signal_fsm, SignalInstance
+from app.signals.scanner import scanner_engine
+from app.signals.outcome_tracker import outcome_tracker
+from app.signals.paper_engine import signal_paper_engine
+from app.signals.sse import signal_sse_hub
+from app.services.market_service import MarketService
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/signals", tags=["signals"])
 
-# ── Models ──────────────────────────────────────────────────────────
 
-class GenerateRequest(BaseModel):
-    instrument_id: str = Field(description="NIFTY / BANKNIFTY / SENSEX / BTCUSD")
-    candle_timeframe: str = Field(default="5M", description="1M | 5M §13")
-    strategy: str = Field(default="BREAKOUT", description="BREAKOUT etc")
-    direction: Literal["BULLISH", "BEARISH", "NEUTRAL"] | None = None
-    engine: Literal["institutional", "algo"] = Field(default="institutional")
-    trigger_level: float | str | None = None
-    current_price: float | str | None = None
-    confidence: float | None = None  # 0-100
-    breakout_pressure: int | None = None
-    false_breakout_risk: float | None = None
-    short_horizon: dict[str, Any] | None = None
-    continuation: dict[str, Any] | None = None
-    ai: dict[str, Any] | None = None
-    ttl_ms: int = Field(default=5000, ge=1000, le=60000)
-    status: str | None = Field(default=None, description="Override status: CONFIRMED / TRIGGERED / POSSIBLE_BREAKOUT etc")
-    # Signal generation payload for algo engine
-    technical: dict[str, Any] | None = None
-    mtf: dict[str, Any] | None = None
-    fno: dict[str, Any] | None = None
-    regime: dict[str, Any] | None = None
-    event_risk: dict[str, Any] | None = None
-    weights: dict[str, Any] | None = None
-    # Paper Trading Auto-Execution
-    execute_paper: bool = Field(default=True, description="Instantly execute paper trade on signal generation")
-    quantity: int | None = Field(default=None, description="Optional custom lot size")
-    # Telegram
-    notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification after generation")
-    setup_type: str | None = Field(default=None, description="BREAKOUT | BREAKDOWN — auto-derived from direction if omitted")
+# ── Request / Response Models ──────────────────────────────────────────
+
+class GenerateSignalRequest(BaseModel):
+    underlying: str = Field(description="NIFTY / BANKNIFTY / SENSEX")
+    strategy: Literal["BREAKOUT", "MEAN_REVERSION", "TREND_PULLBACK", "GAMMA_SQUEEZE", "ORB"] = "BREAKOUT"
+    direction: Literal["LONG_CALL", "LONG_PUT"] = "LONG_CALL"
+    timeframe: Literal["1M", "5M", "15M", "1H", "1D"] = "5M"
+    entry_min: Optional[float] = None
+    entry_max: Optional[float] = None
+    trigger: Optional[float] = None
+    stop_loss: Optional[float] = None
+    target_1: Optional[float] = None
+    target_2: Optional[float] = None
+    confidence: Optional[float] = 80.0
+    execute_paper: bool = Field(default=False, description="Auto-execute paper order")
+    lots: Optional[int] = Field(default=None, description="Optional custom lots")
+    notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification")
+    rationale: Optional[list[str]] = None
 
 
-class PreviewRequest(BaseModel):
-    instrument_id: str
-    candle_timeframe: str = "5M"
-    direction: str = "BULLISH"
-    status: str = "CONFIRMED"
-    setup_type: str | None = None
-    trigger_level: float | None = None
-    current_price: float | None = None
-    confidence: float | None = 75
-    breakout_pressure: int | None = 70
-    stop_loss: float | None = None
-
-
-# ── Engine capability map ─────────────────────────────────────────
-
-def _engines() -> list[dict]:
-    return [
-        {
-            "id": "institutional",
-            "label": "Institutional Breakout",
-            "description": "MarketContext + Breakout + Options + Feed-circuit aware. TTL 5s, throttled Telegram.",
-            "supports": ["NIFTY", "BANKNIFTY", "SENSEX", "BTCUSD"],
-            "timeframes": ["1M", "5M"],
-            "ttl_ms_default": 5000,
-        },
-        {
-            "id": "algo",
-            "label": "Algo Fusion",
-            "description": "Weighted fusion technical/mtf/fno/regime/ai/event_risk. Configurable weights §26.",
-            "supports": ["NIFTY", "BANKNIFTY", "SENSEX", "BTCUSD"],
-            "timeframes": ["1M", "5M"],
-            "ttl_ms_default": 5000,
-        },
-    ]
-
-
-@router.get("/engines")
-def list_engines():
-    return {"engines": _engines()}
-
-
-# ── Active / history aliases ──────────────────────────────────────
-
-@router.get("/active")
-async def list_active(
-    instrument: str | None = Query(None, description="Filter by NIFTY/BANKNIFTY/SENSEX/BTCUSD"),
-    status: str | None = Query(None, description="Filter by CONFIRMED/WATCH/POSSIBLE_BREAKOUT etc"),
-    engine: str | None = Query(None, description="institutional|algo — currently all go via institutional center"),
-):
-    # For now delegate to institutional center (single authoritative writer).
-    # Algo fused signals are created via generate with engine=algo and also appear here.
-    data = await signal_center.active_setups(instrument=instrument, status=status)
-    # Tag engine for frontend filtering
-    for d in data:
-        d.setdefault("engine", "institutional")
-    if engine:
-        data = [d for d in data if d.get("engine") == engine]
-    return {"signals": data, "count": len(data), "generated_at_ms": int(time.time() * 1000)}
-
-
-@router.get("/history")
-async def list_history(limit: int = Query(20, ge=1, le=200)):
-    return {"records": audit_trail.recent(limit)}
-
-
-@router.get("/{signal_id}")
-def get_signal(signal_id: str):
-    sig = signal_fsm.get(signal_id)
-    if not sig:
-        raise HTTPException(status_code=404, detail="signal not found")
-    return {
-        **sig.to_dict(),
-        "is_expired": sig.is_expired(),
-        "ttl_remaining_ms": sig.ttl_remaining_ms(),
-        "state_history": sig.state_history,
-    }
-
-
-@router.post("/{signal_id}/cas-execution")
-def cas_execution(signal_id: str):
-    ok, err = signal_fsm.cas_to_execution_pending(signal_id)
-    if not ok:
-        raise HTTPException(status_code=400, detail=err or "CAS failed")
-    sig = signal_fsm.get(signal_id)
-    return {"status": "EXECUTION_PENDING", "signal": sig.to_dict() if sig else None}
+class AutoDetectRequest(BaseModel):
+    underlying: str
+    strategy: str = "BREAKOUT"
+    timeframe: str = "5M"
 
 
 class ExecutePaperRequest(BaseModel):
-    quantity: int | None = Field(default=None, description="Optional custom lot size")
+    lots: Optional[int] = Field(default=None, description="Optional custom lots override")
+    risk_percent: float = Field(default=2.0, description="Risk capital % for sizing")
 
 
-@router.post("/{signal_id}/execute-paper")
-async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None = None):
+# ── 1. ACTIVE SIGNALS LIST ───────────────────────────────────────────
+
+@router.get("/active")
+async def list_active_signals(
+    instrument: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
+    strategy: Optional[str] = Query(None, description="Filter by BREAKOUT / MEAN_REVERSION / etc"),
+    status: Optional[str] = Query(None, description="Filter by FSM state"),
+):
     """
-    1-Click manual execution of any active signal into the Paper Trading Engine.
+    Returns active signals with live price distance, contract specs, and R:R metrics.
+    """
+    signals = signal_fsm.list_active(underlying=instrument, strategy=strategy)
+    
+    # Update outcomes with latest prices
+    market_svc = MarketService()
+    dto_list = []
+    
+    for s in signals:
+        if status and status != "ALL" and s.fsm_state != status:
+            continue
+            
+        # Compute live distance to trigger
+        distance_pts = None
+        distance_pct = None
+        try:
+            quote = await market_svc.get_quote(s.underlying)
+            if quote and quote.ltp is not None:
+                curr_p = Decimal(str(quote.ltp))
+                # Check outcome progression
+                outcome_tracker.update_with_price(s.underlying, curr_p)
+                
+                diff = abs(curr_p - s.trigger)
+                distance_pts = float(diff.quantize(Decimal("0.05")))
+                distance_pct = float((diff / s.trigger * Decimal("100")).quantize(Decimal("0.01"))) if s.trigger > 0 else 0.0
+        except Exception:
+            pass
+
+        d = s.model_dump()
+        d["distance_to_trigger_pts"] = distance_pts
+        d["distance_to_trigger_pct"] = distance_pct
+        d["ttl_remaining_seconds"] = s.ttl_remaining_seconds()
+        dto_list.append(d)
+
+    return {
+        "signals": dto_list,
+        "count": len(dto_list),
+        "timestamp_ms": int(time.time() * 1000),
+    }
+
+
+# ── 2. REAL-TIME MULTI-STRATEGY SCANNER ───────────────────────────────
+
+@router.get("/scanner")
+async def run_scanner():
+    """
+    Scans NIFTY, BANKNIFTY, SENSEX across all 5 quant strategies simultaneously.
+    """
+    scan_result = await scanner_engine.scan_all()
+    # Broadcast P2 scan event via SSE
+    await signal_sse_hub.broadcast("scanner_update", {"total_signals": len(scan_result.get("active_signals", []))}, priority="P2")
+    return scan_result
+
+
+# ── 3. PERFORMANCE ATTRIBUTION & ANALYTICS ────────────────────────────
+
+@router.get("/performance")
+def get_performance_stats():
+    """
+    Returns Win Rate %, Profit Factor, Expectancy, and Strategy breakdown.
+    """
+    return outcome_tracker.get_performance_metrics().model_dump()
+
+
+# ── 4. SIGNAL DEEP-DIVE TECHNICAL BREAKDOWN ───────────────────────────
+
+@router.get("/{signal_id}/deep-dive")
+async def get_signal_deep_dive(signal_id: str):
+    """
+    Comprehensive technical dossier for a single signal.
     """
     sig = signal_fsm.get(signal_id)
     if not sig:
         raise HTTPException(status_code=404, detail="Signal not found")
-    
-    iid = sig.instrument_id.upper()
-    direction = sig.direction.upper()
-    if direction not in ("BULLISH", "BEARISH", "LONG", "SHORT"):
-        raise HTTPException(status_code=400, detail=f"Cannot execute paper trade for non-directional signal ({direction})")
 
-    side = "BUY" if direction in ("BULLISH", "LONG") else "SELL"
-    default_lots = {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "BTCUSD": 1}
-    qty = (req.quantity if req and req.quantity else None) or default_lots.get(iid, 1)
+    market_svc = MarketService()
+    quote = await market_svc.get_quote(sig.underlying)
+    curr_price = float(quote.ltp) if quote and quote.ltp else float(sig.spot_price)
 
-    # Estimate price from snapshot or default
-    fill_price = 100.0
-    try:
-        from app.institutional.snapshot_buffer import synchronized_buffer
-        latest = synchronized_buffer.get_latest(iid)
-        if latest and latest.event.price:
-            fill_price = float(latest.event.price)
-    except Exception:
-        pass
-
-    try:
-        order_payload = OrderPayload(
-            symbol=f"{iid}_FUT",
-            underlying=iid,
-            side=side,
-            order_type="MARKET",
-            product="INTRADAY",
-            quantity=qty,
-            price=fill_price,
-        )
-        paper_order = await paper_service.place_order(order_payload)
-        return {
-            "success": True,
-            "signal_id": signal_id,
-            "paper_order": paper_order.model_dump(),
-            "message": f"Paper trade {paper_order.status}: {side} {qty} {iid} @ ₹{paper_order.fill_price or fill_price:,.2f}",
-        }
-    except Exception as e:
-        logger.error("signal_execute_paper_failed", signal_id=signal_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Paper trade execution failed: {str(e)}")
-
-
-# ── Preview (render without enqueue) ──────────────────────────────
-
-@router.post("/preview")
-def preview_signal(req: PreviewRequest):
-    from app.institutional.telegram_templates import render_event_message
-    from app.institutional.telegram_notifications import SignalEvent
-
-    setup = (req.setup_type or ("BREAKDOWN" if req.direction.upper() == "BEARISH" else "BREAKOUT")).upper()
-    et_map = {
-        "CONFIRMED": "SIGNAL_CONFIRMED",
-        "TRIGGERED": "SIGNAL_TRIGGERED",
-        "POSSIBLE_BREAKOUT": "POSSIBLE_SETUP",
-        "POSSIBLE_BREAKDOWN": "POSSIBLE_SETUP",
-        "WATCH": "POSSIBLE_SETUP",
-    }
-    event_type = et_map.get(req.status.upper(), "SIGNAL_CONFIRMED")
-    ev = SignalEvent(
-        event_type=event_type,
-        signal_id=f"preview-{uuid.uuid4().hex[:8]}",
-        instrument=req.instrument_id.upper(),
-        candle_timeframe=req.candle_timeframe.upper(),
-        setup_type=setup,
-        direction=req.direction.upper(),
-        status=req.status.upper(),
-        trigger_level=req.trigger_level,
-        current_price=req.current_price,
-        stop_loss=req.stop_loss,
-        confidence=req.confidence,
-        breakout_pressure=req.breakout_pressure,
-    )
-    text = render_event_message(ev)
-    return {"event_type": ev.event_type, "instrument": ev.instrument, "preview": text, "event": ev.model_dump()}
-
-
-# ── Generate ──────────────────────────────────────────────────────
-
-@router.post("/generate")
-async def generate_signal(req: GenerateRequest):
-    """
-    Unified generation endpoint.
-    - engine=institutional: creates authoritative Signal via signal.py and publishes SignalEvent to Telegram (downstream, never blocks).
-    - engine=algo: delegates to algo signal_fusion for LONG/SHORT/NO_TRADE then also creates institutional Signal wrapper for Telegram compat.
-    """
-    iid = req.instrument_id.upper()
-    prof = asset_registry.get(iid)
-    if not prof:
-        raise HTTPException(status_code=404, detail=f"instrument {iid} not found")
-    if req.candle_timeframe.upper() not in ("1M", "5M"):
-        raise HTTPException(status_code=400, detail="candle_timeframe must be 1M or 5M")
-    if iid not in ("NIFTY", "BANKNIFTY", "SENSEX", "BTCUSD"):
-        raise HTTPException(status_code=400, detail="instrument must be NIFTY/BANKNIFTY/SENSEX/BTCUSD")
-
-    direction = (req.direction or "BULLISH").upper()
-    if direction not in ("BULLISH", "BEARISH", "NEUTRAL"):
-        raise HTTPException(status_code=400, detail="direction must be BULLISH/BEARISH/NEUTRAL")
-
-    # Derive status/type
-    status = (req.status or ("CONFIRMED" if direction in ("BULLISH", "BEARISH") else "NO_SETUP")).upper()
-    setup_type = (req.setup_type or ("BREAKDOWN" if direction == "BEARISH" else "BREAKOUT")).upper()
-    ttl_ms = req.ttl_ms
-
-    # ── Resolve current_price for payload if not provided: try buffer
-    current_price = req.current_price
-    if current_price is None:
-        try:
-            from app.institutional.snapshot_buffer import synchronized_buffer
-            latest = synchronized_buffer.get_latest(iid)
-            if latest and latest.event.price:
-                current_price = float(latest.event.price)
-        except Exception:
-            pass
-
-    # ── Build Signal via signal.py (authoritative, same as signal_center) ──
-    # For algo engine, run fusion first to get LONG/SHORT -> map to BULLISH/BEARISH
-    algo_fusion_result: dict | None = None
-    if req.engine == "algo":
-        try:
-            from app.algo.signal_fusion import signal_fusion, SignalInputs
-            inputs = SignalInputs(
-                technical=req.technical or {},
-                mtf=req.mtf or {},
-                fno=req.fno or {},
-                regime=req.regime or {},
-                ai=req.ai or {},
-                event_risk=req.event_risk or {},
-                weights=req.weights or {},
-            )
-            fused = signal_fusion.fuse(inputs, strategy_id=req.strategy, symbol=iid, instrument_id=iid)
-            # Map LONG/SHORT/NO_TRADE -> BULLISH/BEARISH/NEUTRAL
-            if fused.direction == "LONG":
-                direction = "BULLISH"
-            elif fused.direction == "SHORT":
-                direction = "BEARISH"
-            else:
-                direction = "NEUTRAL"
-                status = "NO_SETUP"
-            algo_fusion_result = {
-                "signal_id": str(fused.signal_id),
-                "direction": fused.direction,
-                "score": str(fused.score),
-                "confidence": str(fused.confidence),
-            }
-            setup_type = "BREAKOUT" if direction == "BULLISH" else ("BREAKDOWN" if direction == "BEARISH" else "BREAKOUT")
-        except Exception as e:
-            logger.warning("algo_fusion_failed", error=str(e))
-            # Fall through to institutional defaults
-
-    # Feed-degraded gate: cannot generate when feed degraded? For manual generate we allow but mark Risk REJECTED downstream.
-    # The engine should still create signal; Telegram will be filtered by data_health check inside SignalEvent consumption.
-    signal_obj = create_signal(
-        instrument_id=iid,
-        strategy=req.strategy,
-        direction=direction,  # type: ignore
-        market_context_id=str(int(time.time() * 1000)),
-        short_horizon=req.short_horizon or {"status": status, "confidence": req.confidence or 75, "horizon_minutes": 10},
-        continuation=req.continuation or {"status": "WATCH", "confidence": 60},
-        ai=req.ai or {"status": "UNAVAILABLE"},
-        ttl_ms=ttl_ms,
-    )
-    signal_fsm.register(signal_obj)
-    # Mark validated so it can be queried; mirrors signal_center behaviour
-    try:
-        signal_fsm.transition(signal_obj.signal_id, "VALIDATED")
-    except Exception:
-        pass
-
-    # Audit — same as signal_center
-    try:
-        from app.institutional.audit import AuditRecord
-        rec = AuditRecord(
-            signal_id=signal_obj.signal_id,
-            instrument_id=iid,
-            canonical_timestamp_utc=signal_obj.created_at_utc,
-            market_context={"engine": req.engine, "strategy": req.strategy, "direction": direction},
-            strategy_output={"generate_request": req.model_dump(), "algo_fusion": algo_fusion_result},
-            ttl_ms=ttl_ms,
-            expires_at_utc=signal_obj.expires_at_utc,
-            final_state=status,
-        )
-        audit_trail.append(rec)
-    except Exception as e:
-        logger.warning("signals_audit_append_failed", error=str(e))
-
-    # ── Paper Trading Auto-Execution (on the spot) ───────────────────
-    paper_order_result: dict[str, Any] | None = None
-    if req.execute_paper and direction in ("BULLISH", "BEARISH") and status != "NO_SETUP":
-        side = "BUY" if direction == "BULLISH" else "SELL"
-        default_lots = {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "BTCUSD": 1}
-        qty = req.quantity or default_lots.get(iid, 1)
-        fill_p = float(current_price) if current_price is not None else (float(req.trigger_level) if req.trigger_level else 100.0)
-        try:
-            order_payload = OrderPayload(
-                symbol=f"{iid}_FUT",
-                underlying=iid,
-                side=side,
-                order_type="MARKET",
-                product="INTRADAY",
-                quantity=qty,
-                price=fill_p,
-            )
-            paper_order = await paper_service.place_order(order_payload)
-            paper_order_result = paper_order.model_dump()
-            logger.info("signal_auto_paper_trade_executed", signal_id=signal_obj.signal_id, order_id=paper_order.order_id, status=paper_order.status)
-        except Exception as pe:
-            logger.warning("signal_auto_paper_trade_failed", signal_id=signal_obj.signal_id, error=str(pe))
-
-    # ── Telegram fan-out (downstream, never blocks creation, §35) ──
-    telegram_result: dict[str, Any] = {"enqueued": 0, "notification_ids": [], "skipped_reason": None}
-    if req.notify_telegram and status != "NO_SETUP":
-        try:
-            from app.institutional.telegram_notifications import SignalEvent, should_publish_instrument_event, telegram_notification_queue
-            # Map status -> event_type
-            event_type_map = {
-                "TRIGGERED": "SIGNAL_TRIGGERED",
-                "CONFIRMED": "SIGNAL_CONFIRMED",
-                "POSSIBLE_BREAKOUT": "POSSIBLE_SETUP",
-                "POSSIBLE_BREAKDOWN": "POSSIBLE_SETUP",
-                "WATCH": "POSSIBLE_SETUP",
-                "EXPIRED": "SIGNAL_EXPIRED",
-                "INVALIDATED": "SIGNAL_INVALIDATED",
-            }
-            ev_type = event_type_map.get(status, "SIGNAL_CONFIRMED")
-            # Throttle per (instrument, event_type) 60s
-            if not should_publish_instrument_event(iid, ev_type, min_interval_s=60.0):
-                telegram_result["skipped_reason"] = f"throttled {iid}:{ev_type} within 60s"
-            else:
-                # Derive payload
-                trig_lv = None
-                try:
-                    trig_lv = float(req.trigger_level) if req.trigger_level is not None else (float(current_price) * 1.005 if current_price else None)  # type: ignore
-                except Exception:
-                    trig_lv = None
-                stop_lv = None
-                try:
-                    if iid == "BTCUSD":
-                        ctf = req.candle_timeframe.upper()
-                        # no-op
-                        pass
-                    # try to pull stop from short_horizon
-                    sh = req.short_horizon or {}
-                    if isinstance(sh.get("stop_loss"), (int, float, str)):
-                        stop_lv = float(sh["stop_loss"])  # type: ignore
-                except Exception:
-                    stop_lv = None
-                ev = SignalEvent(
-                    event_type=ev_type,
-                    signal_id=signal_obj.signal_id,
-                    instrument=iid,
-                    candle_timeframe=req.candle_timeframe.upper(),
-                    setup_type=setup_type,
-                    direction=direction,
-                    status=status,
-                    trigger_level=trig_lv,
-                    current_price=float(current_price) if current_price is not None else None,  # type: ignore
-                    stop_loss=stop_lv,
-                    confidence=float(req.confidence) if req.confidence is not None else None,
-                    breakout_pressure=req.breakout_pressure,
-                    false_breakout_risk=req.false_breakout_risk,
-                    ai_status=(signal_obj.ai or {}).get("status") if isinstance(signal_obj.ai, dict) else None,
-                    paper_order_id=paper_order_result.get("order_id") if paper_order_result else None,
-                    paper_fill_price=paper_order_result.get("fill_price") if paper_order_result else None,
-                    paper_filled_qty=paper_order_result.get("quantity") if paper_order_result else None,
-                    paper_status=paper_order_result.get("status") if paper_order_result else None,
-                    paper_side=paper_order_result.get("side") if paper_order_result else None,
-                    created_at_utc=signal_obj.created_at_utc,
-                )
-                ids = await telegram_notification_queue.publish_signal_event(ev)
-                telegram_result["enqueued"] = len(ids)
-                telegram_result["notification_ids"] = ids
-                if not ids:
-                    # May be SKIPPED due to prefs or dedup — surface audit hint
-                    telegram_result["skipped_reason"] = "no eligible Telegram bindings or filtered by preferences/dedup"
-        except Exception as e:  # §35 — never propagate
-            logger.warning("signals_telegram_publish_failed", error=str(e))
-            telegram_result["skipped_reason"] = str(e)
-    elif status == "NO_SETUP":
-        telegram_result["skipped_reason"] = "NO_SETUP not notified"
-
-    # Build unified signal DTO for frontend (mirrors signal_center active shape)
-    trigger_fmt = None
-    try:
-        if req.trigger_level is not None:
-            trigger_fmt = format(float(req.trigger_level), 'f')
-        elif current_price is not None:
-            trigger_fmt = format(float(current_price) * 1.005, 'f')  # type: ignore
-    except Exception:
-        trigger_fmt = None
-
-    price_fmt = None
-    if current_price is not None:
-        try:
-            price_fmt = f"{float(current_price):,.2f}"  # type: ignore
-        except Exception:
-            price_fmt = str(current_price)
-
-    dto = {
-        "signal_id": signal_obj.signal_id,
-        "instrument_id": iid,
-        "display_name": prof.display_name if prof else iid,
-        "engine": req.engine,
-        "strategy": req.strategy,
-        "status": status,
-        "direction": direction,
-        "setup_type": setup_type,
-        "candle_timeframe": req.candle_timeframe.upper(),
-        "trigger_level": trigger_fmt,
-        "price": str(current_price) if current_price is not None else None,
-        "price_formatted": price_fmt,
-        "confidence": req.confidence,
-        "breakout_pressure": req.breakout_pressure,
-        "false_breakout_risk": req.false_breakout_risk,
-        "ttl_ms": ttl_ms,
-        "created_at_utc": signal_obj.created_at_utc,
-        "expires_at_utc": signal_obj.expires_at_utc,
-        "fsm_state": signal_obj.fsm_state,
-        "short_horizon": signal_obj.short_horizon,
-        "continuation": signal_obj.continuation,
-        "algo_fusion": algo_fusion_result,
-        "paper_order": paper_order_result,
-        "backend_authoritative": True,
-    }
+    # Calculate recommended sizing for standard ₹1,00,000 / ₹5,00,000 account
+    opt = sig.option_contract or {}
+    lot_size = int(opt.get("lot_size", 75))
+    sizing_1l = calculate_position_sizing(100000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
+    sizing_5l = calculate_position_sizing(500000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
 
     return {
-        "signal": dto,
-        "signal_obj": signal_obj.to_dict(),
-        "telegram": telegram_result,
-        "paper_order": paper_order_result,
-        "is_expired": signal_obj.is_expired(),
-        "ttl_remaining_ms": signal_obj.ttl_remaining_ms(),
+        "signal": sig.model_dump(),
+        "current_market_price": curr_price,
+        "confluence": sig.confluence_breakdown,
+        "option_contract": sig.option_contract,
+        "fsm_history": [h.model_dump() for h in sig.state_history],
+        "position_sizing_preview": {
+            "account_1lakh": sizing_1l,
+            "account_5lakh": sizing_5l,
+        },
+        "levels": {
+            "entry_range": [float(sig.entry_min), float(sig.entry_max)],
+            "trigger": float(sig.trigger),
+            "stop_loss": float(sig.stop_loss),
+            "target_1": float(sig.target_1),
+            "target_2": float(sig.target_2),
+            "risk_points": float(sig.risk_points),
+            "risk_reward_t1": sig.risk_reward_t1,
+            "risk_reward_t2": sig.risk_reward_t2,
+        },
+        "timestamp_ms": int(time.time() * 1000),
+    }
+
+
+# ── 5. SINGLE SIGNAL QUERY ────────────────────────────────────────────
+
+@router.get("/{signal_id}")
+def get_signal_by_id(signal_id: str):
+    sig = signal_fsm.get(signal_id)
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    return sig.model_dump()
+
+
+# ── 6. 1-CLICK PAPER TRADING EXECUTION ────────────────────────────────
+
+@router.post("/{signal_id}/execute-paper")
+async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest] = None):
+    """
+    1-Click manual execution of any active signal into the Paper Trading Engine.
+    """
+    try:
+        lots = req.lots if req else None
+        risk_pct = req.risk_percent if req else 2.0
+        result = await signal_paper_engine.execute_signal(
+            signal_id=signal_id,
+            lots_override=lots,
+            risk_percent=risk_pct,
+        )
+        # Broadcast P0 execution event
+        await signal_sse_hub.broadcast("paper_execution", result.model_dump(), priority="P0")
+        return result.model_dump()
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        logger.error("paper_execution_failed", signal_id=signal_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Paper execution failed: {str(e)}")
+
+
+# ── 7. AUTO-DETECT LIVE SETUP (PRE-FILL GENERATOR) ────────────────────
+
+@router.post("/auto-detect")
+async def auto_detect_setup(req: AutoDetectRequest):
+    """
+    Evaluates live candles and indicators to automatically pre-fill realistic Entry, SL, and Target levels.
+    """
+    try:
+        candidates = await scanner_engine.scan_instrument(req.underlying, timeframe=req.timeframe)
+        # Filter for requested strategy if available
+        matched = [c for c in candidates if c.strategy == req.strategy.upper()]
+        selected = matched[0] if matched else (candidates[0] if candidates else None)
+
+        if selected:
+            return {
+                "detected": True,
+                "candidate": selected.model_dump(),
+                "message": f"Detected {selected.strategy} {selected.direction} on {req.underlying}",
+            }
+        
+        # Fallback to current price baseline if no active breakout
+        market_svc = MarketService()
+        quote = await market_svc.get_quote(req.underlying)
+        spot = Decimal(str(quote.ltp if quote and quote.ltp else 24800.0))
+        tick = Decimal("0.05")
+        contract = resolve_option_contract(req.underlying, spot, "CE", strike_offset=0)
+
+        entry = normalize_price(spot, tick)
+        sl = normalize_price(spot * Decimal("0.995"), tick)
+        t1 = normalize_price(spot + ((entry - sl) * Decimal("1.5")), tick)
+        t2 = normalize_price(spot + ((entry - sl) * Decimal("3.0")), tick)
+
+        return {
+            "detected": False,
+            "candidate": {
+                "underlying": req.underlying,
+                "strategy": req.strategy,
+                "direction": "LONG_CALL",
+                "timeframe": req.timeframe,
+                "spot_price": float(spot),
+                "entry_min": float(entry),
+                "entry_max": float(entry + Decimal("10.0")),
+                "trigger": float(entry + tick),
+                "stop_loss": float(sl),
+                "target_1": float(t1),
+                "target_2": float(t2),
+                "confidence": 75.0,
+                "option_contract": contract.model_dump(),
+            },
+            "message": "No active setup triggered; populated baseline levels from spot price.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── 8. MANUAL SIGNAL GENERATION ───────────────────────────────────────
+
+@router.post("/generate")
+async def generate_signal(req: GenerateSignalRequest):
+    """
+    Manual authoritative signal generation with FSM registration, optional paper execution, and Telegram dispatch.
+    """
+    u = validate_underlying(req.underlying)
+    market_svc = MarketService()
+    quote = await market_svc.get_quote(u)
+    spot = Decimal(str(quote.ltp if quote and quote.ltp else (req.trigger or 24800.0)))
+    tick = Decimal("0.05")
+
+    entry_min = normalize_price(req.entry_min or spot, tick)
+    entry_max = normalize_price(req.entry_max or (spot + Decimal("10.0")), tick)
+    trigger = normalize_price(req.trigger or (entry_min + tick), tick)
+    stop_loss = normalize_price(req.stop_loss or (spot * Decimal("0.995")), tick)
+    
+    risk_pts = abs(entry_min - stop_loss)
+    t1 = normalize_price(req.target_1 or (entry_min + (risk_pts * Decimal("1.5"))), tick)
+    t2 = normalize_price(req.target_2 or (entry_min + (risk_pts * Decimal("3.0"))), tick)
+
+    opt_type = "CE" if "CALL" in req.direction else "PE"
+    contract = resolve_option_contract(u, spot, opt_type, strike_offset=0)
+
+    instance = SignalInstance(
+        underlying=u,
+        strategy=req.strategy,
+        direction=req.direction,
+        timeframe=req.timeframe,
+        spot_price=spot,
+        entry_min=entry_min,
+        entry_max=entry_max,
+        trigger=trigger,
+        stop_loss=stop_loss,
+        target_1=t1,
+        target_2=t2,
+        risk_points=risk_pts,
+        risk_reward_t1=float(((t1 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5,
+        risk_reward_t2=float(((t2 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0,
+        confidence=req.confidence or 80.0,
+        confluence_breakdown={"technical": 80.0, "mtf": 75.0, "fno": 75.0, "regime": 80.0, "ai": 75.0},
+        rationale=req.rationale or [f"Manual {req.strategy} setup on {u}"],
+        option_contract=contract.model_dump(),
+        fsm_state="CONFIRMED" if req.execute_paper else "ARMED",
+    )
+    signal_fsm.register(instance)
+
+    paper_result = None
+    if req.execute_paper:
+        try:
+            paper_result = await signal_paper_engine.execute_signal(instance.signal_id, lots_override=req.lots)
+        except Exception as pe:
+            logger.warning("generate_signal_paper_auto_failed", error=str(pe))
+
+    # Optional Telegram Notification
+    telegram_res = {"enqueued": 0}
+    if req.notify_telegram:
+        try:
+            from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
+            ev = SignalEvent(
+                event_type="SIGNAL_CONFIRMED",
+                signal_id=instance.signal_id,
+                instrument=u,
+                candle_timeframe=req.timeframe,
+                setup_type=req.strategy,
+                direction="BULLISH" if "CALL" in req.direction else "BEARISH",
+                status=instance.fsm_state,
+                trigger_level=float(instance.trigger),
+                current_price=float(instance.spot_price),
+                stop_loss=float(instance.stop_loss),
+                confidence=float(instance.confidence),
+            )
+            ids = await telegram_notification_queue.publish_signal_event(ev)
+            telegram_res["enqueued"] = len(ids)
+        except Exception as te:
+            logger.warning("generate_telegram_dispatch_failed", error=str(te))
+
+    # Broadcast P0 Signal Creation via SSE
+    await signal_sse_hub.broadcast("signal_created", instance.model_dump(), priority="P0")
+
+    return {
+        "success": True,
+        "signal": instance.model_dump(),
+        "paper_order": paper_result.model_dump() if paper_result else None,
+        "telegram": telegram_res,
+    }
+
+
+# ── 9. REAL-TIME SERVER-SENT EVENTS (SSE) STREAM ──────────────────────
+
+@router.get("/stream")
+async def stream_signals(request: Request):
+    """
+    Live low-latency SSE feed for real-time signal creation, FSM transitions, and execution receipts.
+    """
+    q = signal_sse_hub.subscribe()
+    return StreamingResponse(
+        signal_sse_hub.event_generator(q),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── 10. ENGINES & STRATEGY CATALOG ────────────────────────────────────
+
+@router.get("/engines")
+def list_strategy_engines():
+    return {
+        "approved_universe": list(APPROVED_UNDERLYINGS),
+        "broker": "FYERS API v3",
+        "strategies": [
+            {"id": "BREAKOUT", "label": "Institutional Breakout", "description": "S/R violation with volume expansion (>1.4x) and pressure confirmation."},
+            {"id": "MEAN_REVERSION", "label": "Mean Reversion", "description": "2.0σ Bollinger Band & RSI oversold/overbought exhaustion in range regime."},
+            {"id": "TREND_PULLBACK", "label": "Trend Pullback", "description": "EMA 20/50/200 ribbon alignment with low-volume pullback retests."},
+            {"id": "GAMMA_SQUEEZE", "label": "Gamma Squeeze", "description": "ATM Call/Put OI unwinding with PCR extremes and Delta acceleration."},
+            {"id": "ORB", "label": "Opening Range Breakout (15M)", "description": "First 15-minute high/low breakout with session momentum confirmation."},
+        ],
     }
