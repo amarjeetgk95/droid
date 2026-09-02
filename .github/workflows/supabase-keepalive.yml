@@ -11,53 +11,60 @@ jobs:
     name: Ping Supabase Services
     runs-on: ubuntu-latest
     steps:
-      - name: Validate Secrets
+      - name: Ping Supabase Endpoints
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "${{ secrets.SUPABASE_URL }}" ] || [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::SUPABASE_URL or SUPABASE_ANON_KEY secret is not set in GitHub repository secrets!"
             exit 1
           fi
 
-      - name: Ping Supabase REST API
-        run: |
-          # Strip trailing slash from SUPABASE_URL if present
-          BASE_URL="${{ secrets.SUPABASE_URL }}"
-          BASE_URL="${BASE_URL%/}"
-          
-          echo "Pinging Supabase REST API at $(date -u)..."
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X GET "${BASE_URL}/rest/v1/" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}")
-          
-          BODY=$(echo "$RESPONSE" | sed -e '$d')
-          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d':' -f2)
-          
-          echo "REST API HTTP Status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
-            echo "Successfully pinged Supabase REST API."
-          else
-            echo "::warning::Unexpected HTTP status $HTTP_STATUS from REST API"
-            echo "Response details: $BODY"
-          fi
+          # Clean URL
+          BASE_URL="${SUPABASE_URL%/}"
+          echo "Target Supabase Host: $BASE_URL"
+          echo "Ping Timestamp: $(date -u)"
 
-      - name: Ping Supabase Auth Service
-        run: |
-          BASE_URL="${{ secrets.SUPABASE_URL }}"
-          BASE_URL="${BASE_URL%/}"
+          echo "----------------------------------------"
+          echo "1. Pinging Supabase Auth Health Service..."
+          AUTH_RESP=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET "$BASE_URL/auth/v1/health" \
+            -H "apikey: $SUPABASE_ANON_KEY")
           
-          echo "Pinging Supabase Auth Health..."
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X GET "${BASE_URL}/auth/v1/health" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          AUTH_BODY=$(echo "$AUTH_RESP" | sed -e '$d')
+          AUTH_STATUS=$(echo "$AUTH_RESP" | tail -n1 | cut -d':' -f2)
+          echo "Auth HTTP Status: $AUTH_STATUS"
+          echo "Auth Response: $AUTH_BODY"
+
+          echo "----------------------------------------"
+          echo "2. Pinging Supabase REST API (Schema Root)..."
+          REST_RESP=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET "$BASE_URL/rest/v1/" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+
+          REST_BODY=$(echo "$REST_RESP" | sed -e '$d')
+          REST_STATUS=$(echo "$REST_RESP" | tail -n1 | cut -d':' -f2)
+          echo "REST API HTTP Status: $REST_STATUS"
+          echo "REST API Response: $REST_BODY"
+
+          echo "----------------------------------------"
+          echo "3. Pinging Supabase Storage Status..."
+          STORAGE_RESP=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET "$BASE_URL/storage/v1/status" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
           
-          BODY=$(echo "$RESPONSE" | sed -e '$d')
-          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d':' -f2)
-          
-          echo "Auth Service HTTP Status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
-            echo "Successfully pinged Supabase Auth Service."
+          STORAGE_BODY=$(echo "$STORAGE_RESP" | sed -e '$d')
+          STORAGE_STATUS=$(echo "$STORAGE_RESP" | tail -n1 | cut -d':' -f2)
+          echo "Storage HTTP Status: $STORAGE_STATUS"
+          echo "Storage Response: $STORAGE_BODY"
+          echo "----------------------------------------"
+
+          if [ "$AUTH_STATUS" = "200" ] || [ "$REST_STATUS" = "200" ] || [ "$STORAGE_STATUS" = "200" ]; then
+            echo "SUCCESS: Supabase project is active and received keep-alive ping."
           else
-            echo "::warning::Unexpected HTTP status $HTTP_STATUS from Auth Service"
-            echo "Response details: $BODY"
+            echo "::error::All service pings failed. Please check secret configuration and project status."
+            exit 1
           fi
