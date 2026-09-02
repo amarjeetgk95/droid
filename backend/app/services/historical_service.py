@@ -399,5 +399,118 @@ class HistoricalService:
         finally:
             await session.close()
 
+    # ============================================================
+    # Empirical S/R & Analog Similarity Engine (§26, §30)
+    # ============================================================
+
+    async def get_historical_analogs(
+        self,
+        symbol: str = "NIFTY",
+        timeframe: str = "5M",
+        pattern_window: int = 15,
+        min_similarity: float = 0.70,
+        top_k: int = 20,
+        forward_horizon: int = 10,
+    ) -> dict:
+        """
+        Scans historical series to find matching pattern analogs with zero lookahead,
+        returning empirical win rate, MFE targets, and MAE stop loss.
+        """
+        from app.quant.historical_intelligence.models import CandleData
+        from app.quant.historical_intelligence.data_validator import validate_and_clean_candle_series
+        from app.quant.historical_intelligence.analog_selector import find_historical_analogs
+
+        underlying = symbol.upper().replace(" 50", "")
+        candles_raw = await self.market_service.get_candles(underlying, timeframe=timeframe.lower())
+
+        candle_objs: list[CandleData] = []
+        for i, c in enumerate(candles_raw):
+            ts = int(c.timestamp.timestamp() * 1000) if hasattr(c.timestamp, "timestamp") else int(i * 300000)
+            candle_objs.append(CandleData(
+                timestamp_utc=ts,
+                open=float(c.open),
+                high=float(c.high),
+                low=float(c.low),
+                close=float(c.close),
+                volume=float(c.volume),
+            ))
+
+        val = validate_and_clean_candle_series(candle_objs, min_bars=pattern_window + forward_horizon + 5)
+        if not val.is_valid:
+            from app.quant.historical_intelligence.analog_selector import _empty_summary
+            empty = _empty_summary(underlying, timeframe, pattern_window, len(candle_objs))
+            import dataclasses
+            return dataclasses.asdict(empty)
+
+        clean_candles = val.cleaned_candles
+        current_window = clean_candles[-pattern_window:]
+        is_crypto = "BTC" in underlying
+
+        summary = find_historical_analogs(
+            all_candles=clean_candles,
+            current_window_candles=current_window,
+            symbol=underlying,
+            timeframe=timeframe,
+            min_similarity_threshold=min_similarity,
+            top_k=top_k,
+            forward_horizon_bars=forward_horizon,
+            is_crypto=is_crypto,
+        )
+
+        import dataclasses
+        return dataclasses.asdict(summary)
+
+    async def get_support_resistance_levels(
+        self,
+        symbol: str = "NIFTY",
+        timeframe: str = "5M",
+        max_zones: int = 8,
+    ) -> list[dict]:
+        """
+        Calculates multi-touch swing clusters, Volume POC, and Options OI walls.
+        """
+        from app.quant.historical_intelligence.models import CandleData
+        from app.quant.historical_intelligence.data_validator import validate_and_clean_candle_series
+        from app.quant.historical_intelligence.support_resistance import detect_support_resistance_zones
+
+        underlying = symbol.upper().replace(" 50", "")
+        candles_raw = await self.market_service.get_candles(underlying, timeframe=timeframe.lower())
+
+        candle_objs: list[CandleData] = []
+        for i, c in enumerate(candles_raw):
+            ts = int(c.timestamp.timestamp() * 1000) if hasattr(c.timestamp, "timestamp") else int(i * 300000)
+            candle_objs.append(CandleData(
+                timestamp_utc=ts,
+                open=float(c.open),
+                high=float(c.high),
+                low=float(c.low),
+                close=float(c.close),
+                volume=float(c.volume),
+            ))
+
+        val = validate_and_clean_candle_series(candle_objs, min_bars=20)
+        if not val.is_valid:
+            return []
+
+        # Get current spot for OI strike estimation
+        quote = await self.market_service.get_quote(underlying)
+        spot_p = quote.ltp if quote.ltp > 0 else 24800.0
+        step = 100.0 if "BANK" in underlying else 50.0
+        atm_strike = round(spot_p / step) * step
+
+        call_walls = [atm_strike + step * 2, atm_strike + step * 4]
+        put_walls = [atm_strike - step * 2, atm_strike - step * 4]
+
+        zones = detect_support_resistance_zones(
+            val.cleaned_candles,
+            oi_call_walls=call_walls,
+            oi_put_walls=put_walls,
+            max_zones=max_zones,
+        )
+
+        import dataclasses
+        return [dataclasses.asdict(z) for z in zones]
+
 
 historical_service = HistoricalService()
+

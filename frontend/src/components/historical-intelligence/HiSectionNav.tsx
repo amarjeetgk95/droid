@@ -1,10 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { Database, Layers, LineChart, TrendingUp, CalendarDays, Star, ClipboardList } from 'lucide-react';
+import { Database, Layers, LineChart, TrendingUp, CalendarDays, Star, ClipboardList, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type HiSectionId = 'overview' | 'datasets' | 'patterns' | 'shifts' | 'seasonality' | 'watchlist' | 'audit';
+export type HiSectionId = 'overview' | 'analogs' | 'datasets' | 'patterns' | 'shifts' | 'seasonality' | 'watchlist' | 'audit';
 
 interface NavDef {
   id: HiSectionId;
@@ -15,6 +15,7 @@ interface NavDef {
 
 const NAV: NavDef[] = [
   { id: 'overview', label: 'Overview', icon: Database, description: 'Storage, coverage, activity' },
+  { id: 'analogs', label: 'Fractals & S/R', icon: Sparkles, description: 'Empirical analog similarity & S/R map' },
   { id: 'datasets', label: 'Datasets', icon: Layers, description: 'Derivatives, categories, retention' },
   { id: 'patterns', label: 'Patterns', icon: LineChart, description: 'Similarity setups and outcomes' },
   { id: 'shifts', label: 'Shifts', icon: TrendingUp, description: 'Multi-session regime shifts' },

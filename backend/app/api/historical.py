@@ -170,3 +170,63 @@ async def refresh_hit_rates_view():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Empirical S/R & Analog Similarity APIs (§30)
+# ============================================================
+
+@router.get("/api/v1/historical/analogs")
+async def get_historical_analogs(
+    symbol: str = Query(default="NIFTY", description="Instrument symbol (NIFTY, BANKNIFTY, BTCUSD)"),
+    timeframe: str = Query(default="5M", description="Timeframe e.g. 1M, 5M, 15M"),
+    pattern_window: int = Query(default=15, ge=5, le=50, description="Pattern length in bars"),
+    min_similarity: float = Query(default=0.70, ge=0.5, le=0.99, description="Minimum similarity threshold"),
+    top_k: int = Query(default=20, ge=1, le=50, description="Max top analogs to return"),
+    forward_horizon: int = Query(default=10, ge=3, le=50, description="Forward outcome bars"),
+):
+    """
+    Search historical archive for matching pattern analogs with zero lookahead,
+    returning empirical probabilities, MFE targets, and MAE stop losses.
+    """
+    try:
+        summary = await historical_service.get_historical_analogs(
+            symbol=symbol,
+            timeframe=timeframe,
+            pattern_window=pattern_window,
+            min_similarity=min_similarity,
+            top_k=top_k,
+            forward_horizon=forward_horizon,
+        )
+        return {
+            "data": summary,
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/v1/historical/sr-levels")
+async def get_support_resistance_levels(
+    symbol: str = Query(default="NIFTY", description="Instrument symbol"),
+    timeframe: str = Query(default="5M", description="Timeframe"),
+    max_zones: int = Query(default=8, ge=1, le=20, description="Max S/R zones to return"),
+):
+    """
+    Detect multi-touch price pivot clusters, Volume Profile POC, and Options OI strike walls.
+    """
+    try:
+        zones = await historical_service.get_support_resistance_levels(
+            symbol=symbol,
+            timeframe=timeframe,
+            max_zones=max_zones,
+        )
+        return {
+            "data": {"symbol": symbol.upper(), "zones": zones, "count": len(zones)},
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

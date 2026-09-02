@@ -11,6 +11,7 @@ import { ToastProvider, useToast } from '@/lib/historical-intelligence/toast';
 import { HiSectionNav, hiSectionMeta, type HiSectionId } from '@/components/historical-intelligence/HiSectionNav';
 import { HiTopStrip } from '@/components/historical-intelligence/HiTopStrip';
 import { HiOverview } from '@/components/historical-intelligence/HiOverview';
+import { HiFractalAnalogs } from '@/components/historical-intelligence/HiFractalAnalogs';
 import { HiDatasets } from '@/components/historical-intelligence/HiDatasets';
 import { HiPatterns } from '@/components/historical-intelligence/HiPatterns';
 import { HiShifts } from '@/components/historical-intelligence/HiShifts';
@@ -197,6 +198,9 @@ function HistoricalIntelligencePageInner() {
               onJumpToSection={setSection}
               onOpenImport={(s) => setImportSymbol(s)}
             />
+          )}
+          {section === 'analogs' && (
+            <HiFractalAnalogs defaultSymbol={analysisSymbol || 'NIFTY'} />
           )}
           {section === 'datasets' && (
             <HiDatasets

@@ -567,6 +567,28 @@ class ApiClient {
     return this.request<{ data: import('./types').PatternHitRateResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/hit-rates${query}`);
   }
 
+  // Empirical S/R & Analog Similarity Engine (§30)
+  async getHistoricalAnalogs(symbol: string, timeframe: string = '5M', patternWindow: number = 15, minSimilarity: number = 0.70, topK: number = 20, forwardHorizon: number = 10) {
+    const params = new URLSearchParams({
+      symbol,
+      timeframe,
+      pattern_window: patternWindow.toString(),
+      min_similarity: minSimilarity.toString(),
+      top_k: topK.toString(),
+      forward_horizon: forwardHorizon.toString(),
+    });
+    return this.request<{ data: any; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/historical/analogs?${params.toString()}`);
+  }
+
+  async getSupportResistanceLevels(symbol: string, timeframe: string = '5M', maxZones: number = 8) {
+    const params = new URLSearchParams({
+      symbol,
+      timeframe,
+      max_zones: maxZones.toString(),
+    });
+    return this.request<{ data: { symbol: string; zones: any[]; count: number }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/historical/sr-levels?${params.toString()}`);
+  }
+
   async getPatternOutcomes(symbol: string, patternTypes?: string, timeframe?: string, limit: number = 20) {
     const params = new URLSearchParams();
     if (patternTypes) params.set('pattern_types', patternTypes);
