@@ -303,7 +303,20 @@ class TelegramLinkManager:
 telegram_link_manager = TelegramLinkManager()
 
 # ── Commands §61 ─────────────────────────────────────────────────────
-TELEGRAM_COMMANDS = ["/start", "/status", "/market", "/signal", "/positions", "/pnl", "/risk", "/alerts", "/settings"]
+TELEGRAM_COMMANDS = [
+    "/start",
+    "/auth",
+    "/login",
+    "/connect",
+    "/status",
+    "/market",
+    "/signal",
+    "/positions",
+    "/pnl",
+    "/risk",
+    "/alerts",
+    "/settings",
+]
 
 def handle_telegram_update(update: dict, secret_valid: bool) -> dict:
     """
@@ -463,6 +476,31 @@ class TelegramUpdateQueue:
         if not telegram_link_manager.check_command_permission(chat_id, command):
             await telegram_outbound_queue.enqueue(TelegramOutbound(
                 chat_id=chat_id, text="⛔ Not authorized for this command.", parse_mode=""))
+            return
+
+        # ── /auth or /login command — 1-click broker authorization ──
+        if command in ("/auth", "/login", "/connect"):
+            from app.core.broker_runtime import get_config
+            broker_cfg = get_config()
+            provider_name = broker_cfg.provider.lower()
+            backend_url = getattr(settings, "backend_public_url", "") or "https://droid-backend-emeq.onrender.com"
+            login_url = f"{backend_url}/api/v1/tokens/{provider_name}/login"
+            
+            auth_text = (
+                f"🔐 *DROID Broker Authentication*\n\n"
+                f"• Active Provider: *{provider_name.upper()}*\n"
+                f"• Backend: Render (`{environment}`)\n\n"
+                f"Tap the button below to complete today's 2FA authentication. "
+                f"Your session will activate automatically."
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": f"🚀 1-Click Authorize {provider_name.upper()}", "url": login_url}]
+                ]
+            }
+            await telegram_outbound_queue.enqueue(
+                TelegramOutbound(chat_id=chat_id, text=auth_text, parse_mode="Markdown", reply_markup=markup)
+            )
             return
 
         # ── Read-only commands (§27) ─────────────────────────────────

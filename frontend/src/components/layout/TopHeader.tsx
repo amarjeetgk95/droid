@@ -6,7 +6,8 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Search, Bell, Clock3, Command, Menu } from 'lucide-react';
+import { Activity, Search, Bell, Clock3, Command, Menu, Zap, ExternalLink } from 'lucide-react';
+import { useSettings } from '@/components/settings/SettingsProvider';
 
 // Route label map for breadcrumb
 const ROUTE_LABELS: Record<string, string> = {
@@ -153,6 +154,20 @@ export function TopHeader({
   const modeCfg = getModeConfig(health?.mode);
   const isDemo = health?.mode === 'OFFLINE';
 
+  let activeBroker = 'fyers';
+  let isIndian = true;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const settingsCtx = useSettings();
+    activeBroker = settingsCtx?.settings?.broker?.provider || 'fyers';
+    isIndian = settingsCtx?.settings?.broker?.apiType !== 'crypto';
+  } catch {
+    // Graceful fallback if rendered outside provider context
+  }
+
+  const showQuickAuth = isIndian && streamState !== 'CONNECTED';
+  const authLoginUrl = `https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`;
+
   // Keyboard shortcut hint for search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -214,8 +229,23 @@ export function TopHeader({
           </div>
         </div>
 
-        {/* CENTER — System Status Capsule */}
-        <div className="flex items-center justify-center shrink-0">
+        {/* CENTER — System Status Capsule + Quick Connect */}
+        <div className="flex items-center justify-center gap-2 shrink-0">
+          {/* 1-Click Quick Connect Pill (Only shown when daily auth is required) */}
+          {showQuickAuth && (
+            <a
+              href={authLoginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 dark:text-amber-300 border border-amber-500/40 shadow-xs animate-pulse transition-all cursor-pointer whitespace-nowrap"
+              title={`1-Click connect ${activeBroker.toUpperCase()} daily session via Render`}
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
+              <span>1-Click Connect {activeBroker.toUpperCase()}</span>
+              <ExternalLink className="w-3 h-3 opacity-70" />
+            </a>
+          )}
+
           {/* Desktop capsule */}
           <div className="hidden md:flex items-center gap-1 p-1 rounded-full bg-muted/60 border border-border/60 shadow-sm">
             {/* Session */}
