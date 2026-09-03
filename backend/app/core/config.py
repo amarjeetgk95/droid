@@ -143,24 +143,44 @@ class Settings(BaseSettings):
         import structlog
         indian_providers = ("fyers", "flattrade")
         crypto_providers = ("binance",)
+        # Legacy/demo values from early deployments (Render dashboard may still
+        # carry MARKET_DATA_PROVIDER=mock). Treat as unset → quiet default.
+        legacy_values = ("", "mock", "mock_ai", "demo", "paper", "none")
+        requested = (self.market_data_provider or "").strip().lower()
 
         if self.api_type == "crypto":
             if self.market_data_provider not in crypto_providers:
-                structlog.get_logger().warning(
-                    "config_provider_fallback",
-                    api_type=self.api_type,
-                    requested=self.market_data_provider,
-                    using="binance",
-                )
+                if requested in legacy_values:
+                    structlog.get_logger().info(
+                        "config_provider_default",
+                        api_type=self.api_type,
+                        legacy_value=self.market_data_provider,
+                        using="binance",
+                    )
+                else:
+                    structlog.get_logger().warning(
+                        "config_provider_fallback",
+                        api_type=self.api_type,
+                        requested=self.market_data_provider,
+                        using="binance",
+                    )
                 self.market_data_provider = "binance"
         else:
             if self.market_data_provider not in indian_providers:
-                structlog.get_logger().warning(
-                    "config_provider_fallback",
-                    api_type=self.api_type,
-                    requested=self.market_data_provider,
-                    using="fyers",
-                )
+                if requested in legacy_values:
+                    structlog.get_logger().info(
+                        "config_provider_default",
+                        api_type=self.api_type,
+                        legacy_value=self.market_data_provider,
+                        using="fyers",
+                    )
+                else:
+                    structlog.get_logger().warning(
+                        "config_provider_fallback",
+                        api_type=self.api_type,
+                        requested=self.market_data_provider,
+                        using="fyers",
+                    )
                 self.market_data_provider = "fyers"
         return self
 
