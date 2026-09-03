@@ -1,5 +1,4 @@
-// Data status values — CLOSED added for honest market-closed state (no fake LIVE)
-export type DataStatus = 'LIVE' | 'STALE' | 'OFFLINE' | 'DISCONNECTED' | 'ERROR' | 'CLOSED';
+export type DataStatus = 'LIVE' | 'DEGRADED' | 'STALE' | 'OFFLINE' | 'DISCONNECTED' | 'ERROR' | 'CLOSED' | 'INVALID';
 export type MarketSession = 'PRE_OPEN' | 'OPEN' | 'CLOSED' | 'POST_CLOSE';
 export type Sentiment = 'VERY_BEARISH' | 'BEARISH' | 'NEUTRAL' | 'BULLISH' | 'VERY_BULLISH';
 
@@ -844,12 +843,22 @@ export interface ExpiryResponse {
 // Cryptocurrency & Binance API Module Models
 // ----------------------------------------------------
 
+export type OrderBookSequenceStatus = 'SYNCING' | 'ACTIVE' | 'GAP_DETECTED' | 'STALE' | 'DISCONNECTED';
+export type BasisStatus = 'CONTANGO' | 'BACKWARDATION' | 'NEUTRAL';
+export type RelativeStrengthStatus = 'ETH_OUTPERFORMING' | 'BTC_OUTPERFORMING' | 'NEUTRAL';
+
 export interface CryptoTicker {
   symbol: string;
+  asset?: string;
   display_name: string;
-  base_asset: string;
-  quote_asset: string;
+  base_asset?: string;
+  quote_asset?: string;
+  market_type?: string;
   price: number;
+  bid_price?: number | null;
+  ask_price?: number | null;
+  bid_size?: number | null;
+  ask_size?: number | null;
   change_24h: number;
   change_percent_24h: number;
   high_24h: number;
@@ -857,24 +866,48 @@ export interface CryptoTicker {
   volume_24h_quote: number;
   volume_24h_base: number;
   weighted_avg_price?: number;
+  vwap?: number | null;
+  trade_count?: number | null;
+  spread?: number | null;
+  spread_percent?: number | null;
+  basis_pts?: number | null;
+  high_low_spread_pct?: number | null;
   sparkline: number[];
   status: DataStatus;
   provider: string;
   last_updated: string;
+  received_timestamp?: string;
+  data_age_ms?: number;
 }
 
 export interface CryptoOrderBookLevel {
   price: number;
   quantity: number;
-  total: number;
+  total?: number;
+  notional?: number;
+  cumulative_quantity?: number;
+  cumulative_notional?: number;
 }
 
 export interface CryptoOrderBook {
   symbol: string;
+  market_type?: string;
   bids: CryptoOrderBookLevel[];
   asks: CryptoOrderBookLevel[];
+  best_bid?: number;
+  best_ask?: number;
+  mid_price?: number;
   spread: number;
   spread_percent: number;
+  bid_depth_total?: number;
+  ask_depth_total?: number;
+  depth_imbalance?: number;
+  depth_imbalance_pct?: number;
+  snapshot_id?: number | null;
+  last_update_id?: number | null;
+  sequence_status?: OrderBookSequenceStatus;
+  data_age_ms?: number;
+  status?: DataStatus;
   timestamp: string;
   provider: string;
 }
@@ -883,17 +916,39 @@ export interface CryptoDerivatives {
   symbol: string;
   mark_price: number;
   index_price: number;
+  spot_price?: number | null;
+  basis?: number;
+  basis_percent?: number;
+  basis_status?: BasisStatus;
   estimated_settle_price?: number;
   funding_rate: number;
   funding_rate_percent: number;
+  annualized_funding_rate?: number;
   next_funding_time: string;
+  countdown_seconds: number;
   open_interest_usd: number;
   open_interest_coins: number;
   long_short_ratio: number;
   long_percentage: number;
   short_percentage: number;
-  countdown_seconds: number;
+  top_traders_long_short_ratio?: number | null;
   provider: string;
+  status?: DataStatus;
+  timestamp: string;
+}
+
+export interface CryptoPairComparison {
+  eth_btc_ratio: number;
+  eth_btc_change_24h: number;
+  eth_btc_change_percent_24h: number;
+  btc_price: number;
+  btc_change_percent_24h: number;
+  eth_price: number;
+  eth_change_percent_24h: number;
+  performance_spread_24h: number;
+  relative_strength: RelativeStrengthStatus;
+  relative_volume_ratio: number;
+  status: DataStatus;
   timestamp: string;
 }
 
@@ -901,13 +956,26 @@ export interface CryptoMarketOverview {
   fear_greed_score: number;
   fear_greed_label: string;
   btc_dominance_pct: number;
+  eth_dominance_pct?: number;
   total_market_cap_usd: number;
   total_volume_24h_usd: number;
+  combined_volume_24h_usd?: number;
+  eth_btc_ratio?: number;
   tracked_pairs_count: number;
+  top_assets?: CryptoTicker[];
   top_gainers: CryptoTicker[];
   top_losers: CryptoTicker[];
+  status?: DataStatus;
   timestamp: string;
   provider: string;
+}
+
+export interface CryptoHealthResponse {
+  btc: Record<string, string>;
+  eth: Record<string, string>;
+  websocket: string;
+  last_update_ms: number;
+  overall_status: string;
 }
 
 // ============================================================

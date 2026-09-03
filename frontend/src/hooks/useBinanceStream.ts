@@ -15,14 +15,7 @@ import type { CryptoTicker, CryptoOrderBook, CryptoDerivatives, NormalizedCandle
 const PAIR_DISPLAY_NAMES: Record<string, [string, string, string]> = {
   BTCUSDT: ['Bitcoin', 'BTC', 'USDT'],
   ETHUSDT: ['Ethereum', 'ETH', 'USDT'],
-  SOLUSDT: ['Solana', 'SOL', 'USDT'],
-  BNBUSDT: ['BNB', 'BNB', 'USDT'],
-  XRPUSDT: ['XRP', 'XRP', 'USDT'],
-  DOGEUSDT: ['Dogecoin', 'DOGE', 'USDT'],
-  ADAUSDT: ['Cardano', 'ADA', 'USDT'],
-  AVAXUSDT: ['Avalanche', 'AVAX', 'USDT'],
-  LINKUSDT: ['Chainlink', 'LINK', 'USDT'],
-  NEARUSDT: ['NEAR Protocol', 'NEAR', 'USDT'],
+  ETHBTC: ['Ethereum / Bitcoin', 'ETH', 'BTC'],
 };
 
 function normalizeTickerData(data: Record<string, any>): Partial<CryptoTicker> & { symbol: string } {
@@ -359,29 +352,65 @@ export function useBinanceSymbolStream(
                   .slice(0, 20)
                   .map(([price, quantity]) => ({ price, quantity } as { price: number; quantity: number }));
 
-                // Recompute cumulative totals for depth bars
-                let run = 0;
+                // Recompute cumulative totals and notional for depth bars
+                let runNotional = 0;
+                let runQty = 0;
                 const bids = sortedBids.map((lvl) => {
-                  run += lvl.price * lvl.quantity;
-                  return { price: lvl.price, quantity: lvl.quantity, total: parseFloat(run.toFixed(2)) };
+                  const notional = lvl.price * lvl.quantity;
+                  runNotional += notional;
+                  runQty += lvl.quantity;
+                  return {
+                    price: lvl.price,
+                    quantity: lvl.quantity,
+                    total: parseFloat(runNotional.toFixed(2)),
+                    notional: parseFloat(notional.toFixed(2)),
+                    cumulative_quantity: parseFloat(runQty.toFixed(4)),
+                    cumulative_notional: parseFloat(runNotional.toFixed(2)),
+                  };
                 });
-                run = 0;
+                const totalBidNotional = runNotional;
+
+                runNotional = 0;
+                runQty = 0;
                 const asks = sortedAsks.map((lvl) => {
-                  run += lvl.price * lvl.quantity;
-                  return { price: lvl.price, quantity: lvl.quantity, total: parseFloat(run.toFixed(2)) };
+                  const notional = lvl.price * lvl.quantity;
+                  runNotional += notional;
+                  runQty += lvl.quantity;
+                  return {
+                    price: lvl.price,
+                    quantity: lvl.quantity,
+                    total: parseFloat(runNotional.toFixed(2)),
+                    notional: parseFloat(notional.toFixed(2)),
+                    cumulative_quantity: parseFloat(runQty.toFixed(4)),
+                    cumulative_notional: parseFloat(runNotional.toFixed(2)),
+                  };
                 });
+                const totalAskNotional = runNotional;
 
                 const bestBid = bids[0]?.price ?? 0;
                 const bestAsk = asks[0]?.price ?? 0;
+                const mid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2.0 : bestBid;
                 const spread = Math.max(0, bestAsk - bestBid);
                 const spreadPercent = bestAsk > 0 ? (spread / bestAsk) * 100 : 0;
+                const imbalance = totalBidNotional - totalAskNotional;
+                const totalDepth = totalBidNotional + totalAskNotional;
+                const imbalancePct = totalDepth > 0 ? (imbalance / totalDepth) * 100 : 0;
 
                 return {
                   ...prev,
                   bids,
                   asks,
+                  best_bid: bestBid,
+                  best_ask: bestAsk,
+                  mid_price: parseFloat(mid.toFixed(2)),
                   spread: parseFloat(spread.toFixed(4)),
                   spread_percent: parseFloat(spreadPercent.toFixed(4)),
+                  bid_depth_total: parseFloat(totalBidNotional.toFixed(2)),
+                  ask_depth_total: parseFloat(totalAskNotional.toFixed(2)),
+                  depth_imbalance: parseFloat(imbalance.toFixed(2)),
+                  depth_imbalance_pct: parseFloat(imbalancePct.toFixed(2)),
+                  sequence_status: 'ACTIVE' as const,
+                  status: 'LIVE' as const,
                   timestamp: new Date().toISOString(),
                   provider: `binance_${market}_ws`,
                 };
@@ -414,6 +443,7 @@ export function useBinanceSymbolStream(
                 index_price: indexPrice || undefined,
                 funding_rate: fundingRate,
                 funding_rate_percent: parseFloat((fundingRate * 100).toFixed(4)),
+                annualized_funding_rate: parseFloat((fundingRate * 3 * 365 * 100).toFixed(4)),
                 next_funding_time: nextFundingIso,
                 countdown_seconds: countdown,
                 provider: 'binance_futures_ws',

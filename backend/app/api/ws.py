@@ -87,12 +87,15 @@ async def websocket_crypto_feed(websocket: WebSocket):
         market = "spot"
 
     symbols_param = params.get("symbols", "")
+    from app.models.crypto import ALLOWED_CRYPTO_SYMBOLS
     if symbols_param:
-        symbols = [s.strip().upper() for s in symbols_param.split(",") if s.strip()]
-        # Validate: allow only alphanum, append USDT if missing and not already containing
-        symbols = [s if s.endswith("USDT") else f"{s}USDT" for s in symbols]
+        req_syms = [s.strip().upper() for s in symbols_param.split(",") if s.strip()]
+        req_syms = [s if (s.endswith("USDT") or s.endswith("BTC")) else f"{s}USDT" for s in req_syms]
+        symbols = [s for s in req_syms if s in ALLOWED_CRYPTO_SYMBOLS]
+        if not symbols:
+            symbols = ["BTCUSDT", "ETHUSDT"]
     else:
-        symbols = DEFAULT_SYMBOLS.copy()
+        symbols = ["BTCUSDT", "ETHUSDT"]
 
     interval = params.get("interval", "1m")  # for kline stream if requested
     streams_param = params.get("streams", "ticker")  # comma: ticker,kline,depth

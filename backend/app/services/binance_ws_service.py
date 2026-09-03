@@ -42,8 +42,7 @@ SPOT_WS_BASE = "wss://data-stream.binance.vision/ws"
 FUTURES_WS_BASE = "wss://fstream.binance.com/ws"
 
 DEFAULT_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "NEARUSDT",
+    "BTCUSDT", "ETHUSDT",
 ]
 
 def get_binance_ws_url(market: BinanceMarket, combined: bool = True) -> str:

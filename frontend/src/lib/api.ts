@@ -682,16 +682,24 @@ class ApiClient {
     return this.request<{ data: import('./types').NormalizedCandle[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/crypto/${encodeURIComponent(symbol)}/candles?timeframe=${encodeURIComponent(timeframe)}&limit=${limit}`);
   }
 
-  async getCryptoOrderBook(symbol: string, limit: number = 20) {
-    return this.request<{ data: import('./types').CryptoOrderBook; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/crypto/${encodeURIComponent(symbol)}/orderbook?limit=${limit}`);
+  async getCryptoOrderBook(symbol: string, limit: number = 20, market: string = 'spot') {
+    return this.request<{ data: import('./types').CryptoOrderBook; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/crypto/${encodeURIComponent(symbol)}/orderbook?limit=${limit}&market=${market}`);
   }
 
   async getCryptoDerivatives(symbol: string) {
     return this.request<{ data: import('./types').CryptoDerivatives; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/crypto/${encodeURIComponent(symbol)}/derivatives`);
   }
 
+  async getCryptoComparison() {
+    return this.request<{ data: import('./types').CryptoPairComparison; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/crypto/comparison');
+  }
+
   async getCryptoMarketOverview() {
     return this.request<{ data: import('./types').CryptoMarketOverview; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/crypto/market-overview');
+  }
+
+  async getCryptoHealth() {
+    return this.request<{ data: import('./types').CryptoHealthResponse; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/crypto/health');
   }
 
   // Auth

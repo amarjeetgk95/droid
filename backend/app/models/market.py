@@ -6,12 +6,14 @@ from enum import Enum
 
 class DataStatus(str, Enum):
     LIVE = "LIVE"
+    DEGRADED = "DEGRADED"
     STALE = "STALE"
     DEMO = "DEMO"  # legacy, do not use — use OFFLINE
     DISCONNECTED = "DISCONNECTED"
     ERROR = "ERROR"
     CLOSED = "CLOSED"
     OFFLINE = "OFFLINE"
+    INVALID = "INVALID"
 
 
 class MarketSession(str, Enum):

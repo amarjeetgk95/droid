@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Compass, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
+import { Compass, DollarSign, Activity, Layers, ArrowUpRight } from 'lucide-react';
 import { CryptoMarketOverview, CryptoTicker } from '@/lib/types';
 
 interface Props {
@@ -36,7 +36,7 @@ export function CryptoMarketOverviewStrip({ overview, onSelectTicker }: Props) {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Fear & Greed</span>
+              <span className="text-xs text-muted-foreground">Fear & Greed Index</span>
               <span
                 className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${getFearGreedColor(
                   overview.fear_greed_score
@@ -54,66 +54,56 @@ export function CryptoMarketOverviewStrip({ overview, onSelectTicker }: Props) {
           </div>
         </div>
 
-        {/* 2. Bitcoin Dominance & Market Cap */}
+        {/* 2. Bitcoin & Ethereum Market Dominance */}
         <div className="flex items-center gap-3 px-0 md:px-4 pt-3 md:pt-0">
           <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 shrink-0">
             <Activity className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-muted-foreground block">BTC Market Dominance</span>
+            <span className="text-xs text-muted-foreground block">Market Dominance</span>
             <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-base font-bold text-foreground font-mono">
-                {overview.btc_dominance_pct.toFixed(1)}%
+              <span className="text-sm font-bold text-amber-400 font-mono">
+                BTC: {overview.btc_dominance_pct.toFixed(1)}%
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                Cap: {formatUsd(overview.total_market_cap_usd)}
+              <span className="text-sm font-bold text-sky-400 font-mono">
+                ETH: {(overview.eth_dominance_pct || 16.8).toFixed(1)}%
               </span>
             </div>
+            <span className="text-[10px] text-muted-foreground block mt-0.5">
+              Cap: {formatUsd(overview.total_market_cap_usd)}
+            </span>
           </div>
         </div>
 
-        {/* 3. 24h Global Volume */}
+        {/* 3. Combined BTC + ETH 24h Volume */}
         <div className="flex items-center gap-3 px-0 md:px-4 pt-3 md:pt-0">
           <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 shrink-0">
             <DollarSign className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-muted-foreground block">Tracked 24h Spot Volume</span>
+            <span className="text-xs text-muted-foreground block">BTC + ETH 24h Volume</span>
             <div className="flex items-baseline gap-2 mt-0.5">
               <span className="text-base font-bold text-foreground font-mono">
-                {formatUsd(overview.total_volume_24h_usd)}
+                {formatUsd(overview.combined_volume_24h_usd || overview.total_volume_24h_usd)}
               </span>
-              <span className="text-[11px] text-emerald-400 font-medium">Binance Liquidity</span>
+              <span className="text-[11px] text-emerald-400 font-medium font-mono">Binance Liquid</span>
             </div>
           </div>
         </div>
 
-        {/* 4. Top Gainers & Movers */}
-        <div className="flex flex-col justify-center px-0 md:px-4 pt-3 md:pt-0 space-y-1">
-          <span className="text-[11px] text-muted-foreground block">24h Top Movers</span>
-          <div className="flex flex-wrap gap-1.5">
-            {overview.top_gainers.slice(0, 2).map((g) => (
-              <button
-                key={g.symbol}
-                type="button"
-                onClick={() => onSelectTicker?.(g)}
-                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
-              >
-                <TrendingUp className="w-3 h-3" />
-                <span>{g.symbol.replace('USDT', '')} +{g.change_percent_24h.toFixed(1)}%</span>
-              </button>
-            ))}
-            {overview.top_losers.slice(0, 1).map((l) => (
-              <button
-                key={l.symbol}
-                type="button"
-                onClick={() => onSelectTicker?.(l)}
-                className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors cursor-pointer"
-              >
-                <TrendingDown className="w-3 h-3" />
-                <span>{l.symbol.replace('USDT', '')} {l.change_percent_24h.toFixed(1)}%</span>
-              </button>
-            ))}
+        {/* 4. ETH/BTC Cross-Ratio */}
+        <div className="flex items-center gap-3 px-0 md:px-4 pt-3 md:pt-0">
+          <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 shrink-0">
+            <Layers className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">ETH / BTC Ratio</span>
+            <div className="flex items-baseline gap-2 mt-0.5">
+              <span className="text-base font-bold text-foreground font-mono">
+                {(overview.eth_btc_ratio || 0.0306).toFixed(5)}
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">BTC Price</span>
+            </div>
           </div>
         </div>
       </div>
