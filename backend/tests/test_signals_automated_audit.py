@@ -257,3 +257,83 @@ def test_signals_audit_api_endpoints(client):
     assert single_data["signal_id"] == sig_id
     assert single_data["status"] == "EXECUTED"
     assert single_data["actual_fill_price"] is not None
+    # Live MTM should be computed
+    assert single_data["current_price"] is not None
+    assert single_data["unrealized_pnl_inr"] is not None
+
+
+@pytest.mark.asyncio
+async def test_live_mark_to_market_pnl_updates_on_open_trade():
+    sig = SignalInstance(
+        underlying="NIFTY",
+        strategy="BREAKOUT",
+        direction="LONG_CALL",
+        timeframe="5M",
+        spot_price=Decimal("24800.0"),
+        entry_min=Decimal("24850.0"),
+        entry_max=Decimal("24860.0"),
+        trigger=Decimal("24850.0"),
+        stop_loss=Decimal("24780.0"),
+        target_1=Decimal("24950.0"),
+        target_2=Decimal("25050.0"),
+        risk_points=Decimal("70.0"),
+        risk_reward_t1=1.5,
+        risk_reward_t2=3.0,
+        confidence=85.0,
+        option_contract={"broker_symbol": "NSE:NIFTY24DEC24850CE", "strike": 24850, "option_type": "CE", "lot_size": 75},
+        fsm_state="ARMED",
+    )
+    signal_fsm.register(sig)
+    signal_audit_ledger.record_signal_created(
+        signal_id=sig.signal_id,
+        underlying=sig.underlying,
+        strategy=sig.strategy,
+        direction=sig.direction,
+        timeframe=sig.timeframe,
+        spot_price=float(sig.spot_price),
+        trigger=float(sig.trigger),
+        stop_loss=float(sig.stop_loss),
+        target_1=float(sig.target_1),
+        target_2=float(sig.target_2),
+        confidence=float(sig.confidence),
+        option_contract=sig.option_contract,
+        lots=1,
+        status="CONFIRMED",
+    )
+    signal_audit_ledger.record_paper_executed(
+        signal_id=sig.signal_id,
+        paper_order_id="ORD-TEST-001",
+        fill_price=24850.0,
+        quantity=75,
+        lots=1,
+        side="BUY",
+        margin_used=24850.0 * 75 * 0.15,
+    )
+
+    # 1. Simulate price rising by +30 points to 24880.0
+    updated = signal_audit_ledger.update_live_quote("NIFTY", 24880.0)
+    assert len(updated) == 1
+    rec = updated[0]
+    assert rec.current_price == 24880.0
+    assert rec.unrealized_pnl_points == 30.0
+    assert rec.unrealized_pnl_inr == 30.0 * 75  # 2250.0
+    assert rec.is_winner is True
+    assert rec.total_pnl_inr == 2250.0
+    assert rec.live_duration_str is not None
+
+    # 2. Simulate price falling by -20 points to 24830.0
+    signal_audit_ledger.update_live_quote("NIFTY", 24830.0)
+    rec2 = signal_audit_ledger.get(sig.signal_id)
+    assert rec2.current_price == 24830.0
+    assert rec2.unrealized_pnl_points == -20.0
+    assert rec2.unrealized_pnl_inr == -20.0 * 75  # -1500.0
+    assert rec2.is_winner is False
+
+    # 3. Test summary metrics aggregation
+    summary = signal_audit_ledger.get_summary_metrics()
+    assert summary["open_trades"] == 1
+    assert summary["net_unrealized_pnl_inr"] == -1500.0
+    assert summary["total_pnl_inr"] == -1500.0
+    assert summary["live_losing_trades"] == 1
+    assert summary["live_winning_trades"] == 0
+

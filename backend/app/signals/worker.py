@@ -63,6 +63,20 @@ class AutomatedSignalWorker:
                             curr_p = Decimal(str(quote.ltp))
                             # Process async updates (triggers -> paper execution, targets/stops -> square-off + P&L)
                             await outcome_tracker.process_price_update_async(u, curr_p)
+                            # Update live MTM in Signal Audit Ledger
+                            from app.signals.audit_ledger import signal_audit_ledger
+                            from app.signals.sse import signal_sse_hub
+                            updated_recs = signal_audit_ledger.update_live_quote(u, float(curr_p))
+                            if updated_recs:
+                                await signal_sse_hub.broadcast(
+                                    "audit_pnl_update",
+                                    {
+                                        "underlying": u,
+                                        "ltp": float(curr_p),
+                                        "summary": signal_audit_ledger.get_summary_metrics(),
+                                    },
+                                    priority="P1",
+                                )
                     except Exception as pe:
                         logger.debug("worker_price_update_err", underlying=u, error=str(pe))
 

@@ -60,6 +60,7 @@ def build_market_context_prompt(
     options_analytics: OptionsAnalytics | None = None,
     max_pain: MaxPainResult | None = None,
     strikes: list | None = None,
+    hie_evidence: Any | None = None,
 ) -> str:
     """Serialize quantitative state across all engines into grounded markdown.
 
@@ -319,6 +320,30 @@ def build_market_context_prompt(
         f"- India VIX: {regime.vix_regime.vix_value} ({regime.vix_regime.change_percent}%)",
         f"- VIX Volatility Category: {regime.vix_regime.regime_category} (Historical Percentile: {regime.vix_regime.historical_percentile}%)",
         f"- Playbook Recommendation (VIX): {regime.vix_regime.recommended_option_strategy}",
+    ])
+
+    # Section 26: Inject Historical Intelligence Engine structured evidence if present
+    if hie_evidence:
+        lines.extend([
+            "",
+            "## HISTORICAL INTELLIGENCE ENGINE (EMPIRICAL ANALOGUES & FORWARD OUTCOMES — §§26, 27):",
+            "The following empirical outcomes occurred during historically comparable market states:",
+        ])
+        if hasattr(hie_evidence, "historical_summary_text"):
+            lines.append(hie_evidence.historical_summary_text)
+        elif isinstance(hie_evidence, dict) and "historical_summary_text" in hie_evidence:
+            lines.append(str(hie_evidence["historical_summary_text"]))
+        elif hasattr(hie_evidence, "probability_30m"):
+            lines.append(f"- 15m Horizon Bullish Prob: {int(hie_evidence.probability_15m * 100)}%, Return: {hie_evidence.median_return_15m:+.2f}%")
+            lines.append(f"- 30m Horizon Bullish Prob: {int(hie_evidence.probability_30m * 100)}%, Return: {hie_evidence.median_return_30m:+.2f}%")
+            lines.append(f"- 60m Horizon Bullish Prob: {int(hie_evidence.probability_60m * 100)}%, Return: {hie_evidence.median_return_60m:+.2f}%")
+            lines.append(f"- Sample Size: N={hie_evidence.sample_count} (ESS={hie_evidence.effective_sample_size}), Confidence: {hie_evidence.confidence:.2f}")
+
+        lines.extend([
+            "Rule: Do NOT invent or alter historical statistics. Ground all historical contextual interpretations exclusively in this empirical evidence.",
+        ])
+
+    lines.extend([
         "",
         "## INTERPRETATION GUARDRAILS (APPLY BEFORE BIAS):",
         "- Do NOT automatically interpret increasing option volume or OI as buying or writing — cross-check with IV (rank/percentile/expansion), premium movement (LTP change), underlying price movement, and Greeks (Delta direction, Gamma concentration, Theta decay, Vega exposure).",

@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useMarketStream } from '@/hooks/useMarketStream';
 import {
   Activity,
   ArrowDownRight,
@@ -55,6 +56,16 @@ export interface AuditTradeRecord {
   actual_pnl_pct?: number;
   theoretical_pnl_points?: number;
   theoretical_pnl_inr?: number;
+
+  // Real-Time Live Mark-to-Market Fields
+  current_price?: number;
+  unrealized_pnl_inr?: number;
+  unrealized_pnl_points?: number;
+  unrealized_pnl_pct?: number;
+  total_pnl_inr?: number;
+  live_duration_seconds?: number;
+  live_duration_str?: string;
+
   status: 'DETECTED' | 'ARMED' | 'CONFIRMED' | 'EXECUTED' | 'WON' | 'LOST' | 'EXPIRED' | 'CLOSED';
   outcome_label?: string;
   is_winner?: boolean;
@@ -69,6 +80,11 @@ export interface AuditSummary {
   losing_trades: number;
   win_rate_pct: number;
   net_realized_pnl_inr: number;
+  net_unrealized_pnl_inr?: number;
+  total_pnl_inr?: number;
+  live_winning_trades?: number;
+  live_losing_trades?: number;
+  total_active_exposure_inr?: number;
   gross_profit_inr: number;
   gross_loss_inr: number;
   profit_factor: number;
@@ -78,6 +94,7 @@ export interface AuditSummary {
   avg_holding_time_seconds: number;
   strategy_breakdown: Record<string, any>;
   underlying_breakdown: Record<string, any>;
+  realtime_sync_ts?: number;
 }
 
 type Props = {
@@ -92,7 +109,50 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   const [filterInstr, setFilterInstr] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
 
-  const filtered = trades.filter((t) => {
+  // WebSocket real-time market stream for sub-second tick MTM updates
+  const { latestTicks, streamState } = useMarketStream();
+
+  // Compute live trade values with latest websocket ticks or backend MTM
+  const computedTrades = useMemo(() => {
+    return trades.map((t) => {
+      const isOpen = ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status);
+      if (!isOpen) {
+        return {
+          ...t,
+          displayPrice: t.exit_price ?? t.actual_fill_price ?? t.trigger_price,
+          displayPnlInr: t.actual_pnl_inr ?? 0,
+          displayPoints: t.actual_pnl_points ?? 0,
+          displayPct: t.actual_pnl_pct ?? 0,
+          isProfit: (t.actual_pnl_inr ?? 0) >= 0,
+          liveLtp: t.exit_price,
+        };
+      }
+
+      // Live trade: lookup current tick
+      const tick = latestTicks[t.underlying] || latestTicks[`${t.underlying} 50`] || latestTicks[t.underlying.replace('50', '')];
+      const livePrice = tick?.ltp ? Number(tick.ltp) : (t.current_price ?? t.actual_fill_price ?? t.trigger_price);
+      const entryPrice = t.actual_fill_price || t.trigger_price;
+      const isBullish = (t.direction.includes('CALL') || t.direction === 'BULLISH') && !t.direction.includes('PUT') && !t.direction.includes('BEARISH');
+      const ptsDiff = isBullish ? livePrice - entryPrice : entryPrice - livePrice;
+      const livePnlInr = t.unrealized_pnl_inr !== undefined && t.unrealized_pnl_inr !== null && !tick
+        ? t.unrealized_pnl_inr
+        : Math.round(ptsDiff * t.quantity * 100) / 100;
+      const margin = t.margin_used || (entryPrice * t.quantity);
+      const livePct = margin > 0 ? Math.round((livePnlInr / margin * 100) * 100) / 100 : 0;
+
+      return {
+        ...t,
+        displayPrice: livePrice,
+        displayPnlInr: livePnlInr,
+        displayPoints: Math.round(ptsDiff * 100) / 100,
+        displayPct: livePct,
+        isProfit: livePnlInr >= 0,
+        liveLtp: livePrice,
+      };
+    });
+  }, [trades, latestTicks]);
+
+  const filtered = computedTrades.filter((t) => {
     if (filterInstr !== 'ALL' && t.underlying !== filterInstr) return false;
     if (filterStatus === 'WON' && t.status !== 'WON') return false;
     if (filterStatus === 'LOST' && t.status !== 'LOST') return false;
@@ -100,36 +160,95 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     return true;
   });
 
-  const netPnl = summary?.net_realized_pnl_inr ?? 0;
-  const isNetProfit = netPnl >= 0;
+  // Calculate live aggregate totals
+  const openTrades = computedTrades.filter((t) => ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status));
+  const liveUnrealizedPnl = summary?.net_unrealized_pnl_inr ?? openTrades.reduce((acc, t) => acc + t.displayPnlInr, 0);
+  const netRealizedPnl = summary?.net_realized_pnl_inr ?? 0;
+  const totalCombinedPnl = summary?.total_pnl_inr ?? (netRealizedPnl + liveUnrealizedPnl);
+  const isUnrealizedProfit = liveUnrealizedPnl >= 0;
+  const isTotalProfit = totalCombinedPnl >= 0;
+  const isRealizedProfit = netRealizedPnl >= 0;
+
+  const liveWinningCount = summary?.live_winning_trades ?? openTrades.filter((t) => t.displayPnlInr > 0).length;
+  const liveLosingCount = summary?.live_losing_trades ?? openTrades.filter((t) => t.displayPnlInr < 0).length;
 
   return (
     <div className="space-y-4">
-      {/* ── SUMMARY KPI STRIP ── */}
+      {/* ── 3-TIER LIVE P&L SUMMARY KPI STRIP ── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <Card className={`${isNetProfit ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
+        {/* Card 1: LIVE UNREALIZED MTM P&L */}
+        <Card className={`relative overflow-hidden ${isUnrealizedProfit ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Net Realized P&L</span>
-              {isNetProfit ? <TrendingUp className="w-4 h-4 text-emerald-500" /> : <TrendingDown className="w-4 h-4 text-rose-500" />}
+              <span className="text-[11px] font-semibold flex items-center gap-1.5 text-foreground">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                Live Unrealized P&L
+              </span>
+              <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-mono font-bold ${isUnrealizedProfit ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30' : 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/30'}`}>
+                LIVE MTM
+              </Badge>
             </div>
-            <div className={`text-xl font-bold font-mono mt-1 ${isNetProfit ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {netPnl >= 0 ? `+₹${netPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(netPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+            <div className={`text-xl font-extrabold font-mono mt-1 ${isUnrealizedProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+              {liveUnrealizedPnl >= 0 ? `+₹${liveUnrealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `-₹${Math.abs(liveUnrealizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Gross: +₹{summary?.gross_profit_inr?.toLocaleString() || 0} / -₹{summary?.gross_loss_inr?.toLocaleString() || 0}
+            <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
+              <span>{openTrades.length} Open Positions</span>
+              <span className="font-mono">
+                <span className="text-emerald-600 font-bold">{liveWinningCount}W</span> / <span className="text-rose-600 font-bold">{liveLosingCount}L</span>
+              </span>
             </div>
           </CardContent>
         </Card>
 
+        {/* Card 2: NET REALIZED P&L */}
+        <Card className={`${isRealizedProfit ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground font-medium">Net Realized P&L</span>
+              {isRealizedProfit ? <TrendingUp className="w-4 h-4 text-emerald-500" /> : <TrendingDown className="w-4 h-4 text-rose-500" />}
+            </div>
+            <div className={`text-xl font-bold font-mono mt-1 ${isRealizedProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+              {netRealizedPnl >= 0 ? `+₹${netRealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(netRealizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+              Gross: +₹{(summary?.gross_profit_inr || 0).toLocaleString()} / -₹{(summary?.gross_loss_inr || 0).toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card 3: COMBINED TOTAL PORTFOLIO P&L */}
+        <Card className={`border-2 ${isTotalProfit ? 'border-primary/40 bg-primary/5' : 'border-rose-500/30 bg-rose-500/5'}`}>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-foreground flex items-center gap-1">
+                <DollarSign className="w-3.5 h-3.5 text-primary" /> Total Net P&L
+              </span>
+              <Badge variant="secondary" className="text-[9px] px-1 py-0 font-mono">
+                COMBINED
+              </Badge>
+            </div>
+            <div className={`text-xl font-extrabold font-mono mt-1 ${isTotalProfit ? 'text-primary' : 'text-rose-600'}`}>
+              {totalCombinedPnl >= 0 ? `+₹${totalCombinedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(totalCombinedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              Realized + Live Open MTM
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card 4: WIN RATE & PROFIT FACTOR */}
         <Card className="bg-secondary/20">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Win Rate</span>
-              <Award className="w-4 h-4 text-primary/70" />
+              <span className="text-[11px] text-muted-foreground font-medium">Win Rate & Factor</span>
+              <Award className="w-4 h-4 text-amber-500/70" />
             </div>
-            <div className="text-xl font-bold font-mono text-primary mt-1">
-              {summary?.win_rate_pct !== undefined ? `${summary.win_rate_pct}%` : '0%'}
+            <div className="text-xl font-bold font-mono mt-1 flex items-center gap-1.5">
+              <span className="text-emerald-600">{summary?.win_rate_pct !== undefined ? `${summary.win_rate_pct}%` : '0%'}</span>
+              <span className="text-xs text-muted-foreground font-normal">({summary?.profit_factor || 1.0}x)</span>
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
               {summary?.winning_trades || 0}W - {summary?.losing_trades || 0}L ({summary?.closed_trades || 0} closed)
@@ -137,53 +256,25 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
           </CardContent>
         </Card>
 
+        {/* Card 5: ACTIVE EXPOSURE & PAPER EXECUTIONS */}
         <Card className="bg-secondary/20">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Profit Factor</span>
-              <Zap className="w-4 h-4 text-amber-500/70" />
-            </div>
-            <div className="text-xl font-bold font-mono mt-1">
-              {summary?.profit_factor !== undefined ? `${summary.profit_factor}x` : '—'}
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Avg Trade: ₹{summary?.avg_trade_pnl_inr?.toLocaleString() || 0}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-secondary/20">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Paper Executions</span>
+              <span className="text-[11px] text-muted-foreground font-medium">Active Exposure</span>
               <Activity className="w-4 h-4 text-primary/70" />
             </div>
             <div className="text-xl font-bold font-mono mt-1">
-              {summary?.open_trades || 0} Open
+              ₹{((summary?.total_active_exposure_inr || 0) / 1000).toFixed(1)}k
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              {summary?.total_signals_audited || 0} Total Signals Logged
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-secondary/20">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Avg Holding Time</span>
-              <Clock className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <div className="text-xl font-bold font-mono mt-1">
-              {summary?.avg_holding_time_seconds ? `${Math.round(summary.avg_holding_time_seconds / 60)}m` : '—'}
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Max Win: ₹{summary?.max_win_inr?.toLocaleString() || 0}
+            <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
+              <span>{openTrades.length} Paper Trades</span>
+              <span className="font-mono text-primary">{summary?.total_signals_audited || 0} Logged</span>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* ── FILTER & ACTION BAR ── */}
+      {/* ── FILTER & REAL-TIME STATUS BAR ── */}
       <Card className="p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -207,7 +298,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
             <div className="h-4 w-px bg-border mx-1" />
 
-            {(['ALL', 'WON', 'LOST', 'OPEN'] as const).map((st) => (
+            {(['ALL', 'OPEN', 'WON', 'LOST'] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setFilterStatus(st)}
@@ -222,10 +313,17 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
             ))}
           </div>
 
-          <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} className="h-8 text-xs gap-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Sync Ledger
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded bg-secondary/50 border text-muted-foreground">
+              <span className={`h-2 w-2 rounded-full ${streamState === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              {streamState === 'CONNECTED' ? 'Live Stream Active' : 'Polling (3s)'}
+            </div>
+
+            <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} className="h-8 text-xs gap-1.5">
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Sync Ledger
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -238,10 +336,10 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 <th className="py-2.5 px-3">Time & Signal</th>
                 <th className="py-2.5 px-3">Instrument & Strategy</th>
                 <th className="py-2.5 px-3">Option Contract</th>
-                <th className="py-2.5 px-3">Trigger / Fill Price</th>
-                <th className="py-2.5 px-3">Exit Price & Reason</th>
+                <th className="py-2.5 px-3">Trigger / Fill / LTP</th>
+                <th className="py-2.5 px-3">Exit / Target Progress</th>
                 <th className="py-2.5 px-3">Duration</th>
-                <th className="py-2.5 px-3 text-right">Actual Realized P&L</th>
+                <th className="py-2.5 px-3 text-right">Actual & Live P&L</th>
                 <th className="py-2.5 px-3 text-center">Status</th>
               </tr>
             </thead>
@@ -255,23 +353,26 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 </tr>
               ) : (
                 filtered.map((t) => {
-                  const isWin = t.is_winner === true;
-                  const isLoss = t.is_winner === false && (t.actual_pnl_inr ?? 0) < 0;
-                  const pnlInr = t.actual_pnl_inr;
+                  const isOpen = ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status);
+                  const isWin = t.isProfit;
+                  const pnlInr = t.displayPnlInr;
 
                   return (
                     <tr
                       key={t.audit_id}
                       onClick={() => onSelectSignal?.(t.signal_id)}
-                      className="hover:bg-muted/30 transition-colors cursor-pointer group"
+                      className={`hover:bg-muted/30 transition-colors cursor-pointer group ${isOpen ? 'bg-primary/5' : ''}`}
                     >
+                      {/* Time & Signal */}
                       <td className="py-2.5 px-3 font-mono">
-                        <div className="font-semibold text-foreground">
+                        <div className="font-semibold text-foreground flex items-center gap-1">
+                          {isOpen && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />}
                           {new Date(t.created_at_utc).toLocaleTimeString('en-IN', { hour12: false })}
                         </div>
                         <div className="text-[10px] text-muted-foreground">{t.signal_id.slice(0, 8)}…</div>
                       </td>
 
+                      {/* Instrument & Strategy */}
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-foreground">{t.underlying}</span>
@@ -280,10 +381,11 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                           </Badge>
                         </div>
                         <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                          {t.strategy} • <span className={t.direction.includes('CALL') || t.direction === 'BULLISH' ? 'text-emerald-500' : 'text-rose-500'}>{t.direction}</span>
+                          {t.strategy} • <span className={t.direction.includes('CALL') || t.direction === 'BULLISH' ? 'text-emerald-500 font-semibold' : 'text-rose-500 font-semibold'}>{t.direction}</span>
                         </div>
                       </td>
 
+                      {/* Option Contract */}
                       <td className="py-2.5 px-3 font-mono">
                         <div className="text-[11px] font-semibold text-foreground">
                           {t.option_symbol || `${t.underlying} ATM ${t.option_type || 'CE'}`}
@@ -293,59 +395,80 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                         </div>
                       </td>
 
+                      {/* Trigger / Fill / LTP */}
                       <td className="py-2.5 px-3 font-mono">
                         <div className="text-foreground">
                           Trig: ₹{t.trigger_price?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </div>
                         {t.actual_fill_price ? (
-                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                          <div className="text-[10px] text-muted-foreground">
                             Fill: ₹{t.actual_fill_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                            {t.slippage_points ? ` (${t.slippage_points > 0 ? '+' : ''}${t.slippage_points} pts)` : ''}
                           </div>
-                        ) : (
-                          <div className="text-[10px] text-muted-foreground">Pending Fill</div>
+                        ) : null}
+                        {isOpen && t.liveLtp && (
+                          <div className={`text-[10px] font-bold flex items-center gap-0.5 mt-0.5 ${t.isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            LTP: ₹{t.liveLtp.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
                         )}
                       </td>
 
+                      {/* Exit / Target Progress */}
                       <td className="py-2.5 px-3 font-mono">
                         {t.exit_price ? (
                           <div>
                             <div className="font-semibold text-foreground">
                               ₹{t.exit_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">{t.exit_reason || 'Exit'}</div>
+                            <div className="text-[10px] text-muted-foreground">{t.exit_reason || 'Square-off'}</div>
                           </div>
                         ) : (
-                          <div className="text-muted-foreground">
-                            SL: ₹{t.stop_loss?.toLocaleString('en-IN', { minimumFractionDigits: 1 })} • T1: ₹{t.target_1?.toLocaleString('en-IN', { minimumFractionDigits: 1 })}
+                          <div className="space-y-0.5">
+                            <div className="text-[11px] text-emerald-600 font-semibold">
+                              T1: ₹{t.target_1?.toLocaleString('en-IN', { minimumFractionDigits: 1 })} (1.5R)
+                            </div>
+                            <div className="text-[10px] text-destructive">
+                              SL: ₹{t.stop_loss?.toLocaleString('en-IN', { minimumFractionDigits: 1 })}
+                            </div>
                           </div>
                         )}
                       </td>
 
-                      <td className="py-2.5 px-3 font-mono text-muted-foreground text-[11px]">
-                        {t.holding_time_str || '—'}
+                      {/* Duration */}
+                      <td className="py-2.5 px-3 font-mono text-[11px]">
+                        {isOpen ? (
+                          <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {t.live_duration_str || t.holding_time_str || '1m'} (Live)
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">{t.holding_time_str || '—'}</span>
+                        )}
                       </td>
 
+                      {/* Actual & Live P&L */}
                       <td className="py-2.5 px-3 text-right font-mono">
-                        {pnlInr !== undefined && pnlInr !== null ? (
-                          <div>
-                            <div
-                              className={`text-xs font-bold ${
-                                isWin ? 'text-emerald-600 dark:text-emerald-400' : isLoss ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground'
-                              }`}
-                            >
-                              {pnlInr >= 0 ? `+₹${pnlInr.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(pnlInr).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground">
-                              {t.actual_pnl_points ? `${t.actual_pnl_points > 0 ? '+' : ''}${t.actual_pnl_points} pts` : ''}
-                              {t.actual_pnl_pct ? ` (${t.actual_pnl_pct > 0 ? '+' : ''}${t.actual_pnl_pct}%)` : ''}
-                            </div>
+                        <div>
+                          {isOpen && (
+                            <Badge className="bg-primary/10 text-primary border-primary/20 text-[9px] px-1 py-0 mb-0.5">
+                              LIVE MTM
+                            </Badge>
+                          )}
+                          <div
+                            className={`text-xs font-bold ${
+                              isWin ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {pnlInr >= 0
+                              ? `+₹${pnlInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : `-₹${Math.abs(pnlInr).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                           </div>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
+                          <div className="text-[10px] text-muted-foreground">
+                            {t.displayPoints ? `${t.displayPoints > 0 ? '+' : ''}${t.displayPoints} pts` : ''}
+                            {t.displayPct ? ` (${t.displayPct > 0 ? '+' : ''}${t.displayPct}%)` : ''}
+                          </div>
+                        </div>
                       </td>
 
+                      {/* Status */}
                       <td className="py-2.5 px-3 text-center">
                         <Badge
                           className={`text-[10px] font-mono px-2 py-0.5 ${
@@ -354,13 +477,13 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                               : t.status === 'LOST'
                               ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
                               : t.status === 'EXECUTED'
-                              ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
+                              ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 animate-pulse'
                               : t.status === 'CONFIRMED'
                               ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
                               : 'bg-muted text-muted-foreground'
                           }`}
                         >
-                          {t.status}
+                          {t.status === 'EXECUTED' ? 'EXECUTED (LIVE)' : t.status}
                         </Badge>
                       </td>
                     </tr>

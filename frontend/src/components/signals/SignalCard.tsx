@@ -205,11 +205,32 @@ export function SignalCard({
       {/* Paper Trading Status & 1-Click Action */}
       <div className="pt-2 flex items-center justify-between gap-2 border-t text-xs">
         {paperResult ? (
-          <div className="flex items-center gap-1.5 text-emerald-700 font-mono text-[11px] bg-emerald-100/70 border border-emerald-300 rounded-lg px-2.5 py-1 w-full justify-between">
-            <span className="flex items-center gap-1 font-bold">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Paper: {paperResult.side} {paperResult.quantity} Qty @ ₹{Number(paperResult.fill_price).toLocaleString('en-IN')}
-            </span>
-            <span className="text-[10px] text-muted-foreground font-mono">{paperResult.order_id}</span>
+          <div className="flex flex-col gap-1 w-full text-[11px] bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2 font-mono">
+            <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300">
+              <span className="flex items-center gap-1 font-bold text-[11px]">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Paper: {paperResult.side} {paperResult.quantity} Qty @ ₹{Number(paperResult.fill_price).toLocaleString('en-IN')}
+              </span>
+              <span className="text-[10px] text-muted-foreground">{paperResult.order_id}</span>
+            </div>
+            {(() => {
+              const fillP = Number(paperResult.fill_price || signal.spot_price);
+              const spotP = Number(signal.spot_price);
+              const isBull = signal.direction.includes('CALL') || signal.direction === 'BULLISH';
+              const pts = isBull ? spotP - fillP : fillP - spotP;
+              const pnl = pts * Number(paperResult.quantity || 75);
+              const isProfit = pnl >= 0;
+              return (
+                <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-[10px]">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    Live MTM:
+                  </span>
+                  <span className={`font-bold ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {pnl >= 0 ? `+₹${pnl.toFixed(2)}` : `-₹${Math.abs(pnl).toFixed(2)}`} ({pts >= 0 ? '+' : ''}{pts.toFixed(1)} pts)
+                  </span>
+                </div>
+              );
+            })()}
           </div>
         ) : (
           !isExpired && !isTargetHit && !isStopHit && (

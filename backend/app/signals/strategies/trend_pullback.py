@@ -30,7 +30,7 @@ class TrendPullbackStrategy(Strategy):
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
-        if (ema20 >= ema50 >= ema200 or trend_data.get("trend") == "BULLISH") and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 20.0:
+        if spot > Decimal("0") and (ema20 >= ema50 >= ema200 or trend_data.get("trend") == "BULLISH") and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 20.0:
             # Check if spot is near EMA20 (within 0.4%)
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.5") or spot >= ema20:
@@ -80,7 +80,7 @@ class TrendPullbackStrategy(Strategy):
                     )
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
-        if (ema20 <= ema50 <= ema200 or trend_data.get("trend") == "BEARISH") and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 20.0:
+        if spot > Decimal("0") and (ema20 <= ema50 <= ema200 or trend_data.get("trend") == "BEARISH") and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 20.0:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.5") or spot <= ema20:
                 entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)

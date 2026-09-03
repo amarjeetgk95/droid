@@ -105,5 +105,32 @@ class ConfluenceEngine:
 
         return round(float(fused), 1)
 
+    async def fetch_historical_evidence(self, candidate: SignalCandidate, candles: list) -> Optional[dict]:
+        """Query Historical Intelligence Engine (HIE) in Mode B for candidate setup evidence (§24)."""
+        try:
+            from app.historical_intelligence import hie_service, CandleData
+            hie_candles = [
+                CandleData(
+                    timestamp_utc=int(c.timestamp.timestamp() * 1000) if hasattr(c, "timestamp") else 0,
+                    open=c.open,
+                    high=c.high,
+                    low=c.low,
+                    close=c.close,
+                    volume=float(c.volume),
+                )
+                for c in candles
+            ]
+            res = await hie_service.analyze_state(
+                instrument=candidate.underlying,
+                candles=hie_candles,
+                mode="CANDIDATE",
+                candidate_meta={"strategy_id": candidate.strategy},
+            )
+            return res.model_dump(mode="json")
+        except Exception as e:
+            logger.debug("hie_candidate_evidence_failed", error=str(e))
+            return None
+
 
 confluence_engine = ConfluenceEngine()
+

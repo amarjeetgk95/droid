@@ -273,6 +273,20 @@ export default function SignalsPage() {
           </TabsTrigger>
           <TabsTrigger value="audit" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Audit Ledger & Actual P&L
+            {auditSummary?.total_pnl_inr !== undefined && (
+              <Badge
+                variant="outline"
+                className={`ml-1 text-[10px] font-mono px-1 py-0 ${
+                  auditSummary.total_pnl_inr >= 0
+                    ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30'
+                    : 'bg-rose-500/15 text-rose-600 border-rose-500/30'
+                }`}
+              >
+                {auditSummary.total_pnl_inr >= 0
+                  ? `+₹${Math.round(auditSummary.total_pnl_inr).toLocaleString('en-IN')}`
+                  : `-₹${Math.round(Math.abs(auditSummary.total_pnl_inr)).toLocaleString('en-IN')}`}
+              </Badge>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -373,6 +387,7 @@ export default function SignalsPage() {
                       onInspect={(id) => setInspectSignalId(id)}
                       onPaperExecuted={() => {
                         fetchActive(false);
+                        fetchAudit();
                       }}
                     />
                   ))}
@@ -453,6 +468,7 @@ export default function SignalsPage() {
           onClose={() => setInspectSignalId(null)}
           onPaperExecuted={() => {
             fetchActive(false);
+            fetchAudit();
           }}
         />
       )}

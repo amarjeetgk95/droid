@@ -194,7 +194,7 @@ async def get_signal_deep_dive(signal_id: str):
 # ── 5. SIGNAL AUDIT LEDGER & PROFIT / LOSS ───────────────────────────
 
 @router.get("/audit")
-def get_signals_audit(
+async def get_signals_audit(
     underlying: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
     strategy: Optional[str] = Query(None, description="Filter by strategy"),
     status: Optional[str] = Query(None, description="Filter by status: WON, LOST, EXECUTED, ARMED, etc."),
@@ -202,9 +202,29 @@ def get_signals_audit(
 ):
     """
     Authoritative Signal Audit Ledger showing real trade lifecycle,
-    actual fill vs trigger, exit price, duration, and exact realized P&L (in INR ₹ and %).
+    actual fill vs trigger, current market LTP, duration, and exact realized & unrealized P&L.
     """
     from app.signals.audit_ledger import signal_audit_ledger
+    from app.signals.contract_resolver import APPROVED_UNDERLYINGS
+
+    # Sync with FSM and Paper Service
+    signal_audit_ledger.sync_with_fsm()
+    signal_audit_ledger.sync_with_paper_service()
+
+    # Fetch live quotes to compute real-time MTM
+    market_svc = MarketService()
+    quotes: dict[str, float] = {}
+    for u in APPROVED_UNDERLYINGS:
+        try:
+            q = await market_svc.get_quote(u)
+            if q and getattr(q, "ltp", None) is not None:
+                quotes[u] = float(q.ltp)
+        except Exception:
+            pass
+
+    if quotes:
+        signal_audit_ledger.update_live_quotes_batch(quotes)
+
     trades = signal_audit_ledger.list_trades(underlying=underlying, strategy=strategy, status=status, limit=limit)
     summary = signal_audit_ledger.get_summary_metrics()
     return {
@@ -216,7 +236,7 @@ def get_signals_audit(
 
 
 @router.get("/{signal_id}/audit")
-def get_single_signal_audit(signal_id: str):
+async def get_single_signal_audit(signal_id: str):
     """
     Detailed audit record for a single signal including all transition history and actual PnL.
     """
@@ -224,6 +244,17 @@ def get_single_signal_audit(signal_id: str):
     trade = signal_audit_ledger.get(signal_id)
     if not trade:
         raise HTTPException(status_code=404, detail="Signal audit record not found")
+
+    if trade.status in ("ARMED", "CONFIRMED", "EXECUTED"):
+        try:
+            market_svc = MarketService()
+            q = await market_svc.get_quote(trade.underlying)
+            if q and getattr(q, "ltp", None) is not None:
+                signal_audit_ledger.update_live_quote(trade.underlying, float(q.ltp))
+                trade = signal_audit_ledger.get(signal_id) or trade
+        except Exception:
+            pass
+
     return trade.model_dump()
 
 
