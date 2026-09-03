@@ -58,13 +58,23 @@ class CentralMarketDataFeed:
         logger.info("central_market_data_feed_stopped")
 
     async def register_client(self, websocket: WebSocket) -> None:
-        """Register a connected frontend WebSocket client."""
+        """Register a connected frontend WebSocket client (subscribe-only).
+
+        Adds the socket to the broadcast set. Does NOT start any upstream
+        service — the FYERS stream is backend-owned (lifespan) and already
+        running independently of how many clients are connected.
+        """
         async with self._lock:
             self._subscribers.add(websocket)
             logger.info("ws_client_connected", total_clients=len(self._subscribers))
 
     async def unregister_client(self, websocket: WebSocket) -> None:
-        """Unregister a disconnected frontend WebSocket client."""
+        """Unregister a disconnected frontend WebSocket client (remove-only).
+
+        NEVER stops the upstream FYERS stream or Telegram services, even when
+        zero clients remain — ingestion continues so the next browser that
+        opens instantly receives live data.
+        """
         async with self._lock:
             self._subscribers.discard(websocket)
             logger.info("ws_client_disconnected", total_clients=len(self._subscribers))

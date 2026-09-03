@@ -4,7 +4,6 @@ from app.core.config import settings as app_settings
 from app.core.database import get_db_session
 from app.models.user import UserSettingsResponse, UserSettingsUpdate
 from app.services.user_service import SettingsService
-from app.providers.registry import reset_provider, get_provider, stop_previous_provider_stream
 from app.core.broker_runtime import apply_app_settings, get_config as get_broker_config
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -70,7 +69,9 @@ async def _reconfigure_provider(res: UserSettingsResponse | None, previous_app_s
     credentials / provider selection take effect without a backend restart.
 
     Only restarts the provider stream if broker section actually changed to avoid
-    storm on unrelated PATCHes (quant/paper/prefs).
+    storm on unrelated PATCHes (quant/paper/prefs). The restart itself goes
+    through the backend-owned lifecycle manager (single instance, serialized)
+    — never a direct stop/start from the request path.
     """
     if res is None:
         return
@@ -87,12 +88,11 @@ async def _reconfigure_provider(res: UserSettingsResponse | None, previous_app_s
     if not changed:
         logger.info("broker_config_no_change", provider=get_broker_config().provider)
         return
-    # Stop previous provider's stream BEFORE swapping
-    await stop_previous_provider_stream()
-    reset_provider()
+    # Backend-owned restart: stops previous instance BEFORE swapping, then
+    # starts the new singleton under the process-wide lock.
     try:
-        provider = get_provider()
-        await provider.start_stream()
+        from app.core.service_lifecycle import restart_provider_stream
+        provider = await restart_provider_stream(reason="settings_save")
         logger.info("settings_provider_stream_restarted", provider=provider.provider_name)
     except Exception as e:
         logger.warning("settings_provider_stream_start_failed", error=str(e)[:200])

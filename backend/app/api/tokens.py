@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, Request, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
-from app.providers.registry import get_provider, reset_provider, stop_previous_provider_stream
+from app.providers.registry import get_provider
 from app.core.broker_runtime import apply_app_settings, get_config
 from app.core.token_manager import ConnectionState, TokenInfo
 from app.models.market import ApiMeta, DataStatus
@@ -46,7 +46,10 @@ async def run_token_diagnostics(payload: dict | None = Body(default=None)):
         if isinstance(incoming_app, dict) and incoming_app:
             try:
                 apply_app_settings(incoming_app)
-                reset_provider()
+                # Backend-owned restart (stops previous BEFORE reset — no
+                # leaked second upstream).Same as settings save path.
+                from app.core.service_lifecycle import restart_provider_stream
+                await restart_provider_stream(reason="token_diagnostics")
             except Exception as e:
                 logger.warning("token_diagnostics_hot_sync_failed", error=str(e)[:200])
 
@@ -83,18 +86,20 @@ async def refresh_token(payload: dict | None = Body(default=None)):
         if isinstance(incoming_app, dict) and incoming_app:
             try:
                 apply_app_settings(incoming_app)
-                await stop_previous_provider_stream()
-                reset_provider()
+                from app.core.service_lifecycle import restart_provider_stream
+                await restart_provider_stream(reason="token_refresh")
                 logger.info("token_refresh_hot_sync", provider=incoming_app.get("broker", {}).get("provider"))
             except Exception as e:
                 logger.warning("token_refresh_hot_sync_failed", error=str(e)[:200])
 
-    provider = get_provider()
+    # Backend-owned idempotent ensure (no-op when already running) — never
+    # tied to the calling browser session.
     try:
-        if not getattr(provider, "_stream_running", False):
-            await provider.start_stream()
+        from app.core.service_lifecycle import ensure_provider_stream
+        provider = await ensure_provider_stream()
     except Exception as e:
         logger.warning("token_refresh_start_stream_failed", error=str(e)[:200])
+        provider = get_provider()
     token_mgr = provider.get_token_manager()
 
     if token_mgr._refresh_callback is not None:
@@ -285,8 +290,11 @@ async def fyers_oauth_callback(
                     }
                 }
                 apply_app_settings(new_settings)
-                reset_provider()
-                provider = get_provider()
+                # Backend-owned restart: stop previous BEFORE reset (no leaked
+                # second upstream), then activate the new token on the fresh
+                # singleton under the process-wide lock.
+                from app.core.service_lifecycle import restart_provider_stream
+                provider = await restart_provider_stream(reason="fyers_oauth")
                 token_mgr = provider.get_token_manager()
                 token_mgr.set_token(TokenInfo(
                     access_token=access_token,
@@ -430,8 +438,11 @@ async def flattrade_oauth_callback(
                     }
                 }
                 apply_app_settings(new_settings)
-                reset_provider()
-                provider = get_provider()
+                # Backend-owned restart: stop previous BEFORE reset (no leaked
+                # second upstream), then activate the new token on the fresh
+                # singleton under the process-wide lock.
+                from app.core.service_lifecycle import restart_provider_stream
+                provider = await restart_provider_stream(reason="flattrade_oauth")
                 token_mgr = provider.get_token_manager()
                 token_mgr.set_token(TokenInfo(
                     access_token=session_token,

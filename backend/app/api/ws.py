@@ -21,9 +21,14 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/api/v1/ws/market-feed")
 async def websocket_market_feed(websocket: WebSocket):
     """Central real-time WebSocket market data feed.
-    
-    Adheres to Section 5: All frontend users receive real-time normalized ticks
-    broadcast from the single centralized market data worker.
+
+    LIFECYCLE CONTRACT (frontend subscribe-only):
+      - Connect:    register this client socket ONLY (central_feed).
+      - Disconnect: unregister this client socket ONLY + cancel this
+        connection's own feed task. NEVER stops/restarts the backend-owned
+        FYERS stream or Telegram services — those live in lifespan.
+      - Closing the browser/dashboard tab therefore cannot affect FYERS or
+        Telegram. Dashboard is fully independent of their lifecycle.
     """
     await websocket.accept()
     await central_feed.register_client(websocket)

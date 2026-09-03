@@ -20,10 +20,13 @@ logger = structlog.get_logger()
 
 class FyersProvider(MarketDataProvider):
     """FYERS API v3 Market Data Provider Adapter.
-    
-    Adheres strictly to Sections 4, 8, 9, 11, 13, and 14 of the platform spec.
-    Provides production-grade normalization for FYERS REST and WebSocket feeds.
+
+    Backend-owned persistent connection: started once at backend startup via
+    app.core.service_lifecycle, never by frontend connections. Closing the
+    browser/dashboard never stops this stream.
     """
+
+    PROVIDER_ID = "fyers"
 
     def __init__(
         self,
@@ -57,6 +60,8 @@ class FyersProvider(MarketDataProvider):
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
+        self._start_lock: asyncio.Lock | None = None
+        self._consecutive_failures = 0
         self._last_known_quotes: dict[str, NormalizedQuote] = {}
 
         self.symbol_map = {
@@ -418,16 +423,32 @@ class FyersProvider(MarketDataProvider):
         await self.rate_limiter.acquire()
         return []
 
+    def _get_start_lock(self) -> asyncio.Lock:
+        if self._start_lock is None:
+            self._start_lock = asyncio.Lock()
+        return self._start_lock
+
     async def _poller_loop(self) -> None:
-        """1s Fyers API poller -> central_feed."""
+        """Backend-owned FYERS poller -> central_feed, with backoff reconnect.
+
+        Runs for the lifetime of the backend process (started once at backend
+        startup). Survives transient failures via TokenManager exponential
+        backoff; only stops at backend shutdown or backend-owned restart.
+        Frontend connects/disconnects never touch this loop.
+        """
         from app.services.central_feed import central_feed as _cf
         logger.info("fyers_poller_loop_started", interval_s=1.0)
         symbols = list(self.symbol_map.keys())
         while self._stream_running:
+            delay = 1.0
             try:
                 now = datetime.now(timezone.utc)
                 quotes_map = await self._fetch_fyers_quotes(symbols)
                 if quotes_map:
+                    self._consecutive_failures = 0
+                    if self.token_manager.state != ConnectionState.CONNECTED:
+                        self.token_manager.set_state(ConnectionState.CONNECTED)
+                    self.token_manager.record_message()
                     for sym, q in quotes_map.items():
                         if q.ltp <= 0:
                             continue
@@ -446,56 +467,84 @@ class FyersProvider(MarketDataProvider):
                         )
                         await _cf.ingest_tick(tick)
                 else:
-                    # If market closed or token expired, keep last known ticks active
-                    for sym in symbols:
-                        last = self._last_known_quotes.get(sym)
-                        if last and last.ltp > 0:
-                            tick = TickEvent(
-                                timestamp=now,
-                                symbol=sym,
-                                instrument_token=self.symbol_map.get(sym, sym),
-                                ltp=last.ltp,
-                                open=last.open,
-                                high=last.high,
-                                low=last.low,
-                                close=last.previous_close or last.ltp,
-                                volume=last.volume,
-                                provider=self.PROVIDER_ID,
-                                priority=EventPriority.NORMAL,
-                            )
-                            await _cf.ingest_tick(tick)
+                    # No fresh quotes: auth/network failure OR market closed.
+                    # Back off exponentially (RECONNECTING state) and do NOT
+                    # mask an outage by re-publishing stale ticks while the
+                    # market is open — re-publish last-known only when closed.
+                    self._consecutive_failures += 1
+                    delay = self.token_manager.record_reconnect_attempt()
+                    logger.warning(
+                        "fyers_poller_no_quotes_backoff",
+                        consecutive_failures=self._consecutive_failures,
+                        delay_s=delay,
+                    )
+                    if not calendar_service.is_market_open_now():
+                        for sym in symbols:
+                            last = self._last_known_quotes.get(sym)
+                            if last and last.ltp > 0:
+                                tick = TickEvent(
+                                    timestamp=now,
+                                    symbol=sym,
+                                    instrument_token=self.symbol_map.get(sym, sym),
+                                    ltp=last.ltp,
+                                    open=last.open,
+                                    high=last.high,
+                                    low=last.low,
+                                    close=last.previous_close or last.ltp,
+                                    volume=last.volume,
+                                    provider=self.PROVIDER_ID,
+                                    priority=EventPriority.NORMAL,
+                                )
+                                await _cf.ingest_tick(tick)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug("fyers_poller_error", error=str(e)[:150])
+                self._consecutive_failures += 1
+                try:
+                    delay = self.token_manager.record_reconnect_attempt()
+                except Exception:
+                    delay = min(60.0, 1.0 * (2 ** min(self._consecutive_failures, 6)))
+                logger.debug("fyers_poller_error", error=str(e)[:150], delay_s=delay)
             try:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 break
         logger.info("fyers_poller_loop_stopped")
 
     async def start_stream(self) -> None:
-        if self._stream_running:
-            return
-        self._stream_running = True
-        self.token_manager.set_state(ConnectionState.CONNECTED)
-        logger.info("fyers_stream_started", mode="poller")
-        self._poll_task = asyncio.create_task(self._poller_loop())
-        self._stream_task = self._poll_task
+        """Idempotent backend-owned start — one poller per instance max."""
+        lock = self._get_start_lock()
+        async with lock:
+            if self._stream_running and self._poll_task and not self._poll_task.done():
+                return
+            # Drop any dead task handle before starting a fresh loop.
+            self._poll_task = None
+            self._stream_task = None
+            self._stream_running = True
+            self._consecutive_failures = 0
+            self.token_manager.set_state(ConnectionState.CONNECTING)
+            logger.info("fyers_stream_started", mode="poller")
+            self._poll_task = asyncio.create_task(self._poller_loop())
+            self._stream_task = self._poll_task
 
     async def stop_stream(self) -> None:
-        self._stream_running = False
-        self.token_manager.set_state(ConnectionState.DISCONNECTED)
-        for t in (self._poll_task, self._stream_task):
-            if t:
-                try:
-                    t.cancel()
+        """Backend-owned stop (shutdown / restart only — never frontend)."""
+        lock = self._get_start_lock()
+        async with lock:
+            if not self._stream_running and not self._poll_task and not self._stream_task:
+                return
+            self._stream_running = False
+            self.token_manager.set_state(ConnectionState.MANUAL_STOP)
+            for t in (self._poll_task, self._stream_task):
+                if t and t is not asyncio.current_task():
                     try:
-                        await t
-                    except asyncio.CancelledError:
+                        t.cancel()
+                        try:
+                            await t
+                        except asyncio.CancelledError:
+                            pass
+                    except Exception:
                         pass
-                except Exception:
-                    pass
-        self._poll_task = None
-        self._stream_task = None
-        logger.info("fyers_stream_stopped")
+            self._poll_task = None
+            self._stream_task = None
+            logger.info("fyers_stream_stopped")

@@ -104,11 +104,28 @@ class TelegramOutboundQueue:
         logger.debug("telegram_enqueued", chat_id=msg.chat_id)
 
     async def start(self) -> None:
+        # Backend-lifecycle start: preserve already-queued messages across
+        # restarts (never drop), single worker per process.
         if self._running and self._worker_task and not self._worker_task.done():
             return
-        self._q = asyncio.Queue()
+        if self._q is None:
+            self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
+
+    async def ensure_started(self) -> None:
+        """Auto-recovery: restart the worker if it died, keep queued messages.
+
+        Called at backend startup and safe to call from a watchdog — never
+        tied to any browser session.
+        """
+        if self._running and self._worker_task and not self._worker_task.done():
+            return
+        if self._q is None:
+            self._q = asyncio.Queue()
+        self._running = True
+        self._worker_task = asyncio.create_task(self._loop())
+        logger.info("telegram_outbound_worker_running")
 
     async def stop(self) -> None:
         self._running = False
@@ -121,6 +138,8 @@ class TelegramOutboundQueue:
             self._worker_task = None
 
     async def _loop(self) -> None:
+        # Supervisor loop: any unexpected error on a single message must never
+        # kill the worker — log, re-queue, continue (automatic recovery).
         while self._running:
             try:
                 msg: TelegramOutbound = await asyncio.wait_for(self._q.get(), timeout=1.0)
@@ -128,7 +147,20 @@ class TelegramOutboundQueue:
                 continue
             except asyncio.CancelledError:
                 break
-            ok = await self._rl.acquire(msg.chat_id)
+            except Exception as e:
+                logger.warning("telegram_outbound_dequeue_error", error=str(e)[:150])
+                await asyncio.sleep(0.5)
+                continue
+            try:
+                ok = await self._rl.acquire(msg.chat_id)
+            except Exception as e:
+                logger.warning("telegram_rate_acquire_error", error=str(e)[:150])
+                try:
+                    await self._q.put(msg)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+                continue
             if not ok:
                 logger.warning("telegram_rate_acquire_timeout", chat_id=msg.chat_id)
                 # re-queue later
@@ -138,7 +170,10 @@ class TelegramOutboundQueue:
             try:
                 await self._send_via_httpx(msg)
                 if msg.on_complete is not None:
-                    await msg.on_complete(True, None)
+                    try:
+                        await msg.on_complete(True, None)
+                    except Exception:
+                        pass
             except Exception as e:
                 # Handle 429 if returned
                 if "429" in str(e):
@@ -147,11 +182,18 @@ class TelegramOutboundQueue:
                     if msg.attempt < 3:
                         await self._q.put(msg)
                     elif msg.on_complete is not None:
-                        await msg.on_complete(False, str(e))
+                        try:
+                            await msg.on_complete(False, str(e))
+                        except Exception:
+                            pass
                 else:
                     logger.error("telegram_send_error", error=str(e), chat_id=msg.chat_id)
                     if msg.on_complete is not None:
-                        await msg.on_complete(False, str(e))
+                        try:
+                            await msg.on_complete(False, str(e))
+                        except Exception:
+                            pass
+        logger.info("telegram_outbound_loop_exited")
 
     async def _send_via_httpx(self, msg: TelegramOutbound) -> None:
         """
@@ -486,10 +528,23 @@ class TelegramUpdateQueue:
         await self._q.put(update)
 
     async def start(self) -> None:
-        if self._running:
+        # Backend-lifecycle start: preserve queued updates, single worker.
+        if self._running and self._worker_task and not self._worker_task.done():
             return
+        if self._q is None:
+            self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
+
+    async def ensure_started(self) -> None:
+        """Auto-recovery: restart the worker if it died, keep queued updates."""
+        if self._running and self._worker_task and not self._worker_task.done():
+            return
+        if self._q is None:
+            self._q = asyncio.Queue()
+        self._running = True
+        self._worker_task = asyncio.create_task(self._loop())
+        logger.info("telegram_update_worker_running")
 
     async def stop(self) -> None:
         self._running = False
@@ -499,8 +554,12 @@ class TelegramUpdateQueue:
                 await self._worker_task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                pass
+            self._worker_task = None
 
     async def _loop(self) -> None:
+        # Supervisor loop: per-update errors never kill the worker.
         while self._running:
             try:
                 update = await asyncio.wait_for(self._q.get(), timeout=1.0)
@@ -508,10 +567,15 @@ class TelegramUpdateQueue:
                 continue
             except asyncio.CancelledError:
                 break
+            except Exception as e:
+                logger.warning("telegram_update_dequeue_error", error=str(e)[:150])
+                await asyncio.sleep(0.5)
+                continue
             try:
                 await self._handle(update)
             except Exception as e:
                 logger.error("telegram_update_worker_error", error=str(e))
+        logger.info("telegram_update_loop_exited")
 
     async def _handle(self, update: dict) -> None:
         message = update.get("message") or update.get("edited_message") or {}

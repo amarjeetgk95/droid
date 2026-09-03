@@ -3,7 +3,6 @@ from app.providers.fyers import FyersProvider
 from app.providers.flattrade import FlattradeProvider
 from app.providers.binance_provider import BinanceProvider
 from app.core.broker_runtime import get_config
-import asyncio
 import structlog
 
 logger = structlog.get_logger()
@@ -18,42 +17,17 @@ _suppress_autostart: bool = False
 
 
 def _schedule_start_stream(provider: MarketDataProvider) -> None:
-    """Schedule start_stream() on the running event loop.
+    """DEPRECATED — backend lifecycle owns provider startup (see
+    app.core.service_lifecycle.ensure_provider_stream, called from lifespan).
 
-    Safe to call only when an asyncio loop is running (i.e. inside a request).
-    Centralized so providers are auto-started on first creation AND after
-    reset_provider() (e.g. after Settings save). Without this, saving Groww
-    creds created the GrowwProvider but its licensed stream was never started,
-    so MARKET_TICKS stayed at 0.
-
-    Suppressed by :func:`suppress_autostart` so explicit callers (e.g.
-    ``main.py`` lifespan startup) don't race with a background auto-start task.
+    Frontend REST/WS requests must NEVER start the upstream stream; they only
+    consume data already managed by the backend. Kept as a no-op so existing
+    imports don't break.
     """
-    global _stream_start_task
-    if _suppress_autostart:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No loop running (e.g. module import) — caller must trigger later
-        logger.debug("registry_no_running_loop_skip_autostart", provider=provider.provider_name)
-        return
-    if _stream_start_task is not None and not _stream_start_task.done():
-        # Already starting/stopping; let it finish
-        return
-
-    async def _runner():
-        try:
-            await provider.stop_stream()
-        except Exception as e:
-            logger.debug("registry_autostart_stop_old_failed", error=str(e)[:150])
-        try:
-            await provider.start_stream()
-            logger.info("registry_autostart_stream_started", provider=provider.provider_name)
-        except Exception as e:
-            logger.warning("registry_autostart_stream_failed", provider=provider.provider_name, error=str(e)[:200])
-
-    _stream_start_task = loop.create_task(_runner())
+    logger.debug(
+        "registry_autostart_suppressed_by_lifecycle",
+        provider=getattr(provider, "provider_name", "unknown"),
+    )
 
 
 class _AutostartGuard:
@@ -93,15 +67,15 @@ def get_provider() -> MarketDataProvider:
     injected into the provider so live data fetching activates (instead of
     always falling back to the DEMO provider).
 
-    On first lazy creation (or after reset_provider), the provider's
-    start_stream() is auto-scheduled so the licensed feed begins ingesting
-    ticks into central_feed immediately. Without this, settings-save would
-    rebuild the provider but never start its stream, leaving MARKET_TICKS=0.
+    Lifecycle: this ONLY creates/returns the singleton — it never starts the
+    stream. The stream is started exactly once by backend lifespan via
+    app.core.service_lifecycle.ensure_provider_stream(), and restarted only
+    via service_lifecycle.restart_provider_stream() when broker config
+    changes. Frontend connections merely consume central_feed data.
     """
     global _provider_instance
     if _provider_instance is None:
         _provider_instance = _create_provider()
-        _schedule_start_stream(_provider_instance)
     return _provider_instance
 
 

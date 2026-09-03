@@ -18,7 +18,12 @@ from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
 from app.services.pattern_outcome_worker import pattern_outcome_worker
 from app.hpi.service import hpi_service
-from app.providers.registry import get_provider, suppress_autostart
+from app.core.service_lifecycle import (
+    start_provider_with_retry,
+    stop_provider_stream,
+    start_telegram_stack,
+    stop_telegram_stack,
+)
 import structlog
 
 
@@ -78,14 +83,15 @@ async def lifespan(app: FastAPI):
     await write_pipeline.start()
     await snapshot_service.start()
 
+    # ── BACKEND STARTUP: start persistent services (once per process) ──
+    # FYERS market-data + Telegram are backend-owned from here on. Frontend
+    # browser sessions only subscribe to central_feed data; closing the
+    # browser/dashboard NEVER stops these services.
     # Start Central Market Data Feed & Upstream Provider Stream (real ticks only; no synthetic)
     await central_feed.start()
-    # Suppress registry auto-start while we explicitly start the stream, to
-    # avoid a race where the background auto-start task stop+restarts the
-    # provider concurrently with this explicit start.
-    with suppress_autostart():
-        provider = get_provider()
-        await provider.start_stream()
+    # Backend-owned FYERS start with retry — survives Render cold starts.
+    # (Registry lazy autostart is disabled: no request path may start this.)
+    await start_provider_with_retry()
 
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()
@@ -93,35 +99,10 @@ async def lifespan(app: FastAPI):
     # Start Pattern Outcome Worker (Historical Intelligence v2)
     await pattern_outcome_worker.start()
 
-    # Start Institutional Telegram state restoration & outbound/update queues
-    try:
-        from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, telegram_update_queue, set_telegram_webhook
-        from app.institutional.telegram_notifications import notification_policy
-
-        # Restore Telegram user links & notification preferences from DB / persistent snapshot
-        await telegram_link_manager.restore_state()
-        logger.info("telegram_restore_complete", restored_bindings=len(telegram_link_manager.all_bindings()))
-        await notification_policy.restore_state()
-
-        await telegram_outbound_queue.start()
-        await telegram_update_queue.start()
-        logger.info("telegram_queue_started")
-
-        # Auto-register webhook with Telegram API on Render startup
-        if settings.telegram_bot_token and settings.backend_public_url:
-            webhook_url = f"{settings.backend_public_url.rstrip('/')}/api/v1/telegram/webhook"
-            res = await set_telegram_webhook(webhook_url)
-            logger.info("telegram_webhook_auto_registered", webhook_url=webhook_url, ok=res.get("ok"), description=res.get("description"))
-    except Exception as e:
-        logger.warning("telegram_queue_start_failed", error=str(e))
-
-    # Start Telegram notification queue (signal events → notifications)
-    try:
-        from app.institutional.telegram_notifications import telegram_notification_queue
-        await telegram_notification_queue.start()
-        logger.info("telegram_notification_queue_started")
-    except Exception as e:
-        logger.warning("telegram_notification_queue_start_failed", error=str(e))
+    # ── BACKEND STARTUP: Telegram stack (independent of any browser) ──
+    # Restores bindings from Supabase, starts outbound/update/notification
+    # queues, registers webhook with retry. One instance per process.
+    await start_telegram_stack()
 
     # Start Morning Briefing Service (08:50 AM IST pre-market brief)
     try:
@@ -149,8 +130,10 @@ async def lifespan(app: FastAPI):
         logger.warning("automated_signal_worker_start_failed", error=str(e))
 
     yield
-    
-    # Shutdown in reverse order
+
+    # ── BACKEND SHUTDOWN: gracefully close persistent services ──
+    # Only here (process teardown) are FYERS/Telegram stopped — never on
+    # frontend disconnect.
     try:
         from app.signals.worker import automated_signal_worker
         await automated_signal_worker.stop()
@@ -161,20 +144,10 @@ async def lifespan(app: FastAPI):
         await morning_briefing_service.stop()
     except Exception:
         pass
-    try:
-        from app.institutional.telegram import telegram_outbound_queue, telegram_update_queue
-        await telegram_update_queue.stop()
-        await telegram_outbound_queue.stop()
-    except Exception:
-        pass
-    try:
-        from app.institutional.telegram_notifications import telegram_notification_queue
-        await telegram_notification_queue.stop()
-    except Exception:
-        pass
+    await stop_telegram_stack()
     await pattern_outcome_worker.stop()
     await hpi_service.stop()
-    await provider.stop_stream()
+    await stop_provider_stream()
     await central_feed.stop()
     await snapshot_service.stop()
     await write_pipeline.stop()

@@ -332,11 +332,24 @@ class TelegramNotificationQueue:
 
     # ── Worker ───────────────────────────────────────────────────────
     async def start(self) -> None:
+        # Backend-lifecycle start: preserve queued jobs across restarts
+        # (never drop), single worker per process.
         if self._running and self._worker_task and not self._worker_task.done():
             return
-        self._q = asyncio.Queue()
+        if self._q is None:
+            self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
+
+    async def ensure_started(self) -> None:
+        """Auto-recovery: restart the worker if it died, keep queued jobs."""
+        if self._running and self._worker_task and not self._worker_task.done():
+            return
+        if self._q is None:
+            self._q = asyncio.Queue()
+        self._running = True
+        self._worker_task = asyncio.create_task(self._loop())
+        logger.info("telegram_notification_worker_running")
 
     async def stop(self) -> None:
         self._running = False
