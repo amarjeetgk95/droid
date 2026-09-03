@@ -115,6 +115,8 @@ export function useMarketStream() {
               });
               setLastTickAt(new Date());
               setTicksFresh(true);
+            } else if (payload.type === 'HEARTBEAT' || payload.type === 'PONG' || payload.type === 'CONNECTION_ESTABLISHED') {
+              setTicksFresh(true);
             }
           } catch {
             // Ignore parse errors
@@ -142,6 +144,18 @@ export function useMarketStream() {
 
     createConnection();
 
+    // Keepalive ping interval — send PING every 10s to keep connection alive
+    const pingInterval = setInterval(() => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ action: 'PING' }));
+        } catch {
+          // Ignore send errors
+        }
+      }
+    }, 10_000);
+
     // Idle watchdog — half-open TCP (sleep/resume, proxy timeout) never fires
     // onclose, so force-close dead connections to trigger reconnect.
     const idleInterval = setInterval(() => {
@@ -157,6 +171,7 @@ export function useMarketStream() {
 
     return () => {
       isUnmounted = true;
+      clearInterval(pingInterval);
       clearInterval(idleInterval);
       clearReconnectTimeout();
       if (staleTimerRef.current) clearTimeout(staleTimerRef.current);

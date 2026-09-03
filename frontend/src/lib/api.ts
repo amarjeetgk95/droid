@@ -1097,6 +1097,16 @@ class ApiClient {
       },
     );
   }
+
+  async getSignalsAudit(params?: { underlying?: string; strategy?: string; status?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.underlying) qs.set('underlying', params.underlying);
+    if (params?.strategy) qs.set('strategy', params.strategy);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<{ trades: any[]; count: number; summary: any; timestamp_ms: number }>(`/api/v1/signals/audit${q}`);
+  }
 }
 
 export const api = new ApiClient(API_BASE);

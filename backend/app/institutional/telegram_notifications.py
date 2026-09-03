@@ -73,7 +73,11 @@ class SignalEvent(BaseModel):
     theoretical_entry: float | None = None
     exit_price: float | None = None
     theoretical_pnl_points: float | None = None
+    theoretical_pnl_amount: float | None = None
+    actual_pnl_amount: float | None = None
+    pnl_percent: float | None = None
     holding_time: str | None = None
+    holding_time_seconds: float | None = None
     # §24 theoretical vs actual kept separate
     # Paper Trading Execution fields
     paper_order_id: str | None = None

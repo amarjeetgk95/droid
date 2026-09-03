@@ -48,7 +48,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <MarketDataProvider>
+    <MarketDataProvider refreshInterval={1000}>
       <AuthGuard>
         <AppLayoutInner>{children}</AppLayoutInner>
       </AuthGuard>

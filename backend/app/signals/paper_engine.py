@@ -48,6 +48,7 @@ class SignalPaperEngine:
         capital_override: Optional[float] = None,
         risk_percent: float = 2.0,
         lots_override: Optional[int] = None,
+        quantity_override: Optional[int] = None,
     ) -> SignalPaperExecutionResult:
         sig = signal_fsm.get(signal_id)
         if not sig:
@@ -65,7 +66,10 @@ class SignalPaperEngine:
         # Position Sizing
         avail_cap = capital_override or getattr(paper_service, "_initial_capital", 1000000.0)
         
-        if lots_override and lots_override > 0:
+        if quantity_override and quantity_override > 0:
+            final_qty = quantity_override
+            final_lots = max(1, quantity_override // lot_size)
+        elif lots_override and lots_override > 0:
             final_lots = lots_override
             final_qty = final_lots * lot_size
         else:
@@ -101,6 +105,39 @@ class SignalPaperEngine:
         if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
             signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(fill_price)), reason="PAPER_TRADE_EXECUTED")
 
+        # Record into Signal Audit Ledger
+        try:
+            from app.signals.audit_ledger import signal_audit_ledger
+            # Ensure trade is registered in ledger first
+            if not signal_audit_ledger.get(signal_id):
+                signal_audit_ledger.record_signal_created(
+                    signal_id=sig.signal_id,
+                    underlying=sig.underlying,
+                    strategy=sig.strategy,
+                    direction=sig.direction,
+                    timeframe=sig.timeframe,
+                    spot_price=float(sig.spot_price),
+                    trigger=float(sig.trigger),
+                    stop_loss=float(sig.stop_loss),
+                    target_1=float(sig.target_1),
+                    target_2=float(sig.target_2),
+                    confidence=float(sig.confidence),
+                    option_contract=sig.option_contract,
+                    lots=final_lots,
+                    status="CONFIRMED",
+                )
+            signal_audit_ledger.record_paper_executed(
+                signal_id=signal_id,
+                paper_order_id=paper_order.order_id,
+                fill_price=fill_price,
+                quantity=final_qty,
+                lots=final_lots,
+                side=side,
+                margin_used=fill_price * final_qty,
+            )
+        except Exception as ae:
+            logger.warning("audit_record_paper_failed", error=str(ae))
+
         logger.info("signal_paper_executed", signal_id=signal_id, order_id=paper_order.order_id, lots=final_lots, qty=final_qty)
 
         return SignalPaperExecutionResult(
@@ -120,5 +157,49 @@ class SignalPaperEngine:
             message=f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{fill_price:,.2f}",
         )
 
+    async def close_signal_position(
+        self,
+        signal_id: str,
+        exit_price: float,
+        reason: str = "TARGET_HIT",
+    ) -> Optional[Any]:
+        """
+        Closes the open paper position for a signal and records the actual profit and loss audit.
+        """
+        sig = signal_fsm.get(signal_id)
+        if not sig or not sig.paper_order:
+            return None
+
+        from app.signals.audit_ledger import signal_audit_ledger
+
+        broker_sym = sig.paper_order.get("symbol")
+        qty = sig.paper_order.get("quantity")
+        if not broker_sym or not qty:
+            return None
+
+        pos_id = f"{broker_sym}_INTRADAY"
+        if pos_id in paper_service._positions and paper_service._positions[pos_id].is_open:
+            pos = paper_service._positions[pos_id]
+            exit_side = "SELL" if pos.side == "BUY" else "BUY"
+            exit_payload = OrderPayload(
+                symbol=pos.symbol,
+                underlying=pos.underlying,
+                side=exit_side,
+                order_type="MARKET",
+                product=pos.product,
+                quantity=pos.quantity,
+                price=exit_price,
+            )
+            await paper_service.place_order(exit_payload)
+            logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, reason=reason)
+
+        rec = signal_audit_ledger.record_square_off(
+            signal_id=signal_id,
+            exit_price=exit_price,
+            exit_reason=reason,
+        )
+        return rec
+
 
 signal_paper_engine = SignalPaperEngine()
+

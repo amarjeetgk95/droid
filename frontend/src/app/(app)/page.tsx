@@ -90,6 +90,7 @@ export default function DashboardPage() {
   const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
   const [regimeLoading, setRegimeLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   // Sync selected symbol with valid card if needed
   const activeSymbol =
@@ -104,11 +105,17 @@ export default function DashboardPage() {
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refetch();
+      await Promise.allSettled([
+        refetch(),
+        api.getRegimeOverview(activeSymbol).then((res) => {
+          setRegimeOverview(res.data);
+        }),
+      ]);
+      setDashboardRefreshKey((k) => k + 1);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetch]);
+  }, [refetch, activeSymbol]);
 
   const handleSelectCard = useCallback((symbol: string) => {
     if (symbol.includes('BANKNIFTY')) setSelectedSymbol('BANKNIFTY');
@@ -133,7 +140,7 @@ export default function DashboardPage() {
     fetchRegime();
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(async () => {
         if (!document.hidden) await fetchRegime();
         schedule();
@@ -203,15 +210,15 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          {/* WebSocket Status Pill */}
+          {/* Realtime Status Pill */}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
-                isStreamLive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                isStreamLive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-400'
               }`}
             />
             <span className="font-mono font-semibold text-foreground text-[11px]">
-              {isStreamLive ? 'FEED LIVE' : 'CONNECTING'}
+              {isStreamLive ? 'FEED LIVE (WS)' : 'REALTIME 1s'}
             </span>
             {health?.latency_ms !== null && health?.latency_ms !== undefined && (
               <span className="text-[10px] text-muted-foreground font-mono">
@@ -358,10 +365,10 @@ export default function DashboardPage() {
           {/* 3. Predictive ML & Institutional Analytics Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ErrorBoundary label="MLPredictionCard">
-              <MLPredictionCard symbol={activeSymbol} />
+              <MLPredictionCard symbol={activeSymbol} refreshKey={dashboardRefreshKey} />
             </ErrorBoundary>
             <ErrorBoundary label="FIIPositioningCard">
-              <FIIPositioningCard />
+              <FIIPositioningCard refreshKey={dashboardRefreshKey} />
             </ErrorBoundary>
           </div>
 
@@ -370,7 +377,7 @@ export default function DashboardPage() {
             {/* Market Intelligence Deep Dive (Instrument Selector Tab) */}
             <div className="lg:col-span-6">
               <ErrorBoundary label="MarketIntelligencePanel">
-                <MarketIntelligencePanel instrument={activeSymbol} />
+                <MarketIntelligencePanel instrument={activeSymbol} refreshKey={dashboardRefreshKey} />
               </ErrorBoundary>
             </div>
 
@@ -458,7 +465,7 @@ export default function DashboardPage() {
         </div>
         <div className="lg:col-span-4">
           <ErrorBoundary label="DataHealthPanel">
-            <DataHealthPanel />
+            <DataHealthPanel refreshKey={dashboardRefreshKey} />
           </ErrorBoundary>
         </div>
       </div>

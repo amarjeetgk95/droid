@@ -248,6 +248,16 @@ class TelegramLinkManager:
                     for uid, b in bindings.items()
                     if b.get("telegram_chat_id")
                 }
+            from app.core.config import settings
+            default_chat = getattr(settings, "telegram_chat_id", "") or ""
+            if default_chat and "00000000-0000-0000-0000-000000000001" not in self._bindings:
+                self._bindings["00000000-0000-0000-0000-000000000001"] = {
+                    "telegram_chat_id": str(default_chat),
+                    "linked_at": time.time(),
+                    "status": "ACTIVE",
+                    "permissions": ["read"],
+                }
+                self._by_chat[str(default_chat)] = "00000000-0000-0000-0000-000000000001"
         except Exception as e:
             logger.warning("telegram_link_manager_local_load_failed", error=str(e))
 
@@ -263,7 +273,17 @@ class TelegramLinkManager:
                     for uid, b in bindings.items()
                     if b.get("telegram_chat_id")
                 }
-                logger.info("telegram_link_manager_restored", total_bindings=len(self._bindings))
+            from app.core.config import settings
+            default_chat = getattr(settings, "telegram_chat_id", "") or ""
+            if default_chat and "00000000-0000-0000-0000-000000000001" not in self._bindings:
+                self._bindings["00000000-0000-0000-0000-000000000001"] = {
+                    "telegram_chat_id": str(default_chat),
+                    "linked_at": time.time(),
+                    "status": "ACTIVE",
+                    "permissions": ["read"],
+                }
+                self._by_chat[str(default_chat)] = "00000000-0000-0000-0000-000000000001"
+            logger.info("telegram_link_manager_restored", total_bindings=len(self._bindings))
         except Exception as e:
             logger.warning("telegram_link_manager_restore_failed", error=str(e))
 

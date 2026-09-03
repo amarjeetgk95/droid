@@ -6,7 +6,7 @@ import { MLPredictionResponse } from '@/lib/types';
 import { Cpu, TrendingUp, TrendingDown, ShieldCheck } from 'lucide-react';
 import { safeNum, safeStr } from '@/lib/utils';
 
-export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
+export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: string; refreshKey?: number }) {
   const [prediction, setPrediction] = useState<MLPredictionResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +31,13 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
     };
 
     loadPrediction();
-    // Chained timeout with jitter so clients don't sync up their 30s polls.
+    // Chained timeout with jitter so clients don't sync up polls.
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
       timeout = setTimeout(() => {
         if (!document.hidden) loadPrediction();
         schedule();
-      }, 30000 * (0.8 + Math.random() * 0.4));
+      }, 10000 * (0.8 + Math.random() * 0.4));
     };
     schedule();
     const onVis = () => { if (!document.hidden) loadPrediction(); };
@@ -47,7 +47,7 @@ export function MLPredictionCard({ symbol = 'NIFTY' }: { symbol?: string }) {
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [symbol]);
+  }, [symbol, refreshKey]);
 
   if (loading && !prediction) {
     return (

@@ -39,13 +39,18 @@ router = APIRouter(prefix="/api/v1/signals", tags=["signals"])
 # ── Request / Response Models ──────────────────────────────────────────
 
 class GenerateSignalRequest(BaseModel):
-    underlying: str = Field(description="NIFTY / BANKNIFTY / SENSEX")
-    strategy: Literal["BREAKOUT", "MEAN_REVERSION", "TREND_PULLBACK", "GAMMA_SQUEEZE", "ORB"] = "BREAKOUT"
-    direction: Literal["LONG_CALL", "LONG_PUT"] = "LONG_CALL"
-    timeframe: Literal["1M", "5M", "15M", "1H", "1D"] = "5M"
+    underlying: Optional[str] = Field(default=None, description="NIFTY / BANKNIFTY / SENSEX")
+    instrument_id: Optional[str] = Field(default=None, description="Compatibility alias for underlying")
+    strategy: str = "BREAKOUT"
+    direction: str = "LONG_CALL"
+    timeframe: Optional[str] = Field(default=None, description="1M, 5M, 15M, 1H, 1D")
+    candle_timeframe: Optional[str] = Field(default=None, description="Compatibility alias for timeframe")
+    status: Optional[str] = None
     entry_min: Optional[float] = None
     entry_max: Optional[float] = None
     trigger: Optional[float] = None
+    trigger_level: Optional[float] = None
+    current_price: Optional[float] = None
     stop_loss: Optional[float] = None
     target_1: Optional[float] = None
     target_2: Optional[float] = None
@@ -64,6 +69,7 @@ class AutoDetectRequest(BaseModel):
 
 class ExecutePaperRequest(BaseModel):
     lots: Optional[int] = Field(default=None, description="Optional custom lots override")
+    quantity: Optional[int] = Field(default=None, description="Optional custom quantity override")
     risk_percent: float = Field(default=2.0, description="Risk capital % for sizing")
 
 
@@ -185,7 +191,43 @@ async def get_signal_deep_dive(signal_id: str):
     }
 
 
-# ── 5. SINGLE SIGNAL QUERY ────────────────────────────────────────────
+# ── 5. SIGNAL AUDIT LEDGER & PROFIT / LOSS ───────────────────────────
+
+@router.get("/audit")
+def get_signals_audit(
+    underlying: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
+    strategy: Optional[str] = Query(None, description="Filter by strategy"),
+    status: Optional[str] = Query(None, description="Filter by status: WON, LOST, EXECUTED, ARMED, etc."),
+    limit: int = Query(100, description="Max records to return"),
+):
+    """
+    Authoritative Signal Audit Ledger showing real trade lifecycle,
+    actual fill vs trigger, exit price, duration, and exact realized P&L (in INR ₹ and %).
+    """
+    from app.signals.audit_ledger import signal_audit_ledger
+    trades = signal_audit_ledger.list_trades(underlying=underlying, strategy=strategy, status=status, limit=limit)
+    summary = signal_audit_ledger.get_summary_metrics()
+    return {
+        "trades": [t.model_dump() for t in trades],
+        "count": len(trades),
+        "summary": summary,
+        "timestamp_ms": int(time.time() * 1000),
+    }
+
+
+@router.get("/{signal_id}/audit")
+def get_single_signal_audit(signal_id: str):
+    """
+    Detailed audit record for a single signal including all transition history and actual PnL.
+    """
+    from app.signals.audit_ledger import signal_audit_ledger
+    trade = signal_audit_ledger.get(signal_id)
+    if not trade:
+        raise HTTPException(status_code=404, detail="Signal audit record not found")
+    return trade.model_dump()
+
+
+# ── 6. SINGLE SIGNAL QUERY ────────────────────────────────────────────
 
 @router.get("/{signal_id}")
 def get_signal_by_id(signal_id: str):
@@ -204,15 +246,30 @@ async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest
     """
     try:
         lots = req.lots if req else None
+        qty = req.quantity if req else None
         risk_pct = req.risk_percent if req else 2.0
         result = await signal_paper_engine.execute_signal(
             signal_id=signal_id,
             lots_override=lots,
+            quantity_override=qty,
             risk_percent=risk_pct,
         )
+        sig = signal_fsm.get(signal_id)
+        is_bearish = "BEARISH" in (sig.direction if sig else "") or "PUT" in (sig.direction if sig else "")
+        side_val = "SELL" if is_bearish else "BUY"
+
         # Broadcast P0 execution event
         await signal_sse_hub.broadcast("paper_execution", result.model_dump(), priority="P0")
-        return result.model_dump()
+        res_data = result.model_dump()
+        res_data["paper_order"] = {
+            "order_id": result.order_id,
+            "status": result.status,
+            "side": side_val,
+            "quantity": result.quantity,
+            "underlying": result.underlying,
+            "fill_price": result.fill_price,
+        }
+        return res_data
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
@@ -282,29 +339,42 @@ async def generate_signal(req: GenerateSignalRequest):
     """
     Manual authoritative signal generation with FSM registration, optional paper execution, and Telegram dispatch.
     """
-    u = validate_underlying(req.underlying)
+    raw_u = req.underlying or req.instrument_id or "NIFTY"
+    u = validate_underlying(raw_u)
+    tf = req.timeframe or req.candle_timeframe or "5M"
+    raw_dir = (req.direction or "LONG_CALL").upper()
+    if raw_dir in ("BULLISH", "LONG", "BUY"):
+        dir_val = "LONG_CALL"
+    elif raw_dir in ("BEARISH", "SHORT", "SELL"):
+        dir_val = "LONG_PUT"
+    else:
+        dir_val = raw_dir
+
     market_svc = MarketService()
     quote = await market_svc.get_quote(u)
-    spot = Decimal(str(quote.ltp if quote and quote.ltp else (req.trigger or 24800.0)))
+    spot = Decimal(str(quote.ltp if quote and quote.ltp else (req.current_price or req.trigger or req.trigger_level or 24800.0)))
     tick = Decimal("0.05")
 
-    entry_min = normalize_price(req.entry_min or spot, tick)
+    trig_val = req.trigger or req.trigger_level
+    entry_min = normalize_price(req.entry_min or trig_val or spot, tick)
     entry_max = normalize_price(req.entry_max or (spot + Decimal("10.0")), tick)
-    trigger = normalize_price(req.trigger or (entry_min + tick), tick)
+    trigger = normalize_price(trig_val or (entry_min + tick), tick)
     stop_loss = normalize_price(req.stop_loss or (spot * Decimal("0.995")), tick)
     
     risk_pts = abs(entry_min - stop_loss)
     t1 = normalize_price(req.target_1 or (entry_min + (risk_pts * Decimal("1.5"))), tick)
     t2 = normalize_price(req.target_2 or (entry_min + (risk_pts * Decimal("3.0"))), tick)
 
-    opt_type = "CE" if "CALL" in req.direction else "PE"
+    opt_type = "CE" if "CALL" in dir_val else "PE"
     contract = resolve_option_contract(u, spot, opt_type, strike_offset=0)
+
+    fsm_st = "CONFIRMED" if (req.execute_paper or req.status == "CONFIRMED") else "ARMED"
 
     instance = SignalInstance(
         underlying=u,
         strategy=req.strategy,
-        direction=req.direction,
-        timeframe=req.timeframe,
+        direction=dir_val,
+        timeframe=tf,
         spot_price=spot,
         entry_min=entry_min,
         entry_max=entry_max,
@@ -319,14 +389,36 @@ async def generate_signal(req: GenerateSignalRequest):
         confluence_breakdown={"technical": 80.0, "mtf": 75.0, "fno": 75.0, "regime": 80.0, "ai": 75.0},
         rationale=req.rationale or [f"Manual {req.strategy} setup on {u}"],
         option_contract=contract.model_dump(),
-        fsm_state="CONFIRMED" if req.execute_paper else "ARMED",
+        fsm_state=fsm_st,
     )
     signal_fsm.register(instance)
+
+    # Register into Signal Audit Ledger
+    try:
+        from app.signals.audit_ledger import signal_audit_ledger
+        signal_audit_ledger.record_signal_created(
+            signal_id=instance.signal_id,
+            underlying=instance.underlying,
+            strategy=instance.strategy,
+            direction=instance.direction,
+            timeframe=instance.timeframe,
+            spot_price=float(instance.spot_price),
+            trigger=float(instance.trigger),
+            stop_loss=float(instance.stop_loss),
+            target_1=float(instance.target_1),
+            target_2=float(instance.target_2),
+            confidence=float(instance.confidence),
+            option_contract=instance.option_contract,
+            lots=req.lots or 1,
+            status=instance.fsm_state,
+        )
+    except Exception as ae:
+        logger.warning("audit_record_created_failed", error=str(ae))
 
     paper_result = None
     if req.execute_paper:
         try:
-            paper_result = await signal_paper_engine.execute_signal(instance.signal_id, lots_override=req.lots)
+            paper_result = await signal_paper_engine.execute_signal(instance.signal_id, lots_override=req.lots or 1)
         except Exception as pe:
             logger.warning("generate_signal_paper_auto_failed", error=str(pe))
 
@@ -339,14 +431,19 @@ async def generate_signal(req: GenerateSignalRequest):
                 event_type="SIGNAL_CONFIRMED",
                 signal_id=instance.signal_id,
                 instrument=u,
-                candle_timeframe=req.timeframe,
+                candle_timeframe=tf,
                 setup_type=req.strategy,
-                direction="BULLISH" if "CALL" in req.direction else "BEARISH",
+                direction="BULLISH" if "CALL" in dir_val else "BEARISH",
                 status=instance.fsm_state,
                 trigger_level=float(instance.trigger),
                 current_price=float(instance.spot_price),
                 stop_loss=float(instance.stop_loss),
                 confidence=float(instance.confidence),
+                paper_order_id=paper_result.order_id if paper_result else None,
+                paper_fill_price=paper_result.fill_price if paper_result else None,
+                paper_filled_qty=paper_result.quantity if paper_result else None,
+                paper_status="FILLED" if paper_result else None,
+                paper_side="BUY" if "CALL" in dir_val else "SELL",
             )
             ids = await telegram_notification_queue.publish_signal_event(ev)
             telegram_res["enqueued"] = len(ids)
@@ -356,12 +453,30 @@ async def generate_signal(req: GenerateSignalRequest):
     # Broadcast P0 Signal Creation via SSE
     await signal_sse_hub.broadcast("signal_created", instance.model_dump(), priority="P0")
 
+    sig_dump = instance.model_dump()
+    sig_dump["instrument_id"] = instance.underlying
+    sig_dump["direction"] = "BULLISH" if "CALL" in instance.direction else "BEARISH"
+    sig_dump["created_at_utc"] = instance.created_at_utc
+
+    paper_order_dict = None
+    if paper_result:
+        paper_order_dict = {
+            "order_id": paper_result.order_id,
+            "status": paper_result.status,
+            "side": "BUY" if "CALL" in instance.direction else "SELL",
+            "quantity": paper_result.quantity,
+            "underlying": instance.underlying,
+            "fill_price": paper_result.fill_price,
+        }
+
     return {
         "success": True,
-        "signal": instance.model_dump(),
-        "paper_order": paper_result.model_dump() if paper_result else None,
+        "signal": sig_dump,
+        "paper_order": paper_order_dict,
         "telegram": telegram_res,
     }
+
+
 
 
 # ── 9. REAL-TIME SERVER-SENT EVENTS (SSE) STREAM ──────────────────────

@@ -11,6 +11,7 @@ import { SignalScannerTable } from '@/components/signals/SignalScannerTable';
 import { SignalPerformanceView } from '@/components/signals/SignalPerformanceView';
 import { GenerateSignalForm } from '@/components/signals/GenerateSignalForm';
 import { SignalDeepDiveModal } from '@/components/signals/SignalDeepDiveModal';
+import { SignalAuditTable, type AuditTradeRecord, type AuditSummary } from '@/components/signals/SignalAuditTable';
 import {
   Activity,
   AlertTriangle,
@@ -80,6 +81,10 @@ export default function SignalsPage() {
   const [perfSummary, setPerfSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [auditTrades, setAuditTrades] = useState<AuditTradeRecord[]>([]);
+  const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
+  const [auditLoading, setAuditLoading] = useState<boolean>(false);
+
   const prevSignalsCount = useRef<number>(0);
 
   // Fetch active signals
@@ -123,6 +128,19 @@ export default function SignalsPage() {
     }
   }, []);
 
+  // Fetch Signal Audit Ledger
+  const fetchAudit = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const res: any = await api.getSignalsAudit();
+      setAuditTrades(res.trades || []);
+      setAuditSummary(res.summary || null);
+    } catch {
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
   // Quick stats
   useEffect(() => {
     api
@@ -135,18 +153,20 @@ export default function SignalsPage() {
   useEffect(() => {
     fetchActive(true);
     fetchScanner();
+    fetchAudit();
 
     let timer: ReturnType<typeof setInterval> | null = null;
     timer = setInterval(() => {
       if (!document.hidden) {
         void fetchActive(false);
+        void fetchAudit();
       }
     }, 3000);
 
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [fetchActive, fetchScanner]);
+  }, [fetchActive, fetchScanner, fetchAudit]);
 
   return (
     <div className="space-y-4 max-w-[1440px] mx-auto pb-12">
@@ -250,6 +270,9 @@ export default function SignalsPage() {
           </TabsTrigger>
           <TabsTrigger value="performance" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
             <Award className="w-3.5 h-3.5" /> Performance & Attribution
+          </TabsTrigger>
+          <TabsTrigger value="audit" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Audit Ledger & Actual P&L
           </TabsTrigger>
         </TabsList>
 
@@ -409,6 +432,17 @@ export default function SignalsPage() {
         {/* ── TAB 4: PERFORMANCE & ATTRIBUTION ── */}
         <TabsContent value="performance" className="pt-2">
           <SignalPerformanceView />
+        </TabsContent>
+
+        {/* ── TAB 5: AUDIT LEDGER & ACTUAL P&L ── */}
+        <TabsContent value="audit" className="pt-2">
+          <SignalAuditTable
+            trades={auditTrades}
+            summary={auditSummary}
+            loading={auditLoading}
+            onRefresh={fetchAudit}
+            onSelectSignal={(sigId) => setInspectSignalId(sigId)}
+          />
         </TabsContent>
       </Tabs>
 

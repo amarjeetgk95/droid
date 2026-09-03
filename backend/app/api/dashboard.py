@@ -47,7 +47,7 @@ SYMBOL_ALIASES = {
     "VIX": "INDIA VIX",
 }
 
-CACHE_TTL_SECONDS = 3.0
+CACHE_TTL_SECONDS = 0.8
 _cache: dict[str, tuple[float, "DashboardData"]] = {}
 
 
@@ -261,7 +261,7 @@ class DashboardSummary(BaseModel):
     generated_at: str
 
 
-SUMMARY_CACHE_TTL = 5.0
+SUMMARY_CACHE_TTL = 0.8
 _summary_cache: dict[str, tuple[float, DashboardSummary]] = {}
 
 

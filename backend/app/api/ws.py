@@ -37,6 +37,88 @@ async def websocket_market_feed(websocket: WebSocket):
     }
     await websocket.send_text(json.dumps(welcome_msg))
 
+    # Push initial current prices as MARKET_TICKS so frontend gets immediate live data
+    try:
+        from app.services.market_service import MarketService
+        _svc = MarketService()
+        cards = await _svc.get_index_cards()
+        if cards:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            initial_ticks = []
+            for c in cards:
+                if c.ltp is not None and c.ltp > 0:
+                    initial_ticks.append({
+                        "timestamp": now_iso,
+                        "symbol": c.symbol,
+                        "instrument_token": c.symbol,
+                        "ltp": float(c.ltp),
+                        "open": float(c.open) if c.open else float(c.ltp),
+                        "high": float(c.high) if c.high else float(c.ltp),
+                        "low": float(c.low) if c.low else float(c.ltp),
+                        "close": float(c.previous_close) if c.previous_close else float(c.ltp),
+                        "volume": int(c.volume) if c.volume else 0,
+                        "open_interest": c.open_interest,
+                        "provider": c.provider,
+                    })
+            if initial_ticks:
+                await websocket.send_text(json.dumps({
+                    "type": "MARKET_TICKS",
+                    "timestamp": now_iso,
+                    "ticks": initial_ticks,
+                }))
+    except Exception as e:
+        logger.debug("ws_initial_ticks_snapshot_failed", error=str(e)[:150])
+
+    stop_event = asyncio.Event()
+
+    async def periodic_feed_loop():
+        """Periodically broadcast fresh ticks or heartbeats to keep the feed realtime & alive."""
+        from app.services.market_service import MarketService
+        service = MarketService()
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(1.0)
+                if stop_event.is_set():
+                    break
+                now = datetime.now(timezone.utc)
+                last_b = central_feed.last_broadcast_at
+                # If central_feed has not broadcasted in 0.9s, push latest quotes as ticks
+                is_quiet = (last_b is None) or ((now - last_b).total_seconds() > 0.9)
+                if is_quiet:
+                    fresh_cards = await service.get_index_cards()
+                    now_iso = now.isoformat()
+                    ticks_payload = []
+                    for c in fresh_cards:
+                        if c.ltp is not None and c.ltp > 0:
+                            ticks_payload.append({
+                                "timestamp": now_iso,
+                                "symbol": c.symbol,
+                                "instrument_token": c.symbol,
+                                "ltp": float(c.ltp),
+                                "open": float(c.open) if c.open else float(c.ltp),
+                                "high": float(c.high) if c.high else float(c.ltp),
+                                "low": float(c.low) if c.low else float(c.ltp),
+                                "close": float(c.previous_close) if c.previous_close else float(c.ltp),
+                                "volume": int(c.volume) if c.volume else 0,
+                                "open_interest": c.open_interest,
+                                "provider": c.provider,
+                            })
+                    if ticks_payload:
+                        await websocket.send_text(json.dumps({
+                            "type": "MARKET_TICKS",
+                            "timestamp": now_iso,
+                            "ticks": ticks_payload,
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "HEARTBEAT",
+                            "timestamp": now_iso,
+                        }))
+            except Exception:
+                break
+
+    feed_task = asyncio.create_task(periodic_feed_loop())
+
     try:
         while True:
             # Keep connection open and handle incoming client commands (e.g. subscribe / ping)
@@ -65,6 +147,13 @@ async def websocket_market_feed(websocket: WebSocket):
     except Exception as e:
         logger.warning("ws_connection_error", error=str(e))
         await central_feed.unregister_client(websocket)
+    finally:
+        stop_event.set()
+        feed_task.cancel()
+        try:
+            await feed_task
+        except asyncio.CancelledError:
+            pass
 
 
 @router.websocket("/api/v1/ws/crypto")

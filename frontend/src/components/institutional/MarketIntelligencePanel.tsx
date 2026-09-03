@@ -17,7 +17,7 @@ interface MiData {
   max_holding: string;
 }
 
-export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) {
+export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: MiPanelProps & { refreshKey?: number }) {
   const [data, setData] = useState<MiData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(instrument);
@@ -41,7 +41,7 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
     fetchMi();
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
         if (!document.hidden && !cancelled) void fetchMi();
         schedule();
@@ -51,7 +51,7 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
     const onVis = () => { if (!document.hidden && !cancelled) void fetchMi(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener('visibilitychange', onVis); };
-  }, [selected]);
+  }, [selected, refreshKey]);
 
   if (loading) return <div className="bg-card border rounded p-4 h-80 animate-pulse">Loading Market Intelligence…</div>;
   if (!data) return <div className="bg-card border rounded p-4 text-sm text-muted-foreground">Market Intelligence unavailable</div>;

@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     # Telegram — §55-63
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
+    telegram_chat_id: str = ""                # Default / broadcast Telegram Chat ID
     telegram_secret_token: str = ""          # legacy name — prefer TELEGRAM_WEBHOOK_SECRET
     telegram_webhook_secret: str = ""        # §6 X-Telegram-Bot-Api-Secret-Token
     telegram_rate_limit_per_second: float = 20.0

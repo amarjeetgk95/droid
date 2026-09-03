@@ -6,7 +6,7 @@ import { FIIDIIOverviewResponse } from '@/lib/types';
 import { Landmark } from 'lucide-react';
 import { safeNum, safeStr, safeInt } from '@/lib/utils';
 
-export function FIIPositioningCard() {
+export function FIIPositioningCard({ refreshKey }: { refreshKey?: number } = {}) {
   const [data, setData] = useState<FIIDIIOverviewResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +31,13 @@ export function FIIPositioningCard() {
     };
 
     loadData();
-    // Chained timeout with jitter so clients don't sync up their 60s polls.
+    // Chained timeout with jitter so clients don't sync up polls.
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
       timeout = setTimeout(() => {
         if (!document.hidden) loadData();
         schedule();
-      }, 60000 * (0.8 + Math.random() * 0.4));
+      }, 15000 * (0.8 + Math.random() * 0.4));
     };
     schedule();
     const onVis = () => { if (!document.hidden) loadData(); };
@@ -47,7 +47,7 @@ export function FIIPositioningCard() {
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, []);
+  }, [refreshKey]);
 
   if (loading && !data) {
     return (

@@ -131,9 +131,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("morning_briefing_service_start_failed", error=str(e))
 
+    # Start Automated Signal Engine & Outcome Worker (real-time signals, auto paper execution, telegram dispatch)
+    try:
+        from app.signals.worker import automated_signal_worker
+        await automated_signal_worker.start()
+        logger.info("automated_signal_worker_started")
+    except Exception as e:
+        logger.warning("automated_signal_worker_start_failed", error=str(e))
+
     yield
     
     # Shutdown in reverse order
+    try:
+        from app.signals.worker import automated_signal_worker
+        await automated_signal_worker.stop()
+    except Exception:
+        pass
     try:
         from app.services.morning_briefing_service import morning_briefing_service
         await morning_briefing_service.stop()

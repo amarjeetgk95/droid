@@ -14,8 +14,9 @@ def calculate_required_margin(
     underlying_clean = underlying.upper().replace(" 50", "")
 
     if instrument_type == "OPTION_BUY":
-        # Option buyers only pay full premium
-        return round(price * quantity, 2)
+        # Option buyers only pay full premium. If index spot price passed (>2000), estimate ATM premium (~1.5%)
+        eff_price = price if price < 2000 else round(price * 0.015, 2)
+        return round(eff_price * quantity, 2)
 
     # Base margin per lot for naked shorting & futures
     lot_size = 10 if "SENSEX" in underlying_clean else 25 if "BANK" in underlying_clean else 65 if "FIN" in underlying_clean else 75

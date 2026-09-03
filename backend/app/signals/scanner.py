@@ -161,6 +161,49 @@ class SignalScanner:
                 signal_fsm.register(instance)
                 registered_signals.append(instance)
 
+                # Record into Signal Audit Ledger
+                try:
+                    from app.signals.audit_ledger import signal_audit_ledger
+                    signal_audit_ledger.record_signal_created(
+                        signal_id=instance.signal_id,
+                        underlying=instance.underlying,
+                        strategy=instance.strategy,
+                        direction=instance.direction,
+                        timeframe=instance.timeframe,
+                        spot_price=float(instance.spot_price),
+                        trigger=float(instance.trigger),
+                        stop_loss=float(instance.stop_loss),
+                        target_1=float(instance.target_1),
+                        target_2=float(instance.target_2),
+                        confidence=float(instance.confidence),
+                        option_contract=instance.option_contract,
+                        status=instance.fsm_state,
+                    )
+                except Exception as ae:
+                    logger.warning("audit_record_created_failed", error=str(ae))
+
+                # Enqueue Telegram notification for newly discovered setup
+                try:
+                    from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
+                    ev = SignalEvent(
+                        event_type="SIGNAL_TRIGGERED" if instance.fsm_state == "ARMED" else "POSSIBLE_SETUP",
+                        signal_id=instance.signal_id,
+                        instrument=instance.underlying,
+                        candle_timeframe=instance.timeframe,
+                        setup_type=instance.strategy,
+                        direction="BULLISH" if "CALL" in instance.direction else "BEARISH",
+                        status=instance.fsm_state,
+                        trigger_level=float(instance.trigger),
+                        current_price=float(instance.spot_price),
+                        stop_loss=float(instance.stop_loss),
+                        target_low=float(instance.target_1),
+                        target_high=float(instance.target_2),
+                        confidence=float(instance.confidence),
+                    )
+                    await telegram_notification_queue.publish_signal_event(ev)
+                except Exception as te:
+                    logger.warning("scanner_telegram_publish_failed", error=str(te))
+
         return {
             "scanned_underlyings": list(APPROVED_UNDERLYINGS),
             "total_candidates": len(all_candidates),

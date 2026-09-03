@@ -24,12 +24,14 @@ type MarketDataContextType = {
   errors: SectionErrors;
   lastFetch: Date | null;
   streamState: StreamConnectionState;
+  refreshInterval: number;
+  setRefreshInterval: (ms: number) => void;
   refetch: () => Promise<void>;
 };
 
 const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
-const DEFAULT_REFRESH_MS = 30000;
+const DEFAULT_REFRESH_MS = 1000;
 
 const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, marketStatus: null };
 
@@ -43,6 +45,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<SectionErrors>(EMPTY_ERRORS);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [activeInterval, setActiveInterval] = useState<number>(refreshInterval);
 
   const { latestTicks, streamState, ticksFresh } = useMarketStream();
   const inFlightRef = useRef(false);
@@ -165,11 +168,11 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     // Chained timeout with ±20% jitter — otherwise all clients hit the backend
     // in lockstep every 15s (thundering herd on the free Render instance).
     const schedule = () => {
-      const jittered = refreshInterval * (0.8 + Math.random() * 0.4);
+      const interval = Math.max(500, activeInterval);
       timeout = setTimeout(() => {
         void fetchData();
         schedule();
-      }, jittered);
+      }, interval);
     };
 
     void fetchData();
@@ -184,7 +187,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [refreshInterval, fetchData]);
+  }, [activeInterval, fetchData]);
 
   // Merge live ticks into cards — per-symbol memoized to avoid re-rendering unchanged cards.
   // latestTicks keeps the last-ever tick batch; `ticksFresh` flips false after FEED_STALE_MS without a message.
@@ -274,8 +277,10 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     errors,
     lastFetch,
     streamState,
+    refreshInterval: activeInterval,
+    setRefreshInterval: setActiveInterval,
     refetch: fetchData,
-  }), [displayedCards, breadth, health, marketStatus, loading, errors, lastFetch, streamState, fetchData]);
+  }), [displayedCards, breadth, health, marketStatus, loading, errors, lastFetch, streamState, activeInterval, fetchData]);
 
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
 }

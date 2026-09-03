@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
-export function DataHealthPanel() {
+export function DataHealthPanel({ refreshKey }: { refreshKey?: number } = {}) {
   const [data, setData] = useState<any>(null);
   useEffect(() => {
     let cancelled = false;
@@ -18,7 +18,7 @@ export function DataHealthPanel() {
     fetchH();
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
         if (!document.hidden && !cancelled) void fetchH();
         schedule();
@@ -28,7 +28,7 @@ export function DataHealthPanel() {
     const onVis = () => { if (!document.hidden && !cancelled) void fetchH(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener('visibilitychange', onVis); };
-  }, []);
+  }, [refreshKey]);
 
   const dot = (status: string) => {
     if (status === 'LIVE') return 'bg-emerald-500 animate-pulse';
