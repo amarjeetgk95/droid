@@ -218,6 +218,19 @@ class SignalAuditLedger:
             )
         )
         logger.info("audit_paper_executed", signal_id=signal_id, order_id=paper_order_id, fill_price=fill_price)
+
+        # Asynchronously persist to Supabase
+        try:
+            import asyncio
+            from app.signals.signals_persistence import persist_executed_signal
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_executed_signal(rec))
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
+
         return rec
 
     def record_square_off(
@@ -233,6 +246,11 @@ class SignalAuditLedger:
         rec = self._trades.get(signal_id)
         if not rec:
             return None
+
+        # Guard: Once trade is closed/settled, do not allow subsequent overwrites
+        if rec.status in ("WON", "LOST", "CLOSED"):
+            logger.debug("trade_already_closed_skip_square_off", signal_id=signal_id, status=rec.status)
+            return rec
 
         now_ms = exit_time_ms or int(time.time() * 1000)
         entry_price = rec.actual_fill_price or rec.trigger_price
@@ -302,6 +320,19 @@ class SignalAuditLedger:
             duration=duration_str,
             reason=exit_reason,
         )
+
+        # Asynchronously persist squared-off trade to Supabase
+        try:
+            import asyncio
+            from app.signals.signals_persistence import persist_executed_signal
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(persist_executed_signal(rec))
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
+
         return rec
 
     def update_live_quote(self, underlying: str, current_price: float) -> list[AuditTradeRecord]:
@@ -310,12 +341,21 @@ class SignalAuditLedger:
         for all open signals/trades of the given underlying in real time.
         """
         now_ms = int(time.time() * 1000)
-        u_upper = underlying.upper().replace(" ", "").replace("50", "")
+        from app.signals.contract_resolver import validate_underlying
+        try:
+            target_u = validate_underlying(underlying)
+        except Exception:
+            target_u = underlying.upper().strip()
+
         updated: list[AuditTradeRecord] = []
 
         for rec in self._trades.values():
-            rec_u = rec.underlying.upper().replace(" ", "").replace("50", "")
-            if rec_u != u_upper and underlying.upper() not in rec.underlying.upper():
+            try:
+                rec_u = validate_underlying(rec.underlying)
+            except Exception:
+                rec_u = rec.underlying.upper().strip()
+
+            if rec_u != target_u:
                 continue
 
             if rec.status in ("ARMED", "CONFIRMED", "EXECUTED"):
@@ -557,6 +597,24 @@ class SignalAuditLedger:
 
     def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
         return self._trades.get(signal_id)
+
+    def delete_trade(self, signal_id: str) -> bool:
+        """Delete trade record from memory and schedule deletion from Supabase."""
+        if signal_id in self._trades:
+            del self._trades[signal_id]
+            try:
+                import asyncio
+                from app.signals.signals_persistence import delete_persisted_signal
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(delete_persisted_signal(signal_id))
+                except RuntimeError:
+                    pass
+            except Exception:
+                pass
+            logger.info("audit_trade_deleted", signal_id=signal_id)
+            return True
+        return False
 
     def list_trades(
         self,

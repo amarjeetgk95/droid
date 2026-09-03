@@ -51,7 +51,11 @@ class SignalOutcomeTracker:
         events = []
 
         for sig in active:
+            if sig.outcome_status is not None:
+                continue
             st = sig.fsm_state
+            if st in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+                continue
             direction = sig.direction
 
             # ── 1. TRIGGER & CONFIRMATION ──
@@ -66,7 +70,7 @@ class SignalOutcomeTracker:
                     events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price)})
 
             # ── 2. TARGET & STOP LOSS MONITORING ──
-            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+            elif st == "CONFIRMED":
                 if direction == "LONG_CALL":
                     # Check Target 2 Hit (Highest Priority Win)
                     if d_price >= sig.target_2:
@@ -112,7 +116,11 @@ class SignalOutcomeTracker:
         processed_events: list[dict] = []
 
         for sig in active:
+            if sig.outcome_status is not None:
+                continue
             st = sig.fsm_state
+            if st in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+                continue
             direction = sig.direction
 
             # ── 1. TRIGGER & CONFIRMATION -> AUTO PAPER EXECUTION ──
@@ -166,7 +174,7 @@ class SignalOutcomeTracker:
                     processed_events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price), "paper_order": paper_res.model_dump() if paper_res else None})
 
             # ── 2. TARGET & STOP LOSS -> AUTO SQUARE-OFF WITH ACTUAL P&L ──
-            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+            elif st == "CONFIRMED":
                 exit_event = None
                 rr_val = None
 

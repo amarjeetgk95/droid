@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import get_current_user, AuthUser
 from app.core.database import get_db_session
@@ -160,15 +161,42 @@ async def square_off_all_positions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/reset")
-async def reset_paper_trading_account(
+class SetCapitalPayload(BaseModel):
+    capital: float
+
+
+@router.post("/wallet")
+async def set_paper_wallet_capital(
+    payload: SetCapitalPayload,
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    """Reset virtual account to baseline ₹10,00,000 capital."""
+    """Set custom virtual capital for the paper trading wallet."""
     try:
         user_uuid = _parse_user_uuid(user)
-        summary = await paper_service.reset_portfolio_async(session, user_uuid)
+        summary = await paper_service.set_initial_capital_async(payload.capital, session, user_uuid)
+        return {
+            "data": summary.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reset")
+async def reset_paper_trading_account(
+    payload: Optional[SetCapitalPayload] = None,
+    user: Optional[AuthUser] = Depends(get_current_user),
+    session: Optional[AsyncSession] = Depends(get_db_session),
+):
+    """Reset virtual account to baseline or custom capital."""
+    try:
+        user_uuid = _parse_user_uuid(user)
+        cap = payload.capital if payload else None
+        summary = await paper_service.reset_portfolio_async(session, user_uuid, capital=cap)
         return {
             "data": summary.model_dump(mode="json"),
             "error": None,

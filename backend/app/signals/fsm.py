@@ -30,11 +30,11 @@ SignalFSMState = Literal[
 ]
 
 ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
-    "DETECTED": {"VALIDATED", "INVALIDATED", "EXPIRED"},
-    "VALIDATED": {"ARMED", "INVALIDATED", "EXPIRED"},
-    "ARMED": {"TRIGGERED", "EXPIRED", "INVALIDATED"},
+    "DETECTED": {"VALIDATED", "ARMED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
+    "VALIDATED": {"ARMED", "TRIGGERED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
+    "ARMED": {"TRIGGERED", "CONFIRMED", "EXPIRED", "INVALIDATED"},
     "TRIGGERED": {"CONFIRMED", "INVALIDATED", "EXPIRED"},
-    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "INVALIDATED"},
+    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "INVALIDATED", "CLOSED"},
     "TARGET_1_HIT": {"TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED"},
     "TARGET_2_HIT": {"CLOSED"},
     "STOP_LOSS_HIT": {"CLOSED"},
@@ -126,6 +126,15 @@ class SignalFSMManager:
 
     def get(self, signal_id: str) -> Optional[SignalInstance]:
         return self._signals.get(signal_id)
+
+    def delete(self, signal_id: str) -> bool:
+        """Remove a signal and its transitions from in-memory state."""
+        if signal_id in self._signals:
+            del self._signals[signal_id]
+            self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
+            logger.info("fsm_signal_deleted", signal_id=signal_id)
+            return True
+        return False
 
     def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None) -> list[SignalInstance]:
         now_ms = int(time.time() * 1000)

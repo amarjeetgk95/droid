@@ -131,6 +131,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("morning_briefing_service_start_failed", error=str(e))
 
+    # Auto-provision & restore Executed Signals from Supabase PostgreSQL
+    try:
+        from app.signals.signals_persistence import ensure_signals_tables, restore_signals_from_db
+        await ensure_signals_tables()
+        restored = await restore_signals_from_db()
+        logger.info("signals_persistence_initialized", restored_count=restored)
+    except Exception as e:
+        logger.warning("signals_persistence_init_failed", error=str(e))
+
     # Start Automated Signal Engine & Outcome Worker (real-time signals, auto paper execution, telegram dispatch)
     try:
         from app.signals.worker import automated_signal_worker

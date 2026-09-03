@@ -1107,6 +1107,23 @@ class ApiClient {
     const q = qs.toString() ? `?${qs.toString()}` : '';
     return this.request<{ trades: any[]; count: number; summary: any; timestamp_ms: number }>(`/api/v1/signals/audit${q}`);
   }
+
+  async deleteSignal(signalId: string) {
+    return this.request<{ status: string; message: string; fsm_deleted: boolean; audit_deleted: boolean }>(
+      `/api/v1/signals/${encodeURIComponent(signalId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async setPaperWalletCapital(capital: number) {
+    return this.request<{ status: string; data: any; capital: number; available_margin: number }>(
+      `/api/v1/signals/paper-wallet`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ capital }),
+      },
+    );
+  }
 }
 
 export const api = new ApiClient(API_BASE);

@@ -9,10 +9,14 @@ import uuid
 from decimal import Decimal
 from typing import Literal, Any, Optional
 
-from fastapi import APIRouter, Query, HTTPException, Request
+from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+
+from app.core.security import get_current_user, AuthUser
+from app.core.database import get_db_session
 
 from app.signals.contract_resolver import (
     APPROVED_UNDERLYINGS,
@@ -25,6 +29,7 @@ from app.signals.strategies import STRATEGY_REGISTRY
 from app.signals.strategies.base import StrategyContext, SignalCandidate
 from app.signals.confluence import confluence_engine
 from app.signals.fsm import signal_fsm, SignalInstance
+from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.scanner import scanner_engine
 from app.signals.outcome_tracker import outcome_tracker
 from app.signals.paper_engine import signal_paper_engine
@@ -71,6 +76,27 @@ class ExecutePaperRequest(BaseModel):
     lots: Optional[int] = Field(default=None, description="Optional custom lots override")
     quantity: Optional[int] = Field(default=None, description="Optional custom quantity override")
     risk_percent: float = Field(default=2.0, description="Risk capital % for sizing")
+
+
+class PreviewSignalRequest(BaseModel):
+    instrument_id: Optional[str] = None
+    underlying: Optional[str] = None
+    candle_timeframe: Optional[str] = "5M"
+    timeframe: Optional[str] = None
+    direction: str = "BULLISH"
+    status: str = "CONFIRMED"
+    trigger_level: Optional[float] = None
+    trigger: Optional[float] = None
+    stop_loss: Optional[float] = None
+    target_1: Optional[float] = None
+    target_2: Optional[float] = None
+    confidence: Optional[float] = None
+    setup_type: Optional[str] = "BREAKOUT"
+    strategy: Optional[str] = None
+
+
+class PaperWalletCapitalRequest(BaseModel):
+    capital: float
 
 
 # ── 1. ACTIVE SIGNALS LIST ───────────────────────────────────────────
@@ -258,14 +284,53 @@ async def get_single_signal_audit(signal_id: str):
     return trade.model_dump()
 
 
-# ── 6. SINGLE SIGNAL QUERY ────────────────────────────────────────────
+# ── 6. SIGNALS AUDIT HISTORY ──────────────────────────────────────────
 
-@router.get("/{signal_id}")
-def get_signal_by_id(signal_id: str):
-    sig = signal_fsm.get(signal_id)
-    if not sig:
-        raise HTTPException(status_code=404, detail="Signal not found")
-    return sig.model_dump()
+@router.get("/history")
+def get_signals_history(limit: int = 50):
+    """Return historical signal audit trade records."""
+    records = signal_audit_ledger.list_trades(limit=limit)
+    return {
+        "data": [r.model_dump() for r in records],
+        "count": len(records),
+        "records": [r.model_dump() for r in records],
+    }
+
+
+# ── 7. SIGNAL DELETION AUTHORITY ──────────────────────────────────────
+
+@router.delete("/{signal_id}")
+async def delete_signal_by_id(signal_id: str):
+    """
+    Authority to delete a signal: removes from FSM, Audit Ledger, Supabase,
+    squares off any open paper position, and broadcasts signal_deleted event.
+    """
+    audit_rec = signal_audit_ledger.get(signal_id)
+    if audit_rec and audit_rec.status in ("ARMED", "CONFIRMED", "EXECUTED"):
+        try:
+            await signal_paper_engine.close_signal_position(signal_id, reason="DELETED_BY_USER")
+        except Exception as pe:
+            logger.warning("close_position_on_delete_failed", signal_id=signal_id, error=str(pe))
+
+    fsm_del = signal_fsm.delete(signal_id)
+    audit_del = signal_audit_ledger.delete_trade(signal_id)
+
+    # Async Supabase delete
+    try:
+        from app.signals.signals_persistence import delete_persisted_signal
+        await delete_persisted_signal(signal_id)
+    except Exception as se:
+        logger.warning("supabase_delete_failed", signal_id=signal_id, error=str(se))
+
+    # Broadcast SSE
+    await signal_sse_hub.broadcast("signal_deleted", {"signal_id": signal_id}, priority="P0")
+
+    return {
+        "status": "success",
+        "message": f"Signal {signal_id} deleted successfully",
+        "fsm_deleted": fsm_del,
+        "audit_deleted": audit_del,
+    }
 
 
 # ── 6. 1-CLICK PAPER TRADING EXECUTION ────────────────────────────────
@@ -386,15 +451,25 @@ async def generate_signal(req: GenerateSignalRequest):
     spot = Decimal(str(quote.ltp if quote and quote.ltp else (req.current_price or req.trigger or req.trigger_level or 24800.0)))
     tick = Decimal("0.05")
 
+    is_put = "PUT" in dir_val or "BEARISH" in dir_val
     trig_val = req.trigger or req.trigger_level
     entry_min = normalize_price(req.entry_min or trig_val or spot, tick)
-    entry_max = normalize_price(req.entry_max or (spot + Decimal("10.0")), tick)
-    trigger = normalize_price(trig_val or (entry_min + tick), tick)
-    stop_loss = normalize_price(req.stop_loss or (spot * Decimal("0.995")), tick)
-    
-    risk_pts = abs(entry_min - stop_loss)
-    t1 = normalize_price(req.target_1 or (entry_min + (risk_pts * Decimal("1.5"))), tick)
-    t2 = normalize_price(req.target_2 or (entry_min + (risk_pts * Decimal("3.0"))), tick)
+    entry_max = normalize_price(req.entry_max or (spot - Decimal("10.0") if is_put else spot + Decimal("10.0")), tick)
+    trigger = normalize_price(trig_val or (entry_min - tick if is_put else entry_min + tick), tick)
+
+    if is_put:
+        stop_loss = normalize_price(req.stop_loss or (spot * Decimal("1.005")), tick)
+        risk_pts = abs(stop_loss - entry_min)
+        t1 = normalize_price(req.target_1 or (entry_min - (risk_pts * Decimal("1.5"))), tick)
+        t2 = normalize_price(req.target_2 or (entry_min - (risk_pts * Decimal("3.0"))), tick)
+    else:
+        stop_loss = normalize_price(req.stop_loss or (spot * Decimal("0.995")), tick)
+        risk_pts = abs(entry_min - stop_loss)
+        t1 = normalize_price(req.target_1 or (entry_min + (risk_pts * Decimal("1.5"))), tick)
+        t2 = normalize_price(req.target_2 or (entry_min + (risk_pts * Decimal("3.0"))), tick)
+
+    rr_t1 = float((abs(t1 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5
+    rr_t2 = float((abs(t2 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0
 
     opt_type = "CE" if "CALL" in dir_val else "PE"
     contract = resolve_option_contract(u, spot, opt_type, strike_offset=0)
@@ -414,8 +489,8 @@ async def generate_signal(req: GenerateSignalRequest):
         target_1=t1,
         target_2=t2,
         risk_points=risk_pts,
-        risk_reward_t1=float(((t1 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5,
-        risk_reward_t2=float(((t2 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0,
+        risk_reward_t1=rr_t1,
+        risk_reward_t2=rr_t2,
         confidence=req.confidence or 80.0,
         confluence_breakdown={"technical": 80.0, "mtf": 75.0, "fno": 75.0, "regime": 80.0, "ai": 75.0},
         rationale=req.rationale or [f"Manual {req.strategy} setup on {u}"],
@@ -544,3 +619,78 @@ def list_strategy_engines():
             {"id": "ORB", "label": "Opening Range Breakout (15M)", "description": "First 15-minute high/low breakout with session momentum confirmation."},
         ],
     }
+
+
+# ── 11. TELEGRAM PREVIEW ──────────────────────────────────────────────
+
+@router.post("/preview")
+def preview_signal(req: PreviewSignalRequest):
+    """Generate a Telegram alert formatted preview without publishing."""
+    from app.institutional.telegram_templates import render_event_message
+    from app.institutional.telegram_notifications import SignalEvent
+
+    u = (req.underlying or req.instrument_id or "NIFTY").upper()
+    tf = (req.timeframe or req.candle_timeframe or "5M").upper()
+    dir_val = "BULLISH" if ("CALL" in req.direction.upper() or "BULLISH" in req.direction.upper()) else "BEARISH"
+    strat = (req.strategy or req.setup_type or "BREAKOUT").upper()
+    trig = req.trigger if req.trigger is not None else req.trigger_level
+    status_str = (req.status or "CONFIRMED").upper()
+    ev_type = "SIGNAL_CONFIRMED" if status_str == "CONFIRMED" else ("SIGNAL_TRIGGERED" if status_str == "TRIGGERED" else "POSSIBLE_SETUP")
+
+    ev = SignalEvent(
+        event_type=ev_type,
+        signal_id=f"preview-{uuid.uuid4().hex[:8]}",
+        instrument=u,
+        candle_timeframe=tf,
+        setup_type=strat,
+        direction=dir_val,
+        status=status_str,
+        trigger_level=float(trig) if trig is not None else None,
+        stop_loss=float(req.stop_loss) if req.stop_loss is not None else None,
+        target_low=float(req.target_1) if req.target_1 is not None else None,
+        target_high=float(req.target_2) if req.target_2 is not None else None,
+        confidence=float(req.confidence) if req.confidence is not None else None,
+    )
+    text = render_event_message(ev)
+    return {
+        "event_type": ev.event_type,
+        "instrument": ev.instrument,
+        "preview": text,
+        "event": ev.model_dump(),
+    }
+
+
+# ── 12. CUSTOM PAPER WALLET CAPITAL ───────────────────────────────────
+
+@router.post("/paper-wallet")
+async def set_signals_paper_wallet(
+    req: PaperWalletCapitalRequest,
+    user: Optional[AuthUser] = Depends(get_current_user),
+    session: Optional[AsyncSession] = Depends(get_db_session),
+):
+    """Set custom virtual capital for the paper trading wallet."""
+    from app.services.paper_service import paper_service
+    from app.api.paper import _parse_user_uuid
+    try:
+        user_uuid = _parse_user_uuid(user)
+        summary = await paper_service.set_initial_capital_async(req.capital, session, user_uuid)
+        return {
+            "status": "success",
+            "data": summary.model_dump(mode="json"),
+            "capital": summary.virtual_capital,
+            "available_margin": summary.available_margin,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── 13. SINGLE SIGNAL QUERY (FALLTHROUGH) ─────────────────────────────
+
+@router.get("/{signal_id}")
+def get_signal_by_id(signal_id: str):
+    sig = signal_fsm.get(signal_id)
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    return sig.model_dump()

@@ -154,9 +154,14 @@ class SignalScanner:
                 option_contract=cand.option_contract.model_dump() if cand.option_contract else None,
                 fsm_state="ARMED" if fused_score >= 70.0 else "VALIDATED",
             )
-            # Deduplicate by (underlying, strategy, direction) in recent window
+            # Deduplicate by (underlying, strategy, direction) among currently active/in-flight signals
             existing = signal_fsm.list_active(underlying=cand.underlying, strategy=cand.strategy)
-            same_dir = [s for s in existing if s.direction == cand.direction and not s.is_expired()]
+            same_dir = [
+                s for s in existing
+                if s.direction == cand.direction
+                and s.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED")
+                and not s.is_expired()
+            ]
             if not same_dir:
                 signal_fsm.register(instance)
                 registered_signals.append(instance)
@@ -186,7 +191,7 @@ class SignalScanner:
                 try:
                     from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
                     ev = SignalEvent(
-                        event_type="SIGNAL_TRIGGERED" if instance.fsm_state == "ARMED" else "POSSIBLE_SETUP",
+                        event_type="POSSIBLE_SETUP",
                         signal_id=instance.signal_id,
                         instrument=instance.underlying,
                         candle_timeframe=instance.timeframe,

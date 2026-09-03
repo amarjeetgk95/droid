@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useMarketStream } from '@/hooks/useMarketStream';
+import { api } from '@/lib/api';
 import {
   Activity,
   ArrowDownRight,
@@ -20,6 +21,10 @@ import {
   TrendingUp,
   XCircle,
   Zap,
+  Trash2,
+  Wallet,
+  Settings2,
+  AlertCircle,
 } from 'lucide-react';
 
 export interface AuditTradeRecord {
@@ -108,6 +113,69 @@ type Props = {
 export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelectSignal }: Props) {
   const [filterInstr, setFilterInstr] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
+
+  // Deletion state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [signalToDelete, setSignalToDelete] = useState<string | null>(null);
+
+  // Custom Paper Wallet Capital state
+  const [showCapitalModal, setShowCapitalModal] = useState<boolean>(false);
+  const [customCapital, setCustomCapital] = useState<string>('1000000');
+  const [savingCapital, setSavingCapital] = useState<boolean>(false);
+  const [walletBalance, setWalletBalance] = useState<number>(1000000);
+
+  // Fetch current paper portfolio capital on mount
+  useEffect(() => {
+    async function loadWallet() {
+      try {
+        const portRes: any = await api.getPaperPortfolio();
+        const cap = portRes?.data?.virtual_capital || portRes?.virtual_capital;
+        if (cap) {
+          setWalletBalance(Number(cap));
+          setCustomCapital(String(cap));
+        }
+      } catch {
+        // Fallback to default
+      }
+    }
+    loadWallet();
+  }, []);
+
+  const handleDeleteSignal = async (signalId: string) => {
+    setDeletingId(signalId);
+    try {
+      await api.deleteSignal(signalId);
+      setSignalToDelete(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(`Failed to delete signal: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSaveCapital = async () => {
+    const num = Number(customCapital);
+    if (isNaN(num) || num <= 0) {
+      alert('Please enter a valid positive capital amount');
+      return;
+    }
+    setSavingCapital(true);
+    try {
+      const res = await api.setPaperWalletCapital(num);
+      if (res?.capital) {
+        setWalletBalance(res.capital);
+      } else {
+        setWalletBalance(num);
+      }
+      setShowCapitalModal(false);
+      onRefresh();
+    } catch (err: any) {
+      alert(`Failed to update capital: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setSavingCapital(false);
+    }
+  };
 
   // WebSocket real-time market stream for sub-second tick MTM updates
   const { latestTicks, streamState } = useMarketStream();
@@ -314,6 +382,19 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Custom Paper Wallet Capital Trigger */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCapitalModal(true)}
+              className="h-8 text-xs gap-1.5 font-mono border-primary/30 hover:border-primary bg-primary/5 hover:bg-primary/10 text-foreground"
+              title="Configure Paper Trading Virtual Capital"
+            >
+              <Wallet className="w-3.5 h-3.5 text-primary" />
+              <span>Wallet: ₹{(walletBalance / 100000).toFixed(1)}L</span>
+              <Settings2 className="w-3 h-3 text-muted-foreground ml-0.5" />
+            </Button>
+
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded bg-secondary/50 border text-muted-foreground">
               <span className={`h-2 w-2 rounded-full ${streamState === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               {streamState === 'CONNECTED' ? 'Live Stream Active' : 'Polling (3s)'}
@@ -341,12 +422,13 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 <th className="py-2.5 px-3">Duration</th>
                 <th className="py-2.5 px-3 text-right">Actual & Live P&L</th>
                 <th className="py-2.5 px-3 text-center">Status</th>
+                <th className="py-2.5 px-3 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={9} className="py-8 text-center text-muted-foreground">
                     <p className="text-sm font-medium">No audited signals recorded yet.</p>
                     <p className="text-xs mt-1">Confirmed signals and paper executions will appear here automatically with live P&L.</p>
                   </td>
@@ -363,11 +445,20 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                       onClick={() => onSelectSignal?.(t.signal_id)}
                       className={`hover:bg-muted/30 transition-colors cursor-pointer group ${isOpen ? 'bg-primary/5' : ''}`}
                     >
-                      {/* Time & Signal */}
+                      {/* Time & Signal (Creation & Execution Time) */}
                       <td className="py-2.5 px-3 font-mono">
                         <div className="font-semibold text-foreground flex items-center gap-1">
                           {isOpen && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />}
-                          {new Date(t.created_at_utc).toLocaleTimeString('en-IN', { hour12: false })}
+                          <span title="Signal Creation Time (IST)">{new Date(t.created_at_utc).toLocaleTimeString('en-IN', { hour12: false })}</span>
+                        </div>
+                        <div className="text-[10px] font-mono mt-0.5">
+                          {t.executed_at_utc ? (
+                            <span className="text-primary font-semibold flex items-center gap-0.5" title="Execution Time (IST)">
+                              <Zap className="w-2.5 h-2.5 text-amber-500 shrink-0" /> Exec: {new Date(t.executed_at_utc).toLocaleTimeString('en-IN', { hour12: false })}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/60">Exec: Pending</span>
+                          )}
                         </div>
                         <div className="text-[10px] text-muted-foreground">{t.signal_id.slice(0, 8)}…</div>
                       </td>
@@ -486,6 +577,20 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                           {t.status === 'EXECUTED' ? 'EXECUTED (LIVE)' : t.status}
                         </Badge>
                       </td>
+
+                      {/* Action: Delete Authority */}
+                      <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={deletingId === t.signal_id}
+                          onClick={() => setSignalToDelete(t.signal_id)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Delete signal authority"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })
@@ -494,6 +599,134 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
           </table>
         </div>
       </Card>
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      {signalToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <Card className="w-full max-w-md shadow-2xl border-destructive/30 bg-card">
+            <CardContent className="p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-destructive/15 text-destructive flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Delete Signal Authority</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 font-mono">
+                    ID: {signalToDelete}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                This will permanently delete the signal from the FSM state machine, remove the audited trade from the ledger, delete its record from Supabase, and square off any active paper position.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={deletingId === signalToDelete}
+                  onClick={() => setSignalToDelete(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={deletingId === signalToDelete}
+                  onClick={() => handleDeleteSignal(signalToDelete)}
+                  className="gap-1.5"
+                >
+                  {deletingId === signalToDelete && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Confirm Delete
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── CUSTOM PAPER WALLET CAPITAL MODAL ── */}
+      {showCapitalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <Card className="w-full max-w-md shadow-2xl border-primary/30 bg-card">
+            <CardContent className="p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Paper Trading Capital</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Configure custom virtual wallet balance for simulation.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground">Custom Capital Amount (₹)</label>
+                <div className="mt-1 relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-mono text-muted-foreground">₹</span>
+                  <input
+                    type="number"
+                    value={customCapital}
+                    onChange={(e) => setCustomCapital(e.target.value)}
+                    placeholder="1000000"
+                    className="w-full pl-7 pr-3 py-2 text-sm font-mono font-bold rounded-lg border bg-secondary/30 focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Presets */}
+              <div>
+                <span className="text-[11px] font-semibold text-muted-foreground">Quick Presets:</span>
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {[
+                    { label: '₹1 Lakh', val: 100000 },
+                    { label: '₹2 Lakh', val: 200000 },
+                    { label: '₹5 Lakh', val: 500000 },
+                    { label: '₹10 Lakh', val: 1000000 },
+                    { label: '₹25 Lakh', val: 2500000 },
+                    { label: '₹1 Crore', val: 10000000 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.val}
+                      type="button"
+                      onClick={() => setCustomCapital(String(preset.val))}
+                      className={`px-2.5 py-1 text-xs font-mono rounded-md border transition-all ${
+                        Number(customCapital) === preset.val
+                          ? 'bg-primary text-primary-foreground border-primary font-bold'
+                          : 'bg-secondary/40 hover:bg-secondary border-border/50'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={savingCapital}
+                  onClick={() => setShowCapitalModal(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  disabled={savingCapital}
+                  onClick={handleSaveCapital}
+                  className="gap-1.5"
+                >
+                  {savingCapital && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Save Capital
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

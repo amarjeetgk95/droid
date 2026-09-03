@@ -251,12 +251,61 @@ class PaperTradingService:
                 logger.warning("square_off_failed", pid=pid, error=str(e))
         return closed
 
+    async def set_initial_capital_async(
+        self,
+        capital: float,
+        session: Optional[AsyncSession] = None,
+        user_id: Optional[UUID] = None,
+    ) -> PortfolioSummary:
+        """Set a custom capital amount for the paper trading wallet and persist to DB."""
+        if capital <= 0:
+            raise ValueError("Capital must be greater than 0")
+        self._initial_capital = float(capital)
+
+        if session and user_id:
+            try:
+                db_port = await PaperTradingRepository.get_or_create_portfolio(session, user_id)
+                db_port.virtual_capital = self._initial_capital
+                db_port.available_margin = max(0.0, self._initial_capital + self._realized_pnl - sum(p.used_margin for p in self._positions.values() if p.is_open))
+                await session.commit()
+            except Exception as e:
+                logger.warning("failed_to_update_portfolio_capital_db", error=str(e))
+
+        return await self.get_portfolio_summary(session, user_id)
+
+    def set_initial_capital(self, capital: float) -> PortfolioSummary:
+        """Sync set capital amount."""
+        if capital <= 0:
+            raise ValueError("Capital must be greater than 0")
+        self._initial_capital = float(capital)
+        positions = list(self._positions.values())
+        open_positions = [p for p in positions if p.is_open]
+        total_unrealized = round(sum(p.unrealized_pnl for p in open_positions), 2)
+        total_used_margin = round(sum(p.used_margin for p in open_positions), 2)
+        total_pnl = round(self._realized_pnl + total_unrealized, 2)
+        available_margin = round(max(0.0, self._initial_capital + total_pnl - total_used_margin), 2)
+        margin_util = round((total_used_margin / self._initial_capital) * 100.0, 2) if self._initial_capital > 0 else 0.0
+
+        return PortfolioSummary(
+            virtual_capital=self._initial_capital,
+            available_margin=available_margin,
+            used_margin=total_used_margin,
+            margin_utilization_pct=margin_util,
+            total_realized_pnl=round(self._realized_pnl, 2),
+            total_unrealized_pnl=total_unrealized,
+            total_portfolio_pnl=total_pnl,
+            open_positions_count=len(open_positions),
+        )
+
     async def reset_portfolio_async(
         self,
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
+        capital: Optional[float] = None,
     ) -> PortfolioSummary:
-        """Reset virtual account to baseline state."""
+        """Reset virtual account to baseline or custom capital state."""
+        if capital is not None and capital > 0:
+            self._initial_capital = float(capital)
         self._positions.clear()
         self._orders.clear()
         self._realized_pnl = 0.0
@@ -264,6 +313,10 @@ class PaperTradingService:
         if session and user_id:
             try:
                 await PaperTradingRepository.reset_portfolio(session, user_id)
+                db_port = await PaperTradingRepository.get_or_create_portfolio(session, user_id)
+                db_port.virtual_capital = self._initial_capital
+                db_port.available_margin = self._initial_capital
+                await session.commit()
             except Exception as e:
                 logger.warning("failed_to_reset_portfolio_db", error=str(e))
 
@@ -278,8 +331,10 @@ class PaperTradingService:
             open_positions_count=0,
         )
 
-    def reset_portfolio(self) -> PortfolioSummary:
+    def reset_portfolio(self, capital: Optional[float] = None) -> PortfolioSummary:
         """Sync reset for backwards compatibility."""
+        if capital is not None and capital > 0:
+            self._initial_capital = float(capital)
         self._positions.clear()
         self._orders.clear()
         self._realized_pnl = 0.0
