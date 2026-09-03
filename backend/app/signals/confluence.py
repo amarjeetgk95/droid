@@ -51,10 +51,32 @@ class ConfluenceEngine:
         start_ms = int(__import__("time").time() * 1000)
         try:
             from app.services.ai_service import ai_service
+            from app.historical_intelligence import historical_ai
+
+            # Fetch historical AI evidence asynchronously if candles are in context
+            hist_summary = ""
+            candles = context_snapshot.get("candles", []) if isinstance(context_snapshot, dict) else []
+            if candles:
+                try:
+                    prior_b = "BULLISH" if "CALL" in candidate.direction.upper() or "LONG" in candidate.direction.upper() else "BEARISH"
+                    hist_res = await asyncio.wait_for(
+                        historical_ai.analyze_setup(
+                            instrument=candidate.underlying,
+                            candles=candles,
+                            timeframe=candidate.timeframe,
+                            prior_bias=prior_b,
+                        ),
+                        timeout=0.4,
+                    )
+                    if hist_res and hist_res.status == "READY":
+                        hist_summary = f" Historical AI (N={hist_res.sample_count}): 15m {int(hist_res.probability_15m.bullish*100)}% Bull / {int(hist_res.probability_15m.bearish*100)}% Bear, Failure={int(hist_res.failure_rate*100)}%."
+                except Exception:
+                    pass
+
             # Wrap AI call in 1500ms timeout
             async def _call():
-                # Provide structured prompt to AI service
-                summary = f"Validate {candidate.strategy} {candidate.direction} on {candidate.underlying} at {candidate.spot_price}. Technical: {candidate.technical_score}, MTF: {candidate.mtf_score}, FNO: {candidate.fno_score}."
+                # Provide structured prompt to AI service including empirical historical probabilities
+                summary = f"Validate {candidate.strategy} {candidate.direction} on {candidate.underlying} at {candidate.spot_price}. Technical: {candidate.technical_score}, MTF: {candidate.mtf_score}, FNO: {candidate.fno_score}.{hist_summary}"
                 return await ai_service.get_quick_bias(summary)
 
             raw_res = await asyncio.wait_for(_call(), timeout=1.5)

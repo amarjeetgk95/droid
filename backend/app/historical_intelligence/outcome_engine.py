@@ -162,3 +162,106 @@ def construct_forward_outcomes(
         labeled_at=datetime.now(timezone.utc),
         outcome_version=OUTCOME_VERSION,
     )
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    if n % 2 == 1:
+        return round(s[n // 2], 2)
+    return round((s[n // 2 - 1] + s[n // 2]) / 2.0, 2)
+
+
+def aggregate_matched_outcomes(
+    matches: list[HistoricalAnalogMatch],
+    prior_bias: str = "BULLISH",
+) -> dict:
+    """
+    Empirically aggregates forward outcomes across all matched historical analogues.
+    Never invents probabilities: computes exact ratios from observed outcomes.
+    """
+    n = len(matches)
+    if n == 0:
+        return {
+            "sample_count": 0,
+            "probability_15m": {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0},
+            "probability_30m": {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0},
+            "probability_60m": {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0},
+            "failure_rate": 0.0,
+            "continuation_rate": 0.0,
+            "reversal_rate": 0.0,
+            "median_return_15m": 0.0,
+            "median_return_30m": 0.0,
+            "median_return_60m": 0.0,
+            "median_mfe": 0.0,
+            "median_mae": 0.0,
+        }
+
+    def _horizon_probs(horizon_attr: str) -> dict[str, float]:
+        bull = 0
+        bear = 0
+        neut = 0
+        for m in matches:
+            out: ForwardOutcomeHorizon = getattr(m, horizon_attr)
+            d = out.direction.upper()
+            if d == "BULLISH":
+                bull += 1
+            elif d == "BEARISH":
+                bear += 1
+            else:
+                neut += 1
+
+        p_bull = round(bull / n, 2)
+        p_bear = round(bear / n, 2)
+        p_neut = round(max(0.0, 1.0 - (p_bull + p_bear)), 2)
+        return {"bullish": p_bull, "bearish": p_bear, "neutral": p_neut}
+
+    prob_15 = _horizon_probs("outcome_15m")
+    prob_30 = _horizon_probs("outcome_30m")
+    prob_60 = _horizon_probs("outcome_60m")
+
+    # Failure: stop hit or failed continuation at 30m horizon
+    failures = sum(1 for m in matches if m.outcome_30m.failure or m.outcome_30m.stop_hit)
+    failure_rate = round(failures / n, 2)
+
+    continuations = sum(1 for m in matches if m.outcome_30m.continuation)
+    continuation_rate = round(continuations / n, 2)
+
+    reversals = sum(1 for m in matches if m.outcome_30m.reversal)
+    reversal_rate = round(reversals / n, 2)
+
+    ret_15 = [m.outcome_15m.return_pct for m in matches]
+    ret_30 = [m.outcome_30m.return_pct for m in matches]
+    ret_60 = [m.outcome_60m.return_pct for m in matches]
+    mfes = [m.outcome_30m.mfe_pct for m in matches]
+    maes = [m.outcome_30m.mae_pct for m in matches]
+
+    return {
+        "sample_count": n,
+        "probability_15m": prob_15,
+        "probability_30m": prob_30,
+        "probability_60m": prob_60,
+        "failure_rate": failure_rate,
+        "continuation_rate": continuation_rate,
+        "reversal_rate": reversal_rate,
+        "median_return_15m": _median(ret_15),
+        "median_return_30m": _median(ret_30),
+        "median_return_60m": _median(ret_60),
+        "median_mfe": _median(mfes),
+        "median_mae": _median(maes),
+    }
+
+
+class OutcomeEngine:
+    """
+    Historical Outcome Engine for Evaluating & Aggregating Multi-Horizon Outcomes.
+    """
+
+    compute_horizon_outcome = staticmethod(compute_horizon_outcome)
+    construct_forward_outcomes = staticmethod(construct_forward_outcomes)
+    aggregate_matched_outcomes = staticmethod(aggregate_matched_outcomes)
+
+
+outcome_engine = OutcomeEngine()

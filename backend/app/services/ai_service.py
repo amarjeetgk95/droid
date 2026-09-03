@@ -272,6 +272,28 @@ class AIService:
         except Exception as e:
             logger.warning("options_data_fetch_warn", symbol=underlying, error=str(e))
 
+        # 3. Fetch Historical AI & empirical evidence asynchronously (§26, §27)
+        hie_evidence = None
+        try:
+            import asyncio
+            from app.services.candles_service import candles_service
+            from app.historical_intelligence import historical_ai
+            candles_map = await candles_service.get_multi_timeframe_candles(underlying, timeframes=["1m", "5m"])
+            active_candles = candles_map.get("1m") or candles_map.get("5m") or []
+            if active_candles:
+                bias_dir = "BULLISH" if getattr(regime, "overall_bias", "NEUTRAL") == "BULLISH" else "BEARISH"
+                hie_evidence = await asyncio.wait_for(
+                    historical_ai.analyze_setup(
+                        instrument=underlying,
+                        candles=active_candles,
+                        timeframe="1m" if "1m" in candles_map else "5m",
+                        prior_bias=bias_dir,
+                    ),
+                    timeout=0.5,
+                )
+        except Exception as he:
+            logger.debug("historical_ai_fetch_warn", symbol=underlying, error=str(he))
+
         # 4. Construct Grounded Prompts ( §8 exhaustive F&O + §22 ingestion guardrails )
         system_prompt = build_system_prompt()
         user_prompt = build_market_context_prompt(
@@ -281,6 +303,7 @@ class AIService:
             options_analytics=options_analytics,
             max_pain=max_pain,
             strikes=strikes,
+            hie_evidence=hie_evidence,
         )
 
         # 5. Dispatch to LLM Provider (strict – no silent mock fallback)

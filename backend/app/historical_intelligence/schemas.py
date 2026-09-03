@@ -373,3 +373,33 @@ class AIStructuredContext(BaseModel):
     failure_analysis: dict[str, Any]
     regime_consistency_note: str
     historical_edge_status: str
+
+
+# ── Final Output Contract for Simple Historical AI ─────────────────────
+class HorizonProbabilities(BaseModel):
+    bullish: float = 0.0
+    bearish: float = 0.0
+    neutral: float = 0.0
+
+
+class HistoricalAIResult(BaseModel):
+    """
+    Final Output Contract for Historical AI ('What Happened Last Time?' Engine).
+    Reports empirical probabilities and forward outcomes from historical setups.
+    """
+    status: str = "READY"  # READY, INSUFFICIENT_SAMPLE, UNKNOWN, STALE
+    sample_count: int = 0
+    probability_15m: HorizonProbabilities = Field(default_factory=HorizonProbabilities)
+    probability_30m: HorizonProbabilities = Field(default_factory=HorizonProbabilities)
+    probability_60m: HorizonProbabilities = Field(default_factory=HorizonProbabilities)
+    failure_rate: float = 0.0
+    confidence: str = "UNKNOWN"  # LOW, MEDIUM, HIGH, UNKNOWN
+    historical_context: str = ""
+    # Optional empirical metrics
+    median_return_15m: Optional[float] = None
+    median_return_30m: Optional[float] = None
+    median_return_60m: Optional[float] = None
+    median_mfe: Optional[float] = None
+    median_mae: Optional[float] = None
+    continuation_rate: Optional[float] = None
+    reversal_rate: Optional[float] = None

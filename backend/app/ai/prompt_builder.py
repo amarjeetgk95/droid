@@ -329,15 +329,31 @@ def build_market_context_prompt(
             "## HISTORICAL INTELLIGENCE ENGINE (EMPIRICAL ANALOGUES & FORWARD OUTCOMES — §§26, 27):",
             "The following empirical outcomes occurred during historically comparable market states:",
         ])
-        if hasattr(hie_evidence, "historical_summary_text"):
+        if hasattr(hie_evidence, "historical_context") and getattr(hie_evidence, "historical_context"):
+            lines.append(f"- Historical Context: {hie_evidence.historical_context}")
+            lines.append(f"- Sample Size: N={getattr(hie_evidence, 'sample_count', 0)}, Status: {getattr(hie_evidence, 'status', 'READY')}, Confidence: {getattr(hie_evidence, 'confidence', 'MEDIUM')}")
+            p15 = getattr(hie_evidence, "probability_15m", None)
+            p30 = getattr(hie_evidence, "probability_30m", None)
+            p60 = getattr(hie_evidence, "probability_60m", None)
+            if p15 and hasattr(p15, "bullish"):
+                lines.append(f"- 15-Minute Probabilities: Bullish {round(p15.bullish * 100)}%, Bearish {round(p15.bearish * 100)}%, Neutral {round(p15.neutral * 100)}%")
+                lines.append(f"- 30-Minute Probabilities: Bullish {round(p30.bullish * 100)}%, Bearish {round(p30.bearish * 100)}%, Neutral {round(p30.neutral * 100)}%")
+                lines.append(f"- 60-Minute Probabilities: Bullish {round(p60.bullish * 100)}%, Bearish {round(p60.bearish * 100)}%, Neutral {round(p60.neutral * 100)}%")
+            elif isinstance(p15, dict):
+                lines.append(f"- 15-Minute Probabilities: Bullish {round(p15.get('bullish', 0) * 100)}%, Bearish {round(p15.get('bearish', 0) * 100)}%, Neutral {round(p15.get('neutral', 0) * 100)}%")
+                lines.append(f"- 30-Minute Probabilities: Bullish {round(p30.get('bullish', 0) * 100)}%, Bearish {round(p30.get('bearish', 0) * 100)}%, Neutral {round(p30.get('neutral', 0) * 100)}%")
+                lines.append(f"- 60-Minute Probabilities: Bullish {round(p60.get('bullish', 0) * 100)}%, Bearish {round(p60.get('bearish', 0) * 100)}%, Neutral {round(p60.get('neutral', 0) * 100)}%")
+            if hasattr(hie_evidence, "failure_rate"):
+                lines.append(f"- Failure Rate: {round(hie_evidence.failure_rate * 100)}%")
+        elif hasattr(hie_evidence, "historical_summary_text"):
             lines.append(hie_evidence.historical_summary_text)
         elif isinstance(hie_evidence, dict) and "historical_summary_text" in hie_evidence:
             lines.append(str(hie_evidence["historical_summary_text"]))
-        elif hasattr(hie_evidence, "probability_30m"):
-            lines.append(f"- 15m Horizon Bullish Prob: {int(hie_evidence.probability_15m * 100)}%, Return: {hie_evidence.median_return_15m:+.2f}%")
-            lines.append(f"- 30m Horizon Bullish Prob: {int(hie_evidence.probability_30m * 100)}%, Return: {hie_evidence.median_return_30m:+.2f}%")
-            lines.append(f"- 60m Horizon Bullish Prob: {int(hie_evidence.probability_60m * 100)}%, Return: {hie_evidence.median_return_60m:+.2f}%")
-            lines.append(f"- Sample Size: N={hie_evidence.sample_count} (ESS={hie_evidence.effective_sample_size}), Confidence: {hie_evidence.confidence:.2f}")
+        elif hasattr(hie_evidence, "probability_30m") and isinstance(hie_evidence.probability_30m, (int, float)):
+            lines.append(f"- 15m Horizon Bullish Prob: {int(hie_evidence.probability_15m * 100)}%, Return: {getattr(hie_evidence, 'median_return_15m', 0.0):+.2f}%")
+            lines.append(f"- 30m Horizon Bullish Prob: {int(hie_evidence.probability_30m * 100)}%, Return: {getattr(hie_evidence, 'median_return_30m', 0.0):+.2f}%")
+            lines.append(f"- 60m Horizon Bullish Prob: {int(hie_evidence.probability_60m * 100)}%, Return: {getattr(hie_evidence, 'median_return_60m', 0.0):+.2f}%")
+            lines.append(f"- Sample Size: N={hie_evidence.sample_count} (ESS={getattr(hie_evidence, 'effective_sample_size', hie_evidence.sample_count)}), Confidence: {hie_evidence.confidence}")
 
         lines.extend([
             "Rule: Do NOT invent or alter historical statistics. Ground all historical contextual interpretations exclusively in this empirical evidence.",

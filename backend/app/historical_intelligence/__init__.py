@@ -30,11 +30,17 @@ from app.historical_intelligence.schemas import (
     HistoricalQuery,
     HistoricalIntelligenceResult,
     AIStructuredContext,
+    HorizonProbabilities,
+    HistoricalAIResult,
 )
 from app.historical_intelligence.state_builder import (
     HistoricalStateBuilder,
     state_builder,
     validate_candle_integrity,
+)
+from app.historical_intelligence.similarity_engine import (
+    SimilarityEngine,
+    similarity_engine,
 )
 from app.historical_intelligence.retriever import (
     QdrantRetriever,
@@ -48,6 +54,13 @@ from app.historical_intelligence.similarity import (
 from app.historical_intelligence.outcome_engine import (
     compute_horizon_outcome,
     construct_forward_outcomes,
+    aggregate_matched_outcomes,
+    OutcomeEngine,
+    outcome_engine,
+)
+from app.historical_intelligence.historical_ai import (
+    HistoricalAI,
+    historical_ai,
 )
 from app.historical_intelligence.statistics import (
     compute_horizon_statistics,
@@ -88,9 +101,13 @@ __all__ = [
     "HistoricalQuery",
     "HistoricalIntelligenceResult",
     "AIStructuredContext",
+    "HorizonProbabilities",
+    "HistoricalAIResult",
     "HistoricalStateBuilder",
     "state_builder",
     "validate_candle_integrity",
+    "SimilarityEngine",
+    "similarity_engine",
     "QdrantRetriever",
     "InMemoryVectorStore",
     "vector_retriever",
@@ -98,6 +115,11 @@ __all__ = [
     "cosine_similarity",
     "compute_horizon_outcome",
     "construct_forward_outcomes",
+    "aggregate_matched_outcomes",
+    "OutcomeEngine",
+    "outcome_engine",
+    "HistoricalAI",
+    "historical_ai",
     "compute_horizon_statistics",
     "calculate_effective_sample_size",
     "calculate_wilson_ci",
