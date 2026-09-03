@@ -45,7 +45,18 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
   const [view, setView] = useState({ start: 0, count: 120 });
   const [hoverIdx, setHoverIdx] = useState(null);
 
+  useEffect(() => {
+    if (defaultSymbol) setSymbol(defaultSymbol);
+  }, [defaultSymbol]);
+
   const { data, loading, error } = useRealCandleDataWithSymbol(symbol, tf, live);
+
+  // ---- Viewport helpers ----------------------------------------------------
+  const clampView = useCallback((v, dataLen = data.length) => {
+    const count = Math.min(Math.max(1, Math.round(v.count)), Math.max(1, dataLen));
+    const start = Math.min(Math.max(0, Math.round(v.start)), Math.max(0, dataLen - count));
+    return { start, count };
+  }, [data.length]);
 
   // Keep viewport pinned to latest bars as new data streams — this is a
   // deliberate external-data sync (not a render-time computation).
@@ -60,13 +71,6 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
       return v;
     });
   }, [data.length, clampView]);
-
-  // ---- Viewport helpers ----------------------------------------------------
-  const clampView = useCallback((v, dataLen = data.length) => {
-    const count = Math.min(Math.max(1, Math.round(v.count)), Math.max(1, dataLen));
-    const start = Math.min(Math.max(0, Math.round(v.start)), Math.max(0, dataLen - count));
-    return { start, count };
-  }, [data.length]);
 
   const lastPrice = data.length ? data[data.length - 1].c : 0;
   // Change vs the first bar of the current trading day — NOT a fixed 25-bar

@@ -1,12 +1,20 @@
 'use client';
 
 import { useEffect, useState, memo } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { MarketHealthModal } from '../dashboard/MarketHealthModal';
-import { Activity, Bell, Clock3, Menu, Zap, ExternalLink } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Activity, Bell, Clock3, Menu, Zap, ExternalLink, Radio, Sparkles, ArrowRight } from 'lucide-react';
 import { getStoredSettings } from '@/lib/settings';
 import { ClockDate } from './Clock';
 
@@ -125,6 +133,7 @@ export function TopHeader({
   onMenuClick?: () => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [activeBroker, setActiveBroker] = useState<string>('fyers');
   const [isIndian, setIsIndian] = useState<boolean>(true);
@@ -275,13 +284,92 @@ export function TopHeader({
           </button>
 
           {/* Notifications */}
-          <button
-            className="relative p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            title="Alerts & notifications"
-            aria-label="Notifications"
-          >
-            <Bell className="w-4 h-4" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="relative p-2 rounded-md hover:bg-secondary border border-transparent hover:border-border text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-primary"
+                title="Alerts & signals"
+                aria-label="Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-card animate-pulse" />
+              </button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent align="end" className="w-80 bg-card border-border shadow-xl p-2">
+              <DropdownMenuLabel className="font-normal px-2 py-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-xs font-bold text-foreground tracking-tight">Active Signals & Alerts</span>
+                  </div>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-semibold">
+                    LIVE
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Real-time alpha triggers, volatility spikes &amp; regime updates.
+                </p>
+              </DropdownMenuLabel>
+
+              <DropdownMenuSeparator className="bg-border my-1" />
+
+              <DropdownMenuItem
+                onClick={() => router.push('/signals')}
+                className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
+              >
+                <div className="p-1.5 rounded-md bg-emerald-500/10 text-emerald-400 shrink-0 mt-0.5">
+                  <Radio className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground">Active Alpha Signals</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    Live momentum, breakout &amp; mean-reversion scanner
+                  </p>
+                </div>
+              </DropdownMenuItem>
+
+              <DropdownMenuItem
+                onClick={() => router.push('/options')}
+                className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
+              >
+                <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400 shrink-0 mt-0.5">
+                  <Activity className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground">Options Greeks &amp; Flow</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    PCR shifts, Max Pain migration &amp; institutional OI
+                  </p>
+                </div>
+              </DropdownMenuItem>
+
+              <DropdownMenuItem
+                onClick={() => router.push('/ai-analysis')}
+                className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
+              >
+                <div className="p-1.5 rounded-md bg-purple-500/10 text-purple-400 shrink-0 mt-0.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground">AI Intelligence Briefing</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    Probabilistic model synthesis &amp; multi-TF bias
+                  </p>
+                </div>
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator className="bg-border my-1" />
+
+              <DropdownMenuItem
+                onClick={() => router.push('/signals')}
+                className="cursor-pointer p-2 rounded-lg flex items-center justify-between text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+              >
+                <span>Open Signal Center</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="h-6 w-px bg-secondary mx-1 hidden sm:block" />
 

@@ -702,6 +702,11 @@ class ApiClient {
     return this.request<{ data: import('./types').CryptoHealthResponse; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/crypto/health');
   }
 
+  async getCryptoSignals(symbol?: string) {
+    const path = symbol ? `/api/v1/crypto/${encodeURIComponent(symbol)}/signals` : '/api/v1/crypto/signals';
+    return this.request<{ data: import('./types').CryptoSignalsResponse; error: string | null; meta: import('./types').ApiMeta }>(path);
+  }
+
   // Auth
   async getProfile() {
     return this.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');

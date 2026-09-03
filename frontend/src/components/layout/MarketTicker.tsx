@@ -1,4 +1,5 @@
 import { IndexCard } from '@/lib/types';
+import { safeNum, safeInt } from '@/lib/utils';
 
 export function MarketTicker({ cards, loading }: { cards: IndexCard[]; loading: boolean }) {
   if (loading) {
@@ -30,31 +31,33 @@ export function MarketTicker({ cards, loading }: { cards: IndexCard[]; loading: 
 
       <div className="flex items-center gap-8 whitespace-nowrap animate-marquee group-hover:[animation-play-state:paused] will-change-transform">
         {loopCards.map((card, idx) => {
-          const isPos = card.change >= 0;
-          const isNeutral = card.change === 0;
+          const changeVal = Number(card.change) || 0;
+          const isPos = changeVal > 0;
+          const isNeutral = changeVal === 0;
+          const changePct = Number(card.change_percent) || 0;
           return (
             <div
               key={`${card.symbol}-${idx}`}
               className="flex items-center gap-2 text-xs shrink-0"
-              title={`${card.display_name} • Vol ${card.volume.toLocaleString('en-IN')} • OI ${card.open_interest ?? '—'}`}
+              title={`${card.display_name || card.symbol} • Vol ${safeInt(card.volume)} • OI ${card.open_interest != null ? safeInt(card.open_interest) : '—'}`}
             >
-              <span className="font-semibold text-foreground tracking-tight">{card.display_name}</span>
-              <span className="tabular-nums font-medium text-foreground">{card.ltp.toFixed(2)}</span>
+              <span className="font-semibold text-foreground tracking-tight">{card.display_name || card.symbol}</span>
+              <span className="tabular-nums font-medium text-foreground">{safeNum(card.ltp)}</span>
               <span
                 className={`tabular-nums inline-flex items-center gap-0.5 font-semibold px-1.5 py-0.5 rounded text-[11px] leading-none border ${
                   isNeutral
                     ? 'text-muted-foreground bg-muted border-border'
                     : isPos
-                      ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/20'
-                      : 'text-red-600 bg-red-500/10 border-red-500/20'
+                      ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+                      : 'text-red-500 bg-red-500/10 border-red-500/20'
                 }`}
               >
                 <span className="text-[9px] leading-none">{isNeutral ? '—' : isPos ? '▲' : '▼'}</span>
-                {Math.abs(card.change_percent).toFixed(2)}%
+                {Math.abs(changePct).toFixed(2)}%
               </span>
               <span className="hidden sm:inline text-[11px] text-muted-foreground tabular-nums">
-                {card.change >= 0 ? '+' : ''}
-                {card.change.toFixed(2)}
+                {changeVal > 0 ? '+' : ''}
+                {safeNum(card.change)}
               </span>
             </div>
           );

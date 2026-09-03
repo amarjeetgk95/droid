@@ -19,6 +19,7 @@ import {
   CryptoMarketOverview,
   CryptoPairComparison,
   CryptoHealthResponse,
+  CryptoSignal,
 } from '@/lib/types';
 import { api } from '@/lib/api';
 import {
@@ -34,6 +35,7 @@ import { CryptoOrderBook } from '@/components/crypto/CryptoOrderBook';
 import { CryptoDerivativesCard } from '@/components/crypto/CryptoDerivativesCard';
 import { CryptoMarketOverviewStrip } from '@/components/crypto/CryptoMarketOverviewStrip';
 import { CryptoPairComparisonCard } from '@/components/crypto/CryptoPairComparisonCard';
+import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
 
 export default function CryptoPage() {
   const [tickers, setTickers] = useState<CryptoTicker[]>([]);
@@ -43,6 +45,8 @@ export default function CryptoPage() {
   const [overview, setOverview] = useState<CryptoMarketOverview | null>(null);
   const [comparison, setComparison] = useState<CryptoPairComparison | null>(null);
   const [health, setHealth] = useState<CryptoHealthResponse | null>(null);
+  const [signals, setSignals] = useState<CryptoSignal[]>([]);
+  const [loadingSignals, setLoadingSignals] = useState<boolean>(false);
 
   const [market, setMarket] = useState<BinanceMarket>('spot');
   const [rightTab, setRightTab] = useState<'orderbook' | 'derivatives'>('orderbook');
@@ -68,21 +72,26 @@ export default function CryptoPage() {
       let loadedComp: CryptoPairComparison | null = null;
 
       try {
-        const [tRes, oRes, cRes, hRes] = await Promise.all([
+        setLoadingSignals(true);
+        const [tRes, oRes, cRes, hRes, sRes] = await Promise.all([
           api.getCryptoTickers(),
           api.getCryptoMarketOverview(),
           api.getCryptoComparison(),
           api.getCryptoHealth(),
+          api.getCryptoSignals().catch(() => ({ data: null })),
         ]);
         if (tRes.data && tRes.data.length > 0) loadedTickers = tRes.data;
         if (oRes.data) loadedOverview = oRes.data;
         if (cRes.data) loadedComp = cRes.data;
         if (hRes.data) setHealth(hRes.data);
+        if (sRes?.data?.signals) setSignals(sRes.data.signals);
       } catch {
         loadedTickers = await fetchLiveBinanceTickers().catch(() => []);
         if (loadedTickers.length > 0) {
           loadedOverview = generateLiveCryptoOverview(loadedTickers);
         }
+      } finally {
+        setLoadingSignals(false);
       }
 
       if (loadedTickers.length > 0) {
@@ -370,7 +379,15 @@ export default function CryptoPage() {
       {/* 4. ETH / BTC Relative Strength Barometer */}
       <CryptoPairComparisonCard comparison={comparison} loading={loadingTickers && !comparison} />
 
-      {/* 5. Deep Analysis Grid */}
+      {/* 5. Institutional Quant Signals Cockpit */}
+      <CryptoSignalsCard
+        signals={signals}
+        loading={loadingSignals}
+        selectedAsset={selectedSymbol.replace('USDT', '')}
+        onSelectAsset={(asset) => setSelectedSymbol(`${asset}USDT`)}
+      />
+
+      {/* 6. Deep Analysis Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left 7 Columns: AI Quantitative Synthesis & Key Metrics */}
         <div className="lg:col-span-7 space-y-4">

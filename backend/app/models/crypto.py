@@ -154,3 +154,45 @@ class CryptoHealthResponse(BaseModel):
     websocket: str
     last_update_ms: int
     overall_status: str
+
+
+class SignalDirection(str, Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class CryptoSignalStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    TRIGGERED = "TRIGGERED"
+    TARGET_HIT = "TARGET_HIT"
+    STOPPED_OUT = "STOPPED_OUT"
+    EXPIRED = "EXPIRED"
+
+
+class CryptoSignal(BaseModel):
+    id: str
+    symbol: str
+    asset: str
+    direction: SignalDirection
+    strategy: str
+    strategy_name: str
+    entry_price: float
+    stop_loss: float
+    target_1: float
+    target_2: float
+    current_price: float
+    risk_reward_ratio: float
+    confidence: float
+    timeframe: str = "1H"
+    status: CryptoSignalStatus = CryptoSignalStatus.ACTIVE
+    confluence_factors: list[str] = Field(default_factory=list)
+    rationale: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CryptoSignalsResponse(BaseModel):
+    signals: list[CryptoSignal]
+    total_active: int
+    btc_signals: int
+    eth_signals: int
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -56,7 +56,7 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
   if (loading) return <div className="bg-card border rounded p-4 h-80 animate-pulse">Loading Market Intelligence…</div>;
   if (!data) return <div className="bg-card border rounded p-4 text-sm text-muted-foreground">Market Intelligence unavailable</div>;
 
-  const badgeColor = (status: string) => {
+  const badgeColor = (status?: string) => {
     if (status === 'CONFIRMED') return 'bg-emerald-500 text-white';
     if (status === 'WATCH') return 'bg-amber-400 text-black';
     if (status === 'POSSIBLE') return 'bg-sky-500 text-white';
@@ -76,24 +76,30 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY' }: MiPanelProps) 
       </div>
       <div className="text-xs space-y-1">
         <div className="flex justify-between"><span className="text-muted-foreground">Regime</span><span className="font-medium">{data.regime || '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Price Action</span><span className="font-medium">{data.price_action?.structure} / {data.price_action?.trend}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Bullish Score</span><span className="font-mono font-bold">{data.bullish_score}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Bearish Score</span><span className="font-mono">{data.bearish_score}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono text-emerald-600">{data.breakout_pressure}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">False Breakout Risk</span><span className={`font-mono ${data.false_breakout_risk > 60 ? 'text-red-600' : ''}`}>{data.false_breakout_risk}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Price Action</span><span className="font-medium">{data.price_action?.structure || '—'} / {data.price_action?.trend || '—'}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Bullish Score</span><span className="font-mono font-bold">{data.bullish_score ?? '—'}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Bearish Score</span><span className="font-mono">{data.bearish_score ?? '—'}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono text-emerald-600">{data.breakout_pressure ?? '—'}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">False Breakout Risk</span><span className={`font-mono ${(data.false_breakout_risk ?? 0) > 60 ? 'text-red-600' : ''}`}>{data.false_breakout_risk ?? '—'}</span></div>
       </div>
       <div className="border-t pt-3 space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold">10-MINUTE SETUP</span>
-          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.short_horizon.status)}`}>{data.short_horizon.direction} — {data.short_horizon.status}</span>
+          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.short_horizon?.status)}`}>
+            {data.short_horizon?.direction || 'NEUTRAL'} — {data.short_horizon?.status || 'WATCH'}
+          </span>
         </div>
-        <div className="text-xs text-muted-foreground">Confidence: {data.short_horizon.confidence}%</div>
+        <div className="text-xs text-muted-foreground">Confidence: {data.short_horizon?.confidence ?? 0}%</div>
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold">LONG CONTINUATION</span>
-          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.continuation.status)}`}>{data.continuation.direction} — {data.continuation.status}</span>
+          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.continuation?.status)}`}>
+            {data.continuation?.direction || 'NEUTRAL'} — {data.continuation?.status || 'WATCH'}
+          </span>
         </div>
-        <div className="text-xs text-muted-foreground">Confidence: {data.continuation.confidence}%</div>
-        <div className="text-[11px] text-muted-foreground mt-2">Maximum Holding: {data.max_holding} ({data.continuation.max_holding_minutes} min)</div>
+        <div className="text-xs text-muted-foreground">Confidence: {data.continuation?.confidence ?? 0}%</div>
+        <div className="text-[11px] text-muted-foreground mt-2">
+          Maximum Holding: {data.max_holding || '< 2 Hours'} {data.continuation?.max_holding_minutes ? `(${data.continuation.max_holding_minutes} min)` : ''}
+        </div>
       </div>
     </div>
   );
