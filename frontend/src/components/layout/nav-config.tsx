@@ -72,6 +72,14 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['ai', 'gemini', 'ollama', 'openrouter', 'reasoning', 'sentiment'],
       },
       {
+        id: 'ai-deep-insight',
+        href: '/deep-insight',
+        label: 'AI Deep Insight v2',
+        icon: Bot,
+        description: 'Fast signal evaluation, regime-aware trading decisions',
+        keywords: ['ai', 'signals', 'regime', 'scalping', 'intraday', 'decision'],
+      },
+      {
         id: 'historical-intel',
         href: '/historical-intelligence',
         label: 'Historical Patterns',
