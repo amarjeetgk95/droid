@@ -58,7 +58,7 @@ class TestSignalsPaperIntegration:
             "candle_timeframe": "5M",
             "direction": "BULLISH",
             "status": "CONFIRMED",
-            "trigger_level": 24920.0,
+            "trigger_level": 24940.0,
             "current_price": 24915.0,
             "confidence": 88.0,
             "execute_paper": True,

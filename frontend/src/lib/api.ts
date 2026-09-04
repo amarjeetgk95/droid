@@ -1125,6 +1125,21 @@ class ApiClient {
     );
   }
 
+  async bulkDeleteSignals(payload: {
+    signal_ids?: string[];
+    before_ms?: number;
+    underlying?: string;
+    strategy?: string;
+    status?: string;
+    delete_all?: boolean;
+    confirm_all?: boolean;
+  }) {
+    return this.request<{ status: string; message: string; deleted_count: number; deleted_ids: string[]; requested_count: number }>(
+      `/api/v1/signals/bulk-delete`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
   async setPaperWalletCapital(capital: number) {
     return this.request<{ status: string; data: any; capital: number; available_margin: number }>(
       `/api/v1/signals/paper-wallet`,

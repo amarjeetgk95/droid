@@ -52,15 +52,16 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  // LiveMarket outer so Dashboard (MarketData) context can read stable WS
-  // health for adaptive REST polling without subscribing to tick updates.
+  // MarketData owns the dashboard/summary REST fetch + market-feed WebSocket
+  // (single owner). LiveMarket consumes that shared state for tick-merged
+  // cards — it opens no socket and issues no summary request of its own.
   return (
-    <LiveMarketProvider>
-      <MarketDataProvider refreshInterval={5000} useSummaryEndpoint={true}>
+    <MarketDataProvider refreshInterval={5000} useSummaryEndpoint={true}>
+      <LiveMarketProvider>
         <AuthGuard>
           <AppLayoutInner>{children}</AppLayoutInner>
         </AuthGuard>
-      </MarketDataProvider>
-    </LiveMarketProvider>
+      </LiveMarketProvider>
+    </MarketDataProvider>
   );
 }

@@ -3,8 +3,7 @@
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode, useRef } from 'react';
 import { api } from '@/lib/api';
 import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResponse, MarketRegimeOverview } from '@/lib/types';
-import type { StreamConnectionState } from '@/hooks/useMarketStream';
-import { useStreamHealth } from './LiveMarketContext';
+import { useMarketStream, type StreamConnectionState, type TimestampedTick } from '@/hooks/useMarketStream';
 
 type SectionErrors = {
   cards: string | null;
@@ -35,10 +34,28 @@ type MarketDataContextType = {
   errors: SectionErrors;
   lastFetch: Date | null;
   streamState: StreamConnectionState;
+  /** True when real MARKET_TICKS (not just heartbeats) arrived within staleness window. */
+  ticksFresh: boolean;
   refreshInterval: number;
   setRefreshInterval: (ms: number) => void;
   refetch: () => Promise<void>;
 };
+
+/**
+ * Raw WS tick snapshot — separate context so per-tick updates do NOT
+ * re-render MarketData consumers (analytical panels, layout). Only the
+ * LiveMarketProvider consumes this (and batches it to ≤10 renders/sec).
+ */
+type MarketTicksSnapshot = {
+  ticks: Record<string, TimestampedTick>;
+  lastTickAt: Date | null;
+};
+
+const MarketTicksContext = createContext<MarketTicksSnapshot>({ ticks: {}, lastTickAt: null });
+
+export function useMarketTicks(): MarketTicksSnapshot {
+  return useContext(MarketTicksContext);
+}
 
 const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
@@ -61,17 +78,10 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [activeInterval, setActiveInterval] = useState<number>(refreshInterval);
 
-  // Stable WS health (streamState + ticksFresh only — no re-render on ticks).
-  // LiveMarketProvider is outer in layout; falls back gracefully when absent.
-  let streamState: StreamConnectionState = 'CONNECTING';
-  let ticksFresh = false;
-  try {
-    const h = useStreamHealth();
-    streamState = h.streamState;
-    ticksFresh = h.ticksFresh;
-  } catch {
-    // Standalone usage without LiveMarketProvider — REST fallback cadence.
-  }
+  // Authoritative WS owner: this is the SINGLE market-feed WebSocket in the
+  // app. LiveMarketProvider consumes this state (no second socket) and the
+  // adaptive REST scheduler below reads its health directly.
+  const { latestTicks, streamState, ticksFresh, lastTickAt } = useMarketStream();
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -242,12 +252,24 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     errors,
     lastFetch,
     streamState,
+    ticksFresh,
     refreshInterval: activeInterval,
     setRefreshInterval: setActiveInterval,
     refetch: fetchData,
-  }), [cards, breadth, health, marketStatus, regimeOverview, mlPrediction, fiiDii, loading, errors, lastFetch, streamState, activeInterval, fetchData]);
+  }), [cards, breadth, health, marketStatus, regimeOverview, mlPrediction, fiiDii, loading, errors, lastFetch, streamState, ticksFresh, activeInterval, fetchData]);
 
-  return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
+  // NOTE: ticks snapshot is memoised separately and provided via
+  // MarketTicksContext so per-tick updates never invalidate `value` above.
+  const ticksSnapshot = useMemo<MarketTicksSnapshot>(
+    () => ({ ticks: latestTicks, lastTickAt }),
+    [latestTicks, lastTickAt],
+  );
+
+  return (
+    <MarketTicksContext.Provider value={ticksSnapshot}>
+      <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>
+    </MarketTicksContext.Provider>
+  );
 }
 
 export function useMarketDataContext(options?: { useSummaryEndpoint?: boolean }) {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useTransition } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
  Settings,
  Bot,
@@ -55,26 +55,15 @@ function SettingsSkeleton() {
  );
 }
 
-function TabSkeleton() {
- return (
- <div className="space-y-3 p-4">
-  <div className="skeleton h-6 w-32 rounded" />
-  <div className="skeleton h-24 w-full rounded-lg" />
-  <div className="grid grid-cols-2 gap-3">
-  <div className="skeleton h-20 rounded-lg" />
-  <div className="skeleton h-20 rounded-lg" />
-  </div>
- </div>
- );
-}
-
 function SettingsPageInner() {
- const [activeTab, setActiveTab] = useState<TabId>('ai');
- const [isPending, startTransition] = useTransition();
+  const [activeTab, setActiveTab] = useState<TabId>('ai');
 
- const handleTabChange = useCallback((id: TabId) => {
- startTransition(() => setActiveTab(id));
- }, []);
+  // Tab switches apply immediately (no transition overlay) so the tab
+  // navigation stays interactive while content renders. All tab panels are
+  // keep-alive mounted, so switching is a cheap visibility toggle.
+  const handleTabChange = useCallback((id: TabId) => {
+  setActiveTab(id);
+  }, []);
 
  const {
  settings,
@@ -211,10 +200,10 @@ function SettingsPageInner() {
     onClick={() => handleTabChange(tab.id)}
     aria-selected={isActive}
     className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap relative ${
-    isActive
-     ? 'bg-primary text-primary-foreground'
-     : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'
-    } ${isPending && isActive ? 'opacity-60' : ''}`}
+     isActive
+      ? 'bg-primary text-primary-foreground'
+      : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'
+     }`}
    >
     <Icon className="w-3.5 h-3.5" />
     <span>{tab.label}</span>
@@ -255,13 +244,10 @@ function SettingsPageInner() {
   </div>
   )}
 
-  {/* Keep-alive tabs — hidden, not mount/unmount. content-visibility for perf */}
-  <div className={`relative ${isPending ? 'opacity-90' : ''}`} style={{ contentVisibility: 'auto' } as React.CSSProperties}>
-  {isPending && (
-          <div className="absolute inset-0 z-10 bg-card/60 rounded-xl flex items-center justify-center">
-   <TabSkeleton />
-   </div>
-  )}
+  {/* Keep-alive tabs — hidden, not mount/unmount. content-visibility for perf.
+      NOTE: no overlay here by design — tab navigation must stay clickable
+      while content renders (a covering layer ate the next click). */}
+  <div style={{ contentVisibility: 'auto' } as React.CSSProperties}>
   <div hidden={activeTab !== 'ai'} className={activeTab !== 'ai' ? 'hidden' : 'block'} style={{ contentVisibility: activeTab === 'ai' ? 'visible' : 'auto' } as React.CSSProperties}>
    <AIEngineTab settings={settings.ai} onChange={updateAI} errors={validationErrors} />
   </div>

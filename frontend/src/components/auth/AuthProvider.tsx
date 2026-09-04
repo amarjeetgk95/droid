@@ -49,6 +49,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      setLoading(false);
+    };
+
+    // Deadlock guard: getSession() must never freeze the app on
+    // "Verifying credentials & session...". If it neither resolves nor
+    // rejects within the timeout, enter the controlled unauthenticated
+    // state (AuthGuard redirects to /login) instead of hanging forever.
+    const guard = setTimeout(() => {
+      console.error('Supabase session check timed out; continuing unauthenticated.');
+      api.setToken(null);
+      finish();
+    }, 10000);
+
     // Check existing Supabase session on mount
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error) {
@@ -66,7 +83,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         api.setToken(null);
       }
-      setLoading(false);
+      clearTimeout(guard);
+      finish();
+    }).catch((err) => {
+      console.error('Supabase session check failed:', err);
+      setUser(null);
+      api.setToken(null);
+      clearTimeout(guard);
+      finish();
     });
 
     // Listen for auth state changes (sign in, sign out, token refresh)
@@ -83,10 +107,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         api.setToken(null);
       }
-      setLoading(false);
+      clearTimeout(guard);
+      finish();
     });
 
     return () => {
+      clearTimeout(guard);
       subscription.unsubscribe();
     };
   }, []);

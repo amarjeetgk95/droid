@@ -66,8 +66,13 @@ export default function MarketIntelligencePage() {
   // Per-instrument cache ref to avoid stale data leak between tabs
   const cacheRef = useRef<Map<InstrumentId, FullMiResponse>>(new Map());
 
+  const inFlightRef = useRef<Set<string>>(new Set());
+
   const fetchFor = useCallback(async (iid: InstrumentId, showLoading = false) => {
     if (iid === 'BREAKOUT_SETUPS') return;
+    // Single-flight per instrument: never stack a refresh while one is active.
+    if (inFlightRef.current.has(iid)) return;
+    inFlightRef.current.add(iid);
     if (showLoading) setLoading(prev => ({ ...prev, [iid]: true }));
     try {
       const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
@@ -203,6 +208,7 @@ export default function MarketIntelligencePage() {
     } catch (e: any) {
       setErrorByInstrument(prev => ({ ...prev, [iid]: e?.message || 'Failed to load' }));
     } finally {
+      inFlightRef.current.delete(iid);
       setLoading(prev => ({ ...prev, [iid]: false }));
     }
   }, []);
@@ -225,11 +231,14 @@ export default function MarketIntelligencePage() {
     }
   }, []);
 
-  // Polling: 7s with jitter for MI workspace (was throttled to 30s, too stale) + hidden-tab pause
+  // Polling: ~15s with jitter for MI workspace + hidden-tab pause.
+  // Only the SELECTED instrument is fetched — no background pre-warm of
+  // other instruments (that quadrupled every tab switch for data the user
+  // may never view; each tab loads on selection via cacheRef instead).
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = (fn: () => void) => {
-      const jittered = 7000 * (0.8 + Math.random() * 0.4);
+      const jittered = 15000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
         if (!document.hidden) fn();
         schedule(fn);
@@ -254,13 +263,6 @@ export default function MarketIntelligencePage() {
     };
   }, [selected, fetchFor, fetchBreakoutSetups]);
 
-  // Pre-warm other instruments in background without blocking UI (cached)
-  useEffect(() => {
-    INSTRUMENTS.filter(i => i !== selected && i !== 'BREAKOUT_SETUPS').forEach(i => {
-      if (!cacheRef.current.has(i as InstrumentId)) fetchFor(i as InstrumentId, false);
-    });
-  }, [selected, fetchFor]);
-
   const data = dataByInstrument[selected] ?? cacheRef.current.get(selected) ?? null;
   const err = errorByInstrument[selected];
   const isLoading = loading[selected] && !data;
@@ -276,8 +278,12 @@ export default function MarketIntelligencePage() {
           <Activity className="w-5 h-5 text-primary" /> Market Intelligence
           <span className="text-xs font-normal text-muted-foreground ml-2 hidden sm:inline">Professional trading workspace — authoritative backend state</span>
         </h1>
-        <button onClick={() => fetchFor(selected, true)} className="text-xs flex items-center gap-1 px-2 py-1 border rounded hover:bg-secondary">
-          <RefreshCw className="w-3 h-3" /> Refresh
+        <button
+          onClick={() => fetchFor(selected, true)}
+          disabled={selected !== 'BREAKOUT_SETUPS' && !!loading[selected]}
+          className="text-xs flex items-center gap-1 px-2 py-1 border rounded hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw className={`w-3 h-3 ${selected !== 'BREAKOUT_SETUPS' && loading[selected] ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
 

@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useMarketStream } from '@/hooks/useMarketStream';
+import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { api } from '@/lib/api';
 import {
   Activity,
@@ -118,6 +118,17 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [signalToDelete, setSignalToDelete] = useState<string | null>(null);
 
+  // Bulk + datewise deletion state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<null | {
+    mode: 'selected' | 'datewise';
+    ids: string[];
+    beforeMs?: number;
+    label: string;
+  }>(null);
+  const [clearBeforeDate, setClearBeforeDate] = useState<string>('');
+
   // Custom Paper Wallet Capital state
   const [showCapitalModal, setShowCapitalModal] = useState<boolean>(false);
   const [customCapital, setCustomCapital] = useState<string>('1000000');
@@ -146,12 +157,51 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     try {
       await api.deleteSignal(signalId);
       setSignalToDelete(null);
+      setSelectedIds((prev) => {
+        if (!prev.has(signalId)) return prev;
+        const next = new Set(prev);
+        next.delete(signalId);
+        return next;
+      });
       onRefresh();
     } catch (err: any) {
       alert(`Failed to delete signal: ${err?.message || 'Unknown error'}`);
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!bulkConfirm || bulkConfirm.ids.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      if (bulkConfirm.mode === 'selected') {
+        await api.bulkDeleteSignals({ signal_ids: bulkConfirm.ids });
+      } else {
+        const statusMap: Record<string, string | undefined> = { ALL: undefined, OPEN: undefined, WON: 'WON', LOST: 'LOST' };
+        await api.bulkDeleteSignals({
+          before_ms: bulkConfirm.beforeMs,
+          underlying: filterInstr !== 'ALL' ? filterInstr : undefined,
+          status: statusMap[filterStatus],
+        });
+      }
+      setBulkConfirm(null);
+      setSelectedIds(new Set());
+      onRefresh();
+    } catch (err: any) {
+      alert(`Bulk delete failed: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleSelect = (signalId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(signalId)) next.delete(signalId);
+      else next.add(signalId);
+      return next;
+    });
   };
 
   const handleSaveCapital = async () => {
@@ -177,8 +227,13 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     }
   };
 
-  // WebSocket real-time market stream for sub-second tick MTM updates
-  const { latestTicks, streamState } = useMarketStream();
+  // Live MTM ticks from the SHARED market context (100ms-batched by
+  // LiveMarketProvider). This component opens no WebSocket of its own — the
+  // app holds exactly one market-feed socket (owned by MarketDataProvider).
+  // Ticks arrive batched: many raw ticks → one update → one MTM calculation.
+  const live = useOptionalLiveMarketContext();
+  const latestTicks = live?.latestTicks ?? {};
+  const streamState = live?.streamState ?? 'CONNECTING';
 
   // Compute live trade values with latest websocket ticks or backend MTM
   const computedTrades = useMemo(() => {
@@ -227,6 +282,37 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     if (filterStatus === 'OPEN' && !['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status)) return false;
     return true;
   });
+
+  const filteredIds = filtered.map((t) => t.signal_id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
+      else filteredIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const openDatewiseConfirm = () => {
+    if (!clearBeforeDate) {
+      alert('Pick a date first — everything created before that date (00:00) will be deleted.');
+      return;
+    }
+    const beforeMs = new Date(`${clearBeforeDate}T00:00:00`).getTime();
+    if (Number.isNaN(beforeMs)) {
+      alert('Invalid date.');
+      return;
+    }
+    const matching = filtered.filter((t) => t.created_at_utc < beforeMs).length;
+    setBulkConfirm({
+      mode: 'datewise',
+      ids: filtered.filter((t) => t.created_at_utc < beforeMs).map((t) => t.signal_id),
+      beforeMs,
+      label: `Delete signals created before ${clearBeforeDate} (${matching} in current view${filterInstr !== 'ALL' || filterStatus !== 'ALL' ? ', current filters apply server-side too' : ''})`,
+    });
+  };
 
   // Calculate live aggregate totals
   const openTrades = computedTrades.filter((t) => ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status));
@@ -408,12 +494,60 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </div>
       </Card>
 
+      {/* ── BULK ACTIONS: multi-select + datewise clear ── */}
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+            <Trash2 className="w-3.5 h-3.5" /> Bulk:
+          </span>
+          <Button variant="outline" size="sm" onClick={toggleSelectAllFiltered} disabled={filtered.length === 0} className="h-7 text-[11px]">
+            {allFilteredSelected ? 'Deselect view' : `Select view (${filtered.length})`}
+          </Button>
+          {selectedIds.size > 0 && (
+            <>
+              <Badge variant="secondary" className="text-[11px] font-mono">{selectedIds.size} selected</Badge>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-7 text-[11px] gap-1"
+                onClick={() => setBulkConfirm({ mode: 'selected', ids: Array.from(selectedIds), label: `Delete ${selectedIds.size} selected signal${selectedIds.size === 1 ? '' : 's'}` })}
+              >
+                <Trash2 className="w-3 h-3" /> Delete selected
+              </Button>
+              <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedIds(new Set())}>
+                Clear selection
+              </Button>
+            </>
+          )}
+          <div className="h-4 w-px bg-border mx-1 hidden sm:block" />
+          <input
+            type="date"
+            value={clearBeforeDate}
+            onChange={(e) => setClearBeforeDate(e.target.value)}
+            className="h-7 rounded-md border px-2 text-[11px] font-mono bg-background"
+            title="Delete everything created before this date"
+          />
+          <Button variant="outline" size="sm" onClick={openDatewiseConfirm} className="h-7 text-[11px] gap-1 border-destructive/30 text-destructive hover:bg-destructive/10">
+            <Trash2 className="w-3 h-3" /> Clear older than date
+          </Button>
+        </div>
+      </Card>
+
       {/* ── AUDIT LEDGER TABLE ── */}
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                <th className="py-2.5 px-2 w-8 text-center">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAllFiltered}
+                    className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                    title="Select all in current view"
+                  />
+                </th>
                 <th className="py-2.5 px-3">Time & Signal</th>
                 <th className="py-2.5 px-3">Instrument & Strategy</th>
                 <th className="py-2.5 px-3">Option Contract</th>
@@ -428,7 +562,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
             <tbody className="divide-y divide-border/40">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={10} className="py-8 text-center text-muted-foreground">
                     <p className="text-sm font-medium">No audited signals recorded yet.</p>
                     <p className="text-xs mt-1">Confirmed signals and paper executions will appear here automatically with live P&L.</p>
                   </td>
@@ -443,8 +577,18 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                     <tr
                       key={t.audit_id}
                       onClick={() => onSelectSignal?.(t.signal_id)}
-                      className={`hover:bg-muted/30 transition-colors cursor-pointer group ${isOpen ? 'bg-primary/5' : ''}`}
+                      className={`hover:bg-muted/30 transition-colors cursor-pointer group ${isOpen ? 'bg-primary/5' : ''} ${selectedIds.has(t.signal_id) ? 'bg-destructive/5' : ''}`}
                     >
+                      {/* Multi-select */}
+                      <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(t.signal_id)}
+                          onChange={() => toggleSelect(t.signal_id)}
+                          className="h-3.5 w-3.5 accent-destructive cursor-pointer"
+                          title="Select for bulk delete"
+                        />
+                      </td>
                       {/* Time & Signal (Creation & Execution Time) */}
                       <td className="py-2.5 px-3 font-mono">
                         <div className="font-semibold text-foreground flex items-center gap-1">
@@ -602,8 +746,15 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
       {/* ── DELETE CONFIRMATION MODAL ── */}
       {signalToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <Card className="w-full max-w-md shadow-2xl border-destructive/30 bg-card">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150"
+          onClick={() => setSignalToDelete(null)}
+          role="presentation"
+        >
+          <Card
+            className="w-full max-w-md shadow-2xl border-destructive/30 bg-card"
+            onClick={(e) => e.stopPropagation()}
+          >
             <CardContent className="p-5 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-destructive/15 text-destructive flex items-center justify-center shrink-0">
@@ -644,10 +795,59 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </div>
       )}
 
+      {/* ── BULK / DATEWISE DELETE CONFIRMATION MODAL ── */}
+      {bulkConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150"
+          onClick={() => setBulkConfirm(null)}
+          role="presentation"
+        >
+          <Card
+            className="w-full max-w-md shadow-2xl border-destructive/30 bg-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CardContent className="p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-destructive/15 text-destructive flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">
+                    {bulkConfirm.mode === 'selected' ? `Delete ${bulkConfirm.ids.length} signals?` : 'Clear signals by date?'}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 font-mono">{bulkConfirm.label}</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {bulkConfirm.mode === 'datewise'
+                  ? 'Deletes every signal (FSM + ledger + Supabase) created before the chosen date, honoring the current instrument filter. Open paper positions are squared off first. This cannot be undone.'
+                  : 'Permanently deletes the selected signals from FSM, ledger and Supabase, squaring off open paper positions first. This cannot be undone.'}
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                <Button variant="outline" size="sm" disabled={bulkDeleting} onClick={() => setBulkConfirm(null)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" size="sm" disabled={bulkDeleting || bulkConfirm.ids.length === 0} onClick={handleBulkDelete} className="gap-1.5">
+                  {bulkDeleting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  {bulkDeleting ? 'Deleting…' : `Confirm delete (${bulkConfirm.ids.length})`}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* ── CUSTOM PAPER WALLET CAPITAL MODAL ── */}
       {showCapitalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <Card className="w-full max-w-md shadow-2xl border-primary/30 bg-card">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150"
+          onClick={() => setShowCapitalModal(false)}
+          role="presentation"
+        >
+          <Card
+            className="w-full max-w-md shadow-2xl border-primary/30 bg-card"
+            onClick={(e) => e.stopPropagation()}
+          >
             <CardContent className="p-5 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0">

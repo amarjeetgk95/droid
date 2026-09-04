@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,10 +11,7 @@ import { withJitter } from '@/lib/signal-utils';
 import { useSignalStream } from '@/hooks/useSignalStream';
 import { SignalCard, type SignalDTO } from '@/components/signals/SignalCard';
 import { SignalScannerTable } from '@/components/signals/SignalScannerTable';
-import { SignalPerformanceView } from '@/components/signals/SignalPerformanceView';
-import { GenerateSignalForm } from '@/components/signals/GenerateSignalForm';
-import { SignalDeepDiveModal } from '@/components/signals/SignalDeepDiveModal';
-import { SignalAuditTable, type AuditTradeRecord, type AuditSummary } from '@/components/signals/SignalAuditTable';
+import type { AuditTradeRecord, AuditSummary } from '@/components/signals/SignalAuditTable';
 import { SignalErrorBoundary } from '@/components/signals/SignalErrorBoundary';
 import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
 import type { CryptoSignal } from '@/lib/types';
@@ -38,6 +36,25 @@ import {
   Zap,
 } from 'lucide-react';
 import Link from 'next/link';
+
+// Conditionally-rendered heavy panels load on demand (tab/modal visited),
+// keeping the initial signals chunk small for first-click responsiveness.
+const GenerateSignalForm = dynamic(
+  () => import('@/components/signals/GenerateSignalForm').then((m) => m.GenerateSignalForm),
+  { ssr: false, loading: () => <div className="bg-card border border-border rounded-xl p-5 h-48 animate-pulse" /> },
+);
+const SignalPerformanceView = dynamic(
+  () => import('@/components/signals/SignalPerformanceView').then((m) => m.SignalPerformanceView),
+  { ssr: false, loading: () => <div className="bg-card border border-border rounded-xl p-5 h-48 animate-pulse" /> },
+);
+const SignalAuditTable = dynamic(
+  () => import('@/components/signals/SignalAuditTable').then((m) => m.SignalAuditTable),
+  { ssr: false, loading: () => <div className="bg-card border border-border rounded-xl p-5 h-48 animate-pulse" /> },
+);
+const SignalDeepDiveModal = dynamic(
+  () => import('@/components/signals/SignalDeepDiveModal').then((m) => m.SignalDeepDiveModal),
+  { ssr: false },
+);
 
 type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
 type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
@@ -141,9 +158,20 @@ export default function SignalsPage() {
   const [cryptoError, setCryptoError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedOppIds, setSelectedOppIds] = useState<Set<string>>(new Set());
+  const [bulkDeletingOpp, setBulkDeletingOpp] = useState(false);
 
   const [inspectSignalId, setInspectSignalId] = useState<string | null>(null);
   const [perfSummary, setPerfSummary] = useState<any>(null);
+  // ONE shared 1s clock for every SignalCard TTL/countdown (100 cards → 1
+  // timer). Cards receive it via prop and create no timers of their own.
+  const [cardsNowMs, setCardsNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const clock = setInterval(() => setCardsNowMs(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, []);
   const [activeError, setActiveError] = useState<string | null>(null);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
@@ -283,6 +311,16 @@ export default function SignalsPage() {
         setActive((prev) => prev.filter((s) => s.signal_id !== p.signal_id));
         return;
       }
+      if (t === 'signals_bulk_deleted' && Array.isArray((p as Record<string, unknown>)?.signal_ids)) {
+        const gone = new Set(((p as Record<string, unknown>).signal_ids as unknown[]) as string[]);
+        setActive((prev) => prev.filter((s) => !gone.has(s.signal_id)));
+        setSelectedOppIds((prev) => {
+          const next = new Set(prev);
+          gone.forEach((id) => next.delete(id));
+          return next;
+        });
+        return;
+      }
       if (signal?.signal_id && (t.includes('signal') || t.includes('paper') || t.includes('execution') || t.includes('outcome') || t.includes('staged'))) {
         setActive((prev) => upsertSignal(prev, signal));
         knownSignalIds.current.add(signal.signal_id);
@@ -308,7 +346,8 @@ export default function SignalsPage() {
       .catch(() => {});
   }, []);
 
-  // Polling fallback with jitter + hidden-tab pause (SSE owns realtime; poll is safety net)
+  // Polling fallback with jitter + hidden-tab pause (SSE owns realtime; poll is safety net).
+  // Tuned down: active/audit/crypto every ~18s, scanner every ~60s (expensive full-universe TA).
   useEffect(() => {
     void fetchActive(true);
     void fetchScanner(true);
@@ -326,16 +365,16 @@ export default function SignalsPage() {
           void fetchCrypto(false);
         }
         loop();
-      }, withJitter(8000));
+      }, withJitter(18000));
     };
-    // Scanner is expensive (full universe TA) — poll it 4x slower than active list
+    // Scanner is expensive (full universe TA) — poll it ~3x slower than active list
     let scanTimeout: ReturnType<typeof setTimeout> | null = null;
     const scanLoop = () => {
       if (stopped) return;
       scanTimeout = setTimeout(() => {
         if (!document.hidden) void fetchScanner(false);
         scanLoop();
-      }, withJitter(32000));
+      }, withJitter(60000));
     };
     loop();
     scanLoop();
@@ -756,18 +795,93 @@ export default function SignalsPage() {
                     )}
                     {oppSignals.length > 0 ? (
                       <>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => {
+                              setSelectMode((v) => !v);
+                              setSelectedOppIds(new Set());
+                            }}
+                          >
+                            {selectMode ? 'Cancel select' : 'Select multiple'}
+                          </Button>
+                          {selectMode && viewMode === 'grid' && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-[11px]"
+                                onClick={() => setSelectedOppIds(new Set(oppSignals.map((s) => s.signal_id)))}
+                              >
+                                Select all ({oppSignals.length})
+                              </Button>
+                              {selectedOppIds.size > 0 && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 text-[11px]"
+                                  disabled={bulkDeletingOpp}
+                                  onClick={async () => {
+                                    setBulkDeletingOpp(true);
+                                    try {
+                                      await api.bulkDeleteSignals({ signal_ids: Array.from(selectedOppIds) });
+                                      setSelectedOppIds(new Set());
+                                      setSelectMode(false);
+                                      void fetchActive(false);
+                                      void fetchAudit(false);
+                                    } catch (e: any) {
+                                      alert(`Bulk delete failed: ${e?.message || 'Unknown error'}`);
+                                    } finally {
+                                      setBulkDeletingOpp(false);
+                                    }
+                                  }}
+                                >
+                                  {bulkDeletingOpp ? 'Deleting…' : `Delete ${selectedOppIds.size} selected`}
+                                </Button>
+                              )}
+                            </>
+                          )}
+                        </div>
                         {viewMode === 'grid' ? (
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {oppSignals.map((sig) => (
                               <SignalErrorBoundary key={sig.signal_id} label={sig.underlying || 'Signal'}>
-                                <SignalCard
-                                  signal={sig}
-                                  onInspect={(id) => setInspectSignalId(id)}
-                                  onPaperExecuted={() => {
-                                    void fetchActive(false);
-                                    void fetchAudit(false);
-                                  }}
-                                />
+                                <div className="relative">
+                                  {selectMode && (
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedOppIds.has(sig.signal_id)}
+                                      onChange={() =>
+                                        setSelectedOppIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(sig.signal_id)) next.delete(sig.signal_id);
+                                          else next.add(sig.signal_id);
+                                          return next;
+                                        })
+                                      }
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="absolute top-2 right-2 z-10 h-4 w-4 accent-destructive cursor-pointer"
+                                      title="Select for bulk delete"
+                                    />
+                                  )}
+                                  <SignalCard
+                                    signal={sig}
+                                    nowMs={cardsNowMs}
+                                    onInspect={(id) => {
+                                      if (!selectMode) setInspectSignalId(id);
+                                    }}
+                                    onPaperExecuted={() => {
+                                      void fetchActive(false);
+                                      void fetchAudit(false);
+                                    }}
+                                    onDeleted={(id) => {
+                                      setActive((prev) => prev.filter((s) => s.signal_id !== id));
+                                      void fetchAudit(false);
+                                    }}
+                                  />
+                                </div>
                               </SignalErrorBoundary>
                             ))}
                           </div>

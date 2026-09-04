@@ -51,6 +51,16 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
       .finally(() => setLoading(false));
   }, [signalId]);
 
+  // Escape dismisses the dossier (backdrop click also closes below).
+  useEffect(() => {
+    if (!signalId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [signalId, onClose]);
+
   if (!signalId) return null;
 
   const handleExecute = async () => {
@@ -75,8 +85,17 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
   const dirColor = isCall ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/30' : 'text-red-600 bg-red-500/10 border-red-500/30';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-card border rounded-xl shadow-2xl overflow-hidden my-8 max-h-[90vh] flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="relative w-full max-w-4xl bg-card border rounded-xl shadow-2xl overflow-hidden my-8 max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         {/* Header */}
         <div className="p-4 border-b flex items-center justify-between bg-muted/30">
           <div className="flex items-center gap-3">

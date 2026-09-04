@@ -1,14 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { OptionChainResponse, MaxPainResult } from '@/lib/types';
 import { OptionsHeader } from '@/components/options/OptionsHeader';
 import { OptionChainTable } from '@/components/options/OptionChainTable';
 import { PayoffChart } from '@/components/options/PayoffChart';
 import { IVSmileChart } from '@/components/options/IVSmileChart';
-import { InstitutionalFlowTracker } from '@/components/options/InstitutionalFlowTracker';
 import { Layers, Target, Activity, ShieldAlert } from 'lucide-react';
+
+// Tab-conditional flow tracker loads only when its tab is selected.
+const InstitutionalFlowTracker = dynamic(
+  () => import('@/components/options/InstitutionalFlowTracker').then((m) => m.InstitutionalFlowTracker),
+  { ssr: false, loading: () => <div className="bg-card border border-border rounded-xl p-5 h-48 animate-pulse" /> },
+);
 
 export default function OptionsPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
@@ -21,21 +27,40 @@ export default function OptionsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Chain + MaxPain have no data dependency once the expiry is known, so
+  // fetch them in parallel. When no expiry is selected yet, resolve it from
+  // a single chain call first — the resulting setSelectedExpiry triggers one
+  // parallel re-run (instead of the old sequential chain→maxPain waterfall
+  // that ran twice per symbol change). Stale responses from rapid
+  // symbol/expiry switches are dropped via isMounted.
   useEffect(() => {
     let isMounted = true;
 
     const run = async () => {
       try {
-        const chainRes = await api.getOptionChain(selectedSymbol, selectedExpiry || undefined);
-        if (!isMounted) return;
-        setChainData(chainRes.data);
+        if (!selectedExpiry) {
+          const chainRes = await api.getOptionChain(selectedSymbol, undefined);
+          if (!isMounted) return;
+          setChainData(chainRes.data);
 
-        if (!selectedExpiry && chainRes.data.expiry) {
-          setSelectedExpiry(chainRes.data.expiry);
+          if (chainRes.data.expiry) {
+            setSelectedExpiry(chainRes.data.expiry);
+          } else {
+            const mpRes = await api.getMaxPain(selectedSymbol, undefined);
+            if (!isMounted) return;
+            setMaxPainData(mpRes.data);
+          }
+
+          setError(null);
+          return;
         }
 
-        const mpRes = await api.getMaxPain(selectedSymbol, selectedExpiry || undefined);
+        const [chainRes, mpRes] = await Promise.all([
+          api.getOptionChain(selectedSymbol, selectedExpiry),
+          api.getMaxPain(selectedSymbol, selectedExpiry),
+        ]);
         if (!isMounted) return;
+        setChainData(chainRes.data);
         setMaxPainData(mpRes.data);
 
         setError(null);

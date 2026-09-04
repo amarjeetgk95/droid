@@ -78,7 +78,9 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
     return () => { cancelled = true; };
   }, [symbol, tf]);
 
-  // Live polling: 5s refresh (throttled from 2s) with jitter + hidden-tab pause + single-flight.
+  // Live polling: lightweight incremental patch (last 2 candles only — never
+  // the full dataset) every ~10s with jitter + hidden-tab pause + single-flight.
+  // The full dataset loads once on symbol/timeframe change above.
   useEffect(() => {
     if (!live) return undefined;
     let timeout = null;
@@ -134,7 +136,7 @@ export function useRealCandleDataWithSymbol(symbol, tf, live) {
       }
     };
     const schedule = () => {
-      const jittered = 5000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(async () => {
         await poll();
         if (!cancelled) schedule();

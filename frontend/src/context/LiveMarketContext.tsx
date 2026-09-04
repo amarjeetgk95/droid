@@ -10,8 +10,8 @@ import {
   useState,
   ReactNode,
 } from 'react';
-import { api } from '@/lib/api';
-import { useMarketStream, StreamConnectionState, TimestampedTick } from '@/hooks/useMarketStream';
+import type { StreamConnectionState, TimestampedTick } from '@/hooks/useMarketStream';
+import { useOptionalMarketDataContext, useMarketTicks } from './MarketDataContext';
 import type { IndexCard, DataStatus } from '@/lib/types';
 
 type LiveMarketContextType = {
@@ -50,65 +50,23 @@ function deepCardsEqual(a: IndexCard, b: IndexCard): boolean {
 }
 
 export function LiveMarketProvider({ children }: { children: ReactNode }) {
-  const { latestTicks: rawTicks, streamState, ticksFresh, lastTickAt } = useMarketStream();
-  const [baseCards, setBaseCards] = useState<IndexCard[]>([]);
-  const [loading, setLoading] = useState(true);
+  // SINGLE-OWNER MODEL: MarketDataProvider (outer) owns the dashboard/summary
+  // REST fetch + the market-feed WebSocket. This provider only merges shared
+  // REST snapshot cards with shared WS ticks (batched) — no fetch, no socket.
+  const market = useOptionalMarketDataContext();
+  const { ticks: rawTicks, lastTickAt } = useMarketTicks();
+  const baseCards = market?.cards ?? [];
+  const loading = market?.loading ?? true;
+  const streamState: StreamConnectionState = market?.streamState ?? 'CONNECTING';
+  const ticksFresh = market?.ticksFresh ?? false;
+  const marketRefetch = market?.refetch;
+  const refetchCards = useCallback(() => {
+    if (marketRefetch) return marketRefetch();
+    return Promise.resolve();
+  }, [marketRefetch]);
   const [batchedTicks, setBatchedTicks] = useState<Record<string, TimestampedTick>>({});
-  const mountedRef = useRef(true);
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTicksRef = useRef<Record<string, TimestampedTick>>({});
-
-  const fetchCards = useCallback(async () => {
-    try {
-      // Prefer the batched summary endpoint (single REST call, coordinator-backed).
-      // Fall back to the dedicated cards endpoint if the summary is unavailable.
-      let cards: IndexCard[] | null = null;
-      try {
-        const summaryRes = await api.getDashboardSummary();
-        if (Array.isArray(summaryRes?.data?.cards) && summaryRes.data.cards.length > 0) {
-          cards = summaryRes.data.cards as IndexCard[];
-        }
-      } catch {
-        // fall through to dedicated endpoint
-      }
-      if (!cards) {
-        const res = await api.getIndexCards();
-        cards = res.data;
-      }
-      if (mountedRef.current && cards) setBaseCards(cards);
-    } catch {
-      // Keep last-known cards; WS ticks + summary polling in Dashboard context
-      // will recover. Never blank the ticker on transient failure.
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    void fetchCards();
-    // Quiet REST snapshot refresh — WS is the primary live source.
-    // 30s cadence with jitter; paused while tab hidden.
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
-    const schedule = () => {
-      timeout = setTimeout(() => {
-        if (!cancelled && typeof document !== 'undefined' && !document.hidden) void fetchCards();
-        if (!cancelled) schedule();
-      }, 30000 * (0.85 + Math.random() * 0.3));
-    };
-    schedule();
-    const onVis = () => {
-      if (!document.hidden && !cancelled) void fetchCards();
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      cancelled = true;
-      mountedRef.current = false;
-      if (timeout) clearTimeout(timeout);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [fetchCards]);
 
   // Throttle high-frequency WS ticks into ≤10 renders/sec.
   useEffect(() => {
@@ -213,9 +171,9 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
       ticksFresh,
       loading,
       lastTickAt,
-      refetchCards: fetchCards,
+      refetchCards,
     }),
-    [displayedCards, batchedTicks, streamState, ticksFresh, loading, lastTickAt, fetchCards]
+    [displayedCards, batchedTicks, streamState, ticksFresh, loading, lastTickAt, refetchCards]
   );
 
   return (

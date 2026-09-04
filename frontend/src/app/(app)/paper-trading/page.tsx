@@ -102,7 +102,7 @@ export default function PaperTradingPage() {
     setLastUpdatedMs(Date.now());
   }, [applySnapshot]);
 
-  // Polling: fast lane (portfolio+positions ~5s for live MTM) + slow lane (orders 15s).
+  // Polling: fast lane (portfolio+positions ~10s for live MTM) + slow lane (orders 15s).
   // Falls back to localStorage when backend unreachable. Pauses when tab hidden.
   useEffect(() => {
     let isMounted = true;
@@ -160,7 +160,7 @@ export default function PaperTradingPage() {
     let fastTimer: ReturnType<typeof setTimeout> | null = null;
     let slowTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleFast = () => {
-      const jittered = 5000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       fastTimer = setTimeout(async () => {
         if (!document.hidden) await loadFast();
         scheduleFast();

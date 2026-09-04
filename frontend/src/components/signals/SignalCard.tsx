@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import {
   Target,
   TrendingDown,
   TrendingUp,
+  Trash2,
   Zap,
 } from 'lucide-react';
 
@@ -104,20 +105,25 @@ export function SignalCard({
   signal,
   onInspect,
   onPaperExecuted,
+  onDeleted,
+  nowMs,
 }: {
   signal: SignalDTO;
   onInspect?: (signalId: string) => void;
   onPaperExecuted?: (result: any) => void;
+  onDeleted?: (signalId: string) => void;
+  /**
+   * Shared page-level clock (ms). The signals page owns ONE 1s ticker and
+   * passes it to every card — cards must NOT create their own timers
+   * (100 cards = 1 timer, not 100).
+   */
+  nowMs: number;
 }) {
   const [executing, setExecuting] = useState(false);
   const [paperResult, setPaperResult] = useState<any>(signal.paper_order || null);
   const [execError, setExecError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState<number>(Date.now());
-
-  useEffect(() => {
-    const interval = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+  const [deleting, setDeleting] = useState(false);
+  const [armDelete, setArmDelete] = useState(false);
 
   const fsm = safeState(signal.fsm_state);
   const isCall = signal.direction?.includes('CALL') || signal.direction === 'BULLISH';
@@ -156,6 +162,36 @@ export function SignalCard({
       setExecuting(false);
     }
   };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!armDelete) {
+      setArmDelete(true);
+      setTimeout(() => setArmDelete(false), 3000);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.deleteSignal(signal.signal_id);
+      onDeleted?.(signal.signal_id);
+    } catch (err: any) {
+      setExecError(err.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+      setArmDelete(false);
+    }
+  };
+
+  // Trigger-gap edge check (mirrors backend trigger_gate): gap < min ⇒ born-triggered noise.
+  const triggerEdge = (() => {
+    const spotP = Number(signal.spot_price);
+    const trigP = Number(signal.trigger);
+    const riskP = Number(signal.risk_points);
+    if (!Number.isFinite(spotP) || !Number.isFinite(trigP) || spotP <= 0 || trigP <= 0) return null;
+    const gap = Math.abs(trigP - spotP);
+    const minGap = Math.max(spotP * 0.0005, (Number.isFinite(riskP) ? Math.abs(riskP) : 0) * 0.1, 0.1);
+    return { gap, minGap, noEdge: gap < minGap };
+  })();
 
   return (
     <Card
@@ -235,6 +271,11 @@ export function SignalCard({
           <span className={`font-bold ${typeof signal.distance_to_trigger_pct === 'number' && signal.distance_to_trigger_pct <= 0.1 ? 'text-emerald-600 animate-pulse' : 'text-primary'}`}>
             {signal.distance_to_trigger_pts > 0 ? `${signal.distance_to_trigger_pts.toFixed(1)} pts (${safeNum(signal.distance_to_trigger_pct)}%) away` : '⚡ Trigger Zone'}
           </span>
+        </div>
+      )}
+      {triggerEdge?.noEdge && !isExpired && !isTargetHit && !isStopHit && (
+        <div className="text-[10px] font-mono px-2.5 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive font-bold">
+          NO EDGE — trigger {triggerEdge.gap.toFixed(1)}pts from spot (needs ≥ {triggerEdge.minGap.toFixed(1)}pts). Born-triggered noise.
         </div>
       )}
 
@@ -327,6 +368,16 @@ export function SignalCard({
                 }}
               >
                 Inspect <ExternalLink className="w-3 h-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={`h-8 w-8 p-0 ${armDelete ? 'text-destructive bg-destructive/10' : 'text-muted-foreground hover:text-destructive'}`}
+                onClick={handleDelete}
+                disabled={deleting}
+                title={armDelete ? 'Tap again to confirm delete' : 'Delete signal'}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
           )

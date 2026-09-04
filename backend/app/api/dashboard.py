@@ -263,8 +263,12 @@ class DashboardSummary(BaseModel):
     generated_at: str
 
 
-SUMMARY_CACHE_TTL = 5.0
+SUMMARY_FRESH_TTL = 3.0
 _summary_cache: dict[str, tuple[float, DashboardSummary]] = {}
+_summary_refresh_lock = asyncio.Lock()
+_summary_refresh_task: asyncio.Task | None = None
+
+_symbol_refresh_tasks: dict[str, asyncio.Task] = {}
 
 
 def _make_summary_meta(degraded: bool) -> ApiMeta:
@@ -275,17 +279,17 @@ def _make_summary_meta(degraded: bool) -> ApiMeta:
     )
 
 
-@router.get("/summary")
-async def get_dashboard_summary():
-    cached = _summary_cache.get("default")
-    now = time.monotonic()
-    if cached is not None and now - cached[0] < SUMMARY_CACHE_TTL:
-        return {
-            "data": cached[1].model_dump(),
-            "error": None,
-            "meta": _make_summary_meta(cached[1].degraded).model_dump(),
-        }
+def _to_dict(v: Any) -> Any:
+    if v is None:
+        return None
+    if hasattr(v, "model_dump"):
+        return v.model_dump(mode="json")
+    if isinstance(v, list):
+        return [_to_dict(x) for x in v]
+    return v
 
+
+async def _compute_summary() -> DashboardSummary:
     errors: dict[str, str] = {}
     service = MarketService()
 
@@ -333,15 +337,6 @@ async def get_dashboard_summary():
     }
 
     results = await market_data_coordinator.get_many(fetch_specs)
-
-    def _to_dict(v: Any) -> Any:
-        if v is None:
-            return None
-        if hasattr(v, "model_dump"):
-            return v.model_dump(mode="json")
-        if isinstance(v, list):
-            return [_to_dict(x) for x in v]
-        return v
 
     # Process cards
     cards_val = results.get("cards")
@@ -400,7 +395,7 @@ async def get_dashboard_summary():
         v.status == "DEGRADED" for v in results.values() if v is not None
     )
 
-    data = DashboardSummary(
+    return DashboardSummary(
         cards=cards,
         breadth=breadth_dict,
         health=health_dict,
@@ -413,14 +408,74 @@ async def get_dashboard_summary():
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    response = {
+
+async def _refresh_summary_background() -> None:
+    """Non-blocking background refresh for SWR."""
+    async with _summary_refresh_lock:
+        try:
+            data = await _compute_summary()
+            _summary_cache["default"] = (time.monotonic(), data)
+            logger.debug("dashboard_summary_background_refreshed")
+        except Exception as e:
+            logger.warning("background_summary_refresh_failed", error=str(e)[:150])
+
+
+def _trigger_background_summary_refresh() -> None:
+    """Schedule background refresh without blocking response delivery."""
+    global _summary_refresh_task
+    if _summary_refresh_lock.locked():
+        return
+    if _summary_refresh_task is None or _summary_refresh_task.done():
+        try:
+            loop = asyncio.get_running_loop()
+            _summary_refresh_task = loop.create_task(_refresh_summary_background())
+        except RuntimeError:
+            pass
+
+
+async def prewarm_dashboard_summary() -> None:
+    """Pre-compute dashboard summary at startup so the very first request is instant."""
+    try:
+        data = await _compute_summary()
+        _summary_cache["default"] = (time.monotonic(), data)
+        logger.info("dashboard_summary_prewarmed", cards_count=len(data.cards))
+    except Exception as e:
+        logger.warning("dashboard_summary_prewarm_failed", error=str(e)[:150])
+
+
+@router.get("/summary")
+async def get_dashboard_summary():
+    cached = _summary_cache.get("default")
+    now = time.monotonic()
+
+    # Stale-While-Revalidate: return immediately (<1ms) if cached, trigger async refresh if stale
+    if cached is not None:
+        cached_time, data = cached
+        if now - cached_time >= SUMMARY_FRESH_TTL:
+            _trigger_background_summary_refresh()
+        return {
+            "data": data.model_dump(),
+            "error": None,
+            "meta": _make_summary_meta(data.degraded).model_dump(),
+        }
+
+    # Cold start: first request before background prewarm finishes
+    data = await _compute_summary()
+    _summary_cache["default"] = (now, data)
+    return {
         "data": data.model_dump(),
         "error": None,
         "meta": _make_summary_meta(data.degraded).model_dump(),
     }
 
-    _summary_cache["default"] = (time.monotonic(), data)
-    return response
+
+async def _refresh_symbol_dashboard_background(sym: str) -> None:
+    try:
+        data = await _build_dashboard(sym)
+        _cache[sym] = (time.monotonic(), data)
+        logger.debug("symbol_dashboard_background_refreshed", symbol=sym)
+    except Exception as e:
+        logger.warning("background_symbol_dashboard_refresh_failed", symbol=sym, error=str(e)[:150])
 
 
 @router.get("/{symbol}")
@@ -429,18 +484,26 @@ async def get_dashboard(symbol: str):
 
     cached = _cache.get(sym)
     now = time.monotonic()
-    if cached is not None and now - cached[0] < CACHE_TTL_SECONDS:
+    if cached is not None:
+        cached_time, data = cached
+        if now - cached_time >= CACHE_TTL_SECONDS:
+            t = _symbol_refresh_tasks.get(sym)
+            if t is None or t.done():
+                try:
+                    loop = asyncio.get_running_loop()
+                    _symbol_refresh_tasks[sym] = loop.create_task(_refresh_symbol_dashboard_background(sym))
+                except RuntimeError:
+                    pass
         return {
-            "data": cached[1].model_dump(),
+            "data": data.model_dump(),
             "error": None,
-            "meta": _meta(degraded=cached[1].degraded).model_dump(),
+            "meta": _meta(degraded=data.degraded).model_dump(),
         }
 
     data = await _build_dashboard(sym)
-    response = {
+    _cache[sym] = (now, data)
+    return {
         "data": data.model_dump(),
         "error": None,
         "meta": _meta(degraded=data.degraded).model_dump(),
     }
-    _cache[sym] = (now, data)
-    return response

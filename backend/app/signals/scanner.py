@@ -287,11 +287,45 @@ class SignalScanner:
         self._last_diagnostics[f"{u}:{timeframe}"] = diag
         return candidates
 
-    async def _process_candidates(self, candidates: list[SignalCandidate]) -> list[SignalInstance]:
-        """Validates confluence and registers candidates into FSM."""
+    async def _process_candidates(self, candidates: list[SignalCandidate]) -> tuple[list[SignalInstance], list[str]]:
+        """Validates confluence + trigger integrity, registers passing candidates into FSM.
+
+        Returns (registered, rejected_reasons). Rejections (no-edge triggers etc.)
+        are surfaced in scan diagnostics instead of silently vanishing.
+        """
+        from app.signals.trigger_gate import check_trigger_integrity
+
         registered_signals: list[SignalInstance] = []
+        rejected_gates: list[str] = []
 
         for cand in candidates:
+            # ── Trigger integrity gate: kill born-triggered / no-edge setups ──
+            gate = check_trigger_integrity(
+                underlying=cand.underlying,
+                strategy=cand.strategy,
+                direction=cand.direction,
+                spot_price=cand.spot_price,
+                entry_min=cand.entry_min,
+                entry_max=cand.entry_max,
+                trigger=cand.trigger,
+                stop_loss=cand.stop_loss,
+                target_1=cand.target_1,
+                target_2=cand.target_2,
+                risk_points=cand.risk_points,
+                risk_reward_t1=cand.risk_reward_t1,
+                risk_reward_t2=cand.risk_reward_t2,
+            )
+            if not gate.passed:
+                rejected_gates.append(f"{cand.strategy}:{gate.reason_code}")
+                logger.info(
+                    "candidate_rejected_trigger_gate",
+                    strategy=cand.strategy,
+                    underlying=cand.underlying,
+                    reason=gate.reason_code,
+                    msg=gate.message,
+                )
+                continue
+
             # Check confluence with AI
             fused_score = confluence_engine.fuse(cand)
             cand.overall_confidence = fused_score
@@ -388,7 +422,7 @@ class SignalScanner:
                 except Exception as te:
                     logger.warning("scanner_telegram_publish_failed", error=str(te))
 
-        return registered_signals
+        return registered_signals, rejected_gates
 
     def _cache_get(self, key: str) -> Optional[dict[str, Any]]:
         entry = self._scan_cache.get(key)
@@ -452,7 +486,7 @@ class SignalScanner:
             return cached
 
         candidates, diagnostics, errors = await self._scan_universe(universe, timeframe="1M", desk="SCALP")
-        registered = await self._process_candidates(candidates)
+        registered, rejected = await self._process_candidates(candidates)
         quality, degraded = self._summarize_quality(diagnostics, errors)
         result: dict[str, Any] = {
             "desk": "SCALP",
@@ -460,6 +494,7 @@ class SignalScanner:
             "scanned_underlyings": universe,
             "total_candidates": len(candidates),
             "new_signals": [s.model_dump() for s in registered],
+            "rejected_no_edge": rejected,
             "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
             "data_quality": quality,
             "degraded_underlyings": degraded,
@@ -484,7 +519,7 @@ class SignalScanner:
             return cached
 
         candidates, diagnostics, errors = await self._scan_universe(universe, timeframe="5M", desk="INTRADAY")
-        registered = await self._process_candidates(candidates)
+        registered, rejected = await self._process_candidates(candidates)
         quality, degraded = self._summarize_quality(diagnostics, errors)
         result: dict[str, Any] = {
             "desk": "INTRADAY",
@@ -492,6 +527,7 @@ class SignalScanner:
             "scanned_underlyings": universe,
             "total_candidates": len(candidates),
             "new_signals": [s.model_dump() for s in registered],
+            "rejected_no_edge": rejected,
             "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
             "data_quality": quality,
             "degraded_underlyings": degraded,
@@ -519,6 +555,7 @@ class SignalScanner:
             "scanned_underlyings": sorted(list(APPROVED_UNDERLYINGS)),
             "total_candidates": scalp_res["total_candidates"] + intraday_res["total_candidates"],
             "new_signals": all_new,
+            "rejected_no_edge": list(scalp_res.get("rejected_no_edge", [])) + list(intraday_res.get("rejected_no_edge", [])),
             "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
             "scalp_desk": scalp_res,
             "intraday_desk": intraday_res,

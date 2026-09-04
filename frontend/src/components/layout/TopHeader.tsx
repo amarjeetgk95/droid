@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, memo } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
@@ -133,7 +134,6 @@ export function TopHeader({
   onMenuClick?: () => void;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [activeBroker, setActiveBroker] = useState<string>('fyers');
   const [isIndian, setIsIndian] = useState<boolean>(true);
@@ -316,10 +316,13 @@ export function TopHeader({
 
               <DropdownMenuSeparator className="bg-border my-1" />
 
+              {/* Native Links (not router.push) so Radix closes the menu and
+                  Next navigates in the same commit — no close-animation race. */}
               <DropdownMenuItem
-                onClick={() => router.push('/signals')}
+                asChild
                 className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
               >
+                <Link href="/signals">
                 <div className="p-1.5 rounded-md bg-emerald-500/10 text-emerald-400 shrink-0 mt-0.5">
                   <Radio className="w-3.5 h-3.5" />
                 </div>
@@ -329,12 +332,14 @@ export function TopHeader({
                     Live momentum, breakout &amp; mean-reversion scanner
                   </p>
                 </div>
+                </Link>
               </DropdownMenuItem>
 
               <DropdownMenuItem
-                onClick={() => router.push('/options')}
+                asChild
                 className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
               >
+                <Link href="/options">
                 <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400 shrink-0 mt-0.5">
                   <Activity className="w-3.5 h-3.5" />
                 </div>
@@ -344,12 +349,14 @@ export function TopHeader({
                     PCR shifts, Max Pain migration &amp; institutional OI
                   </p>
                 </div>
+                </Link>
               </DropdownMenuItem>
 
               <DropdownMenuItem
-                onClick={() => router.push('/ai-analysis')}
+                asChild
                 className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary/80 transition-colors"
               >
+                <Link href="/ai-analysis">
                 <div className="p-1.5 rounded-md bg-purple-500/10 text-purple-400 shrink-0 mt-0.5">
                   <Sparkles className="w-3.5 h-3.5" />
                 </div>
@@ -359,16 +366,19 @@ export function TopHeader({
                     Probabilistic model synthesis &amp; multi-TF bias
                   </p>
                 </div>
+                </Link>
               </DropdownMenuItem>
 
               <DropdownMenuSeparator className="bg-border my-1" />
 
               <DropdownMenuItem
-                onClick={() => router.push('/signals')}
+                asChild
                 className="cursor-pointer p-2 rounded-lg flex items-center justify-between text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
               >
+                <Link href="/signals">
                 <span>Open Signal Center</span>
                 <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

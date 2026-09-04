@@ -411,12 +411,8 @@ def get_signals_history(limit: int = 50):
 
 # ── 7. SIGNAL DELETION AUTHORITY ──────────────────────────────────────
 
-@router.delete("/{signal_id}")
-async def delete_signal_by_id(signal_id: str):
-    """
-    Authority to delete a signal: removes from FSM, Audit Ledger, Supabase,
-    squares off any open paper position, and broadcasts signal_deleted event.
-    """
+async def _delete_signal_core(signal_id: str) -> dict:
+    """Shared delete path: square off paper, drop FSM + audit + Supabase. Best-effort per store."""
     audit_rec = signal_audit_ledger.get(signal_id)
     if audit_rec and audit_rec.status in ("ARMED", "CONFIRMED", "EXECUTED"):
         try:
@@ -427,12 +423,116 @@ async def delete_signal_by_id(signal_id: str):
     fsm_del = signal_fsm.delete(signal_id)
     audit_del = signal_audit_ledger.delete_trade(signal_id)
 
-    # Async Supabase delete
     try:
         from app.signals.signals_persistence import delete_persisted_signal
         await delete_persisted_signal(signal_id)
     except Exception as se:
         logger.warning("supabase_delete_failed", signal_id=signal_id, error=str(se))
+
+    return {"signal_id": signal_id, "fsm_deleted": fsm_del, "audit_deleted": audit_del}
+
+
+class BulkDeleteRequest(BaseModel):
+    signal_ids: list[str] = Field(default_factory=list, description="Explicit signal IDs to delete")
+    before_ms: Optional[int] = Field(default=None, description="Delete signals created before this epoch-ms (datewise clear)")
+    underlying: Optional[str] = Field(default=None, description="Filter: NIFTY / BANKNIFTY / SENSEX")
+    strategy: Optional[str] = Field(default=None, description="Filter by strategy name")
+    status: Optional[str] = Field(default=None, description="Filter by FSM/audit status")
+    delete_all: bool = Field(default=False, description="Delete everything matching the filters")
+    confirm_all: bool = Field(default=False, description="Required safety flag when delete_all has no other selector")
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_signals(req: BulkDeleteRequest):
+    """
+    Multi-delete + datewise clear. Selectors combine with AND:
+    explicit IDs ∪ (FSM + audit records matching underlying/strategy/status/before_ms).
+    delete_all=true with no other selector needs confirm_all=true. Capped at 500/call.
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _add(sid: Any) -> None:
+        s = str(sid or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            ids.append(s)
+
+    for sid in req.signal_ids or []:
+        _add(sid)
+
+    need_scan = bool(req.before_ms or req.delete_all or req.underlying or req.strategy or req.status)
+    if need_scan:
+        u = (req.underlying or "").upper() or None
+        if u == "ALL":
+            u = None
+        strat = (req.strategy or "").upper() or None
+        if strat == "ALL":
+            strat = None
+        st = (req.status or "").upper() or None
+        if st == "ALL":
+            st = None
+
+        for s in signal_fsm.list_active():
+            if u and s.underlying != u:
+                continue
+            if strat and s.strategy != strat:
+                continue
+            if st and s.fsm_state != st:
+                continue
+            if req.before_ms and not (s.created_at_utc < req.before_ms):
+                continue
+            _add(s.signal_id)
+
+        for t in signal_audit_ledger.list_trades(limit=10000):
+            if u and t.underlying != u:
+                continue
+            if strat and t.strategy != strat:
+                continue
+            if st and t.status != st:
+                continue
+            if req.before_ms and not (t.created_at_utc < req.before_ms):
+                continue
+            _add(t.signal_id)
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="Nothing selected: pass signal_ids or a filter (before_ms/underlying/strategy/status/delete_all).")
+    if req.delete_all and not req.confirm_all and not req.signal_ids and not req.before_ms:
+        raise HTTPException(status_code=400, detail="Bulk delete-all needs confirm_all=true.")
+    ids = ids[:500]
+
+    deleted: list[str] = []
+    for sid in ids:
+        try:
+            res = await _delete_signal_core(sid)
+            if res["fsm_deleted"] or res["audit_deleted"]:
+                deleted.append(sid)
+        except Exception as e:
+            logger.warning("bulk_delete_item_failed", signal_id=sid, error=str(e))
+
+    try:
+        await signal_sse_hub.broadcast(
+            "signals_bulk_deleted", {"signal_ids": deleted, "count": len(deleted)}, priority="P0"
+        )
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "message": f"Deleted {len(deleted)} of {len(ids)} selected signals",
+        "deleted_count": len(deleted),
+        "deleted_ids": deleted,
+        "requested_count": len(ids),
+    }
+
+
+@router.delete("/{signal_id}")
+async def delete_signal_by_id(signal_id: str):
+    """
+    Authority to delete a signal: removes from FSM, Audit Ledger, Supabase,
+    squares off any open paper position, and broadcasts signal_deleted event.
+    """
+    res = await _delete_signal_core(signal_id)
 
     # Broadcast SSE
     await signal_sse_hub.broadcast("signal_deleted", {"signal_id": signal_id}, priority="P0")
@@ -440,8 +540,8 @@ async def delete_signal_by_id(signal_id: str):
     return {
         "status": "success",
         "message": f"Signal {signal_id} deleted successfully",
-        "fsm_deleted": fsm_del,
-        "audit_deleted": audit_del,
+        "fsm_deleted": res["fsm_deleted"],
+        "audit_deleted": res["audit_deleted"],
     }
 
 
@@ -590,30 +690,31 @@ async def generate_signal(req: GenerateSignalRequest):
 
     is_put = "PUT" in dir_val or "BEARISH" in dir_val
     trig_val = req.trigger or req.trigger_level
-    entry_min = normalize_price(req.entry_min or trig_val or spot, tick)
-    entry_max = normalize_price(req.entry_max or (spot - Decimal("10.0") if is_put else spot + Decimal("10.0")), tick)
-    trigger = normalize_price(trig_val or (entry_min - tick if is_put else entry_min + tick), tick)
+    min_gap = normalize_price(max(spot * Decimal("0.001"), Decimal("15.0")), tick)
+    trigger = normalize_price(trig_val or (spot - min_gap if is_put else spot + min_gap), tick)
+    entry_min = normalize_price(req.entry_min or (trigger - Decimal("5.0") if is_put else trigger), tick)
+    entry_max = normalize_price(req.entry_max or (trigger if is_put else trigger + Decimal("5.0")), tick)
 
     if is_put:
         stop_loss = normalize_price(req.stop_loss or (spot * Decimal("1.005")), tick)
-        risk_pts = abs(stop_loss - entry_min)
+        risk_pts = abs(stop_loss - entry_max)
         t1 = normalize_price(req.target_1 or (entry_min - (risk_pts * Decimal("1.5"))), tick)
         t2 = normalize_price(req.target_2 or (entry_min - (risk_pts * Decimal("3.0"))), tick)
     else:
         stop_loss = normalize_price(req.stop_loss or (spot * Decimal("0.995")), tick)
         risk_pts = abs(entry_min - stop_loss)
-        t1 = normalize_price(req.target_1 or (entry_min + (risk_pts * Decimal("1.5"))), tick)
-        t2 = normalize_price(req.target_2 or (entry_min + (risk_pts * Decimal("3.0"))), tick)
+        t1 = normalize_price(req.target_1 or (entry_max + (risk_pts * Decimal("1.5"))), tick)
+        t2 = normalize_price(req.target_2 or (entry_max + (risk_pts * Decimal("3.0"))), tick)
 
-    rr_t1 = float((abs(t1 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5
-    rr_t2 = float((abs(t2 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0
+    rr_t1 = float((abs(t1 - (entry_min if is_put else entry_max)) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5
+    rr_t2 = float((abs(t2 - (entry_min if is_put else entry_max)) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0
 
     # ── Level sanity: reject incoherent manuals instead of registering doomed signals ──
     if risk_pts <= 0:
         raise HTTPException(status_code=400, detail="Stop-loss must differ from entry (zero risk points).")
-    if is_put and not (stop_loss > entry_max and t1 < entry_max and t2 < t1):
+    if is_put and not (stop_loss > entry_max and t1 < entry_min and t2 < t1):
         raise HTTPException(status_code=400, detail="PUT levels incoherent: need SL > entry > T1 > T2.")
-    if not is_put and not (stop_loss < entry_min and t1 > entry_min and t2 > t1):
+    if not is_put and not (stop_loss < entry_min and t1 > entry_max and t2 > t1):
         raise HTTPException(status_code=400, detail="CALL levels incoherent: need SL < entry < T1 < T2.")
 
     try:
@@ -632,6 +733,26 @@ async def generate_signal(req: GenerateSignalRequest):
             status_code=422,
             detail=f"Unknown strategy '{req.strategy}'. Valid: {sorted(STRATEGY_REGISTRY.keys())}",
         )
+
+    # ── Trigger integrity: reject born-triggered / no-edge manuals ──
+    from app.signals.trigger_gate import check_trigger_integrity
+    gate = check_trigger_integrity(
+        underlying=u,
+        strategy=strat_val,
+        direction=dir_val,
+        spot_price=spot,
+        entry_min=entry_min,
+        entry_max=entry_max,
+        trigger=trigger,
+        stop_loss=stop_loss,
+        target_1=t1,
+        target_2=t2,
+        risk_points=risk_pts,
+        risk_reward_t1=rr_t1,
+        risk_reward_t2=rr_t2,
+    )
+    if not gate.passed:
+        raise HTTPException(status_code=400, detail=f"{gate.reason_code}: {gate.message}")
 
     is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
     sig_type = "SCALP" if is_scalp_setup else (req.signal_type or "INTRADAY")

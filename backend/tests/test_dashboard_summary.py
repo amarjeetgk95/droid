@@ -79,3 +79,24 @@ def test_dashboard_summary_degraded_when_subsystem_fails():
         assert data["degraded"] is True
         assert "ml" in data["errors"]
         assert data["ml_prediction"] is None
+
+
+def test_dashboard_summary_stale_while_revalidate():
+    """Verify that when cache is older than SUMMARY_FRESH_TTL, it returns instantly without blocking."""
+    # First call to populate cache
+    r1 = client.get("/api/v1/dashboard/summary")
+    assert r1.status_code == 200
+
+    # Age the cache entry artificially by 10 seconds past SUMMARY_FRESH_TTL
+    cached_data = _summary_cache["default"][1]
+    _summary_cache["default"] = (time.monotonic() - 10.0, cached_data)
+
+    # Call must return immediately (<50ms) without blocking on recomputation
+    start = time.perf_counter()
+    r2 = client.get("/api/v1/dashboard/summary")
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert r2.status_code == 200
+    assert elapsed_ms < 50.0
+    assert r2.json()["data"]["generated_at"] == cached_data.generated_at
+

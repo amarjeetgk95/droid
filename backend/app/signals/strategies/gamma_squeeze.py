@@ -28,11 +28,17 @@ class GammaSqueezeStrategy(Strategy):
         max_pain = Decimal(str(fno.get("max_pain", spot)))
 
         # ── BULLISH GAMMA SQUEEZE (LONG_CALL) ──
-        # Conditions: PCR extreme or Call OI unwinding + spot above max pain / resistance
-        if (pcr <= 0.75 or pcr >= 1.30 or oi_change >= 8.0) and spot >= max_pain * Decimal("0.998"):
+        # Conditions: need 2-of-3 (PCR extreme, OI surge, above max-pain wall).
+        # A single OI twitch near max pain is noise, not a squeeze.
+        # Trigger sits a confirmation gap above spot — never spot + 1 tick.
+        _pcr_extreme = (pcr <= 0.75 or pcr >= 1.30)
+        _oi_surge = oi_change >= 8.0
+        _above_wall = spot >= max_pain * Decimal("0.998")
+        if sum((_pcr_extreme, _oi_surge, _above_wall)) >= 2:
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.25")), tick)
-            trigger = normalize_price(spot + tick, tick)
+            trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
+            trigger = normalize_price(spot + trigger_gap, tick)
             stop_loss = normalize_price(spot - (atr * Decimal("0.9")), tick)
             risk_pts = entry_min - stop_loss
             if risk_pts > Decimal("0"):
@@ -76,10 +82,14 @@ class GammaSqueezeStrategy(Strategy):
                 )
 
         # ── BEARISH GAMMA TRAP / LONG_PUT ──
-        if (pcr >= 1.40 or pcr <= 0.65 or oi_change >= 8.0) and spot <= max_pain * Decimal("1.002"):
+        _pcr_extreme_p = (pcr >= 1.40 or pcr <= 0.65)
+        _oi_surge_p = oi_change >= 8.0
+        _below_wall = spot <= max_pain * Decimal("1.002")
+        if sum((_pcr_extreme_p, _oi_surge_p, _below_wall)) >= 2:
             entry_min = normalize_price(spot - (atr * Decimal("0.25")), tick)
             entry_max = normalize_price(spot, tick)
-            trigger = normalize_price(spot - tick, tick)
+            trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
+            trigger = normalize_price(spot - trigger_gap, tick)
             stop_loss = normalize_price(spot + (atr * Decimal("0.9")), tick)
             risk_pts = stop_loss - entry_max
             if risk_pts > Decimal("0"):

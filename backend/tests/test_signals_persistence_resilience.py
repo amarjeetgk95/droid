@@ -14,15 +14,17 @@ from app.signals.signals_persistence import (
     save_signals_state_local,
     restore_signals_state_local,
     restore_signals_from_db,
+    persist_executed_signal,
     SIGNALS_STATE_FILE,
 )
 
 
 @pytest.mark.asyncio
 async def test_signals_persistence_resilience():
-    # 1. Register test signal
+    import uuid
+    test_id = f"SIG-TEST-PERSIST-{uuid.uuid4().hex[:8]}"
     sig = SignalInstance(
-        signal_id="SIG-TEST-PERSIST-01",
+        signal_id=test_id,
         underlying="NIFTY",
         strategy="VWAP_SCALP",
         direction="LONG_CALL",
@@ -62,10 +64,11 @@ async def test_signals_persistence_resilience():
         status="CONFIRMED",
     )
 
-    # 3. Explicitly verify save_signals_state_local works and creates the file
+    # 3. Explicitly verify save_signals_state_local and persist_executed_signal work
     saved = save_signals_state_local()
     assert saved is True
     assert SIGNALS_STATE_FILE.exists()
+    await persist_executed_signal(sig)
 
     # 4. SIMULATE REDEPLOYMENT / RESTART (Memory wiped clean)
     signal_fsm._signals.clear()
@@ -78,7 +81,7 @@ async def test_signals_persistence_resilience():
     assert restored_count > 0
 
     # 6. Verify signal is fully restored with v6 fields intact
-    restored_sig = signal_fsm.get("SIG-TEST-PERSIST-01")
+    restored_sig = signal_fsm.get(test_id)
     assert restored_sig is not None
     assert restored_sig.underlying == "NIFTY"
     assert restored_sig.strategy == "VWAP_SCALP"
@@ -87,7 +90,7 @@ async def test_signals_persistence_resilience():
     assert restored_sig.risk_reward_t1 == 1.8
 
     # 7. Verify audit trade is fully restored
-    restored_trade = signal_audit_ledger.get("SIG-TEST-PERSIST-01")
+    restored_trade = signal_audit_ledger.get(test_id)
     assert restored_trade is not None
     assert restored_trade.underlying == "NIFTY"
     assert restored_trade.status == "CONFIRMED"

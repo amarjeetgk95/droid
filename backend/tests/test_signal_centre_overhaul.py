@@ -117,6 +117,7 @@ class TestInstitutionalSignalCentre:
             "direction": "LONG_CALL",
             "timeframe": "5M",
             "trigger": 24900.0,
+            "current_price": 24870.0,
             "stop_loss": 24850.0,
             "target_1": 24975.0,
             "target_2": 25050.0,

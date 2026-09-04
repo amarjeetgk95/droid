@@ -93,6 +93,10 @@ async def lifespan(app: FastAPI):
     # (Registry lazy autostart is disabled: no request path may start this.)
     await start_provider_with_retry()
 
+    # Pre-warm dashboard summary cache in background so the very first user request loads in <5ms
+    import asyncio as _asyncio
+    _asyncio.create_task(dashboard_api.prewarm_dashboard_summary())
+
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()
 

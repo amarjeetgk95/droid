@@ -233,7 +233,7 @@ def test_signals_audit_api_endpoints(client):
         "direction": "BULLISH",
         "status": "CONFIRMED",
         "trigger_level": 24900.0,
-        "current_price": 24900.0,
+        "current_price": 24870.0,
         "execute_paper": True,
         "notify_telegram": False,
     })

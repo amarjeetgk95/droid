@@ -34,10 +34,13 @@ class MeanReversionStrategy(Strategy):
             return None
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
-        if spot <= bb_lower * Decimal("1.002") or rsi <= 28.0:
+        # Both BB touch AND RSI exhaustion required (OR fired mid-range noise).
+        # Trigger sits a confirmation gap above spot — never spot ± 1 tick.
+        if (spot <= bb_lower * Decimal("1.002")) and rsi <= 28.0:
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
-            trigger = normalize_price(spot + tick, tick)
+            trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+            trigger = normalize_price(spot + trigger_gap, tick)
             stop_loss = normalize_price(spot - (atr * Decimal("1.0")), tick)
             risk_pts = entry_min - stop_loss
             if risk_pts > Decimal("0"):
@@ -83,10 +86,11 @@ class MeanReversionStrategy(Strategy):
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
-        if spot >= bb_upper * Decimal("0.998") or rsi >= 72.0:
+        if (spot >= bb_upper * Decimal("0.998")) and rsi >= 72.0:
             entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
             entry_max = normalize_price(spot, tick)
-            trigger = normalize_price(spot - tick, tick)
+            trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+            trigger = normalize_price(spot - trigger_gap, tick)
             stop_loss = normalize_price(spot + (atr * Decimal("1.0")), tick)
             risk_pts = stop_loss - entry_max
             if risk_pts > Decimal("0"):
