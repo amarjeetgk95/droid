@@ -1,7 +1,5 @@
 """XGBoost/LightGBM Ensemble Trainer — trains on historical feature vectors."""
-import os
 import json
-import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,7 +79,6 @@ def _generate_synthetic_dataset(n_samples: int = 1000):
 async def train_ensemble(n_samples: int = 2000) -> dict:
     """Train XGBoost + LightGBM ensemble on synthetic (or historical) data and save artifacts."""
     try:
-        import numpy as np
         import xgboost as xgb
         import lightgbm as lgb
         from sklearn.model_selection import train_test_split

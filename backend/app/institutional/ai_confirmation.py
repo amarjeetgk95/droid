@@ -6,11 +6,9 @@ Strict schema, NOT_ELIGIBLE on bad data, handles disagreement, never override de
 """
 from __future__ import annotations
 
-import time
 import json
 from dataclasses import dataclass, field
 from typing import Literal, Any
-from enum import Enum
 
 AIDecision = Literal["CONFIRM", "REJECT", "WATCH", "UNCERTAIN"]
 AIStatus = Literal["CONFIRMED", "REJECTED", "WATCH", "UNCERTAIN", "NOT_ELIGIBLE", "ERROR", "UNAVAILABLE", "TIMEOUT"]

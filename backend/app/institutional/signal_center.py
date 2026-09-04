@@ -8,7 +8,6 @@ States: NO_SETUP / PREPARING / POSSIBLE_BREAKOUT / POSSIBLE_BREAKDOWN / TRIGGERE
 from __future__ import annotations
 
 import time
-import uuid
 from decimal import Decimal
 from typing import Literal, Any
 
@@ -21,7 +20,7 @@ from app.institutional.snapshot_buffer import synchronized_buffer
 from app.institutional.market_intelligence import market_intelligence_engine
 from app.institutional.breakout_engine import breakout_engine, short_horizon_strategy, continuation_strategy
 from app.institutional.decimal_types import D
-from app.institutional.signal import Signal, create_signal, signal_fsm
+from app.institutional.signal import create_signal, signal_fsm
 from app.institutional.audit import audit_trail, AuditRecord
 
 logger = structlog.get_logger()

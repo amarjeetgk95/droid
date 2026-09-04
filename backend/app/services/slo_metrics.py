@@ -6,12 +6,11 @@ feed freshness, consumer lag, reconciliation status, and system health threshold
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import numpy as np
 
 from app.core.redis_bus import global_event_bus
 from app.institutional.state_recovery import state_recovery_engine
-from app.algo.broker_capabilities import broker_capability_registry
 
 
 class LatencyTracker:

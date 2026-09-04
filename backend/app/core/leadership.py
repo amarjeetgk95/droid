@@ -11,8 +11,6 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from app.core.config import Settings
-from app.core.redis_bus import global_event_bus
 
 logger = logging.getLogger("app.core.leadership")
 

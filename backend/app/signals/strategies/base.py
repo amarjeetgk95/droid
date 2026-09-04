@@ -7,7 +7,7 @@ import uuid
 from decimal import Decimal
 from typing import Literal, Protocol, Any, Optional
 from pydantic import BaseModel, Field
-from app.signals.contract_resolver import InstrumentMaster, normalize_price
+from app.signals.contract_resolver import InstrumentMaster
 
 StrategyName = Literal[
     "BREAKOUT",

@@ -1,4 +1,3 @@
-import math
 
 def analyze_price_action(candles: list[dict]) -> dict:
     """Calculates price-action metrics from OHLCV candles.

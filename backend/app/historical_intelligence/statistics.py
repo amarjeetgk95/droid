@@ -12,7 +12,6 @@ from app.historical_intelligence.schemas import (
     HistoricalAnalogMatch,
     SampleReliability,
 )
-from app.historical_intelligence.versioning import STATISTICS_VERSION
 
 
 def calculate_wilson_ci(successes: int, total: int, z: float = 1.96) -> ConfidenceInterval:

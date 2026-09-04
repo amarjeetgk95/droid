@@ -10,8 +10,7 @@ Weights:
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
-from typing import Optional, Any
+from typing import Optional
 import structlog
 from pydantic import BaseModel, Field
 

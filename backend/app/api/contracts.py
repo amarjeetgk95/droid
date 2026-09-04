@@ -1,8 +1,8 @@
 from datetime import date
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from app.services.contract_master import contract_master_service
-from app.models.contracts import ContractType, OptionType, ContractStatus, ExpiryResolution
-from app.models.market import ApiResponse, ApiMeta, DataStatus
+from app.models.contracts import ContractType, OptionType
+from app.models.market import ApiMeta
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/v1/contracts", tags=["contracts"])

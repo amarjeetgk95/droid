@@ -14,7 +14,7 @@ import asyncio
 import string
 from dataclasses import dataclass, field
 from collections import deque, defaultdict
-from typing import Literal, Any
+from typing import Any
 import structlog
 
 logger = structlog.get_logger()

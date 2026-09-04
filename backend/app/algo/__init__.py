@@ -3,7 +3,6 @@
 from app.algo.money import Money, D, quantize_price, quantize_qty
 from app.algo.clock import ClockAuthority
 from app.algo.data_health import DataHealth, DataHealthMonitor
-from app.algo.candles import CandleEngine
 from app.algo.instruments import InstrumentMaster
 from app.algo.risk import TradeRiskEngine, PortfolioRiskEngine
 from app.algo.capital import CapitalEngine
@@ -17,7 +16,7 @@ from app.algo.signal_fusion import SignalFusion, TriggerEngine, ConflictResolver
 __all__ = [
     "Money", "D", "quantize_price", "quantize_qty",
     "ClockAuthority", "DataHealth", "DataHealthMonitor",
-    "CandleEngine", "InstrumentMaster",
+    "InstrumentMaster",
     "TradeRiskEngine", "PortfolioRiskEngine",
     "CapitalEngine",
     "OrderManager", "BrokerAdapter", "ExecutionSafety",

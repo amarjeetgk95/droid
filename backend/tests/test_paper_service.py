@@ -3,6 +3,12 @@ from app.services.paper_service import PaperTradingService
 from app.models.paper import OrderPayload, BasketOrderPayload
 
 
+@pytest.fixture(autouse=True)
+def _open_market(mock_market_open):
+    """Ensure market is considered open for all paper service unit tests."""
+    pass
+
+
 class TestPaperTradingService:
     @pytest.mark.asyncio
     async def test_place_single_order_and_position(self):

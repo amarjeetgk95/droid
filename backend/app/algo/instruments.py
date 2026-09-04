@@ -10,7 +10,6 @@ from datetime import datetime, timezone, date
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal, Any
-from uuid import uuid4
 import structlog
 
 from app.algo.money import D

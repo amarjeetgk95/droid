@@ -1,4 +1,3 @@
-import math
 
 def detect_chart_patterns(candles: list[dict]) -> list[dict]:
     patterns=[]

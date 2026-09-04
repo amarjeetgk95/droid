@@ -10,9 +10,7 @@ import time
 import uuid
 import asyncio
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Literal, Any
-from enum import Enum
 
 SignalState = Literal[
     "NO_SETUP", "POSSIBLE", "WATCH", "CONFIRMED", "REJECTED",

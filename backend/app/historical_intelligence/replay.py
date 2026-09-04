@@ -5,7 +5,7 @@ Reconstructs historical intelligence deterministically with strict T < query_tim
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional
 from app.historical_intelligence.schemas import (
     HistoricalStateSnapshot,
     HistoricalOutcomeRecord,

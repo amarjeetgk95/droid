@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
-from sqlalchemy import select, func, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import PatternOutcomeDB
 from app.models.historical import PatternHitRate, PatternOutcomeRecord

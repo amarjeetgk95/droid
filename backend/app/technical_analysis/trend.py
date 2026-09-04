@@ -1,4 +1,3 @@
-import math
 
 def sma(prices, period):
     if len(prices) < period: return None

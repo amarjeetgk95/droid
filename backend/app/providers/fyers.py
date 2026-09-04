@@ -1,7 +1,6 @@
 import asyncio
-import json
 import httpx
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from app.providers.base import MarketDataProvider
 from app.models.market import (
     NormalizedQuote, NormalizedCandle, NormalizedOptionQuote,

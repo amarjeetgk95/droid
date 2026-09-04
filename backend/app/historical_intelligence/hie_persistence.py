@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Optional
 import structlog
 from sqlalchemy import text
 
 from app.core.database import get_async_session_factory
-from app.historical_intelligence.schemas import HistoricalStateSnapshot, HistoricalOutcomeRecord
+from app.historical_intelligence.schemas import HistoricalStateSnapshot
 
 logger = structlog.get_logger()
 

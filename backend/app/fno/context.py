@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from app.instruments.registry import get_by_symbol_exact, get_instrument
 
 async def get_fno_context(symbol: str) -> dict:

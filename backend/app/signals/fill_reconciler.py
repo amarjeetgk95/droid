@@ -12,16 +12,15 @@ Enforces:
 """
 from __future__ import annotations
 
-import math
 import time
 from decimal import Decimal
-from typing import Optional, Any
+from typing import Optional
 from pydantic import BaseModel, Field
 import structlog
 
 from app.quant.costs import calculate_option_costs, CostBreakdown
 from app.quant.black76 import black76_price
-from app.signals.fsm import signal_fsm, SignalInstance
+from app.signals.fsm import SignalInstance
 
 logger = structlog.get_logger()
 

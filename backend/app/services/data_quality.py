@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import NamedTuple, Any
 from app.models.contracts import TickEvent
-from app.models.market import NormalizedQuote, NormalizedCandle
+from app.models.market import NormalizedCandle
 import structlog
 
 logger = structlog.get_logger()

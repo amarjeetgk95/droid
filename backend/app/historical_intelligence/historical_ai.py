@@ -4,9 +4,8 @@ Provides empirical evidence from similar historical market setups to Main AI.
 """
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone, timedelta
-from typing import Any, Optional, Sequence
+from datetime import datetime, timezone
+from typing import Any, Optional
 import structlog
 
 from app.historical_intelligence.schemas import (

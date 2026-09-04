@@ -16,7 +16,7 @@ from app.models.ai import (
 )
 from app.services.regime_service import regime_service
 from app.services.options_service import options_service
-from app.ai.registry import get_llm_provider, create_provider_for_test
+from app.ai.registry import create_provider_for_test
 
 logger = structlog.get_logger()
 

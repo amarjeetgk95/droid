@@ -19,8 +19,7 @@ Never force a trade. Follows §46 principles: COMPUTE → FORECAST → REASON �
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from enum import Enum
 
 import structlog
@@ -35,8 +34,8 @@ from app.services.pricing_engine import (
     validate_quantitative_confirmation,
     calculate_position_size,
 )
-from app.services.execution_state_machine import execution_state_machine, ExecutionState
-from app.services.observability import new_analysis_id, log_pipeline_event, Timer
+from app.services.execution_state_machine import execution_state_machine
+from app.services.observability import new_analysis_id, log_pipeline_event
 from app.services.outcome_logger import log_ai_event
 from app.core.config import settings
 

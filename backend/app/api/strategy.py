@@ -4,10 +4,9 @@ Exposes Strategy Builder, Templates, Payoff Curve calculation, and Multi-factor 
 """
 from __future__ import annotations
 
-import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, Body
+from typing import Dict, List, Optional
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.models.market import ApiMeta, DataStatus

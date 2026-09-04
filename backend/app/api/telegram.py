@@ -231,7 +231,6 @@ async def dev_quick_test(
     """
     import time
     import uuid
-    from decimal import Decimal
 
     instrument = instrument.upper()
     event_type = event_type.upper()

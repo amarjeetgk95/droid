@@ -6,7 +6,7 @@ Tick-size quantization before execution, quantity validation, serialization as d
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN, getcontext, InvalidOperation
+from decimal import Decimal, ROUND_HALF_UP, getcontext
 from typing import Union
 import re
 

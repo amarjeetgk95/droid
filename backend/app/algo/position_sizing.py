@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from dataclasses import dataclass
-from app.algo.money import D, quantize_qty
-import math
+from app.algo.money import D
 import structlog
 
 logger = structlog.get_logger()

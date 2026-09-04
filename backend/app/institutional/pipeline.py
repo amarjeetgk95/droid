@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 
@@ -27,7 +26,7 @@ from app.institutional.market_intelligence import market_intelligence_engine
 from app.institutional.breakout_engine import breakout_engine, short_horizon_strategy, continuation_strategy
 from app.institutional.ai_confirmation import ai_confirmation_engine, AIConfirmationRequest
 from app.institutional.signal import create_signal, signal_fsm, check_ttl, check_freshness_before_submit, final_execution_guard, Signal
-from app.institutional.decimal_types import D, normalize_price_to_tick, validate_quantity, compute_notional
+from app.institutional.decimal_types import D, normalize_price_to_tick, validate_quantity
 from app.institutional.portfolio_risk import institutional_portfolio_engine, PortfolioState
 from app.institutional.audit import audit_trail, AuditRecord
 from app.institutional.telegram_notifications import telegram_notification_queue

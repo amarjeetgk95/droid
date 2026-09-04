@@ -4,9 +4,8 @@ Domain Models for Historical Intelligence Engine — §5, §17, §25, §26, §32
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
-from typing import Literal, Any
+from typing import Literal
 
 
 # ── Versioning Metadata (§32) ─────────────────────────────────────────

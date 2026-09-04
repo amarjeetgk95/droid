@@ -9,7 +9,6 @@ from datetime import datetime
 
 from app.core.token_manager import TokenManager
 from app.core.rate_limiter import TokenBucketRateLimiter
-from app.models.contracts import ContractMaster, TickEvent
 
 
 class MarketDataProvider(ABC):

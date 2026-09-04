@@ -14,7 +14,6 @@ import random
 from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass
-from typing import Literal
 from uuid import UUID, uuid4
 import structlog
 

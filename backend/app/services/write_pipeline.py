@@ -1,8 +1,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
-from typing import NamedTuple, Any
+from typing import NamedTuple
 from app.models.contracts import TickEvent
 from app.models.timeseries import CandleRecord
 from app.services.timeseries_store import timeseries_store

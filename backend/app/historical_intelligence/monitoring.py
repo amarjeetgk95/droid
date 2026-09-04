@@ -3,13 +3,11 @@ Monitoring, Latency Benchmarks, Index Lifecycle & Failure Handling — §§36, 3
 """
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 import structlog
 from app.historical_intelligence.schemas import (
-    HIEStatus,
     IndexLifecycleState,
 )
 

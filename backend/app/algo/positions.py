@@ -6,8 +6,7 @@ Emergency exit failures → ORPHANED_ALERT (§64-65), never assume closed.
 """
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Literal, Any

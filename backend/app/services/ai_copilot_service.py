@@ -9,20 +9,13 @@ import json
 from typing import AsyncGenerator
 import structlog
 
-from app.models.ai import AIChatRequest, AIChatMessage, AIChatStreamChunk
+from app.models.ai import AIChatRequest, AIChatMessage
 from app.ai.streaming import (
     sse_event,
-    sse_content_chunk,
-    sse_reasoning_chunk,
-    sse_tool_call_chunk,
     sse_tool_result_chunk,
-    sse_done_chunk,
-    sse_error_chunk,
 )
 from app.ai.tools import AI_TOOLS_SCHEMA, execute_tool
 from app.ai.fallback_router import stream_chat_with_fallback
-from app.services.market_service import MarketService
-from app.services.regime_service import regime_service
 
 logger = structlog.get_logger()
 

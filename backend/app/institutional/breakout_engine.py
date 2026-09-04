@@ -7,14 +7,12 @@ Simple price crossing level is not enough — evaluate structure, candle close, 
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Literal, Any
-from enum import Enum
+from typing import Literal
 
 from app.algo.money import D
-from app.institutional.market_intelligence import MarketContext, market_intelligence_engine
+from app.institutional.market_intelligence import MarketContext
 
 Direction = Literal["BULLISH", "BEARISH"]
 BreakoutStatus = Literal["POSSIBLE", "WATCH", "CONFIRMED", "REJECTED", "INVALIDATED", "EXPIRED", "FAILED"]

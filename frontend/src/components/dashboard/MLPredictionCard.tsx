@@ -93,7 +93,7 @@ export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: st
           onClick={() => {
             setLoading(true);
             api.getMLPrediction(symbol)
-              .then(res => { setFallback(res.data); setError(null); })
+              .then(res => { setPrediction(res.data); setError(null); })
               .catch(err => setError(err instanceof Error ? err.message : 'Failed to fetch ML prediction'))
               .finally(() => setLoading(false));
           }}

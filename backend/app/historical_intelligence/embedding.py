@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 from app.historical_intelligence.schemas import NormalizedFeatureVector
-from app.historical_intelligence.versioning import EMBEDDING_VERSION, FEATURE_VERSION
+from app.historical_intelligence.versioning import EMBEDDING_VERSION
 
 EMBEDDING_DIM: int = 64
 

@@ -1,7 +1,14 @@
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _open_market(mock_market_open):
+    """Ensure market is considered open for paper trading API tests."""
+    pass
 
 
 class TestPaperTradingEndpoints:

@@ -5,17 +5,14 @@ Exposes: instruments, market intelligence, breakout, signal, audit, health, tele
 from __future__ import annotations
 
 import time
-import hmac
-import hashlib
-import uuid
 from decimal import Decimal
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
+from fastapi import APIRouter, HTTPException, Request, Header, Query
 from pydantic import BaseModel
 
 from app.institutional.instrument_registry import asset_registry, CapabilityMap
-from app.institutional.clocks import get_session_clock, get_event_clock
+from app.institutional.clocks import get_session_clock
 from app.institutional.feed_circuit import feed_circuit
 from app.institutional.sequence import get_sequence_validator
 from app.institutional.snapshot_buffer import synchronized_buffer
@@ -27,7 +24,7 @@ from app.institutional.decimal_types import D, normalize_price_to_tick, validate
 from app.institutional.portfolio_risk import institutional_portfolio_engine, PortfolioState, PositionExposure
 from app.institutional.audit import audit_trail
 from app.institutional.pipeline import institutional_pipeline
-from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, telegram_rate_limiter, verify_telegram_secret, handle_telegram_update, is_duplicate_update, live_order_confirmation_markup, format_live_order_alert
+from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, verify_telegram_secret, handle_telegram_update, is_duplicate_update
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/v1/institutional", tags=["institutional"])
@@ -77,7 +74,6 @@ class MIRequest(BaseModel):
 
 @router.post("/market-intelligence/evaluate")
 def evaluate_market_intelligence(req: MIRequest):
-    from app.institutional.market_intelligence import MarketContext
     # Handle NOT_APPLICABLE for BTC — ignore forced PCR
     prof = asset_registry.get(req.instrument_id)
     if prof and prof.asset_class == "CRYPTO" and req.options_data and "pcr" in req.options_data:
@@ -253,7 +249,7 @@ def validate_contract(instrument_id: str, price: str, quantity: str):
     # Exposure
     exp = None
     try:
-        from app.institutional.decimal_types import compute_notional, normalize_exposure
+        from app.institutional.decimal_types import normalize_exposure
         exp = normalize_exposure(price, quantity, spec.contract_multiplier)
     except Exception:
         pass

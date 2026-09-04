@@ -6,9 +6,8 @@ Staleness 2-5s, heartbeat 10s, timeout 30s
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field
-from enum import Enum
+from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Literal
 import structlog
 

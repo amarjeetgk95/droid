@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import PaperPortfolioDB, PaperOrderDB, PaperPositionDB
-from app.models.paper import VirtualOrder, VirtualPosition, PortfolioSummary
+from app.models.paper import VirtualOrder, VirtualPosition
 
 
 class PaperTradingRepository:

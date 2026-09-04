@@ -1,7 +1,6 @@
 import os
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 from app.core.config import settings
 import structlog

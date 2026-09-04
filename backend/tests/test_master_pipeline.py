@@ -357,6 +357,11 @@ class TestNoMockFallback:
 
 
 class TestBrokerFeedback:
+    @pytest.fixture(autouse=True)
+    def _open_market(self, mock_market_open):
+        """Ensure market is considered open for broker feedback tests."""
+        pass
+
     @pytest.mark.asyncio
     async def test_paper_service_broker_feedback_updates_position(self):
         from app.services.paper_service import paper_service

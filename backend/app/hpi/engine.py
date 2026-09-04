@@ -6,7 +6,6 @@ confidence when coverage is limited or derivative datasets are missing.
 """
 from __future__ import annotations
 
-from app.hpi import constants as C
 from app.hpi.models import CoverageReport, HPIAnalysis, HPISetup
 from app.hpi.service import HPIService, CANDLE_CATEGORIES
 

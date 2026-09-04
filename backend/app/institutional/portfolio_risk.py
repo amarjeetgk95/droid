@@ -13,7 +13,6 @@ from typing import Literal
 
 from app.algo.money import D
 from app.algo.risk import RiskDecision, RiskCheck
-from app.institutional.instrument_registry import asset_registry
 
 RiskResult = Literal["APPROVED", "REJECTED"]
 

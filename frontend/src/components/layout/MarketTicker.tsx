@@ -60,10 +60,10 @@ function MarketTickerInner({ cards: cardsProp, loading: loadingProp }: { cards?:
               <span
                 className={`tabular-nums inline-flex items-center gap-0.5 font-semibold px-1.5 py-0.5 rounded text-[11px] leading-none border ${
                   isNeutral
-                    ? 'text-muted-foreground bg-muted border-border'
+                    ? 'text-muted-foreground bg-secondary border-border'
                     : isPos
-                      ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
-                      : 'text-red-500 bg-red-500/10 border-red-500/20'
+                      ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/25'
+                      : 'text-rose-700 bg-rose-500/10 border-rose-500/25'
                 }`}
               >
                 <span className="text-[9px] leading-none">{isNeutral ? '—' : isPos ? '▲' : '▼'}</span>

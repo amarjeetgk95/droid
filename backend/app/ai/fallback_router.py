@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import structlog
 from typing import AsyncGenerator, Any
-from app.models.ai import AIChatRequest, AIChatStreamChunk, AIChatMessage
-from app.ai.registry import create_provider_for_test, get_llm_provider
+from app.models.ai import AIChatRequest, AIChatStreamChunk
+from app.ai.registry import create_provider_for_test
 from app.ai.base import BaseLLMProvider
 from app.core.config import settings
 

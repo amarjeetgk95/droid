@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 from app.quant.black76 import black76_price, black76_greeks
-from app.quant.black_scholes import black_scholes_price, black_scholes_greeks
+from app.quant.black_scholes import black_scholes_price
 
 IV_MIN_BRACKET: float = 0.005  # 0.5% min IV
 IV_MAX_BRACKET: float = 5.0    # 500% max IV

@@ -1,13 +1,12 @@
 """Background worker for labeling pattern outcomes."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 import structlog
 from app.core.config import settings
 from app.core.database import get_async_session_factory, is_database_configured
 from app.repositories.pattern_outcome_repository import PatternOutcomeRepository
 from app.services.market_service import MarketService
-from app.services.regime_service import regime_service
 
 logger = structlog.get_logger()
 

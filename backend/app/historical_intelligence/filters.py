@@ -4,14 +4,12 @@ Builds query filters for Qdrant and in-memory ANN vector indexes.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from datetime import timezone
+from typing import Any, Callable
 from app.historical_intelligence.schemas import (
     HistoricalStateSnapshot,
     HistoricalQuery,
     MarketRegime,
-    VolatilityRegime,
-    SessionPhase,
 )
 
 

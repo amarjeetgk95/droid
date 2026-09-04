@@ -3,7 +3,7 @@ from typing import Optional
 from app.models.historical import (
     DetectedPatternModel, HistoricalShiftPoint, HistoricalShiftsResponse,
     DaySeasonality, SeasonalityResponse, WatchlistItem,
-    PatternHitRate, PatternHitRateResponse, PatternOutcomeRecord, PatternOutcomesRequest
+    PatternHitRateResponse, PatternOutcomeRecord
 )
 from app.services.market_service import MarketService
 from app.services.regime_service import regime_service
@@ -273,7 +273,6 @@ class HistoricalService:
             # For 3D/5D: fetch daily candles
             # Convert timeframe to daily for forward-looking
             from datetime import timedelta
-            from app.core.config import settings
 
             # Determine number of trading days needed
             days_needed = 5

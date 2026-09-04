@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from app.models.regime import (
     MarketRegimeOverview, TechnicalIndicators, KeyLevelsModel,
     PivotSetModel, VixRegimeInfo, MarketRegimeState, VixRegimeCategory

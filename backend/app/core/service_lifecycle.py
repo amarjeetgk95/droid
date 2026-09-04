@@ -246,7 +246,6 @@ async def start_telegram_stack() -> None:
     """
     try:
         from app.institutional.telegram import telegram_link_manager
-        from app.institutional.telegram_notifications import notification_policy
 
         await telegram_link_manager.restore_state()
         logger.info(

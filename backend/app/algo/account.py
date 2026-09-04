@@ -5,12 +5,7 @@ System modes OFF/PAPER/LIVE, consent, kill switch, live entry gate §81
 """
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
-from decimal import Decimal
-from dataclasses import dataclass
 from typing import Literal
-from uuid import UUID
 import structlog
 
 logger = structlog.get_logger()

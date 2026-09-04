@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone, date
-from decimal import Decimal, InvalidOperation
-from typing import Optional, Any
+from decimal import Decimal
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Body
@@ -27,20 +27,19 @@ from app.algo.capital import capital_engine
 from app.algo.risk import trade_risk_engine, portfolio_risk_engine, OrderIntent, PortfolioExposure, PortfolioRiskInput
 from app.algo.position_sizing import size_position, SizingInputs
 from app.algo.execution import order_manager, execution_safety, broker_registry
-from app.algo.positions import position_manager, exit_engine
+from app.algo.positions import exit_engine
 from app.algo.reconciliation import reconciliation_engine
 from app.algo.audit import audit_trail, AuditRecord, alert_deduper
 from app.algo.account import live_entry_gate
 from app.algo.clock import clock_authority
-from app.algo.data_health import DataHealthMonitor
-from app.algo.market_data import technical_engine, mtf_engine, fo_engine, options_selector, regime_engine
-from app.algo.signal_fusion import signal_fusion, SignalInputs, conflict_resolver, ConflictingSignal, trigger_engine
+from app.algo.market_data import options_selector
+from app.algo.signal_fusion import signal_fusion, SignalInputs
 from app.algo.ai_governance import ai_governance, AIModelIdentity, AIDecision
 from app.algo.instruments import instrument_master
 from app.algo.models import (
-    AlgoAccount, AlgoCapitalConfig, AlgoCapitalReservation, AlgoOrderDB, AlgoPositionDB,
+    AlgoAccount, AlgoCapitalConfig, AlgoOrderDB, AlgoPositionDB,
     AlgoSignalDB, AlgoKillSwitch, AlgoConsent, AlgoRiskDecision, AlgoAuditLog,
-    AlgoDailyRiskState, AlgoStrategy
+    AlgoStrategy
 )
 from app.models.market import ApiMeta, DataStatus
 import structlog

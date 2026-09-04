@@ -5,8 +5,8 @@ and derives safe internal operational limits (70-80% of broker ceiling).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List
 
 
 @dataclass(frozen=True)

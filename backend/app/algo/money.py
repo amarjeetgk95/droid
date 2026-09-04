@@ -6,7 +6,7 @@ Never float for price/P&L/fees/margin/capital/risk.
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN, getcontext, InvalidOperation
+from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN, getcontext
 from typing import Union
 
 # Sufficient precision for intermediate calculations

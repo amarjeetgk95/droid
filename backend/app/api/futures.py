@@ -5,9 +5,7 @@ Exposes Term Structure (Contango/Backwardation), Open Interest Buildup, and Expi
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+from fastapi import APIRouter
 
 from app.models.market import ApiMeta, DataStatus
 

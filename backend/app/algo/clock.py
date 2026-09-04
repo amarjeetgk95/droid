@@ -6,8 +6,8 @@ Server clock only for processing metadata. Track drift.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Literal
 import structlog
 

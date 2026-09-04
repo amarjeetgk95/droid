@@ -3,10 +3,8 @@ Analog Selection, De-Duplication, and Aggregation Engine — §11, §14, §15, �
 """
 from __future__ import annotations
 
-from typing import Optional
 from app.quant.historical_intelligence.models import (
-    CandleData, NormalizedFeatures, MarketRegime, SessionPhase,
-    HistoricalAnalogMatch, AnalogAnalyticsSummary
+    CandleData, NormalizedFeatures, MarketRegime, HistoricalAnalogMatch, AnalogAnalyticsSummary
 )
 from app.quant.historical_intelligence.feature_extractor import extract_features
 from app.quant.historical_intelligence.regime_classifier import classify_regime, are_regimes_compatible

@@ -36,7 +36,7 @@ ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
     "VALIDATED": {"ARMED", "TRIGGERED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
     "ARMED": {"TRIGGERED", "CONFIRMED", "EXPIRED", "INVALIDATED"},
     "TRIGGERED": {"CONFIRMED", "INVALIDATED", "EXPIRED"},
-    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "INVALIDATED", "CLOSED"},
+    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "INVALIDATED", "EXPIRED", "CLOSED"},
     "TARGET_1_HIT": {"TARGET_2_HIT", "STOP_LOSS_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED"},
     "TARGET_2_HIT": {"CLOSED"},
     "STOP_LOSS_HIT": {"CLOSED"},
@@ -229,7 +229,7 @@ class SignalFSMManager:
 
         for sig in list(self._signals.values()):
             try:
-                if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
+                if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED") or (sig.fsm_state == "CONFIRMED" and not sig.actual_fill_price and not sig.paper_order):
                     if is_market_closed:
                         ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED")
                         if ok:

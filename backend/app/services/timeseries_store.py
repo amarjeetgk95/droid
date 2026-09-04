@@ -2,9 +2,9 @@ import asyncio
 import gzip
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Sequence
-from app.models.timeseries import CandleRecord, HistoricalQuery
+from app.models.timeseries import CandleRecord
 from app.models.contracts import TickEvent
 import structlog
 

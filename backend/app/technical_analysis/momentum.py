@@ -1,4 +1,3 @@
-import math
 
 def rsi(prices, period=14):
     if len(prices) < period+1: return 50.0

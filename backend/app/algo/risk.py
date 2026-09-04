@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal, Any
 from uuid import UUID
-from enum import Enum
 import structlog
 
 from app.algo.money import D

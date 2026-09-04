@@ -6,14 +6,11 @@ Expiry health, IV surface, breakout confirmation
 """
 from __future__ import annotations
 
-import time
-from decimal import Decimal
 from typing import Literal, Any
 
 import structlog
 
 from app.institutional.instrument_registry import asset_registry
-from app.institutional.decimal_types import D
 from app.services.options_service import options_service
 
 logger = structlog.get_logger()

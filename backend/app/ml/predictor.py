@@ -1,5 +1,4 @@
 import math
-import uuid
 from datetime import datetime, timezone
 from app.models.ml import MLPredictionResponse, MLFeatureContribution
 from app.ml.feature_extractor import extract_ml_feature_vector, MLFeatures

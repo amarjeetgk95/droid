@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timezone
-from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 

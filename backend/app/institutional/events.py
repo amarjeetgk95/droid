@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.algo.money import D

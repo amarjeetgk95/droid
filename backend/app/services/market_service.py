@@ -5,7 +5,7 @@ from app.models.market import (
     MarketHealthStatus, MarketStatusResponse, MarketBreadthData,
     DataStatus,
 )
-from app.core.circuit_breaker import CircuitBreaker, CircuitState
+from app.core.circuit_breaker import CircuitBreaker
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.services.market_data_coordinator import market_data_coordinator

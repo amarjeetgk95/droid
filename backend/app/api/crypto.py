@@ -20,7 +20,7 @@ def _make_meta(provider: str = "binance") -> ApiMeta:
 def _check_symbol(symbol: str) -> str:
     try:
         return binance_service.validate_symbol(symbol)
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported symbol '{symbol}'. Allowed symbols: {list(ALLOWED_CRYPTO_SYMBOLS)}",

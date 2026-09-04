@@ -1,4 +1,3 @@
-import math
 from typing import NamedTuple, Any
 from app.models.regime import TechnicalIndicators, KeyLevelsModel
 from app.models.options import OptionsAnalytics, MaxPainResult

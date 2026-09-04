@@ -6,7 +6,7 @@ Recovery via clean resync, authoritative snapshot, derived-state rebuild.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 import structlog
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass, field
-from typing import Literal, Any
+from typing import Literal
 import structlog
 
 from app.algo.money import D
@@ -123,7 +123,7 @@ class TechnicalEngine:
         # Simple scoring: replicate spec's example output
         # Real implementation calls calculate_rsi, macd, vwap etc (already exists)
         try:
-            from app.quant.indicators import calculate_rsi, calculate_ema
+            pass
         except Exception:
             pass
 

@@ -3,7 +3,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from app.services.historical_service import historical_service
 from app.models.market import ApiMeta, DataStatus
-from app.models.historical import PatternHitRateResponse, PatternOutcomeRecord, PatternOutcomesRequest
 
 router = APIRouter(tags=["historical"])
 

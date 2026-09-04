@@ -18,7 +18,7 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 import structlog
 
-from app.signals.strategies.base import SignalCandidate, StrategyName, TradeDirection
+from app.signals.strategies.base import SignalCandidate, TradeDirection
 
 logger = structlog.get_logger()
 

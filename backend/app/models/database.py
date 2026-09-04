@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, Any
 from uuid import UUID, uuid4
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, BigInteger,
+    Boolean, DateTime, ForeignKey, Integer, Text, BigInteger,
     Float, UniqueConstraint, Date, func
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.core.market_state import capture_market_state
 from app.services.trigger_gateway import trigger_gateway, TriggerType
 from app.services.staleness_guard import check_staleness
-from app.services.pricing_engine import calculate_deterministic_pricing, validate_risk_reward, calculate_position_size, validate_quantitative_confirmation
+from app.services.pricing_engine import calculate_deterministic_pricing, validate_quantitative_confirmation
 from app.services.execution_state_machine import execution_state_machine, ExecutionState
 from app.services.observability import get_trace, get_all_traces, new_analysis_id, log_pipeline_event
 from app.models.market import ApiMeta, DataStatus

@@ -12,7 +12,6 @@ from app.historical_intelligence.schemas import (
     VolatilityRegime,
     SessionPhase,
 )
-from app.historical_intelligence.versioning import SIMILARITY_VERSION
 
 # Configurable and versioned similarity weights (§14)
 DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {

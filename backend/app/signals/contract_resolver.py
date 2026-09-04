@@ -13,7 +13,7 @@ import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 APPROVED_UNDERLYINGS = {"NIFTY", "BANKNIFTY", "SENSEX"}
 

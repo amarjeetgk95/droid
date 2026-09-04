@@ -273,11 +273,12 @@ class PaperTradingService:
         payload: BasketOrderPayload,
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
+        allow_closed_market: bool = False,
     ) -> list[VirtualOrder]:
         """Execute a multi-leg strategy basket."""
         results: list[VirtualOrder] = []
         for ord_payload in payload.orders:
-            res = await self.place_order(ord_payload, session, user_id)
+            res = await self.place_order(ord_payload, session, user_id, allow_closed_market=allow_closed_market)
             results.append(res)
         return results
 
@@ -286,6 +287,7 @@ class PaperTradingService:
         position_id: str,
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
+        allow_closed_market: bool = False,
     ) -> VirtualPosition:
         """Close an open position at current market price."""
         if position_id not in self._positions or not self._positions[position_id].is_open:
@@ -303,20 +305,21 @@ class PaperTradingService:
             quantity=pos.quantity,
             price=pos.ltp,
         )
-        await self.place_order(exit_order, session, user_id)
+        await self.place_order(exit_order, session, user_id, allow_closed_market=allow_closed_market)
         return self._positions[position_id]
 
     async def square_off_all(
         self,
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
+        allow_closed_market: bool = False,
     ) -> list[VirtualPosition]:
         """Emergency square off of all active positions."""
         closed: list[VirtualPosition] = []
         open_ids = [pid for pid, pos in self._positions.items() if pos.is_open]
         for pid in open_ids:
             try:
-                c = await self.square_off_position(pid, session, user_id)
+                c = await self.square_off_position(pid, session, user_id, allow_closed_market=allow_closed_market)
                 closed.append(c)
             except Exception as e:
                 logger.warning("square_off_failed", pid=pid, error=str(e))

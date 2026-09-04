@@ -238,8 +238,10 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   // Compute live trade values with latest websocket ticks or backend MTM
   const computedTrades = useMemo(() => {
     return trades.map((t) => {
-      const isOpen = ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status);
-      if (!isOpen) {
+      // Mark-to-market P&L applies ONLY to genuinely EXECUTED positions with an actual fill price.
+      // Unexecuted signals (CONFIRMED, ARMED, EXPIRED) must never display live MTM losses.
+      const isLivePosition = t.status === 'EXECUTED' && t.actual_fill_price !== null && t.actual_fill_price !== undefined && t.actual_fill_price > 0;
+      if (!isLivePosition) {
         return {
           ...t,
           displayPrice: t.exit_price ?? t.actual_fill_price ?? t.trigger_price,
@@ -247,7 +249,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
           displayPoints: t.actual_pnl_points ?? 0,
           displayPct: t.actual_pnl_pct ?? 0,
           isProfit: (t.actual_pnl_inr ?? 0) >= 0,
-          liveLtp: t.exit_price,
+          liveLtp: t.exit_price ?? (t.status === 'CONFIRMED' ? undefined : t.trigger_price),
         };
       }
 

@@ -8,9 +8,7 @@ from app.services.binance_ws_service import (
     get_binance_ws_url,
     build_combined_stream_url,
     build_ticker_streams,
-    DEFAULT_SYMBOLS,
     parse_ticker_to_tick_event,
-    binance_ws_manager,
 )
 import structlog
 

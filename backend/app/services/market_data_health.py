@@ -1,6 +1,5 @@
 import time
-from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict
 from app.models.crypto import CryptoHealthResponse
 
 

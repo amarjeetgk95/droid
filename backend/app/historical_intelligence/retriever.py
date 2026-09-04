@@ -4,9 +4,7 @@ Provides dual-backend support: Live Qdrant cluster & high-speed In-Memory Index 
 """
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 import structlog
 import httpx
 
@@ -18,7 +16,7 @@ from app.historical_intelligence.schemas import (
     ForwardOutcomeHorizon,
 )
 from app.historical_intelligence.filters import MetadataFilterBuilder
-from app.historical_intelligence.similarity import compute_composite_similarity, cosine_similarity
+from app.historical_intelligence.similarity import compute_composite_similarity
 from app.historical_intelligence.recency import compute_recency_weight, is_in_fresh_window
 
 logger = structlog.get_logger()

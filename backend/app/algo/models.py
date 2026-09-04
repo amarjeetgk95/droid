@@ -6,9 +6,9 @@ from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional, Any
 from uuid import UUID, uuid4
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, Float, UniqueConstraint, Date, func, Numeric
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, Date, func, Numeric
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
-from sqlalchemy.orm import DeclarativeBase, relationship, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.database import Base  # reuse Base
 

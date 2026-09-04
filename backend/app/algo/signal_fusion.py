@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Literal, Any
+from typing import Literal
 from uuid import UUID, uuid4
 import structlog
 

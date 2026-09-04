@@ -1,4 +1,3 @@
-import asyncio
 from collections import deque
 from typing import Deque
 from app.models.contracts import TickEvent, EventPriority

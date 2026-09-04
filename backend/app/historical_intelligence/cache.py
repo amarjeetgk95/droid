@@ -5,7 +5,7 @@ In-memory and Redis cache for frequent historical query contexts and candidate e
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Optional
 from app.historical_intelligence.schemas import HistoricalIntelligenceResult
 
 

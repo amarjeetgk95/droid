@@ -4,11 +4,9 @@ Prepares prompt-ready factual evidence for the LLM Decision Layer without mathem
 """
 from __future__ import annotations
 
-from typing import Any
 from app.historical_intelligence.schemas import (
     HistoricalIntelligenceResult,
     AIStructuredContext,
-    SampleReliability,
 )
 from app.historical_intelligence.statistics import classify_sample_reliability
 

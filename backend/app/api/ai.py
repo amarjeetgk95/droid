@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import time
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Body, Header, Request
+from fastapi import APIRouter, HTTPException, Query, Body, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.ai_service import ai_service
@@ -15,7 +15,7 @@ from app.models.ai import (
     AITradeValidationRequest,
     AIDailyBriefingResponse,
 )
-from app.services.openrouter_catalog import get_model_catalog, validate_model_or_raise, get_cache_status, clear_cache as clear_model_cache
+from app.services.openrouter_catalog import get_model_catalog, validate_model_or_raise, get_cache_status
 from app.models.market import ApiMeta, DataStatus
 from app.core.config import settings
 

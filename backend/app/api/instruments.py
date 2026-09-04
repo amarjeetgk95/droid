@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Query
 from app.instruments.search import search
-from app.instruments.schemas import InstrumentSearchResponse
 from datetime import datetime, timezone
 from app.models.market import ApiMeta, DataStatus
 

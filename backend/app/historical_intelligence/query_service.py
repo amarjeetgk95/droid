@@ -12,7 +12,6 @@ import structlog
 
 from app.historical_intelligence.schemas import (
     CandleData,
-    HistoricalStateSnapshot,
     HistoricalQuery,
     HistoricalIntelligenceResult,
     HIEStatus,

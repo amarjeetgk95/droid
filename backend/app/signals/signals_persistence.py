@@ -146,14 +146,20 @@ def sanitize_persisted_signals() -> int:
         market_perm = calendar_service.can_trade_now()
         market_open = market_perm.allowed
 
-        # 1. Sweep pre-trigger signals if market is closed
+        # 1. Sweep unexecuted signals if market is closed
         if not market_open:
             for sid, inst in list(signal_fsm._signals.items()):
-                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED"):
+                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED") or (inst.fsm_state == "CONFIRMED" and not inst.actual_fill_price and not inst.paper_order):
                     prior = inst.fsm_state
                     inst.fsm_state = "EXPIRED"
                     sanitized_count += 1
                     logger.info("sanitized_closed_market_signal", signal_id=sid, prior_state=prior)
+
+            for aid, rec in list(signal_audit_ledger._trades.items()):
+                if rec.status in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED") and not rec.actual_fill_price and not rec.executed_at_utc:
+                    rec.status = "EXPIRED"
+                    rec.unrealized_pnl_inr = 0.0
+                    rec.total_pnl_inr = 0.0
 
         # 2. Check for invalid prices (<= 0) in audit ledger
         for aid, rec in list(signal_audit_ledger._trades.items()):

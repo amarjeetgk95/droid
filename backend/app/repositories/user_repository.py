@@ -1,8 +1,7 @@
 from typing import Optional
 from uuid import UUID
-from sqlalchemy import select, delete, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 from app.models.database import Profile, UserSettings, Watchlist, WatchlistItem, Instrument, Expiry
 import structlog
 
