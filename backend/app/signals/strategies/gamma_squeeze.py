@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class GammaSqueezeStrategy(Strategy):
@@ -20,7 +21,7 @@ class GammaSqueezeStrategy(Strategy):
         fno = ctx.fno
         spot = ctx.spot_price
         tick = Decimal("0.05")
-        atr = Decimal(str(ctx.indicators.get("atr", spot * Decimal("0.007"))))
+        atr = resolve_realistic_atr(ctx.underlying, spot, ctx.indicators)
 
         pcr = float(fno.get("pcr", 1.0))
         oi_change = float(fno.get("oi_change_pct", fno.get("oi_data", {}).get("oi_change_pct", 5.0)))

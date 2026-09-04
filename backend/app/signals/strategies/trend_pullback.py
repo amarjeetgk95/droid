@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class TrendPullbackStrategy(Strategy):
@@ -26,7 +27,7 @@ class TrendPullbackStrategy(Strategy):
         ema50 = Decimal(str(trend_data.get("ema50") or spot * Decimal("0.995")))
         ema200 = Decimal(str(trend_data.get("ema200") or spot * Decimal("0.990")))
         adx = float(ind.get("adx") or trend_data.get("adx", 25.0))
-        atr = Decimal(str(ind.get("atr", spot * Decimal("0.005"))))
+        atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
@@ -37,7 +38,7 @@ class TrendPullbackStrategy(Strategy):
                 entry_min = normalize_price(ema20, tick)
                 entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
                 trigger = normalize_price(spot + tick, tick)
-                stop_loss = normalize_price(ema50 - (atr * Decimal("0.5")), tick)
+                stop_loss = normalize_price(entry_min - (atr * Decimal("1.0")), tick)
                 risk_pts = entry_min - stop_loss
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(entry_min + (risk_pts * Decimal("1.5")), tick)
@@ -86,7 +87,7 @@ class TrendPullbackStrategy(Strategy):
                 entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
                 entry_max = normalize_price(ema20, tick)
                 trigger = normalize_price(spot - tick, tick)
-                stop_loss = normalize_price(ema50 + (atr * Decimal("0.5")), tick)
+                stop_loss = normalize_price(entry_max + (atr * Decimal("1.0")), tick)
                 risk_pts = stop_loss - entry_max
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(entry_max - (risk_pts * Decimal("1.5")), tick)

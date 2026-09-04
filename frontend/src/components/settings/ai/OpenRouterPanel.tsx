@@ -1,8 +1,10 @@
 'use client';
+
 import React, { useState } from 'react';
-import { Key, CheckCircle2, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Key, CheckCircle2, AlertCircle, Eye, EyeOff, ExternalLink } from 'lucide-react';
 import type { AISettings } from '@/lib/settings';
 import { OpenRouterModelSelector } from '../OpenRouterModelSelector';
+import { SettingSection, SettingRow } from '../ui/SettingPrimitives';
 
 interface Props {
   settings: AISettings;
@@ -12,36 +14,67 @@ interface Props {
 
 export function OpenRouterPanel({ settings, onChange, errors = [] }: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `ai.${field}`)?.message;
-  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const toggleShow = (k: string) => setShowKeys((p) => ({ ...p, [k]: !p[k] }));
+  const [showKey, setShowKey] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-        <Key className="w-4 h-4 text-primary" />
-        OpenRouter
-        <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-mono">DYNAMIC CATALOG</span>
-      </h3>
-      <div className="bg-primary/5 border border-primary/20 rounded-lg p-3.5 text-xs space-y-3">
-        <div className="flex items-center gap-2 font-semibold text-foreground">
-          <Key className="w-3.5 h-3.5 text-primary" /> OpenRouter API Key
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 border border-emerald-500/20 font-mono">NO HARDCODE</span>
+    <SettingSection
+      title="OpenRouter Dynamic Gateway"
+      description="Connect to thousands of open-source & frontier models via unified API keys."
+      icon={Key}
+      action={
+        <a
+          href="https://openrouter.ai/keys"
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+        >
+          <span>Get API Key</span>
+          <ExternalLink className="w-3 h-3" />
+        </a>
+      }
+    >
+      <SettingRow
+        label="OpenRouter API Key"
+        description="Stored securely in browser localStorage and synced to your encrypted profile."
+        error={getError('openRouterApiKey')}
+      >
+        <div className="w-full max-w-sm space-y-1.5">
+          <div className="relative">
+            <input
+              type={showKey ? 'text' : 'password'}
+              placeholder="sk-or-v1-..."
+              value={settings.openRouterApiKey}
+              onChange={(e) => onChange({ openRouterApiKey: e.target.value })}
+              className="w-full bg-secondary/40 border border-border/70 rounded-md px-3 py-1.5 pr-9 text-xs font-mono text-foreground placeholder:text-muted-foreground/60 transition-colors focus:outline-hidden focus:border-ring focus:ring-1 focus:ring-ring"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <div className="text-[11px] flex items-center gap-1.5">
+            {settings.openRouterApiKey ? (
+              <span className="text-emerald-600 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>API key configured</span>
+              </span>
+            ) : (
+              <span className="text-muted-foreground flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 text-amber-500" />
+                <span>Enter key to unlock model catalog</span>
+              </span>
+            )}
+          </div>
         </div>
-        <p className="text-[11px] text-muted-foreground leading-relaxed">
-          Enter <code className="font-mono">sk-or-v1-...</code> from <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai/keys</a>. Stored in localStorage + Supabase, sent per-request. Server env fallback is optional.
-        </p>
-        <div className="relative">
-          <input type={showKeys['openrouter'] ? 'text' : 'password'} placeholder="sk-or-v1-..." value={settings.openRouterApiKey} onChange={(e) => onChange({ openRouterApiKey: e.target.value })} className="w-full bg-card border border-border rounded-lg px-3 py-2.5 pr-10 text-xs font-mono focus:border-primary focus:outline-none" />
-          <button type="button" onClick={() => toggleShow('openrouter')} className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground cursor-pointer">
-            {showKeys['openrouter'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-        {getError('openRouterApiKey') && <span className="text-[11px] text-destructive block">{getError('openRouterApiKey')}</span>}
-        <div className="text-[11px] flex items-center gap-1">
-          {settings.openRouterApiKey ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Key set • Save then Run Live Test</span> : <span className="text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />No key — add and Save</span>}
-        </div>
+      </SettingRow>
+
+      <div className="p-5 border-t border-border/40">
+        <OpenRouterModelSelector settings={settings} onChange={onChange} />
       </div>
-      <OpenRouterModelSelector settings={settings} onChange={onChange} />
-    </div>
+    </SettingSection>
   );
 }

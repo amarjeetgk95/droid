@@ -1,4 +1,5 @@
 'use client';
+
 import React from 'react';
 import { Brain } from 'lucide-react';
 import type { AISettings, AIConnectionMode } from '@/lib/settings';
@@ -10,6 +11,7 @@ import { DirectProviderPanel } from './ai/DirectProviderPanel';
 import { OllamaPanel } from './ai/OllamaPanel';
 import { PersonaControls } from './ai/PersonaControls';
 import { LiveVerification } from './ai/LiveVerification';
+import { SettingSection } from './ui/SettingPrimitives';
 
 interface Props {
   settings: AISettings;
@@ -23,27 +25,37 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     (settings.provider === 'openrouter' ? 'OpenRouter' : settings.provider === 'ollama' ? 'Local Ollama' : 'OpenRouter');
 
   return (
-    <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-        <div>
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <Brain className="w-4 h-4 text-primary" />
-            AI CONFIGURATION
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">3 MODES</span>
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">Unified quantitative → AI reasoning pipeline. Market data flows through deterministic validators before AI, stale checks, risk, then execution.</p>
-        </div>
+    <div className="space-y-6">
+      {/* 1. Inference Gateway & Architecture */}
+      <SettingSection
+        title="Inference Gateway &amp; Routing"
+        description="Select AI execution runtime and dispatch policy for option strategies and signals."
+        icon={Brain}
+      >
         <ConnectionModeSelector settings={settings} onChange={onChange} />
-        <RoutingModeSelector settings={settings} onChange={onChange} />
-      </div>
+        <div className="divide-y divide-border/40 border-t border-border/40">
+          <RoutingModeSelector settings={settings} onChange={onChange} />
+        </div>
+      </SettingSection>
 
+      {/* 2. Specialized Task Routing */}
       <TaskRoutingGrid settings={settings} onChange={onChange} />
 
-      {connectionMode === 'OpenRouter' && <OpenRouterPanel settings={settings} onChange={onChange} errors={errors} />}
-      {connectionMode === 'Direct Provider' && <DirectProviderPanel settings={settings} onChange={onChange} />}
-      {connectionMode === 'Local Ollama' && <OllamaPanel settings={settings} onChange={onChange} errors={errors} />}
+      {/* 3. Provider Credentials & Catalog */}
+      {connectionMode === 'OpenRouter' && (
+        <OpenRouterPanel settings={settings} onChange={onChange} errors={errors} />
+      )}
+      {connectionMode === 'Direct Provider' && (
+        <DirectProviderPanel settings={settings} onChange={onChange} />
+      )}
+      {connectionMode === 'Local Ollama' && (
+        <OllamaPanel settings={settings} onChange={onChange} errors={errors} />
+      )}
 
+      {/* 4. Persona & Sampling Controls */}
       <PersonaControls settings={settings} onChange={onChange} />
+
+      {/* 5. Live Diagnostics Probe */}
       <LiveVerification settings={settings} />
     </div>
   );

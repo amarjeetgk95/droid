@@ -311,11 +311,47 @@ class SignalScanner:
             return [], [f"MARKET_CLOSED_{perm.reason}"]
 
         from app.signals.trigger_gate import check_trigger_integrity
+        from app.signals.risk_engine import central_risk_engine, StrategySetup
 
         registered_signals: list[SignalInstance] = []
         rejected_gates: list[str] = []
 
         for cand in candidates:
+            # ── Centralized Risk Engine Validation (Enforces Envelopes & Rejection of Oversized SL) ──
+            strat_setup = StrategySetup(
+                strategy_name=cand.strategy,
+                underlying=cand.underlying,
+                direction=cand.direction,
+                timeframe=cand.timeframe,
+                is_scalp=cand.is_scalp,
+                spot_price=cand.spot_price,
+                entry_trigger=cand.trigger,
+                raw_structural_stop=cand.stop_loss,
+                structural_target_candidates=[cand.target_1, cand.target_2],
+                atr_5m=Decimal(str(round(float(cand.risk_points or 20.0), 2))),
+                confidence=cand.overall_confidence,
+            )
+            risk_decision = central_risk_engine.evaluate(strat_setup)
+            if not risk_decision.accepted:
+                rejected_gates.append(f"{cand.strategy}:{risk_decision.rejection_reason}")
+                logger.info(
+                    "candidate_rejected_risk_engine",
+                    strategy=cand.strategy,
+                    underlying=cand.underlying,
+                    reason=risk_decision.rejection_reason,
+                )
+                continue
+
+            # Update candidate with validated, realistic parameters
+            cand.stop_loss = risk_decision.stop_loss
+            cand.target_1 = risk_decision.target_1
+            cand.target_2 = risk_decision.target_2
+            cand.risk_points = Decimal(str(risk_decision.risk_points))
+            cand.risk_reward_t1 = risk_decision.risk_reward_t1
+            cand.risk_reward_t2 = risk_decision.risk_reward_t2
+            cand.ttl_seconds = risk_decision.trigger_ttl_seconds
+            cand.time_stop_seconds = risk_decision.active_time_stop_seconds
+
             # ── Trigger integrity gate: kill born-triggered / no-edge setups ──
             gate = check_trigger_integrity(
                 underlying=cand.underlying,
@@ -371,6 +407,10 @@ class SignalScanner:
                 risk_reward_t2=cand.risk_reward_t2,
                 ttl_seconds=cand.ttl_seconds,
                 runner_ttl_seconds=cand.runner_ttl_seconds,
+                time_stop_seconds=cand.time_stop_seconds,
+                lots=risk_decision.lots,
+                quantity=risk_decision.quantity,
+                max_rupee_loss=risk_decision.max_rupee_loss,
                 confidence=fused_score,
                 confluence_breakdown={
                     "technical": cand.technical_score,

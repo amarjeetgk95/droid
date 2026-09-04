@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class OpeningRangeBreakoutStrategy(Strategy):
@@ -24,7 +25,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
         # Check for ORB range in indicators or fallback to first candle extremes
         orb_data = ind.get("orb") or ind.get("price_action", {}).get("opening_range", {})
-        atr = Decimal(str(ind.get("atr", spot * Decimal("0.006"))))
+        atr = resolve_realistic_atr(ctx.underlying, spot, ind)
 
         orb_high = Decimal(str(orb_data.get("high") or spot * Decimal("1.004")))
         orb_low = Decimal(str(orb_data.get("low") or spot * Decimal("0.996")))

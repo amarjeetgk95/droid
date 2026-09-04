@@ -1,6 +1,7 @@
 'use client';
+
 import React from 'react';
-import { Brain, Cloud, Network, Server } from 'lucide-react';
+import { Cloud, Network, Server, Check } from 'lucide-react';
 import type { AISettings, AIConnectionMode } from '@/lib/settings';
 
 interface Props {
@@ -22,15 +23,34 @@ export function ConnectionModeSelector({ settings, onChange }: Props) {
     onChange({ connectionMode: mode, provider: legacyMap[mode] || 'openrouter' } as unknown as Partial<AISettings>);
   };
 
+  const modes = [
+    {
+      id: 'OpenRouter' as AIConnectionMode,
+      name: 'OpenRouter Gateway',
+      icon: Cloud,
+      badge: 'Unified',
+      desc: 'Unified catalog, automatic model fallbacks, free-only verified models',
+    },
+    {
+      id: 'Direct Provider' as AIConnectionMode,
+      name: 'Direct Provider',
+      icon: Network,
+      badge: 'Native',
+      desc: 'Direct API endpoints for OpenAI, Novita, NVIDIA, Gemini, or custom proxy',
+    },
+    {
+      id: 'Local Ollama' as AIConnectionMode,
+      name: 'Local Ollama',
+      icon: Server,
+      badge: 'Private',
+      desc: '100% on-device private inference via localhost:11434 with zero cloud dependencies',
+    },
+  ];
+
   return (
-    <div>
-      <label className="text-xs font-semibold text-foreground block mb-2">Connection Mode</label>
+    <div className="p-5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {[
-          { id: 'OpenRouter' as AIConnectionMode, name: 'OpenRouter', icon: Cloud, badge: 'Gateway', desc: 'Unified gateway · dynamic catalog · free-only enforced' },
-          { id: 'Direct Provider' as AIConnectionMode, name: 'Direct Provider', icon: Network, badge: '5 Adapters', desc: 'OpenAI · Novita · NVIDIA · Gemini · Custom' },
-          { id: 'Local Ollama' as AIConnectionMode, name: 'Local Ollama', icon: Server, badge: '100% Private', desc: 'http://localhost:11434 · no cloud key' },
-        ].map((m) => {
+        {modes.map((m) => {
           const Icon = m.icon;
           const selected = connectionMode === m.id;
           return (
@@ -38,20 +58,32 @@ export function ConnectionModeSelector({ settings, onChange }: Props) {
               key={m.id}
               type="button"
               onClick={() => handleConnectionMode(m.id)}
-              className={`flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer ${selected ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-border bg-card hover:bg-secondary/40'}`}
+              className={`flex flex-col text-left p-4 rounded-lg border transition-all cursor-pointer ${
+                selected
+                  ? 'border-foreground/30 bg-secondary/50 shadow-2xs'
+                  : 'border-border/60 bg-card hover:bg-secondary/30'
+              }`}
             >
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-semibold text-xs text-foreground"><Icon className="w-3.5 h-3.5" /> {m.name}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-medium ${selected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{m.badge}</span>
+              <div className="flex items-center justify-between w-full">
+                <span className="flex items-center gap-2 font-medium text-xs text-foreground">
+                  <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                  {m.name}
+                </span>
+                {selected ? (
+                  <Check className="w-3.5 h-3.5 text-foreground shrink-0" />
+                ) : (
+                  <span className="text-[10px] font-mono text-muted-foreground px-1 py-0.5 rounded bg-secondary">
+                    {m.badge}
+                  </span>
+                )}
               </div>
-              <span className="text-[11px] text-muted-foreground mt-2">{m.desc}</span>
+              <span className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
+                {m.desc}
+              </span>
             </button>
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground mt-2">
-        Selected: <span className="font-mono font-semibold text-foreground">{connectionMode}</span> — quantitative engine is provider-independent.
-      </p>
     </div>
   );
 }

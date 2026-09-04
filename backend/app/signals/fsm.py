@@ -92,9 +92,15 @@ class SignalInstance(BaseModel):
     breakeven_trigger_price: Optional[Decimal] = None
 
     # Two-Clock Lifecycles (§6, §20)
+    time_stop_seconds: Optional[int] = None
     time_stop_at_utc: Optional[int] = None
     runner_time_stop_at_utc: Optional[int] = None
     runner_ttl_seconds: Optional[int] = None
+
+    # Position Sizing & Capital Allocation
+    lots: Optional[int] = None
+    quantity: Optional[int] = None
+    max_rupee_loss: Optional[float] = None
 
     # Staged Target Execution (§18, §25)
     t1_price: Optional[Decimal] = None
@@ -173,6 +179,10 @@ class SignalFSMManager:
         else:
             signal.breakeven_trigger_price = signal.spot_price - (risk_r * Decimal("0.8"))
 
+        # Pre-entry trigger expiry based on signal.ttl_seconds
+        if signal.ttl_seconds and signal.ttl_seconds > 0:
+            signal.expires_at_utc = signal.created_at_utc + (signal.ttl_seconds * 1000)
+
         self._signals[signal.signal_id] = signal
         audit = FSMTransitionAudit(
             signal_id=signal.signal_id,
@@ -245,8 +255,8 @@ class SignalFSMManager:
                     ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
                     if ok:
                         runner_stopped += 1
-                # 3. Scalp active time-stop auto-fire (prevents CONFIRMED scalp zombies)
-                elif sig.fsm_state == "CONFIRMED" and getattr(sig, "is_scalp", False) and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
+                # 3. Active trade time-stop auto-fire (prevents zombie active trades)
+                elif sig.fsm_state == "CONFIRMED" and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
                     ok, _ = self.transition(sig.signal_id, "TIME_STOP_HIT", reason="TIME_STOP_EXCEEDED")
                     if ok:
                         runner_stopped += 1
@@ -326,10 +336,10 @@ class SignalFSMManager:
             sig.triggered_at_utc = sig.last_updated_utc
         elif to_state == "CONFIRMED":
             sig.confirmed_at_utc = sig.last_updated_utc
-            # Anchor Active Time-Stop (§20)
-            if sig.is_scalp and sig.time_stop_at_utc is None:
-                ttl_ms = (sig.ttl_seconds or 240) * 1000
-                sig.time_stop_at_utc = sig.last_updated_utc + ttl_ms
+            # Anchor Active Trade Holding Time-Stop (§18, §20)
+            if sig.time_stop_at_utc is None:
+                duration_sec = sig.time_stop_seconds or (900 if sig.is_scalp else 4500)
+                sig.time_stop_at_utc = sig.last_updated_utc + (duration_sec * 1000)
         elif to_state == "TARGET_1_HIT":
             sig.t1_hit = True
             sig.t1_fill_timestamp = sig.last_updated_utc

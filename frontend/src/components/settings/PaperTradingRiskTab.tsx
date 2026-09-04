@@ -1,10 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FileText, Coins, ShieldCheck, AlertTriangle, RefreshCw, CheckCircle2, AlertCircle, Clock, PieChart } from 'lucide-react';
+import { ShieldCheck, RefreshCw, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
 import { PaperTradingSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { PortfolioSummary } from '@/lib/types';
+import {
+  SettingSection,
+  SettingRow,
+  SettingInput,
+  SettingSelect,
+  SettingSwitch,
+} from './ui/SettingPrimitives';
 
 interface Props {
   settings: PaperTradingSettings;
@@ -25,7 +32,6 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
       const res = await api.getPaperPortfolio();
       setPortfolio(res.data);
     } catch {
-      // Fallback
       setPortfolio({
         virtual_capital: settings.initialCapital,
         available_margin: settings.initialCapital,
@@ -43,10 +49,15 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
 
   useEffect(() => {
     fetchPortfolio();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleResetAccount = async () => {
-    if (!confirm('Are you sure you want to reset your virtual paper trading account? This will square off all active positions and restore starting capital.')) {
+    if (
+      !confirm(
+        'Are you sure you want to reset your virtual paper trading account? This will square off all active positions and restore starting capital.'
+      )
+    ) {
       return;
     }
 
@@ -69,13 +80,18 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
     }
   };
 
+  const virtualCapital = portfolio?.virtual_capital ?? settings.initialCapital;
+  const availableMargin = portfolio?.available_margin ?? settings.initialCapital;
+  const usedMargin = portfolio?.used_margin ?? 0;
+  const realizedPnl = portfolio?.total_realized_pnl ?? 0;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {msg && (
         <div
-          className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
+          className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
             msg.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
               : 'bg-destructive/10 text-destructive border border-destructive/20'
           }`}
         >
@@ -85,184 +101,181 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
             <AlertCircle className="w-4 h-4 shrink-0" />
           )}
           <span>{msg.text}</span>
+          <button
+            type="button"
+            onClick={() => setMsg(null)}
+            className="ml-auto text-muted-foreground hover:text-foreground text-[11px]"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      {/* 1. Live Virtual Account Telemetry Card */}
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Coins className="w-4 h-4 text-emerald-400" />
-              Live Virtual Portfolio & Capital Status
-            </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Simulated capital allocation and real-time margin utilization.
-            </p>
-          </div>
+      {/* 1. Account Summary & Status */}
+      <SettingSection
+        title="Virtual Portfolio & Capital"
+        description="Real-time simulated capital allocation, available intraday margin, and net cumulative P&L."
+        icon={Wallet}
+        action={
           <button
             type="button"
             onClick={handleResetAccount}
             disabled={resetting}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/20 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${resetting ? 'animate-spin' : ''}`} />
-            <span>Reset Virtual Capital</span>
+            <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${resetting ? 'animate-spin' : ''}`} />
+            <span>Reset Account</span>
           </button>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
-            <span className="text-muted-foreground text-[11px] block">Virtual Capital</span>
-            <span className="font-mono font-bold text-foreground text-base mt-0.5 block">
-              ₹{(portfolio?.virtual_capital ?? settings.initialCapital).toLocaleString('en-IN')}
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
-            <span className="text-muted-foreground text-[11px] block">Available Margin</span>
-            <span className="font-mono font-semibold text-emerald-400 mt-0.5 block">
-              ₹{(portfolio?.available_margin ?? settings.initialCapital).toLocaleString('en-IN')}
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
-            <span className="text-muted-foreground text-[11px] block">Margin Used</span>
-            <span className="font-mono font-semibold text-foreground mt-0.5 block">
-              ₹{(portfolio?.used_margin ?? 0).toLocaleString('en-IN')} ({portfolio?.margin_utilization_pct ?? 0}%)
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3">
-            <span className="text-muted-foreground text-[11px] block">Total Realized P&L</span>
-            <span
-              className={`font-mono font-bold mt-0.5 block ${
-                (portfolio?.total_realized_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-destructive'
-              }`}
-            >
-              {(portfolio?.total_realized_pnl ?? 0) >= 0 ? '+' : ''}₹{(portfolio?.total_realized_pnl ?? 0).toLocaleString('en-IN')}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Capital & Risk Allocation Parameters */}
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-        <div>
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-primary" />
-            Virtual Execution & Risk Safeguard Parameters
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Enforce trading guardrails, position size limits, and intraday square-off rules for virtual orders.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs pt-1">
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Default Initial Capital (₹)
-            </label>
-            <select
-              value={settings.initialCapital}
-              onChange={(e) => onChange({ initialCapital: Number(e.target.value) })}
-              className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden"
-            >
-              <option value={500000}>₹5,00,000 (5 Lakhs)</option>
-              <option value={1000000}>₹10,00,000 (10 Lakhs - Standard)</option>
-              <option value={2500000}>₹25,00,000 (25 Lakhs)</option>
-              <option value={5000000}>₹50,00,000 (50 Lakhs - HNI)</option>
-              <option value={10000000}>₹1,00,00,000 (1 Crore - Institutional)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Intraday Auto Square-off Time
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={settings.autoSquareOffTime}
-                onChange={(e) => onChange({ autoSquareOffTime: e.target.value })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
-              />
-              <span className="text-muted-foreground shrink-0 font-mono text-[11px]">IST</span>
+        }
+      >
+        <div className="p-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
+              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
+                Virtual Capital
+              </span>
+              <span className="font-mono font-bold text-base text-foreground mt-1 block">
+                ₹{virtualCapital.toLocaleString('en-IN')}
+              </span>
             </div>
-            <span className="text-[10px] text-muted-foreground mt-1 block">
-              Default NSE intraday MIS cutoff (15:20)
-            </span>
-          </div>
 
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Max Capital Per Trade (%)
-            </label>
-            <div className="relative">
-              <input
-                type="number"
-                min="5"
-                max="100"
-                value={settings.maxCapitalPerTradePct}
-                onChange={(e) => onChange({ maxCapitalPerTradePct: Number(e.target.value) || 20 })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
-              />
-              <span className="absolute right-3 top-2 text-muted-foreground">%</span>
+            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
+              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
+                Available Margin
+              </span>
+              <span className="font-mono font-semibold text-base text-emerald-600 mt-1 block">
+                ₹{availableMargin.toLocaleString('en-IN')}
+              </span>
             </div>
-            <span className="text-[10px] text-muted-foreground mt-1 block">
-              Single trade exposure cap
-            </span>
-          </div>
 
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Max Daily Drawdown Halt (%)
-            </label>
-            <div className="relative">
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={settings.maxDailyDrawdownHaltPct}
-                onChange={(e) => onChange({ maxDailyDrawdownHaltPct: Number(e.target.value) || 10 })}
-                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground font-mono"
-              />
-              <span className="absolute right-3 top-2 text-muted-foreground">%</span>
+            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
+              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
+                Margin Utilized
+              </span>
+              <span className="font-mono font-semibold text-base text-foreground mt-1 block">
+                ₹{usedMargin.toLocaleString('en-IN')}{' '}
+                <span className="text-xs font-normal text-muted-foreground">
+                  ({portfolio?.margin_utilization_pct ?? 0}%)
+                </span>
+              </span>
             </div>
-            <span className="text-[10px] text-muted-foreground mt-1 block">
-              Halt trading if daily loss exceeds this %
-            </span>
+
+            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
+              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
+                Realized P&amp;L
+              </span>
+              <span
+                className={`font-mono font-bold text-base mt-1 block ${
+                  realizedPnl >= 0 ? 'text-emerald-600' : 'text-destructive'
+                }`}
+              >
+                {realizedPnl >= 0 ? '+' : ''}₹{realizedPnl.toLocaleString('en-IN')}
+              </span>
+            </div>
           </div>
         </div>
+      </SettingSection>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-foreground block">Order Execution Confirmation</span>
-              <span className="text-[11px] text-muted-foreground">Show preview modal before placing virtual orders</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.requireOrderConfirm}
-              onChange={(e) => onChange({ requireOrderConfirm: e.target.checked })}
-              className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+      {/* 2. Risk Boundaries & Constraints */}
+      <SettingSection
+        title="Execution Limits & Risk Guardrails"
+        description="Enforce exposure ceilings, automatic intraday square-off, and circuit breakers."
+        icon={ShieldCheck}
+      >
+        <SettingRow
+          label="Default Starting Capital"
+          description="Baseline balance restored when provisioning or resetting paper accounts."
+          error={getError('initialCapital')}
+        >
+          <SettingSelect
+            value={settings.initialCapital}
+            onChange={(e) => onChange({ initialCapital: Number(e.target.value) })}
+          >
+            <option value={500000}>₹5,00,000 (5 Lakhs)</option>
+            <option value={1000000}>₹10,00,000 (10 Lakhs - Standard)</option>
+            <option value={2500000}>₹25,00,000 (25 Lakhs)</option>
+            <option value={5000000}>₹50,00,000 (50 Lakhs - HNI)</option>
+            <option value={10000000}>₹1,00,00,000 (1 Crore - Institutional)</option>
+          </SettingSelect>
+        </SettingRow>
+
+        <SettingRow
+          label="Intraday Auto Square-Off Time"
+          description="Mandatory cutoff time (IST) to close open intraday MIS option & futures positions."
+          error={getError('autoSquareOffTime')}
+        >
+          <div className="flex items-center gap-2">
+            <SettingInput
+              type="text"
+              mono
+              value={settings.autoSquareOffTime}
+              onChange={(e) => onChange({ autoSquareOffTime: e.target.value })}
+              className="w-28"
             />
+            <span className="text-xs text-muted-foreground font-mono">IST</span>
           </div>
+        </SettingRow>
 
-          <div className="bg-secondary/30 border border-border/50 rounded-lg p-3 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-foreground block">Allow Overnight / NRML Positions</span>
-              <span className="text-[11px] text-muted-foreground">Enable carryforward options & futures contracts</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.allowOvernightPositions}
-              onChange={(e) => onChange({ allowOvernightPositions: e.target.checked })}
-              className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+        <SettingRow
+          label="Single-Trade Allocation Cap"
+          description="Maximum portfolio percentage allowed on any single executed option structure."
+          error={getError('maxCapitalPerTradePct')}
+        >
+          <div className="flex items-center gap-2">
+            <SettingInput
+              type="number"
+              min="5"
+              max="100"
+              mono
+              value={settings.maxCapitalPerTradePct}
+              onChange={(e) => onChange({ maxCapitalPerTradePct: Number(e.target.value) || 20 })}
+              className="w-28"
             />
+            <span className="text-xs text-muted-foreground font-mono">%</span>
           </div>
-        </div>
-      </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Daily Drawdown Circuit Breaker"
+          description="Automatically halt all execution algorithms if daily losses exceed this threshold."
+          error={getError('maxDailyDrawdownHaltPct')}
+        >
+          <div className="flex items-center gap-2">
+            <SettingInput
+              type="number"
+              min="1"
+              max="100"
+              mono
+              value={settings.maxDailyDrawdownHaltPct}
+              onChange={(e) => onChange({ maxDailyDrawdownHaltPct: Number(e.target.value) || 10 })}
+              className="w-28"
+            />
+            <span className="text-xs text-muted-foreground font-mono">%</span>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Order Confirmation Modal"
+          description="Display an explicit verification modal before routing simulated orders."
+        >
+          <SettingSwitch
+            checked={settings.requireOrderConfirm}
+            onChange={(checked) => onChange({ requireOrderConfirm: checked })}
+            aria-label="Order confirmation modal"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Allow Overnight (NRML) Positions"
+          description="Permit multi-day swing and hedging structures to carry past market close."
+        >
+          <SettingSwitch
+            checked={settings.allowOvernightPositions}
+            onChange={(checked) => onChange({ allowOvernightPositions: checked })}
+            aria-label="Allow overnight positions"
+          />
+        </SettingRow>
+      </SettingSection>
     </div>
   );
 }

@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class BreakoutStrategy(Strategy):
@@ -26,7 +27,7 @@ class BreakoutStrategy(Strategy):
         resistances = [Decimal(str(r)) for r in sr.get("resistance", []) if r]
         supports = [Decimal(str(s)) for s in sr.get("support", []) if s]
 
-        atr = Decimal(str(ind.get("atr", spot * Decimal("0.006"))))
+        atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         vol_ratio = float(ind.get("volume_ratio", 1.2))
         breakout_pressure = float(ind.get("breakout_pressure", ind.get("scores", {}).get("breakout_pressure", 65)))
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")

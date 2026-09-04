@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class MeanReversionStrategy(Strategy):
@@ -23,7 +24,7 @@ class MeanReversionStrategy(Strategy):
 
         bb = ind.get("bollinger_bands") or ind.get("volatility", {}).get("bollinger_bands", {})
         rsi = float(ind.get("rsi") or ind.get("momentum", {}).get("rsi", 50.0))
-        atr = Decimal(str(ind.get("atr", spot * Decimal("0.005"))))
+        atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         
         bb_upper = Decimal(str(bb.get("upper", spot * Decimal("1.01"))))
         bb_middle = Decimal(str(bb.get("middle", spot)))

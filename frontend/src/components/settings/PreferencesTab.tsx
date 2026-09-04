@@ -1,8 +1,22 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Palette, Globe, Volume2, Download, Upload, RotateCcw, CheckCircle2, AlertCircle, LayoutGrid, Sliders } from 'lucide-react';
+import {
+  Palette,
+  Sliders,
+  Download,
+  Upload,
+  RotateCcw,
+  CheckCircle2,
+  AlertCircle,
+} from 'lucide-react';
 import { PreferencesSettings, AppSettings, exportSettingsJson, importSettingsJson } from '@/lib/settings';
+import {
+  SettingSection,
+  SettingRow,
+  SettingSelect,
+  SettingSwitch,
+} from './ui/SettingPrimitives';
 
 interface Props {
   settings: PreferencesSettings;
@@ -13,7 +27,14 @@ interface Props {
   errors?: { path: string; message: string }[];
 }
 
-export function PreferencesTab({ settings, fullSettings, onChange, onFullSettingsChange, onResetAll, errors = [] }: Props) {
+export function PreferencesTab({
+  settings,
+  fullSettings,
+  onChange,
+  onFullSettingsChange,
+  onResetAll,
+  errors = [],
+}: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `preferences.${field}`)?.message;
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [includeSecretsInExport, setIncludeSecretsInExport] = useState(false);
@@ -21,9 +42,11 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
 
   const handleExport = () => {
     try {
-      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(
-        exportSettingsJson(fullSettings, { includeSecrets: includeSecretsInExport })
-      );
+      const dataStr =
+        'data:text/json;charset=utf-8,' +
+        encodeURIComponent(
+          exportSettingsJson(fullSettings, { includeSecrets: includeSecretsInExport })
+        );
       const downloadAnchor = document.createElement('a');
       downloadAnchor.setAttribute('href', dataStr);
       downloadAnchor.setAttribute('download', `droid_settings_${new Date().toISOString().slice(0, 10)}.json`);
@@ -33,8 +56,8 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
       setMsg({
         type: 'success',
         text: includeSecretsInExport
-          ? 'Settings exported WITH API keys — store this file securely!'
-          : 'Settings exported (API keys/secrets stripped for safety).',
+          ? 'Settings exported WITH API keys. Store this file securely.'
+          : 'Settings exported safely (API keys stripped).',
       });
     } catch (err: any) {
       setMsg({ type: 'error', text: 'Failed to export settings: ' + err?.message });
@@ -51,9 +74,9 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
         const content = event.target?.result as string;
         const imported = importSettingsJson(content);
         onFullSettingsChange(imported);
-        setMsg({ type: 'success', text: 'Settings successfully imported from backup file!' });
+        setMsg({ type: 'success', text: 'Configuration imported successfully.' });
       } catch {
-        setMsg({ type: 'error', text: 'Invalid settings JSON backup file format.' });
+        setMsg({ type: 'error', text: 'Invalid JSON backup format.' });
       }
     };
     reader.readAsText(file);
@@ -61,12 +84,12 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {msg && (
         <div
-          className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
+          className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
             msg.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
               : 'bg-destructive/10 text-destructive border border-destructive/20'
           }`}
         >
@@ -76,139 +99,130 @@ export function PreferencesTab({ settings, fullSettings, onChange, onFullSetting
             <AlertCircle className="w-4 h-4 shrink-0" />
           )}
           <span>{msg.text}</span>
+          <button
+            type="button"
+            onClick={() => setMsg(null)}
+            className="ml-auto text-muted-foreground hover:text-foreground text-[11px]"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      {/* 1. Interface & Number Format Preferences */}
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-        <div>
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <Palette className="w-4 h-4 text-primary" />
-            Display & Regional Formatting
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Personalize terminal theme, number representations, and default trading assets.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs pt-1">
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Terminal Visual Theme
-            </label>
-            <div className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              Daylight Light — clean, airy
-            </div>
-            <span className="text-[10px] text-muted-foreground mt-1 block">Light-only (dark removed)</span>
+      {/* 1. Display & Regional Formatting */}
+      <SettingSection
+        title="Display & Regional Formatting"
+        description="Configure terminal visual aesthetics, numeral conventions, and default active indices."
+        icon={Palette}
+      >
+        <SettingRow
+          label="Visual Appearance"
+          description="Daylight Light clean architecture optimized for financial data legibility."
+        >
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/50 border border-border/50 text-xs font-medium text-foreground">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span>Daylight Light</span>
           </div>
+        </SettingRow>
 
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Currency & Number System
-            </label>
-            <select
-              value={settings.numberFormat}
-              onChange={(e) => onChange({ numberFormat: e.target.value as any })}
-              className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden"
-            >
-              <option value="INDIAN">Indian (₹ Lakhs & Crores — ₹1,25,000)</option>
-              <option value="INTERNATIONAL">International (Millions & Billions — 125,000)</option>
-            </select>
-          </div>
+        <SettingRow
+          label="Numeral & Currency System"
+          description="Format monetary values across option chains, P&L, and orders."
+          error={getError('numberFormat')}
+        >
+          <SettingSelect
+            value={settings.numberFormat}
+            onChange={(e) => onChange({ numberFormat: e.target.value as any })}
+          >
+            <option value="INDIAN">Indian (₹ Lakhs & Crores — ₹1,25,000)</option>
+            <option value="INTERNATIONAL">International (Millions & Billions — 125,000)</option>
+          </SettingSelect>
+        </SettingRow>
 
-          <div>
-            <label className="font-semibold text-foreground block mb-1">
-              Default Primary Index
-            </label>
-            <select
-              value={settings.defaultIndexSymbol}
-              onChange={(e) => onChange({ defaultIndexSymbol: e.target.value })}
-              className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden"
-            >
-              <option value="NIFTY 50">NIFTY 50</option>
-              <option value="BANKNIFTY">BANKNIFTY</option>
-              <option value="FINNIFTY">FINNIFTY</option>
-              <option value="SENSEX">SENSEX</option>
-            </select>
-          </div>
-        </div>
+        <SettingRow
+          label="Primary Benchmark Index"
+          description="Default selected underlying asset when launching terminal screens."
+          error={getError('defaultIndexSymbol')}
+        >
+          <SettingSelect
+            value={settings.defaultIndexSymbol}
+            onChange={(e) => onChange({ defaultIndexSymbol: e.target.value })}
+          >
+            <option value="NIFTY 50">NIFTY 50</option>
+            <option value="BANKNIFTY">BANKNIFTY</option>
+            <option value="FINNIFTY">FINNIFTY</option>
+            <option value="SENSEX">SENSEX</option>
+          </SettingSelect>
+        </SettingRow>
+      </SettingSection>
 
-
-      </div>
-
-      {/* 2. Backup, Import & Factory Reset */}
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-        <div>
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-primary" />
-            Configuration Backup & Reset
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Export your quantitative rules and broker configurations to a JSON file or restore defaults.
-            API keys are stripped by default for safety.
-          </p>
-        </div>
-
-        {/* Include secrets toggle */}
-        <div className="bg-secondary/30 border border-border/50 rounded-lg p-3 flex items-center justify-between text-xs">
-          <div>
-            <span className="font-semibold text-foreground block">Include API Keys in Export</span>
-            <span className="text-[11px] text-muted-foreground">
-              {includeSecretsInExport
-                ? '⚠️ API keys WILL be included — store the exported file securely!'
-                : 'API keys and secrets will be stripped from the exported file'}
-            </span>
-          </div>
-          <input
-            type="checkbox"
+      {/* 2. Backup, Import & Reset */}
+      <SettingSection
+        title="Configuration Management"
+        description="Export rules and parameters for backup, migrate between environments, or reset."
+        icon={Sliders}
+      >
+        <SettingRow
+          label="Include Sensitive Credentials in Export"
+          description="When enabled, your API secrets and keys will be included in the JSON dump."
+        >
+          <SettingSwitch
             checked={includeSecretsInExport}
-            onChange={(e) => setIncludeSecretsInExport(e.target.checked)}
-            className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+            onChange={setIncludeSecretsInExport}
+            aria-label="Include API keys in export"
           />
-        </div>
+        </SettingRow>
 
-        <div className="flex flex-wrap gap-3 pt-1">
-          <button
-            type="button"
-            onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
-          >
-            <Download className="w-4 h-4 text-primary" />
-            <span>Export Settings (JSON)</span>
-          </button>
+        <SettingRow
+          label="Backup & Restore"
+          description="Download current configuration snapshot or restore from a JSON file."
+        >
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Export JSON</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Import JSON</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImportFile}
+              className="hidden"
+            />
+          </div>
+        </SettingRow>
 
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
-          >
-            <Upload className="w-4 h-4 text-emerald-400" />
-            <span>Import Settings File</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleImportFile}
-            className="hidden"
-          />
-
+        <SettingRow
+          label="Factory Reset"
+          description="Revert all terminal parameters, risk limits, and pricing models to default defaults."
+        >
           <button
             type="button"
             onClick={() => {
-              if (confirm('Are you sure you want to restore all settings to default values?')) {
+              if (confirm('Are you sure you want to restore all terminal settings to default values?')) {
                 onResetAll();
                 setMsg({ type: 'success', text: 'All settings restored to factory defaults.' });
               }
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/20 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs ml-auto"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-destructive bg-destructive/5 hover:bg-destructive/10 border border-destructive/20 rounded-md text-xs font-medium transition-colors cursor-pointer"
           >
-            <RotateCcw className="w-4 h-4" />
-            <span>Restore Factory Defaults</span>
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Restore Defaults</span>
           </button>
-        </div>
-      </div>
+        </SettingRow>
+      </SettingSection>
     </div>
   );
 }
