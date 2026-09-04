@@ -93,31 +93,34 @@ export function useMarketStream() {
 
         ws.onmessage = (event) => {
           if (isUnmounted) return;
+          // Any message proves the socket is alive (idle watchdog), but only
+          // real MARKET_TICKS prove market data is flowing — heartbeats must
+          // NOT mark the feed fresh, otherwise the UI claims LIVE with 0.00 data.
           lastMessageAtRef.current = Date.now();
-          // Any message (incl. non-tick heartbeats) keeps the feed fresh.
-          if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
-          staleTimerRef.current = setTimeout(() => {
-            if (!isUnmounted) {
-              setTicksFresh(false);
-              setLatestTicks({});
-            }
-          }, FEED_STALE_MS);
           try {
             const payload = JSON.parse(event.data);
             if (payload.type === 'MARKET_TICKS' && Array.isArray(payload.ticks)) {
-              const receivedAt = Date.now();
-              setLatestTicks((prev) => {
-                const updated = { ...prev };
-                payload.ticks.forEach((tick: TickEvent) => {
-                  if (tick && tick.symbol) updated[tick.symbol] = { ...tick, received_at: receivedAt };
+              if (payload.ticks.length > 0) {
+                if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+                staleTimerRef.current = setTimeout(() => {
+                  if (!isUnmounted) {
+                    setTicksFresh(false);
+                    setLatestTicks({});
+                  }
+                }, FEED_STALE_MS);
+                const receivedAt = Date.now();
+                setLatestTicks((prev) => {
+                  const updated = { ...prev };
+                  payload.ticks.forEach((tick: TickEvent) => {
+                    if (tick && tick.symbol) updated[tick.symbol] = { ...tick, received_at: receivedAt };
+                  });
+                  return updated;
                 });
-                return updated;
-              });
-              setLastTickAt(new Date());
-              setTicksFresh(true);
-            } else if (payload.type === 'HEARTBEAT' || payload.type === 'PONG' || payload.type === 'CONNECTION_ESTABLISHED') {
-              setTicksFresh(true);
+                setLastTickAt(new Date());
+                setTicksFresh(true);
+              }
             }
+            // HEARTBEAT / PONG / CONNECTION_ESTABLISHED: keep-alive only.
           } catch {
             // Ignore parse errors
           }

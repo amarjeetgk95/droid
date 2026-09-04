@@ -75,7 +75,7 @@ function SectionError({ message }: { message: string }) {
 export default function DashboardPage() {
   // Tier A live prices from LiveMarketContext (isolated re-renders);
   // Tiers B/C/D analytical data from Dashboard (MarketData) context.
-  const { cards, streamState, loading: liveLoading } = useLiveMarketContext();
+  const { cards, streamState, ticksFresh, loading: liveLoading } = useLiveMarketContext();
   const {
     breadth,
     health,
@@ -189,7 +189,10 @@ export default function DashboardPage() {
     );
   }
 
-  const isStreamLive = streamState === 'CONNECTED';
+  // LIVE requires actual ticks flowing — an open socket with only heartbeats
+  // (broker outage) must read as stale, never as live.
+  const isStreamLive = streamState === 'CONNECTED' && ticksFresh;
+  const isStreamWaiting = streamState === 'CONNECTED' && !ticksFresh;
 
   return (
     <div className="space-y-5 pb-8">
@@ -227,11 +230,15 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
-                isStreamLive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-400'
+                isStreamLive
+                  ? 'bg-emerald-500 animate-pulse'
+                  : isStreamWaiting
+                    ? 'bg-amber-400 animate-pulse'
+                    : 'bg-red-500'
               }`}
             />
             <span className="font-mono font-semibold text-foreground text-[11px]">
-              {isStreamLive ? 'FEED LIVE (WS)' : 'REALTIME 1s'}
+              {isStreamLive ? 'FEED LIVE (WS)' : isStreamWaiting ? 'FEED STALE — RETRYING' : 'FEED DOWN'}
             </span>
             {health?.latency_ms !== null && health?.latency_ms !== undefined && (
               <span className="text-[10px] text-muted-foreground font-mono">

@@ -347,6 +347,15 @@ async def get_dashboard_summary():
         errors["cards"] = "Index cards unavailable"
     else:
         cards = cards_res or []
+        # An empty or all-OFFLINE/zero card set means no live quotes are flowing
+        # (dead broker token, upstream outage) — surface it so clients show an
+        # honest degraded state instead of silent 0.00 cards with degraded=false.
+        if not cards or all(
+            (c.get("ltp") or 0) <= 0 or str(c.get("status", "")).upper() == "OFFLINE"
+            for c in cards
+            if isinstance(c, dict)
+        ):
+            errors["cards"] = "Index cards offline — no live quotes (re-auth broker if persistent)"
 
     breadth_dict = None
     if isinstance(breadth_res, Exception):

@@ -376,11 +376,39 @@ class FyersProvider(MarketDataProvider):
     async def get_health(self) -> MarketHealthStatus:
         self.token_manager.record_heartbeat()
         diag = self.token_manager.get_diagnostics()
-        
+
+        # Honest health: a locally-unexpired token means nothing if FYERS keeps
+        # rejecting quote calls (stale daily token, revoked app). The poller
+        # records RECONNECTING + consecutive failures in exactly that case, so
+        # surface it instead of reporting HEALTHY/LIVE with zero data flowing.
+        # When the market is closed, missing ticks are expected — don't cry wolf.
+        token_ok = bool(diag["is_token_valid"])
+        flowing = (
+            token_ok
+            and self.token_manager.state == ConnectionState.CONNECTED
+            and self._consecutive_failures == 0
+        )
+        try:
+            market_open = calendar_service.is_market_open_now()
+        except Exception:
+            market_open = True  # fail honest: assume open so outages stay visible
+        healthy = flowing or not market_open
+        if not token_ok:
+            message = "Awaiting authentication token — re-auth FYERS (daily token expired/missing)"
+        elif flowing:
+            message = "FYERS API v3 connected"
+        elif not market_open:
+            message = "Market closed — serving last-known snapshot"
+        else:
+            message = (
+                f"FYERS quote pipeline failing ({self._consecutive_failures} consecutive, "
+                f"state={self.token_manager.state.value}) — re-auth FYERS if persistent"
+            )
+
         return MarketHealthStatus(
-            status="HEALTHY" if diag["is_token_valid"] else "DEGRADED",
+            status="HEALTHY" if healthy else "DEGRADED",
             provider=self.provider_name,
-            mode="LIVE" if diag["is_token_valid"] else "OFFLINE",
+            mode="LIVE" if (token_ok and (flowing or not market_open)) else "OFFLINE",
             last_update=datetime.now(timezone.utc),
             data_age_seconds=diag["data_lag_seconds"] or 0.5,
             latency_ms=25.0,
@@ -391,7 +419,7 @@ class FyersProvider(MarketDataProvider):
             dropped_events=0,
             circuit_breaker_state="CLOSED",
             last_heartbeat=datetime.now(timezone.utc),
-            message="FYERS API v3 connected" if diag["is_token_valid"] else "Awaiting authentication token"
+            message=message,
         )
 
     async def get_market_breadth(self) -> MarketBreadthData:

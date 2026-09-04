@@ -158,7 +158,9 @@ export function TopHeader({
   const isDemo = health?.mode === 'OFFLINE';
 
   const authLoginUrl = `https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`;
-  const isHealthy = health?.is_healthy === true && health?.mode !== 'OFFLINE';
+  // MarketHealthStatus has no `is_healthy` field — derive from the real
+  // status/mode signals so the button isn't permanently stuck on amber.
+  const isHealthy = health?.status === 'HEALTHY' && health?.mode === 'LIVE';
 
   return (
     <>
