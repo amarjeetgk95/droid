@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { User, LogOut, Settings, BarChart2, ShieldCheck } from 'lucide-react';
+import { LogOut, Settings, BarChart2, ShieldCheck } from 'lucide-react';
 
 export function UserProfileMenu() {
   const { user, signOut } = useAuth();
@@ -34,7 +34,7 @@ export function UserProfileMenu() {
           <div className="w-6 h-6 rounded-full bg-primary/20 text-primary border border-primary/40 flex items-center justify-center text-xs font-semibold">
             {initial}
           </div>
-          <div className="flex flex-col">
+          <div className="hidden lg:flex flex-col">
             <span className="text-xs font-medium max-w-[130px] truncate text-foreground">
               {emailDisplay}
             </span>

@@ -14,6 +14,10 @@ class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   setToken(token: string | null) {
     this.token = token;
   }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/layout/Sidebar';
-import { TopHeader } from '@/components/layout/TopHeader';
+import { TopHeader, loadTickerVisible, saveTickerVisible } from '@/components/layout/TopHeader';
 import { MarketTicker } from '@/components/layout/MarketTicker';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { MarketDataProvider, useMarketDataContext } from '@/context/MarketDataContext';
@@ -18,12 +18,22 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const { streamState } = useLiveMarketContext();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [tickerVisible, setTickerVisible] = useState(true);
 
   useEffect(() => {
     try {
       setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+      setTickerVisible(loadTickerVisible());
     } catch {}
   }, []);
+
+  const handleToggleTicker = () => {
+    setTickerVisible((v) => {
+      const next = !v;
+      saveTickerVisible(next);
+      return next;
+    });
+  };
 
   const handleCollapsedChange = (v: boolean) => {
     setCollapsed(v);
@@ -41,8 +51,10 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
           marketStatus={marketStatus}
           streamState={streamState}
           onMenuClick={() => setMobileOpen(true)}
+          tickerVisible={tickerVisible}
+          onToggleTicker={handleToggleTicker}
         />
-        <MarketTicker />
+        {tickerVisible && <MarketTicker />}
         <main className="flex-1 overflow-auto p-4">
           {children}
         </main>
