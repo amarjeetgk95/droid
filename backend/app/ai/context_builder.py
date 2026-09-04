@@ -70,8 +70,8 @@ class MarketContextBuilder:
     def build(
         self,
         symbol: str,
-        current_price: float,
-        market_status: str,
+        current_price: float = 0.0,
+        market_status: str = "UNKNOWN",
         structure_1m: str = "",
         structure_3m: str = "",
         structure_5m: str = "",

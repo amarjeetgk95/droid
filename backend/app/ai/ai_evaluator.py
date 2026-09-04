@@ -85,7 +85,7 @@ class AIEvaluator:
         self, symbol: str, overrides: Optional[dict] = None
     ) -> MarketContext:
         """Build market context with field allowlist and size caps per §11."""
-        raw_context = await self.context_builder.build(symbol)
+        raw_context = self.context_builder.build(symbol)
         if overrides:
             raw_context = self.context_builder.apply_overrides(raw_context, overrides)
         return raw_context

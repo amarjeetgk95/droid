@@ -274,5 +274,26 @@ class ScalpingAI:
             self._last_context_hash.clear()
             self._last_decision.clear()
 
+    async def generate(
+        self,
+        symbol: str,
+        regime: "Regime",
+        market_context: "MarketContext",
+    ) -> "AISignal":
+        """Generate a scalping signal. Uses analyze internally."""
+        from app.ai.provider_manager import provider_manager
+        provider = provider_manager.get_primary_provider()
+        if not provider:
+            return AISignal(
+                signal_id=str(uuid.uuid4()),
+                symbol=symbol.upper(),
+                decision=Decision.NO_TRADE,
+                setup_type=SetupType.SCALPING,
+                regime=regime,
+                raw_confidence=0,
+                reasons=["No AI provider available"],
+            )
+        return await self.analyze(market_context, provider, symbol, timeframe="1M")
+
 
 scalping_ai = ScalpingAI()
