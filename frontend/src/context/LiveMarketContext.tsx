@@ -59,6 +59,7 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
   const loading = market?.loading ?? true;
   const streamState: StreamConnectionState = market?.streamState ?? 'CONNECTING';
   const ticksFresh = market?.ticksFresh ?? false;
+  const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
   const marketRefetch = market?.refetch;
   const refetchCards = useCallback(() => {
     if (marketRefetch) return marketRefetch();
@@ -94,43 +95,51 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
 
   const prevDisplayedRef = useRef<Map<string, IndexCard>>(new Map());
   const displayedCards = useMemo(() => {
+    const applyClosedStatus = (list: IndexCard[]) =>
+      isMarketClosed ? list.map((c) => (c.status === 'CLOSED' ? c : { ...c, status: 'CLOSED' as DataStatus })) : list;
+
     if (!batchedTicks || Object.keys(batchedTicks).length === 0) {
       prevDisplayedRef.current.clear();
-      baseCards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return baseCards;
+      const adjusted = applyClosedStatus(baseCards);
+      adjusted.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
+      return adjusted;
     }
     if (streamState !== 'CONNECTED' || !ticksFresh) {
       prevDisplayedRef.current.clear();
-      baseCards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return baseCards;
+      const adjusted = applyClosedStatus(baseCards);
+      adjusted.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
+      return adjusted;
     }
     const next: IndexCard[] = [];
     for (const card of baseCards) {
+      const targetStatus: DataStatus = (card.status === 'CLOSED' || isMarketClosed) ? 'CLOSED' : 'LIVE';
       const tick: TimestampedTick | undefined = batchedTicks[card.symbol];
       if (!tick) {
+        const currentCard = card.status !== targetStatus ? { ...card, status: targetStatus } : card;
         const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev === card) {
-          next.push(card);
-        } else if (prev && deepCardsEqual(prev, card)) {
+        if (prev && prev === currentCard) {
+          next.push(currentCard);
+        } else if (prev && deepCardsEqual(prev, currentCard)) {
           next.push(prev);
         } else {
-          prevDisplayedRef.current.set(card.symbol, card);
-          next.push(card);
+          prevDisplayedRef.current.set(card.symbol, currentCard);
+          next.push(currentCard);
         }
         continue;
       }
       const newLtp = Number(tick.ltp);
       if (!Number.isFinite(newLtp) || newLtp <= 0) {
+        const currentCard = card.status !== targetStatus ? { ...card, status: targetStatus } : card;
         const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev.ltp === card.ltp) next.push(prev);
+        if (prev && prev.ltp === currentCard.ltp && prev.status === targetStatus) next.push(prev);
         else {
-          prevDisplayedRef.current.set(card.symbol, card);
-          next.push(card);
+          prevDisplayedRef.current.set(card.symbol, currentCard);
+          next.push(currentCard);
         }
         continue;
       }
       const prev = prevDisplayedRef.current.get(card.symbol);
-      if (prev && prev.ltp === newLtp && prev.volume === (tick.volume ?? card.volume) && prev.status === 'LIVE') {
+      if (prev && prev.ltp === newLtp && prev.volume === (tick.volume ?? card.volume) && prev.status === targetStatus) {
         next.push(prev);
         continue;
       }
@@ -149,14 +158,14 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
         sparkline,
         volume: tick.volume ?? card.volume,
         open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
-        status: 'LIVE' as DataStatus,
+        status: targetStatus,
         provider: tick.provider || card.provider,
       };
       prevDisplayedRef.current.set(card.symbol, merged);
       next.push(merged);
     }
     return next;
-  }, [baseCards, batchedTicks, streamState, ticksFresh]);
+  }, [baseCards, batchedTicks, streamState, ticksFresh, isMarketClosed]);
 
   const healthValue = useMemo<StreamHealth>(
     () => ({ streamState, ticksFresh }),

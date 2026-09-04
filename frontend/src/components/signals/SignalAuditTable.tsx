@@ -316,8 +316,8 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     });
   };
 
-  // Calculate live aggregate totals
-  const openTrades = computedTrades.filter((t) => ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status));
+  // Calculate live aggregate totals (strictly executed positions with fill price)
+  const openTrades = computedTrades.filter((t) => t.status === 'EXECUTED' && Boolean(t.actual_fill_price));
   const liveUnrealizedPnl = summary?.net_unrealized_pnl_inr ?? openTrades.reduce((acc, t) => acc + t.displayPnlInr, 0);
   const netRealizedPnl = summary?.net_realized_pnl_inr ?? 0;
   const totalCombinedPnl = summary?.total_pnl_inr ?? (netRealizedPnl + liveUnrealizedPnl);
@@ -571,7 +571,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 </tr>
               ) : (
                 filtered.map((t) => {
-                  const isOpen = ['ARMED', 'CONFIRMED', 'EXECUTED'].includes(t.status);
+                  const isOpen = t.status === 'EXECUTED' && Boolean(t.actual_fill_price);
                   const isWin = t.isProfit;
                   const pnlInr = t.displayPnlInr;
 
@@ -689,19 +689,25 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                               LIVE MTM
                             </Badge>
                           )}
-                          <div
-                            className={`text-xs font-bold ${
-                              isWin ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                            }`}
-                          >
-                            {pnlInr >= 0
-                              ? `+₹${pnlInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                              : `-₹${Math.abs(pnlInr).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">
-                            {t.displayPoints ? `${t.displayPoints > 0 ? '+' : ''}${t.displayPoints} pts` : ''}
-                            {t.displayPct ? ` (${t.displayPct > 0 ? '+' : ''}${t.displayPct}%)` : ''}
-                          </div>
+                          {t.status === 'EXECUTED' || t.status === 'WON' || t.status === 'LOST' ? (
+                            <>
+                              <div
+                                className={`text-xs font-bold ${
+                                  isWin ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                }`}
+                              >
+                                {pnlInr >= 0
+                                  ? `+₹${pnlInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `-₹${Math.abs(pnlInr).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {t.displayPoints ? `${t.displayPoints > 0 ? '+' : ''}${t.displayPoints} pts` : ''}
+                                {t.displayPct ? ` (${t.displayPct > 0 ? '+' : ''}${t.displayPct}%)` : ''}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-xs text-muted-foreground/60">—</div>
+                          )}
                         </div>
                       </td>
 

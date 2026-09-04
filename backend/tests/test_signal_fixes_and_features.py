@@ -7,6 +7,11 @@ from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.outcome_tracker import outcome_tracker
 from app.signals.signals_persistence import ensure_signals_tables, persist_executed_signal, restore_signals_from_db, delete_persisted_signal
 
+@pytest.fixture(autouse=True)
+def _open_market(mock_market_open):
+    """Ensure market is considered open for signal fixes and features tests."""
+    pass
+
 
 def test_routes_not_shadowed(client: TestClient):
     """Verify /engines and /stream are not shadowed by /{signal_id}."""
@@ -152,7 +157,7 @@ def test_target_1_win_not_overwritten_by_stop_loss():
     )
 
     # Price rises to Target 1
-    events = outcome_tracker.update_with_price("NIFTY", Decimal("24905.0"))
+    events = outcome_tracker.update_with_price("NIFTY", Decimal("24905.0"), allow_closed_market=True)
     assert any(e["event"] == "TARGET_1_HIT" for e in events)
 
     updated_sig = signal_fsm.get(sig.signal_id)
@@ -160,7 +165,7 @@ def test_target_1_win_not_overwritten_by_stop_loss():
     assert updated_sig.outcome_status == "WIN_T1"
 
     # Price later plummets to Stop Loss
-    events2 = outcome_tracker.update_with_price("NIFTY", Decimal("24740.0"))
+    events2 = outcome_tracker.update_with_price("NIFTY", Decimal("24740.0"), allow_closed_market=True)
     # Should NOT trigger stop loss hit for this won signal
     assert not any(e.get("signal_id") == sig.signal_id and e.get("event") == "STOP_LOSS_HIT" for e in events2)
     assert signal_fsm.get(sig.signal_id).fsm_state == "TARGET_1_HIT"

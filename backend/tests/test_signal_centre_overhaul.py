@@ -21,6 +21,12 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _open_market(mock_market_open):
+    """Ensure market is considered open for signal centre tests."""
+    pass
+
+
 class TestInstitutionalSignalCentre:
 
     def test_approved_universe_guard(self):

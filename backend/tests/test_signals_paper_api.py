@@ -12,7 +12,7 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_paper():
+def reset_paper(mock_market_open):
     paper_service.reset_portfolio()
 
 

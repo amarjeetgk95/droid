@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import {
   Activity,
   AlertTriangle,
@@ -30,6 +31,9 @@ interface Props {
 }
 
 export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Props) {
+  const market = useOptionalMarketDataContext();
+  const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
+
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
@@ -309,12 +313,13 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                       <Button
                         size="sm"
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 w-full sm:w-auto"
+                        className={`${isMarketClosed ? 'bg-muted text-muted-foreground cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} gap-1.5 w-full sm:w-auto`}
                         onClick={handleExecute}
-                        disabled={executing}
+                        disabled={executing || isMarketClosed}
+                        title={isMarketClosed ? 'Market is closed. Orders cannot be executed.' : 'Execute 1-Click Paper Order'}
                       >
                         <Zap className="w-3.5 h-3.5" />
-                        {executing ? 'Executing Paper Order…' : '⚡ Execute 1-Click Paper Order'}
+                        {executing ? 'Executing Paper Order…' : isMarketClosed ? 'Market Closed' : '⚡ Execute 1-Click Paper Order'}
                       </Button>
                     </div>
                   </>

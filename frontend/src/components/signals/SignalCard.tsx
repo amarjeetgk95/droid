@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
 import { safeNum, safeState, ttlLabel } from '@/lib/signal-utils';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -70,8 +71,11 @@ export type SignalDTO = {
   paper_order?: any;
 };
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isMarketClosed }: { status: string; isMarketClosed?: boolean }) {
   const s = status.toUpperCase();
+  if (['DETECTED', 'VALIDATED', 'ARMED', 'CONFIRMED'].includes(s) && isMarketClosed) {
+    return <Badge variant="outline" className="border-slate-500/40 text-muted-foreground bg-muted/40">MARKET CLOSED</Badge>;
+  }
   if (s === 'CONFIRMED') return <Badge className="bg-emerald-500 text-white border-emerald-600 animate-pulse">CONFIRMED</Badge>;
   if (s === 'TARGET_1_HIT') return <Badge className="bg-emerald-600 text-white font-bold">🎯 T1 HIT • RUNNER ACTIVE</Badge>;
   if (s === 'TARGET_2_HIT') return <Badge className="bg-emerald-700 text-white font-bold">🏁 TARGET 2 HIT (+3.0R)</Badge>;
@@ -125,23 +129,28 @@ export function SignalCard({
   const [deleting, setDeleting] = useState(false);
   const [armDelete, setArmDelete] = useState(false);
 
+  const market = useOptionalMarketDataContext();
+  const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
+
   const fsm = safeState(signal.fsm_state);
   const isCall = signal.direction?.includes('CALL') || signal.direction === 'BULLISH';
   const isConfirmed = fsm === 'CONFIRMED';
   const isTargetHit = fsm.includes('TARGET');
   const isStopHit = fsm === 'STOP_LOSS_HIT';
   const isExpired = fsm === 'EXPIRED' || (
-    ['DETECTED', 'VALIDATED', 'ARMED'].includes(fsm) && signal.expires_at_utc ? nowMs > signal.expires_at_utc : false
+    ['DETECTED', 'VALIDATED', 'ARMED', 'CONFIRMED'].includes(fsm) && (
+      (signal.expires_at_utc ? nowMs > signal.expires_at_utc : false) || isMarketClosed
+    )
   );
 
   const borderClass = isTargetHit
     ? 'border-emerald-500 bg-emerald-50/70 border-2'
     : isStopHit
       ? 'border-destructive/60 bg-destructive/10 border-2'
-      : isConfirmed
+      : isConfirmed && !isMarketClosed
         ? 'border-emerald-500 bg-emerald-50/50 border-2'
-        : isExpired
-          ? 'border-border bg-muted/30 opacity-60'
+        : isExpired || isMarketClosed
+          ? 'border-border bg-muted/30 opacity-70'
           : 'bg-card border-border hover:border-primary/50';
 
   const dirColor = isCall ? 'text-emerald-600' : 'text-red-600';
@@ -234,7 +243,7 @@ export function SignalCard({
           </div>
         </div>
 
-        <StatusBadge status={fsm} />
+        <StatusBadge status={fsm} isMarketClosed={isMarketClosed} />
       </div>
 
       {/* Two-Clock Lifecycle Banner (§6, §20) */}
@@ -346,18 +355,30 @@ export function SignalCard({
             })()}
           </div>
         ) : (
-          !isExpired && !isTargetHit && !isStopHit && (
-            <div className="flex items-center justify-between w-full gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 font-semibold gap-1.5"
-                onClick={handleExecutePaper}
-                disabled={executing}
-              >
-                <Zap className="w-3.5 h-3.5 text-emerald-600" />
-                {executing ? 'Executing…' : '⚡ 1-Click Paper Order'}
-              </Button>
+          <div className="flex items-center justify-between w-full gap-2">
+            {!isExpired && !isTargetHit && !isStopHit ? (
+              isMarketClosed ? (
+                <Badge variant="outline" className="h-7 text-[10px] font-mono text-muted-foreground border-border bg-muted/30">
+                  Market Closed
+                </Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 font-semibold gap-1.5"
+                  onClick={handleExecutePaper}
+                  disabled={executing}
+                >
+                  <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                  {executing ? 'Executing…' : '⚡ 1-Click Paper Order'}
+                </Button>
+              )
+            ) : (
+              <span className="text-[11px] font-mono text-muted-foreground">
+                {isMarketClosed ? 'Market Closed' : isExpired ? 'Expired' : isTargetHit ? 'Target Completed' : isStopHit ? 'Stop Hit' : ''}
+              </span>
+            )}
+            <div className="flex items-center gap-1">
               <Button
                 size="sm"
                 variant="ghost"
@@ -380,7 +401,7 @@ export function SignalCard({
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
-          )
+          </div>
         )}
         {execError && <span className="text-[10px] text-destructive">{execError}</span>}
       </div>
