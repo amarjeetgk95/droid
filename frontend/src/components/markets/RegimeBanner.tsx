@@ -106,20 +106,20 @@ export function RegimeBanner({
         <div className="bg-secondary/60 p-2.5 rounded-lg border border-border">
           <span className="text-[11px] text-muted-foreground block">Nearest Resistance</span>
           <span className="font-bold font-mono text-sm text-destructive">
-            {overview?.key_levels.nearest_resistance ? `₹${overview.key_levels.nearest_resistance}` : '---'}
+            {overview?.key_levels?.nearest_resistance ? `₹${overview.key_levels.nearest_resistance}` : '---'}
           </span>
           <span className="text-[10px] text-muted-foreground block">
-            +{overview?.key_levels.distance_to_resistance_pts} pts away
+            +{overview?.key_levels?.distance_to_resistance_pts ?? 0} pts away
           </span>
         </div>
 
         <div className="bg-secondary/60 p-2.5 rounded-lg border border-border">
           <span className="text-[11px] text-muted-foreground block">Nearest Support</span>
           <span className="font-bold font-mono text-sm text-success">
-            {overview?.key_levels.nearest_support ? `₹${overview.key_levels.nearest_support}` : '---'}
+            {overview?.key_levels?.nearest_support ? `₹${overview.key_levels.nearest_support}` : '---'}
           </span>
           <span className="text-[10px] text-muted-foreground block">
-            -{overview?.key_levels.distance_to_support_pts} pts away
+            -{overview?.key_levels?.distance_to_support_pts ?? 0} pts away
           </span>
         </div>
 
@@ -128,10 +128,10 @@ export function RegimeBanner({
             <ShieldCheck className="w-3 h-3 text-primary" /> VIX Regime
           </span>
           <span className="font-bold font-mono text-sm text-foreground">
-            {overview?.vix_regime.regime_category.replace('_', ' ') || 'NORMAL'}
+            {overview?.vix_regime?.regime_category?.replace('_', ' ') || 'NORMAL'}
           </span>
           <span className="text-[10px] text-muted-foreground block">
-            VIX: {overview?.vix_regime.vix_value} ({overview?.vix_regime.change_percent}%)
+            VIX: {overview?.vix_regime?.vix_value ?? '---'} ({overview?.vix_regime?.change_percent ?? 0}%)
           </span>
         </div>
       </div>

@@ -18,8 +18,8 @@ export function IndicatorsGrid({
     );
   }
 
-  const rsi = indicators.rsi_14;
-  const adx = indicators.adx_14;
+  const rsi = indicators.rsi_14 ?? 50;
+  const adx = indicators.adx_14 ?? 0;
   const isSupertrendBull = indicators.supertrend_direction === 'BULLISH';
 
   return (
@@ -108,7 +108,7 @@ export function IndicatorsGrid({
 
           <div className="flex items-baseline justify-between">
             <span className="text-lg font-bold font-mono text-foreground">
-              ₹{indicators.supertrend_value.toLocaleString('en-IN')}
+              ₹{(indicators.supertrend_value ?? 0).toLocaleString('en-IN')}
             </span>
             <span className="text-[11px] text-muted-foreground">
               Trailing Level

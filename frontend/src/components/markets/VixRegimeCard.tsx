@@ -16,7 +16,7 @@ export function VixRegimeCard({
     );
   }
 
-  const category = vixInfo.regime_category;
+  const category = vixInfo.regime_category || 'NORMAL';
   const isElevated = category === 'ELEVATED_VOLATILITY' || category === 'EXTREME_VOLATILITY';
 
   return (

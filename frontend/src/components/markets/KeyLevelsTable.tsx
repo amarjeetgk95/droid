@@ -18,9 +18,9 @@ export function KeyLevelsTable({
     );
   }
 
-  const cp = keyLevels.classic_pivots;
-  const fp = keyLevels.fibonacci_pivots;
-  const cam = keyLevels.camarilla_pivots;
+  const cp = keyLevels.classic_pivots || {} as NonNullable<typeof keyLevels.classic_pivots>;
+  const fp = keyLevels.fibonacci_pivots || {} as NonNullable<typeof keyLevels.fibonacci_pivots>;
+  const cam = keyLevels.camarilla_pivots || {} as NonNullable<typeof keyLevels.camarilla_pivots>;
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
