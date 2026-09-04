@@ -191,7 +191,7 @@ function MultiTimeframeTable() {
   const bullCount = multiTimeframe.filter(t => t.direction === 'BULLISH').length;
   const bearCount = multiTimeframe.filter(t => t.direction === 'BEARISH').length;
   const total = multiTimeframe.length;
-  const alignment = bullCount === total ? 'STRONG BULLISH' : bearCount === total ? 'STRONG BEARISH' : bullCount > bearCount ? 'BULLISH LEAD' : bearCount > bullCount ? 'BEARISH LEAD' : 'MIXED';
+  const alignment = bullCount === total ? 'STRONG BULLISH' : bearCount === total ? 'STRONG BEARISH' : bullCount === 0 && bearCount === 0 ? 'MIXED' : bullCount > bearCount ? 'BULLISH LEAD' : 'BEARISH LEAD';
 
   return (
     <div>
