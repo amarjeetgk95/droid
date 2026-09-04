@@ -103,9 +103,32 @@ async def restore_hpi_from_db() -> dict[str, Any] | None:
 
             if state_row:
                 s_json, p_json, a_json, d_json, is_seeded = state_row
+                if isinstance(s_json, str):
+                    try:
+                        s_json = json.loads(s_json)
+                    except Exception:
+                        s_json = []
                 selection = s_json if isinstance(s_json, list) else []
+
+                if isinstance(p_json, str):
+                    try:
+                        p_json = json.loads(p_json)
+                    except Exception:
+                        p_json = []
                 policies = p_json if isinstance(p_json, list) else []
+
+                if isinstance(a_json, str):
+                    try:
+                        a_json = json.loads(a_json)
+                    except Exception:
+                        a_json = []
                 audit = a_json if isinstance(a_json, list) else []
+
+                if isinstance(d_json, str):
+                    try:
+                        d_json = json.loads(d_json)
+                    except Exception:
+                        d_json = {}
                 deleted_ranges = d_json if isinstance(d_json, dict) else {}
                 seeded = bool(is_seeded)
 
@@ -151,7 +174,7 @@ async def persist_hpi_to_db(
             await session.execute(
                 text("""
                     INSERT INTO hpi_state (id, selection_json, policies_json, audit_json, deleted_ranges_json, seeded, updated_at)
-                    VALUES ('global', :sel::jsonb, :pol::jsonb, :aud::jsonb, :del::jsonb, :sd, now())
+                    VALUES ('global', CAST(:sel AS JSONB), CAST(:pol AS JSONB), CAST(:aud AS JSONB), CAST(:del AS JSONB), :sd, now())
                     ON CONFLICT (id) DO UPDATE SET
                         selection_json = EXCLUDED.selection_json,
                         policies_json = EXCLUDED.policies_json,
@@ -188,7 +211,7 @@ async def persist_hpi_to_db(
                 await session.execute(
                     text("""
                         INSERT INTO hpi_datasets (symbol, category, record_count, storage_bytes, oldest_ts, newest_ts, records_json, updated_at)
-                        VALUES (:sym, :cat, :cnt, :b, :old_ts, :new_ts, :recs::jsonb, now())
+                        VALUES (:sym, :cat, :cnt, :b, :old_ts, :new_ts, CAST(:recs AS JSONB), now())
                         ON CONFLICT (symbol, category) DO UPDATE SET
                             record_count = EXCLUDED.record_count,
                             storage_bytes = EXCLUDED.storage_bytes,

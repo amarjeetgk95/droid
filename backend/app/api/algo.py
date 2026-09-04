@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.security import get_current_user, AuthUser
+from app.models.database import Profile
 
 from app.algo.money import D
 from app.algo.capital import capital_engine
@@ -83,10 +84,20 @@ async def _get_or_create_account(session: AsyncSession | None, user_id: UUID) ->
             # Verify it still matches DB; but return cached for stability
             return cached
     try:
-        res = await session.execute(select(AlgoAccount).where(AlgoAccount.user_id == user_id))
+        # Check if user_id exists in profiles; if dev user not in profiles, map to existing active profile
+        target_uid = user_id
+        prof_res = await session.execute(select(Profile.id).where(Profile.id == user_id))
+        if not prof_res.scalar_one_or_none():
+            if str(user_id) == "00000000-0000-0000-0000-000000000001":
+                active_prof_res = await session.execute(select(Profile.id).order_by(Profile.created_at.asc()).limit(1))
+                db_uid = active_prof_res.scalar_one_or_none()
+                if db_uid:
+                    target_uid = db_uid
+
+        res = await session.execute(select(AlgoAccount).where(AlgoAccount.user_id == target_uid))
         acct = res.scalar_one_or_none()
         if not acct:
-            acct = AlgoAccount(user_id=user_id, mode="OFF")
+            acct = AlgoAccount(user_id=target_uid, mode="OFF")
             session.add(acct)
             await session.flush()
             cfg = AlgoCapitalConfig(account_id=acct.id)
@@ -94,6 +105,7 @@ async def _get_or_create_account(session: AsyncSession | None, user_id: UUID) ->
             ks = AlgoKillSwitch(account_id=acct.id)
             session.add(ks)
             await session.flush()
+            await session.commit()
         _synthetic_account_cache[user_id] = acct
         return acct
     except Exception as e:
@@ -709,9 +721,11 @@ async def create_signal(
         try:
             db_sig = AlgoSignalDB(
                 signal_id=signal.signal_id, account_id=aid, strategy_id=signal.strategy_id,
-                instrument_id=signal.instrument_id, symbol=signal.symbol, direction=signal.direction,
+                instrument_id=str(signal.instrument_id) if signal.instrument_id else None,
+                symbol=signal.symbol, direction=signal.direction,
                 market_snapshot_id=signal.market_snapshot_id, technical_state=signal.technical_state,
-                mtf_state=signal.mtf_state, fo_state=signal.fo_state, regime=signal.regime,
+                mtf_state=signal.mtf_state, fo_state=signal.fo_state,
+                regime=signal.regime if isinstance(signal.regime, str) else (signal.regime.get("regime") if isinstance(signal.regime, dict) else (str(signal.regime) if signal.regime else None)),
                 ai_result=signal.ai_result, score=signal.score, confidence=signal.confidence,
                 invalidation_conditions=signal.invalidation_conditions, is_duplicate=is_dup,
             )
@@ -743,7 +757,8 @@ async def list_signals(
     if session is None:
         return {"data": [], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
+    if isinstance(acct, dict):
+        return {"data": [], "error": None, "meta": _meta().model_dump()}
     q = select(AlgoSignalDB).where(AlgoSignalDB.account_id == acct.id).order_by(AlgoSignalDB.created_at.desc()).limit(limit)
     if strategy_id:
         q = q.where(AlgoSignalDB.strategy_id == strategy_id)

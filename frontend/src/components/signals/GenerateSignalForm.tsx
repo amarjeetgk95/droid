@@ -9,11 +9,15 @@ import { AlertTriangle, Crosshair, Eye, RefreshCw, Send, Sparkles, Wand2, Zap } 
 
 const UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
 const STRATEGIES = [
-  { id: 'BREAKOUT', label: 'Institutional Breakout (S/R Volume)' },
-  { id: 'MEAN_REVERSION', label: 'Mean Reversion (Bollinger/RSI Exhaustion)' },
-  { id: 'TREND_PULLBACK', label: 'Trend Pullback (20 EMA Retest)' },
-  { id: 'GAMMA_SQUEEZE', label: 'Gamma Squeeze (0DTE OI Unwinding)' },
-  { id: 'ORB', label: 'Opening Range Breakout (15M High/Low)' },
+  { id: 'BREAKOUT', label: 'Institutional Breakout (S/R Volume)', desk: 'INTRADAY' },
+  { id: 'MEAN_REVERSION', label: 'Mean Reversion (Bollinger/RSI Exhaustion)', desk: 'INTRADAY' },
+  { id: 'TREND_PULLBACK', label: 'Trend Pullback (20 EMA Retest)', desk: 'INTRADAY' },
+  { id: 'GAMMA_SQUEEZE', label: 'Gamma Squeeze (0DTE OI Unwinding)', desk: 'INTRADAY' },
+  { id: 'ORB', label: 'Opening Range Breakout (15M High/Low)', desk: 'INTRADAY' },
+  { id: 'VWAP_REJECTION', label: '⚡ VWAP Rejection (Mean Reversion Scalp)', desk: 'SCALP' },
+  { id: 'MICRO_MOMENTUM', label: '⚡ Micro-Momentum (Breakout Scalp)', desk: 'SCALP' },
+  { id: 'EMA_RIBBON', label: '⚡ EMA Ribbon (Pullback Scalp)', desk: 'SCALP' },
+  { id: 'GAMMA_SPIKE', label: '⚡ Expiry Gamma Spike (0-DTE Scalp)', desk: 'SCALP' },
 ] as const;
 const DIRECTIONS = [
   { id: 'LONG_CALL', label: 'LONG_CALL (Bullish Call Option)' },
@@ -101,16 +105,31 @@ export function GenerateSignalForm({ onGenerated }: Props) {
     }
   };
 
+  const handleStrategySelect = (val: string) => {
+    setStrategy(val);
+    const isScalp = ['VWAP_REJECTION', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(val);
+    if (isScalp && timeframe !== '1M' && timeframe !== '3M') {
+      setTimeframe('1M');
+    } else if (!isScalp && (timeframe === '1M' || timeframe === '3M')) {
+      setTimeframe('5M');
+    }
+  };
+
   const doGenerate = async () => {
     setGenerating(true);
     setError(null);
     setResult(null);
     try {
+      const isScalp = ['VWAP_REJECTION', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(strategy) || timeframe === '1M' || timeframe === '3M';
       const payload: Record<string, any> = {
         underlying,
         strategy,
         direction,
         timeframe,
+        is_scalp: isScalp,
+        signal_type: isScalp ? 'SCALP' : 'INTRADAY',
+        time_stop_seconds: isScalp ? 180 : 3600,
+        runner_ttl_seconds: isScalp ? 300 : undefined,
         trigger: triggerLevel ? Number(triggerLevel) : undefined,
         entry_min: triggerLevel ? Number(triggerLevel) : undefined,
         entry_max: triggerLevel ? Number(triggerLevel) + 10.0 : undefined,
@@ -179,7 +198,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
               <label className="text-xs font-semibold text-muted-foreground">Quant Strategy</label>
               <select
                 value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
+                onChange={(e) => handleStrategySelect(e.target.value)}
                 className="h-8 rounded-lg border px-2 text-xs bg-background"
               >
                 {STRATEGIES.map((s) => (
@@ -213,6 +232,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
                 className="h-8 rounded-lg border px-2 text-xs bg-background font-mono"
               >
                 <option value="1M">1M (Scalp)</option>
+                <option value="3M">3M (Scalp)</option>
                 <option value="5M">5M (Standard)</option>
                 <option value="15M">15M (Swing)</option>
                 <option value="1H">1H (Positional)</option>

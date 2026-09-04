@@ -36,10 +36,21 @@ import {
 import Link from 'next/link';
 
 type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
-type FilterStrategy = 'ALL' | 'BREAKOUT' | 'MEAN_REVERSION' | 'TREND_PULLBACK' | 'GAMMA_SQUEEZE' | 'ORB';
+type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
+type FilterStrategy =
+  | 'ALL'
+  | 'BREAKOUT'
+  | 'MEAN_REVERSION'
+  | 'TREND_PULLBACK'
+  | 'GAMMA_SQUEEZE'
+  | 'ORB'
+  | 'VWAP_SCALP'
+  | 'MICRO_MOMENTUM'
+  | 'EMA_RIBBON'
+  | 'GAMMA_SPIKE';
 
 // Web Audio synthesizer chime for low-latency alerts without external mp3 files
-function playAlertChime(isWin = false) {
+function playAlertChime(isWin = false, isScalp = false) {
   try {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContext) return;
@@ -47,22 +58,30 @@ function playAlertChime(isWin = false) {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
-    osc.type = isWin ? 'triangle' : 'sine';
-    osc.frequency.setValueAtTime(isWin ? 587.33 : 440.0, ctx.currentTime); // D5 or A4
-    if (isWin) {
-      osc.frequency.exponentialRampToValueAtTime(880.0, ctx.currentTime + 0.15); // A5 chime
+    if (isScalp) {
+      // High-frequency dual beep for fast scalping alerts
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(880.0, ctx.currentTime);
+      osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
     } else {
-      osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.12); // E5 chime
+      osc.type = isWin ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(isWin ? 587.33 : 440.0, ctx.currentTime);
+      if (isWin) {
+        osc.frequency.exponentialRampToValueAtTime(880.0, ctx.currentTime + 0.15);
+      } else {
+        osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.12);
+      }
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
     }
-
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
 
     osc.start();
-    osc.stop(ctx.currentTime + 0.35);
+    osc.stop(ctx.currentTime + (isScalp ? 0.25 : 0.35));
   } catch {}
 }
 
@@ -72,6 +91,7 @@ export default function SignalsPage() {
   const [loading, setLoading] = useState(false);
   const [scannerLoading, setScannerLoading] = useState(false);
 
+  const [filterDesk, setFilterDesk] = useState<FilterDesk>('ALL');
   const [filterInstr, setFilterInstr] = useState<FilterInstrument>('ALL');
   const [filterStrat, setFilterStrat] = useState<FilterStrategy>('ALL');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
@@ -96,13 +116,15 @@ export default function SignalsPage() {
         const res: any = await api.getSignalsActive({
           instrument: filterInstr !== 'ALL' ? filterInstr : undefined,
           strategy: filterStrat !== 'ALL' ? filterStrat : undefined,
+          desk: filterDesk !== 'ALL' ? filterDesk : undefined,
         });
         const list: SignalDTO[] = res.signals || res.data?.signals || [];
         
         // Check if new confirmed signal arrived -> play chime
         if (soundEnabled && list.length > prevSignalsCount.current && prevSignalsCount.current > 0) {
           const hasNewConfirmed = list.some((s) => s.fsm_state === 'CONFIRMED' || s.fsm_state.includes('TARGET'));
-          if (hasNewConfirmed) playAlertChime(true);
+          const isScalp = list.some((s) => s.is_scalp || s.signal_type === 'SCALP');
+          if (hasNewConfirmed) playAlertChime(true, isScalp);
         }
         prevSignalsCount.current = list.length;
         setActive(list);
@@ -112,7 +134,7 @@ export default function SignalsPage() {
         setLoading(false);
       }
     },
-    [filterInstr, filterStrat, soundEnabled],
+    [filterInstr, filterStrat, filterDesk, soundEnabled],
   );
 
   // Run full scanner
@@ -209,7 +231,7 @@ export default function SignalsPage() {
         </div>
       </div>
 
-      {/* ── TOP KPI SUMMARY STRIP ── */}
+      {/* ── TOP KPI SUMMARY STRIP (DUAL-DESK PERFORMANCE) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="bg-secondary/20">
           <CardContent className="p-3 flex items-center justify-between">
@@ -221,15 +243,39 @@ export default function SignalsPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-emerald-500/5 border-emerald-500/20">
+        <Card className="bg-amber-500/5 border-amber-500/20">
           <CardContent className="p-3 flex items-center justify-between">
             <div>
-              <span className="text-[11px] text-muted-foreground font-medium">Historical Win Rate</span>
-              <div className="text-lg font-bold font-mono text-emerald-600">
-                {perfSummary?.win_rate_pct !== undefined ? `${perfSummary.win_rate_pct}%` : '—'}
+              <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-500" /> ⚡ Scalp Win Rate (1M)
+              </span>
+              <div className="text-lg font-bold font-mono text-amber-600">
+                {perfSummary?.scalp_summary?.win_rate_pct !== undefined
+                  ? `${perfSummary.scalp_summary.win_rate_pct}%`
+                  : perfSummary?.win_rate_pct !== undefined
+                    ? `${perfSummary.win_rate_pct}%`
+                    : '—'}
               </div>
             </div>
-            <Target className="w-5 h-5 text-emerald-600/60" />
+            <Target className="w-5 h-5 text-amber-500/60" />
+          </CardContent>
+        </Card>
+
+        <Card className="bg-indigo-500/5 border-indigo-500/20">
+          <CardContent className="p-3 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] text-indigo-700 dark:text-indigo-400 font-medium flex items-center gap-1">
+                <Layers className="w-3 h-3 text-indigo-500" /> 📊 Intraday Win Rate (5M)
+              </span>
+              <div className="text-lg font-bold font-mono text-indigo-600">
+                {perfSummary?.intraday_summary?.win_rate_pct !== undefined
+                  ? `${perfSummary.intraday_summary.win_rate_pct}%`
+                  : perfSummary?.win_rate_pct !== undefined
+                    ? `${perfSummary.win_rate_pct}%`
+                    : '—'}
+              </div>
+            </div>
+            <Award className="w-5 h-5 text-indigo-500/60" />
           </CardContent>
         </Card>
 
@@ -240,16 +286,6 @@ export default function SignalsPage() {
               <div className="text-lg font-bold font-mono">
                 {perfSummary?.profit_factor !== undefined ? `${perfSummary.profit_factor}x` : '—'}
               </div>
-            </div>
-            <Award className="w-5 h-5 text-muted-foreground/60" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-secondary/20">
-          <CardContent className="p-3 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] text-muted-foreground font-medium">Approved Universe</span>
-              <div className="text-xs font-mono font-bold text-foreground">NIFTY • BANKNIFTY • SENSEX</div>
             </div>
             <Crosshair className="w-5 h-5 text-primary/60" />
           </CardContent>
@@ -293,34 +329,50 @@ export default function SignalsPage() {
         {/* ── TAB 1: ACTIVE RADAR ── */}
         <TabsContent value="active" className="space-y-4 pt-2">
           {/* Filters & View Toggle Bar */}
-          <Card className="p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-muted-foreground">Index:</span>
-                  {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX'] as const).map((instr) => (
-                    <button
-                      key={instr}
-                      onClick={() => setFilterInstr(instr)}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${filterInstr === instr ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/60 hover:bg-secondary border-transparent'}`}
-                    >
-                      {instr}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-muted-foreground ml-2">Strategy:</span>
-                  {(['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB'] as const).map((strat) => (
-                    <button
-                      key={strat}
-                      onClick={() => setFilterStrat(strat)}
-                      className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-all ${filterStrat === strat ? 'bg-primary text-primary-foreground border-primary font-bold' : 'bg-secondary/60 hover:bg-secondary border-transparent'}`}
-                    >
-                      {strat}
-                    </button>
-                  ))}
-                </div>
+          <Card className="p-3 space-y-2.5">
+            {/* Top Row: Desk Switcher */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Trading Desk:</span>
+                <button
+                  onClick={() => {
+                    setFilterDesk('ALL');
+                    setFilterStrat('ALL');
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
+                    filterDesk === 'ALL'
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                  }`}
+                >
+                  🌐 All Signals
+                </button>
+                <button
+                  onClick={() => {
+                    setFilterDesk('SCALP');
+                    setFilterStrat('ALL');
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
+                    filterDesk === 'SCALP'
+                      ? 'bg-amber-500 text-black border-amber-600 shadow-sm'
+                      : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border-amber-500/30'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5" /> ⚡ Scalp Desk (1M/3M)
+                </button>
+                <button
+                  onClick={() => {
+                    setFilterDesk('INTRADAY');
+                    setFilterStrat('ALL');
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
+                    filterDesk === 'INTRADAY'
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
+                      : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 border-indigo-500/30'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" /> 📊 Core Intraday (5M/15M)
+                </button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -343,6 +395,69 @@ export default function SignalsPage() {
                 <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
                   <Clock className="w-3 h-3" /> Live 3s SSE/Poll
                 </span>
+              </div>
+            </div>
+
+            {/* Bottom Row: Index and Dynamic Strategy Pills */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-muted-foreground">Index:</span>
+                  {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX'] as const).map((instr) => (
+                    <button
+                      key={instr}
+                      onClick={() => setFilterInstr(instr)}
+                      className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
+                        filterInstr === instr
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                      }`}
+                    >
+                      {instr}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-semibold text-muted-foreground ml-2">Strategy:</span>
+                  {(() => {
+                    const scalpStrats = ['ALL', 'VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'] as const;
+                    const intradayStrats = ['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB'] as const;
+                    const allStrats = [
+                      'ALL',
+                      'VWAP_SCALP',
+                      'MICRO_MOMENTUM',
+                      'EMA_RIBBON',
+                      'GAMMA_SPIKE',
+                      'BREAKOUT',
+                      'MEAN_REVERSION',
+                      'TREND_PULLBACK',
+                      'GAMMA_SQUEEZE',
+                      'ORB',
+                    ] as const;
+
+                    const activeList =
+                      filterDesk === 'SCALP'
+                        ? scalpStrats
+                        : filterDesk === 'INTRADAY'
+                          ? intradayStrats
+                          : allStrats;
+
+                    return activeList.map((strat) => (
+                      <button
+                        key={strat}
+                        onClick={() => setFilterStrat(strat as FilterStrategy)}
+                        className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-all ${
+                          filterStrat === strat
+                            ? 'bg-primary text-primary-foreground border-primary font-bold'
+                            : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                        }`}
+                      >
+                        {strat}
+                      </button>
+                    ));
+                  })()}
+                </div>
               </div>
             </div>
           </Card>

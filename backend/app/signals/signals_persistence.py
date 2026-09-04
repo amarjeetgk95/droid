@@ -55,10 +55,18 @@ async def ensure_signals_tables() -> bool:
                     is_winner BOOLEAN,
                     option_contract JSONB DEFAULT '{}'::jsonb,
                     state_history JSONB DEFAULT '[]'::jsonb,
+                    confidence DOUBLE PRECISION DEFAULT 80.0,
+                    risk_points DOUBLE PRECISION,
+                    risk_reward_t1 DOUBLE PRECISION DEFAULT 1.5,
+                    risk_reward_t2 DOUBLE PRECISION DEFAULT 3.0,
                     created_at_utc BIGINT NOT NULL,
                     updated_at_utc BIGINT NOT NULL
                 )
             """))
+            await session.execute(text("ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION DEFAULT 80.0"))
+            await session.execute(text("ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS risk_points DOUBLE PRECISION"))
+            await session.execute(text("ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS risk_reward_t1 DOUBLE PRECISION DEFAULT 1.5"))
+            await session.execute(text("ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS risk_reward_t2 DOUBLE PRECISION DEFAULT 3.0"))
             await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_underlying ON executed_signals (underlying)"))
             await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_status ON executed_signals (status)"))
             await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_created ON executed_signals (created_at_utc DESC)"))
@@ -87,14 +95,18 @@ async def persist_executed_signal(record: Any) -> bool:
                 spot_price_at_creation, trigger_price, stop_loss, target_1, target_2,
                 paper_order_id, paper_side, actual_fill_price, executed_at_utc,
                 exit_price, exited_at_utc, exit_reason, actual_pnl_inr, actual_pnl_points,
-                status, is_winner, option_contract, state_history, created_at_utc, updated_at_utc
+                status, is_winner, option_contract, state_history,
+                confidence, risk_points, risk_reward_t1, risk_reward_t2,
+                created_at_utc, updated_at_utc
             ) VALUES (
                 :signal_id, :audit_id, :underlying, :strategy, :direction, :timeframe,
                 :option_symbol, :option_type, :option_strike, :lot_size, :lots, :quantity,
                 :spot_price_at_creation, :trigger_price, :stop_loss, :target_1, :target_2,
                 :paper_order_id, :paper_side, :actual_fill_price, :executed_at_utc,
                 :exit_price, :exited_at_utc, :exit_reason, :actual_pnl_inr, :actual_pnl_points,
-                :status, :is_winner, CAST(:option_contract AS JSONB), CAST(:state_history AS JSONB), :created_at_utc, :updated_at_utc
+                :status, :is_winner, CAST(:option_contract AS JSONB), CAST(:state_history AS JSONB),
+                :confidence, :risk_points, :risk_reward_t1, :risk_reward_t2,
+                :created_at_utc, :updated_at_utc
             )
             ON CONFLICT (signal_id) DO UPDATE SET
                 status = EXCLUDED.status,
@@ -109,8 +121,16 @@ async def persist_executed_signal(record: Any) -> bool:
                 actual_pnl_points = COALESCE(EXCLUDED.actual_pnl_points, executed_signals.actual_pnl_points),
                 is_winner = COALESCE(EXCLUDED.is_winner, executed_signals.is_winner),
                 state_history = EXCLUDED.state_history,
+                confidence = COALESCE(EXCLUDED.confidence, executed_signals.confidence),
+                risk_points = COALESCE(EXCLUDED.risk_points, executed_signals.risk_points),
+                risk_reward_t1 = COALESCE(EXCLUDED.risk_reward_t1, executed_signals.risk_reward_t1),
+                risk_reward_t2 = COALESCE(EXCLUDED.risk_reward_t2, executed_signals.risk_reward_t2),
                 updated_at_utc = EXCLUDED.updated_at_utc;
         """)
+
+        trig = float(getattr(record, "trigger_price", getattr(record, "trigger", 0.0)) or 0.0)
+        sl = float(getattr(record, "stop_loss", 0.0) or 0.0)
+        rp = float(getattr(record, "risk_points", abs(trig - sl)) or abs(trig - sl))
 
         params = {
             "signal_id": record.signal_id,
@@ -126,8 +146,8 @@ async def persist_executed_signal(record: Any) -> bool:
             "lots": getattr(record, "lots", 1),
             "quantity": getattr(record, "quantity", 75),
             "spot_price_at_creation": getattr(record, "spot_price_at_creation", getattr(record, "spot_price", 0.0)),
-            "trigger_price": getattr(record, "trigger_price", getattr(record, "trigger", 0.0)),
-            "stop_loss": getattr(record, "stop_loss", 0.0),
+            "trigger_price": trig,
+            "stop_loss": sl,
             "target_1": getattr(record, "target_1", 0.0),
             "target_2": getattr(record, "target_2", 0.0),
             "paper_order_id": getattr(record, "paper_order_id", None),
@@ -139,10 +159,14 @@ async def persist_executed_signal(record: Any) -> bool:
             "exit_reason": getattr(record, "exit_reason", None),
             "actual_pnl_inr": getattr(record, "actual_pnl_inr", None),
             "actual_pnl_points": getattr(record, "actual_pnl_points", None),
-            "status": getattr(record, "status", "ARMED"),
+            "status": getattr(record, "status", getattr(record, "fsm_state", "ARMED")),
             "is_winner": getattr(record, "is_winner", None),
             "option_contract": opt_json,
             "state_history": hist_json,
+            "confidence": float(getattr(record, "confidence", 80.0) or 80.0),
+            "risk_points": rp,
+            "risk_reward_t1": float(getattr(record, "risk_reward_t1", 1.5) or 1.5),
+            "risk_reward_t2": float(getattr(record, "risk_reward_t2", 3.0) or 3.0),
             "created_at_utc": getattr(record, "created_at_utc", int(__import__("time").time() * 1000)),
             "updated_at_utc": getattr(record, "updated_at_utc", int(__import__("time").time() * 1000)),
         }
@@ -273,12 +297,12 @@ async def restore_signals_from_db() -> int:
                         stop_loss=Decimal(str(row.get("stop_loss") or 0.0)),
                         target_1=Decimal(str(row.get("target_1") or 0.0)),
                         target_2=Decimal(str(row.get("target_2") or 0.0)),
-                        risk_points=Decimal(str(abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
-                        risk_reward_t1=1.5,
-                        risk_reward_t2=3.0,
-                        confidence=80.0,
+                        risk_points=Decimal(str(row.get("risk_points") or abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
+                        risk_reward_t1=float(row.get("risk_reward_t1") or 1.5),
+                        risk_reward_t2=float(row.get("risk_reward_t2") or 3.0),
+                        confidence=float(row.get("confidence") or 80.0),
                         option_contract=opt_dict,
-                        fsm_state="CONFIRMED" if st in ("CONFIRMED", "EXECUTED") else ("TARGET_1_HIT" if st == "WON" else ("STOP_LOSS_HIT" if st == "LOST" else st)),
+                        fsm_state=st if st in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "EXPIRED", "INVALIDATED", "CLOSED") else ("TARGET_1_HIT" if st == "WON" else ("STOP_LOSS_HIT" if st == "LOST" else "ARMED")),
                         created_at_utc=row["created_at_utc"],
                     )
                     signal_fsm._signals[sid] = fsm_inst

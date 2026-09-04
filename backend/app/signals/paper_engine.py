@@ -162,9 +162,10 @@ class SignalPaperEngine:
         signal_id: str,
         exit_price: float,
         reason: str = "TARGET_HIT",
+        quantity_to_close: Optional[int] = None,
     ) -> Optional[Any]:
         """
-        Closes the open paper position for a signal and records the actual profit and loss audit.
+        Closes full or partial open paper position for a signal and records the actual profit and loss audit.
         """
         sig = signal_fsm.get(signal_id)
         if not sig or not sig.paper_order:
@@ -181,17 +182,18 @@ class SignalPaperEngine:
         if pos_id in paper_service._positions and paper_service._positions[pos_id].is_open:
             pos = paper_service._positions[pos_id]
             exit_side = "SELL" if pos.side == "BUY" else "BUY"
+            final_close_qty = quantity_to_close if (quantity_to_close and quantity_to_close <= pos.quantity) else pos.quantity
             exit_payload = OrderPayload(
                 symbol=pos.symbol,
                 underlying=pos.underlying,
                 side=exit_side,
                 order_type="MARKET",
                 product=pos.product,
-                quantity=pos.quantity,
+                quantity=final_close_qty,
                 price=exit_price,
             )
             await paper_service.place_order(exit_payload)
-            logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, reason=reason)
+            logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, qty=final_close_qty, reason=reason)
 
         rec = signal_audit_ledger.record_square_off(
             signal_id=signal_id,

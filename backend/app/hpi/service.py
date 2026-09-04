@@ -156,8 +156,17 @@ class HPIService:
     async def _debounced_sync_to_db(self) -> None:
         try:
             await asyncio.sleep(1.0)
+            await self.sync_to_db_now()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("hpi_sync_to_db_error", error=str(e)[:200])
+
+    async def sync_to_db_now(self) -> bool:
+        """Immediately persist full HPI state and records to Supabase PostgreSQL."""
+        try:
             from app.hpi.hpi_persistence import persist_hpi_to_db
-            await asyncio.wait_for(
+            return await asyncio.wait_for(
                 persist_hpi_to_db(
                     records_map=dict(self.store._records),
                     deleted_ranges=dict(self.store._deleted_ranges),
@@ -166,12 +175,11 @@ class HPIService:
                     audit=[a.model_dump(mode="json") for a in self._audit if a.derivative in C.HPI_UNIVERSE],
                     seeded=self._seeded,
                 ),
-                timeout=15.0,
+                timeout=30.0,
             )
-        except asyncio.CancelledError:
-            pass
         except Exception as e:
-            logger.warning("hpi_sync_to_db_error", error=str(e)[:200])
+            logger.warning("hpi_sync_to_db_now_error", error=str(e)[:200])
+            return False
 
     # ------------------------------------------------------------------
     # §1/§2 — Derivative selection
@@ -827,6 +835,7 @@ class HPIService:
             try:
                 logger.info("hpi_auto_seeding_historical_datasets")
                 self.seed_defaults(force=True, sampling_interval="1h", retention_days=180)
+                await self.sync_to_db_now()
             except Exception as e:
                 logger.warning("hpi_auto_seed_failed", error=str(e)[:200])
 

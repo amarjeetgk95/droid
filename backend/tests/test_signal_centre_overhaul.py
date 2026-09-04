@@ -9,7 +9,7 @@ from app.signals.contract_resolver import (
     calculate_position_sizing,
     normalize_price,
 )
-from app.signals.strategies import STRATEGY_REGISTRY
+from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY_STRATEGIES
 from app.signals.strategies.base import StrategyContext
 from app.signals.confluence import confluence_engine
 from app.signals.fsm import signal_fsm
@@ -69,7 +69,9 @@ class TestInstitutionalSignalCentre:
         assert sizing_large["allowed"] is True
 
     def test_5_strategies_detection(self):
-        assert set(STRATEGY_REGISTRY.keys()) == {"BREAKOUT", "MEAN_REVERSION", "TREND_PULLBACK", "GAMMA_SQUEEZE", "ORB"}
+        assert set(INTRADAY_STRATEGIES.keys()) == {"BREAKOUT", "MEAN_REVERSION", "TREND_PULLBACK", "GAMMA_SQUEEZE", "ORB"}
+        assert set(SCALP_STRATEGIES.keys()) == {"VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"}
+        assert len(STRATEGY_REGISTRY) == 9
 
         # Test Breakout
         ctx = StrategyContext(

@@ -1027,17 +1027,20 @@ class ApiClient {
   }
 
   // Unified Signals Facade — Institutional Quantitative Signals Engine
-  async getSignalsActive(params?: { instrument?: string; status?: string; strategy?: string }) {
+  async getSignalsActive(params?: { instrument?: string; status?: string; strategy?: string; desk?: string; is_scalp?: boolean }) {
     const qs = new URLSearchParams();
     if (params?.instrument) qs.set('instrument', params.instrument);
     if (params?.status) qs.set('status', params.status);
     if (params?.strategy) qs.set('strategy', params.strategy);
+    if (params?.desk) qs.set('desk', params.desk);
+    if (params?.is_scalp !== undefined) qs.set('is_scalp', String(params.is_scalp));
     const q = qs.toString() ? `?${qs.toString()}` : '';
     return this.request<{ signals: any[]; count: number; timestamp_ms: number }>(`/api/v1/signals/active${q}`);
   }
-  async getSignalsScanner() {
+  async getSignalsScanner(desk?: string) {
+    const qs = desk ? `?desk=${desk}` : '';
     return this.request<{ scanned_underlyings: string[]; total_candidates: number; new_signals: any[]; active_signals: any[]; timestamp_ms: number }>(
-      `/api/v1/signals/scanner`
+      `/api/v1/signals/scanner${qs}`
     );
   }
   async getSignalsPerformance() {

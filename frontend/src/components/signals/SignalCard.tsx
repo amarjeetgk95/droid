@@ -32,12 +32,23 @@ export type SignalDTO = {
   entry_max: number | string;
   trigger: number | string;
   stop_loss: number | string;
+  current_stop_loss?: number | string;
   target_1: number | string;
   target_2: number | string;
   risk_points: number | string;
   risk_reward_t1: number;
   risk_reward_t2: number;
   confidence: number;
+  signal_type?: string;
+  is_scalp?: boolean;
+  breakeven_activated?: boolean;
+  time_stop_at_utc?: number | null;
+  runner_time_stop_at_utc?: number | null;
+  runner_ttl_seconds?: number | null;
+  t1_hit?: boolean;
+  t2_hit?: boolean;
+  remaining_qty?: number | string;
+  intended_qty?: number | string;
   confluence_breakdown?: Record<string, number>;
   rationale?: string[];
   option_contract?: {
@@ -60,9 +71,11 @@ export type SignalDTO = {
 function StatusBadge({ status }: { status: string }) {
   const s = status.toUpperCase();
   if (s === 'CONFIRMED') return <Badge className="bg-emerald-500 text-white border-emerald-600 animate-pulse">CONFIRMED</Badge>;
-  if (s === 'TARGET_1_HIT') return <Badge className="bg-emerald-600 text-white font-bold">🎯 TARGET 1 HIT (+1.5R)</Badge>;
+  if (s === 'TARGET_1_HIT') return <Badge className="bg-emerald-600 text-white font-bold">🎯 T1 HIT • RUNNER ACTIVE</Badge>;
   if (s === 'TARGET_2_HIT') return <Badge className="bg-emerald-700 text-white font-bold">🏁 TARGET 2 HIT (+3.0R)</Badge>;
   if (s === 'STOP_LOSS_HIT') return <Badge variant="destructive">🛑 STOP LOSS HIT</Badge>;
+  if (s === 'TIME_STOP_HIT') return <Badge variant="outline" className="border-amber-500 text-amber-600 font-bold">⏱️ TIME STOP HIT</Badge>;
+  if (s === 'RUNNER_TIME_STOP_HIT') return <Badge variant="outline" className="border-amber-600 text-amber-700 font-bold">⏱️ RUNNER TIME STOP</Badge>;
   if (s === 'TRIGGERED') return <Badge className="bg-amber-500 text-black border-amber-600">TRIGGERED</Badge>;
   if (s === 'ARMED') return <Badge className="bg-sky-500 text-white border-sky-600">ARMED</Badge>;
   if (s === 'VALIDATED') return <Badge variant="secondary">VALIDATED</Badge>;
@@ -78,6 +91,10 @@ function StrategyBadge({ strategy }: { strategy: string }) {
     TREND_PULLBACK: 'bg-blue-500/10 text-blue-700 border-blue-500/20',
     GAMMA_SQUEEZE: 'bg-amber-500/10 text-amber-700 border-amber-500/20',
     ORB: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20',
+    VWAP_SCALP: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-bold',
+    MICRO_MOMENTUM: 'bg-amber-500/10 text-amber-600 border-amber-500/20 font-bold',
+    EMA_RIBBON: 'bg-cyan-500/10 text-cyan-600 border-cyan-500/20 font-bold',
+    GAMMA_SPIKE: 'bg-rose-500/10 text-rose-600 border-rose-500/20 font-bold',
   };
   return <Badge variant="outline" className={`text-[10px] font-mono ${colors[strategy] || ''}`}>{strategy}</Badge>;
 }
@@ -141,9 +158,20 @@ export function SignalCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-base tracking-tight">{signal.underlying}</span>
             <StrategyBadge strategy={signal.strategy} />
-            <Badge variant="secondary" className="text-[10px] font-mono">
-              {signal.timeframe || '5M'}
-            </Badge>
+            {signal.is_scalp || signal.signal_type === 'SCALP' ? (
+              <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[10px] font-bold">
+                ⚡ {signal.timeframe || '1M'} SCALP
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-[10px] font-mono">
+                {signal.timeframe || '5M'}
+              </Badge>
+            )}
+            {signal.breakeven_activated && (
+              <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-[10px] font-mono font-bold">
+                🛡️ SL @ COST
+              </Badge>
+            )}
             <span className={`text-xs font-bold flex items-center gap-0.5 ${dirColor}`}>
               {isCall ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
               {signal.direction}
@@ -163,8 +191,35 @@ export function SignalCard({
         <StatusBadge status={signal.fsm_state} />
       </div>
 
+      {/* Two-Clock Lifecycle Banner (§6, §20) */}
+      {signal.fsm_state === 'TARGET_1_HIT' ? (
+        <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
+          <span className="flex items-center gap-1 font-semibold">
+            🎯 50% Profit Booked • Runner Mode Active
+          </span>
+          <span className="font-bold flex items-center gap-1">
+            <Clock className="w-3 h-3 text-emerald-600" />
+            {signal.runner_time_stop_at_utc
+              ? `${Math.max(0, Math.round((signal.runner_time_stop_at_utc - Date.now()) / 1000))}s Runner TTL`
+              : 'Runner Clock'}
+          </span>
+        </div>
+      ) : signal.fsm_state === 'CONFIRMED' && (signal.is_scalp || signal.signal_type === 'SCALP') ? (
+        <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300">
+          <span className="flex items-center gap-1 font-semibold">
+            ⚡ High-Frequency Scalp Active
+          </span>
+          <span className="font-bold flex items-center gap-1">
+            <Clock className="w-3 h-3 text-amber-600" />
+            {signal.time_stop_at_utc
+              ? `${Math.max(0, Math.round((signal.time_stop_at_utc - Date.now()) / 1000))}s Time-Stop`
+              : `${signal.ttl_seconds || 120}s TTL`}
+          </span>
+        </div>
+      ) : null}
+
       {/* Live Distance to Trigger Banner */}
-      {signal.distance_to_trigger_pts !== null && signal.distance_to_trigger_pts !== undefined && !isExpired && !isTargetHit && !isStopHit && (
+      {signal.distance_to_trigger_pts !== null && signal.distance_to_trigger_pts !== undefined && !isExpired && !isTargetHit && !isStopHit && signal.fsm_state !== 'CONFIRMED' && (
         <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-secondary/40 border">
           <span className="text-muted-foreground flex items-center gap-1">
             <Crosshair className="w-3.5 h-3.5 text-primary" /> Trigger Level: <span className="font-bold text-foreground">₹{Number(signal.trigger).toLocaleString('en-IN')}</span>
@@ -178,7 +233,10 @@ export function SignalCard({
       {/* Target & Stop Loss Progress Bar */}
       <div className="space-y-1 pt-1">
         <div className="flex justify-between text-[11px] font-mono text-muted-foreground">
-          <span className="text-destructive font-semibold">SL ₹{Number(signal.stop_loss).toLocaleString('en-IN')}</span>
+          <span className="text-destructive font-semibold">
+            SL ₹{Number(signal.current_stop_loss || signal.stop_loss).toLocaleString('en-IN')}
+            {signal.breakeven_activated && ' (Cost)'}
+          </span>
           <span className="text-emerald-600 font-semibold">T1 ₹{Number(signal.target_1).toLocaleString('en-IN')} (1.5R)</span>
           <span className="text-emerald-700 font-bold">T2 ₹{Number(signal.target_2).toLocaleString('en-IN')} (3.0R)</span>
         </div>

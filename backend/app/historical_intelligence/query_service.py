@@ -207,6 +207,28 @@ class HistoricalIntelligenceService:
             result=result,
         )
 
+        # 8. Persist snapshot & query audit to Supabase (§3.1, §36)
+        try:
+            import asyncio
+            from app.historical_intelligence.hie_persistence import persist_hie_snapshot, persist_hie_query_audit
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(persist_hie_snapshot(query_snapshot))
+                loop.create_task(
+                    persist_hie_query_audit(
+                        instrument=instrument.upper(),
+                        timeframe=timeframe,
+                        query_mode=mode,
+                        sample_count=sample_count,
+                        effective_sample_size=ess,
+                        bullish_prob=float(stat_30.bullish_probability),
+                        confidence=confidence,
+                        latency_ms=(time.perf_counter() - start_time) * 1000.0,
+                    )
+                )
+        except Exception as pe:
+            logger.debug("hie_async_persist_failed", error=str(pe))
+
         return result
 
     def _build_failure_result(

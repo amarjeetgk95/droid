@@ -180,6 +180,56 @@ class SignalAuditLedger:
             )
         )
         self._trades[signal_id] = rec
+        self._schedule_persist(rec)
+        return rec
+
+    def _schedule_persist(self, rec: AuditTradeRecord) -> None:
+        """Safely schedule asynchronous upsert to Supabase PostgreSQL."""
+        try:
+            import asyncio
+            from app.signals.signals_persistence import persist_executed_signal
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(persist_executed_signal(rec))
+            except RuntimeError:
+                pass
+        except Exception as e:
+            logger.warning("audit_schedule_persist_err", signal_id=getattr(rec, "signal_id", "unknown"), error=str(e))
+
+    def record_state_transition(
+        self,
+        signal_id: str,
+        to_state: str,
+        market_price: Optional[float] = None,
+        reason: str = "",
+    ) -> Optional[AuditTradeRecord]:
+        """Record lifecycle transition in AuditTradeRecord and sync to Supabase."""
+        rec = self._trades.get(signal_id)
+        now_ms = int(time.time() * 1000)
+        if not rec:
+            return None
+
+        from_state = rec.status
+        rec.status = to_state
+        rec.updated_at_utc = now_ms
+        if market_price is not None:
+            rec.current_price = market_price
+        if to_state in ("TARGET_1_HIT", "TARGET_2_HIT", "WON"):
+            rec.is_winner = True
+        elif to_state in ("STOP_LOSS_HIT", "LOST"):
+            rec.is_winner = False
+
+        rec.state_history.append(
+            AuditStateEvent(
+                timestamp_utc=now_ms,
+                from_state=from_state,
+                to_state=to_state,
+                market_price=market_price,
+                reason=reason or f"TRANSITION_TO_{to_state}",
+            )
+        )
+        self._schedule_persist(rec)
         return rec
 
     def record_paper_executed(
@@ -220,17 +270,7 @@ class SignalAuditLedger:
         logger.info("audit_paper_executed", signal_id=signal_id, order_id=paper_order_id, fill_price=fill_price)
 
         # Asynchronously persist to Supabase
-        try:
-            import asyncio
-            from app.signals.signals_persistence import persist_executed_signal
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(persist_executed_signal(rec))
-            except RuntimeError:
-                pass
-        except Exception:
-            pass
-
+        self._schedule_persist(rec)
         return rec
 
     def record_square_off(
@@ -322,16 +362,7 @@ class SignalAuditLedger:
         )
 
         # Asynchronously persist squared-off trade to Supabase
-        try:
-            import asyncio
-            from app.signals.signals_persistence import persist_executed_signal
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(persist_executed_signal(rec))
-            except RuntimeError:
-                pass
-        except Exception:
-            pass
+        self._schedule_persist(rec)
 
         return rec
 

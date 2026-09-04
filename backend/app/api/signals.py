@@ -48,9 +48,13 @@ class GenerateSignalRequest(BaseModel):
     instrument_id: Optional[str] = Field(default=None, description="Compatibility alias for underlying")
     strategy: str = "BREAKOUT"
     direction: str = "LONG_CALL"
-    timeframe: Optional[str] = Field(default=None, description="1M, 5M, 15M, 1H, 1D")
+    timeframe: Optional[str] = Field(default=None, description="1M, 3M, 5M, 15M, 1H, 1D")
     candle_timeframe: Optional[str] = Field(default=None, description="Compatibility alias for timeframe")
     status: Optional[str] = None
+    signal_type: Optional[str] = Field(default="INTRADAY", description="SCALP or INTRADAY")
+    is_scalp: bool = Field(default=False, description="Flag indicating high-frequency scalp setup")
+    time_stop_seconds: Optional[int] = None
+    runner_ttl_seconds: Optional[int] = None
     entry_min: Optional[float] = None
     entry_max: Optional[float] = None
     trigger: Optional[float] = None
@@ -104,11 +108,13 @@ class PaperWalletCapitalRequest(BaseModel):
 @router.get("/active")
 async def list_active_signals(
     instrument: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
-    strategy: Optional[str] = Query(None, description="Filter by BREAKOUT / MEAN_REVERSION / etc"),
+    strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     status: Optional[str] = Query(None, description="Filter by FSM state"),
+    desk: Optional[str] = Query(None, description="Filter by desk: SCALP, INTRADAY, or ALL"),
+    is_scalp: Optional[bool] = Query(None, description="Filter specifically for scalp signals"),
 ):
     """
-    Returns active signals with live price distance, contract specs, and R:R metrics.
+    Returns active signals with live price distance, contract specs, R:R metrics, and desk categorization.
     """
     signals = signal_fsm.list_active(underlying=instrument, strategy=strategy)
     
@@ -118,6 +124,12 @@ async def list_active_signals(
     
     for s in signals:
         if status and status != "ALL" and s.fsm_state != status:
+            continue
+        if desk == "SCALP" and not getattr(s, "is_scalp", False):
+            continue
+        if desk == "INTRADAY" and getattr(s, "is_scalp", False):
+            continue
+        if is_scalp is not None and getattr(s, "is_scalp", False) != is_scalp:
             continue
             
         # Compute live distance to trigger
@@ -152,13 +164,20 @@ async def list_active_signals(
 # ── 2. REAL-TIME MULTI-STRATEGY SCANNER ───────────────────────────────
 
 @router.get("/scanner")
-async def run_scanner():
+async def run_scanner(desk: Optional[str] = Query(None, description="SCALP, INTRADAY, or ALL")):
     """
-    Scans NIFTY, BANKNIFTY, SENSEX across all 5 quant strategies simultaneously.
+    Scans NIFTY, BANKNIFTY, SENSEX across requested Desk or all strategies simultaneously.
     """
-    scan_result = await scanner_engine.scan_all()
+    if desk == "SCALP":
+        scan_result = await scanner_engine.scan_scalp()
+    elif desk == "INTRADAY":
+        scan_result = await scanner_engine.scan_intraday()
+    else:
+        scan_result = await scanner_engine.scan_all()
+
     # Broadcast P2 scan event via SSE
-    await signal_sse_hub.broadcast("scanner_update", {"total_signals": len(scan_result.get("active_signals", []))}, priority="P2")
+    active_count = len(scan_result.get("active_signals", [])) if "active_signals" in scan_result else len(scan_result.get("new_signals", []))
+    await signal_sse_hub.broadcast("scanner_update", {"total_signals": active_count, "desk": desk or "ALL"}, priority="P2")
     return scan_result
 
 
@@ -476,21 +495,33 @@ async def generate_signal(req: GenerateSignalRequest):
 
     fsm_st = "CONFIRMED" if (req.execute_paper or req.status == "CONFIRMED") else "ARMED"
 
+    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (req.strategy in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
+    sig_type = "SCALP" if is_scalp_setup else (req.signal_type or "INTRADAY")
+    ttl_s = req.time_stop_seconds or (180 if is_scalp_setup else 300)
+
     instance = SignalInstance(
         underlying=u,
         strategy=req.strategy,
         direction=dir_val,
         timeframe=tf,
         spot_price=spot,
+        signal_type=sig_type,
+        is_scalp=is_scalp_setup,
         entry_min=entry_min,
         entry_max=entry_max,
         trigger=trigger,
         stop_loss=stop_loss,
+        initial_stop_loss=stop_loss,
+        current_stop_loss=stop_loss,
         target_1=t1,
         target_2=t2,
+        t1_price=t1,
+        t2_price=t2,
         risk_points=risk_pts,
         risk_reward_t1=rr_t1,
         risk_reward_t2=rr_t2,
+        ttl_seconds=ttl_s,
+        runner_ttl_seconds=req.runner_ttl_seconds,
         confidence=req.confidence or 80.0,
         confluence_breakdown={"technical": 80.0, "mtf": 75.0, "fno": 75.0, "regime": 80.0, "ai": 75.0},
         rationale=req.rationale or [f"Manual {req.strategy} setup on {u}"],
@@ -520,6 +551,13 @@ async def generate_signal(req: GenerateSignalRequest):
         )
     except Exception as ae:
         logger.warning("audit_record_created_failed", error=str(ae))
+
+    # Authoritative Supabase PostgreSQL Persistence
+    try:
+        from app.signals.signals_persistence import persist_executed_signal
+        await persist_executed_signal(instance)
+    except Exception as se:
+        logger.warning("generate_signal_supabase_persist_failed", signal_id=instance.signal_id, error=str(se))
 
     paper_result = None
     if req.execute_paper:

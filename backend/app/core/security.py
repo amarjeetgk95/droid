@@ -40,6 +40,20 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme)
 ) -> AuthUser | None:
     """Get the current authenticated user, or None in dev mode."""
+    # If credentials provided, try to decode Supabase JWT token
+    if credentials is not None and credentials.credentials:
+        try:
+            payload = decode_supabase_jwt(credentials.credentials)
+            return AuthUser(
+                user_id=payload.get("sub", ""),
+                email=payload.get("email"),
+                role=payload.get("role", "user")
+            )
+        except Exception as e:
+            if settings.auth_required:
+                raise
+            logger.debug("dev_auth_token_ignored", error=str(e))
+
     # Development mode: auth not required — use deterministic UUID so DB queries succeed
     if not settings.auth_required:
         return AuthUser(user_id="00000000-0000-0000-0000-000000000001", email="dev@localhost", role="admin")

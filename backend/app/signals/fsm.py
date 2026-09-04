@@ -24,6 +24,8 @@ SignalFSMState = Literal[
     "TARGET_1_HIT",
     "TARGET_2_HIT",
     "STOP_LOSS_HIT",
+    "TIME_STOP_HIT",
+    "RUNNER_TIME_STOP_HIT",
     "INVALIDATED",
     "EXPIRED",
     "CLOSED",
@@ -34,10 +36,12 @@ ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
     "VALIDATED": {"ARMED", "TRIGGERED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
     "ARMED": {"TRIGGERED", "CONFIRMED", "EXPIRED", "INVALIDATED"},
     "TRIGGERED": {"CONFIRMED", "INVALIDATED", "EXPIRED"},
-    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "INVALIDATED", "CLOSED"},
-    "TARGET_1_HIT": {"TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED"},
+    "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "INVALIDATED", "CLOSED"},
+    "TARGET_1_HIT": {"TARGET_2_HIT", "STOP_LOSS_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED"},
     "TARGET_2_HIT": {"CLOSED"},
     "STOP_LOSS_HIT": {"CLOSED"},
+    "TIME_STOP_HIT": {"CLOSED"},
+    "RUNNER_TIME_STOP_HIT": {"CLOSED"},
     "INVALIDATED": {"CLOSED"},
     "EXPIRED": {"CLOSED"},
     "CLOSED": set(),
@@ -76,6 +80,37 @@ class SignalInstance(BaseModel):
     rationale: list[str] = Field(default_factory=list)
     option_contract: Optional[dict] = None
 
+    # Version 6.0 Desk & Risk Fields
+    signal_type: str = "INTRADAY"  # SCALP, INTRADAY, SWING
+    is_scalp: bool = False
+    initial_stop_loss: Optional[Decimal] = None
+    current_stop_loss: Optional[Decimal] = None
+    risk_r: Optional[Decimal] = None
+
+    # Breakeven Ratchet (+0.8R)
+    breakeven_activated: bool = False
+    breakeven_trigger_price: Optional[Decimal] = None
+
+    # Two-Clock Lifecycles (§6, §20)
+    time_stop_at_utc: Optional[int] = None
+    runner_time_stop_at_utc: Optional[int] = None
+    runner_ttl_seconds: Optional[int] = None
+
+    # Staged Target Execution (§18, §25)
+    t1_price: Optional[Decimal] = None
+    t2_price: Optional[Decimal] = None
+    t1_hit: bool = False
+    t1_fill_timestamp: Optional[int] = None
+    t2_hit: bool = False
+
+    # Fill Reconciliation & Residual Quantity Tracking (§24, §25)
+    entry_price: Optional[Decimal] = None
+    actual_fill_price: Optional[Decimal] = None
+    remaining_qty: Decimal = Decimal("0")
+    intended_qty: Decimal = Decimal("0")
+    t1_realized_qty: Optional[Decimal] = None
+    regime_at_confirmation: Optional[str] = None
+
     # State & Lifecycle
     fsm_state: SignalFSMState = "DETECTED"
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
@@ -88,7 +123,7 @@ class SignalInstance(BaseModel):
     confirmed_at_utc: Optional[int] = None
     exit_price: Optional[Decimal] = None
     realized_rr: Optional[float] = None
-    outcome_status: Optional[str] = None  # WIN_T1, WIN_T2, LOSS_SL, EXPIRED, INVALIDATED
+    outcome_status: Optional[str] = None  # WIN_T1, WIN_T2, LOSS_SL, TIME_STOP, RUNNER_TIME_STOP, EXPIRED, INVALIDATED
     paper_order: Optional[dict] = None
 
     state_history: list[FSMTransitionAudit] = Field(default_factory=list)
@@ -99,6 +134,12 @@ class SignalInstance(BaseModel):
 
     def ttl_remaining_seconds(self) -> int:
         now_ms = int(time.time() * 1000)
+        # In RUNNER mode, display runner countdown
+        if self.fsm_state == "TARGET_1_HIT" and self.runner_time_stop_at_utc:
+            return max(0, int((self.runner_time_stop_at_utc - now_ms) / 1000))
+        # In ACTIVE mode, display time stop countdown if set
+        if self.fsm_state == "CONFIRMED" and self.time_stop_at_utc:
+            return max(0, int((self.time_stop_at_utc - now_ms) / 1000))
         return max(0, int((self.expires_at_utc - now_ms) / 1000))
 
 
@@ -112,6 +153,26 @@ class SignalFSMManager:
         self._audit_log: list[FSMTransitionAudit] = []
 
     def register(self, signal: SignalInstance) -> SignalInstance:
+        # Initialize default risk levels if not already set (§18)
+        if signal.initial_stop_loss is None:
+            signal.initial_stop_loss = signal.stop_loss
+        if signal.current_stop_loss is None:
+            signal.current_stop_loss = signal.stop_loss
+        if signal.t1_price is None:
+            signal.t1_price = signal.target_1
+        if signal.t2_price is None:
+            signal.t2_price = signal.target_2
+
+        # Compute initial Risk R
+        risk_r = abs(signal.spot_price - signal.stop_loss)
+        signal.risk_r = risk_r
+
+        # Pre-compute breakeven trigger (+0.8R)
+        if signal.direction == "LONG_CALL":
+            signal.breakeven_trigger_price = signal.spot_price + (risk_r * Decimal("0.8"))
+        else:
+            signal.breakeven_trigger_price = signal.spot_price - (risk_r * Decimal("0.8"))
+
         self._signals[signal.signal_id] = signal
         audit = FSMTransitionAudit(
             signal_id=signal.signal_id,
@@ -122,6 +183,17 @@ class SignalFSMManager:
         )
         signal.state_history.append(audit)
         self._audit_log.append(audit)
+
+        # Asynchronously persist newly registered signal to Supabase
+        try:
+            import asyncio
+            from app.signals.signals_persistence import persist_executed_signal
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(persist_executed_signal(signal))
+        except (RuntimeError, Exception):
+            pass
+
         return signal
 
     def get(self, signal_id: str) -> Optional[SignalInstance]:
@@ -140,7 +212,7 @@ class SignalFSMManager:
         now_ms = int(time.time() * 1000)
         res = []
         for s in self._signals.values():
-            if s.is_expired(now_ms) and s.fsm_state not in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED", "EXPIRED"):
+            if s.is_expired(now_ms) and s.fsm_state not in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED"):
                 self.transition(s.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
             if underlying and s.underlying != underlying.upper():
                 continue
@@ -148,7 +220,21 @@ class SignalFSMManager:
                 continue
             res.append(s)
         # Sort so ACTIVE & CONFIRMED appear at top, newest first
-        state_order = {"CONFIRMED": 0, "TRIGGERED": 1, "ARMED": 2, "VALIDATED": 3, "DETECTED": 4, "TARGET_1_HIT": 5, "TARGET_2_HIT": 6, "STOP_LOSS_HIT": 7, "EXPIRED": 8, "INVALIDATED": 9, "CLOSED": 10}
+        state_order = {
+            "CONFIRMED": 0,
+            "TARGET_1_HIT": 1,
+            "TRIGGERED": 2,
+            "ARMED": 3,
+            "VALIDATED": 4,
+            "DETECTED": 5,
+            "TARGET_2_HIT": 6,
+            "STOP_LOSS_HIT": 7,
+            "TIME_STOP_HIT": 8,
+            "RUNNER_TIME_STOP_HIT": 9,
+            "EXPIRED": 10,
+            "INVALIDATED": 11,
+            "CLOSED": 12,
+        }
         res.sort(key=lambda x: (state_order.get(x.fsm_state, 99), -x.created_at_utc))
         return res
 
@@ -177,22 +263,52 @@ class SignalFSMManager:
         sig.fsm_state = to_state
         sig.last_updated_utc = int(time.time() * 1000)
 
-        # Update specific timestamps
+        # Update specific timestamps & Two-Clock Lifecycle transitions (§6, §20)
         if to_state == "TRIGGERED":
             sig.triggered_at_utc = sig.last_updated_utc
         elif to_state == "CONFIRMED":
             sig.confirmed_at_utc = sig.last_updated_utc
-        elif to_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT"):
+            # Anchor Active Time-Stop (§20)
+            if sig.is_scalp and sig.time_stop_at_utc is None:
+                ttl_ms = (sig.ttl_seconds or 240) * 1000
+                sig.time_stop_at_utc = sig.last_updated_utc + ttl_ms
+        elif to_state == "TARGET_1_HIT":
+            sig.t1_hit = True
+            sig.t1_fill_timestamp = sig.last_updated_utc
             sig.exit_price = market_price
-            if to_state == "TARGET_1_HIT":
-                sig.outcome_status = "WIN_T1"
-                sig.realized_rr = sig.risk_reward_t1
-            elif to_state == "TARGET_2_HIT":
-                sig.outcome_status = "WIN_T2"
-                sig.realized_rr = sig.risk_reward_t2
-            elif to_state == "STOP_LOSS_HIT":
-                sig.outcome_status = "LOSS_SL"
-                sig.realized_rr = -1.0
+            sig.outcome_status = "WIN_T1"
+            sig.realized_rr = sig.risk_reward_t1
+
+            # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
+            runner_ttl_sec = sig.runner_ttl_seconds or 300
+            sig.runner_time_stop_at_utc = sig.last_updated_utc + (runner_ttl_sec * 1000)
+
+            # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19)
+            if not sig.breakeven_activated:
+                sig.breakeven_activated = True
+                cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
+                if sig.direction == "LONG_CALL":
+                    sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
+                else:
+                    sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
+
+        elif to_state == "TARGET_2_HIT":
+            sig.t2_hit = True
+            sig.exit_price = market_price
+            sig.outcome_status = "WIN_T2"
+            sig.realized_rr = sig.risk_reward_t2
+        elif to_state == "STOP_LOSS_HIT":
+            sig.exit_price = market_price
+            sig.outcome_status = "LOSS_SL"
+            sig.realized_rr = -1.0 if not sig.breakeven_activated else 0.0
+        elif to_state == "TIME_STOP_HIT":
+            sig.exit_price = market_price
+            sig.outcome_status = "TIME_STOP"
+            sig.realized_rr = 0.0
+        elif to_state == "RUNNER_TIME_STOP_HIT":
+            sig.exit_price = market_price
+            sig.outcome_status = "RUNNER_TIME_STOP"
+            sig.realized_rr = sig.risk_reward_t1
         elif to_state == "EXPIRED":
             sig.outcome_status = "EXPIRED"
         elif to_state == "INVALIDATED":
@@ -209,7 +325,146 @@ class SignalFSMManager:
         sig.state_history.append(audit)
         self._audit_log.append(audit)
         logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason)
+
+        # Sync transition to audit ledger & Supabase
+        try:
+            from app.signals.audit_ledger import signal_audit_ledger
+            signal_audit_ledger.record_state_transition(
+                signal_id=signal_id,
+                to_state=to_state,
+                market_price=float(market_price) if market_price is not None else None,
+                reason=reason,
+            )
+        except Exception as te:
+            logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
+
+        # Asynchronously persist updated SignalInstance to Supabase
+        try:
+            import asyncio
+            from app.signals.signals_persistence import persist_executed_signal
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(persist_executed_signal(sig))
+        except (RuntimeError, Exception):
+            pass
+
         return True, None
+
+    def ratchet_breakeven(self, signal_id: str, market_price: Decimal) -> bool:
+        """Activate +0.8R Breakeven Ratchet (§19). Moves stop loss to cost/entry."""
+        sig = self._signals.get(signal_id)
+        if not sig or sig.breakeven_activated:
+            return False
+        if sig.fsm_state not in ("CONFIRMED", "TARGET_1_HIT"):
+            return False
+
+        cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
+        cost_buffer = Decimal("0.10")  # exchange tick safety buffer
+        if sig.direction == "LONG_CALL":
+            new_sl = cost_ref + cost_buffer
+            if sig.current_stop_loss is not None and new_sl <= sig.current_stop_loss:
+                return False  # stop cannot move backward
+            sig.current_stop_loss = new_sl
+        else:
+            new_sl = cost_ref - cost_buffer
+            if sig.current_stop_loss is not None and new_sl >= sig.current_stop_loss:
+                return False  # stop cannot move backward
+            sig.current_stop_loss = new_sl
+
+        sig.breakeven_activated = True
+        audit = FSMTransitionAudit(
+            signal_id=signal_id,
+            from_state=sig.fsm_state,
+            to_state=sig.fsm_state,
+            market_price=market_price,
+            reason_code="BREAKEVEN_RATCHET_ACTIVATED",
+            guard_snapshot={"new_sl": float(new_sl), "trigger_price": float(market_price)},
+        )
+        sig.state_history.append(audit)
+        self._audit_log.append(audit)
+        logger.info("fsm_breakeven_ratchet", signal_id=signal_id, new_sl=float(new_sl))
+        return True
+
+    def evaluate_tick(
+        self,
+        sig: SignalInstance,
+        tick_price: Decimal,
+        tick_timestamp_ms: Optional[int] = None,
+    ) -> Optional[str]:
+        """Convenience method delegating to deterministic evaluate_tick."""
+        action, reason = evaluate_tick(sig, tick_price, tick_timestamp_ms)
+        if reason == "BE_ACTIVATED":
+            return "BE_ACTIVATED"
+        return action
+
+
+
+def evaluate_tick(
+    sig: SignalInstance,
+    tick_price: Decimal,
+    tick_timestamp_ms: Optional[int] = None,
+) -> tuple[Optional[SignalFSMState], str]:
+    """
+    Deterministic Tick Evaluation (§21)
+    Ordered Priority:
+      1. STOP_HIT (highest priority)
+      2. T2_HIT (in RUNNER) / T1_HIT (in ACTIVE)
+      3. Time-Stop (RUNNER_TIME_STOP_HIT in RUNNER / TIME_STOP_HIT in ACTIVE)
+      4. BE_ACTIVATED (returns None state but signals BE ratchet)
+    """
+    ts = tick_timestamp_ms or int(time.time() * 1000)
+    direction = sig.direction
+    curr_sl = sig.current_stop_loss or sig.stop_loss
+
+    # 1. Stop Loss Check (Highest Priority)
+    if direction == "LONG_CALL" and tick_price <= curr_sl:
+        return "STOP_LOSS_HIT", "STOP_LOSS_BREACHED"
+    elif direction == "LONG_PUT" and tick_price >= curr_sl:
+        return "STOP_LOSS_HIT", "STOP_LOSS_BREACHED"
+
+    # 2. RUNNER State Evaluation (Position already achieved T1)
+    if sig.fsm_state == "TARGET_1_HIT":
+        t2 = sig.t2_price or sig.target_2
+        # Check T2 Hit
+        if direction == "LONG_CALL" and tick_price >= t2:
+            return "TARGET_2_HIT", "TARGET_2_ACHIEVED"
+        elif direction == "LONG_PUT" and tick_price <= t2:
+            return "TARGET_2_HIT", "TARGET_2_ACHIEVED"
+
+        # Check Runner Time-Stop (Original TTL is structurally unreachable)
+        if sig.runner_time_stop_at_utc and ts > sig.runner_time_stop_at_utc:
+            return "RUNNER_TIME_STOP_HIT", "RUNNER_TIME_STOP_EXCEEDED"
+
+        # Breakeven trigger in runner
+        if not sig.breakeven_activated and sig.breakeven_trigger_price:
+            if (direction == "LONG_CALL" and tick_price >= sig.breakeven_trigger_price) or \
+               (direction == "LONG_PUT" and tick_price <= sig.breakeven_trigger_price):
+                return None, "BE_ACTIVATED"
+
+        return None, "HOLD_RUNNER"
+
+    # 3. ACTIVE / CONFIRMED State Evaluation
+    if sig.fsm_state == "CONFIRMED":
+        t1 = sig.t1_price or sig.target_1
+        # Check T1 Hit
+        if direction == "LONG_CALL" and tick_price >= t1:
+            return "TARGET_1_HIT", "TARGET_1_ACHIEVED"
+        elif direction == "LONG_PUT" and tick_price <= t1:
+            return "TARGET_1_HIT", "TARGET_1_ACHIEVED"
+
+        # Check Active Time-Stop (Scalp only)
+        if sig.is_scalp and sig.time_stop_at_utc and ts > sig.time_stop_at_utc:
+            return "TIME_STOP_HIT", "TIME_STOP_EXCEEDED"
+
+        # Check +0.8R Breakeven Trigger
+        if not sig.breakeven_activated and sig.breakeven_trigger_price:
+            if (direction == "LONG_CALL" and tick_price >= sig.breakeven_trigger_price) or \
+               (direction == "LONG_PUT" and tick_price <= sig.breakeven_trigger_price):
+                return None, "BE_ACTIVATED"
+
+        return None, "HOLD_ACTIVE"
+
+    return None, "NO_ACTION"
 
 
 signal_fsm = SignalFSMManager()

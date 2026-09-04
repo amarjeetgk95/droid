@@ -18,6 +18,7 @@ from app.signals.fsm import signal_fsm, SignalInstance
 logger = structlog.get_logger()
 
 
+
 class PerformanceMetrics(BaseModel):
     total_signals: int = 0
     active_signals: int = 0
@@ -34,19 +35,30 @@ class PerformanceMetrics(BaseModel):
     target_1_hits: int = 0
     target_2_hits: int = 0
     stop_loss_hits: int = 0
+    time_stop_hits: int = 0
+    runner_time_stop_hits: int = 0
 
     strategy_breakdown: dict[str, dict] = Field(default_factory=dict)
     underlying_breakdown: dict[str, dict] = Field(default_factory=dict)
+    scalp_summary: dict = Field(default_factory=dict)
+    intraday_summary: dict = Field(default_factory=dict)
     audit_summary: Optional[dict] = None
 
 
 class SignalOutcomeTracker:
     """
     Monitors price progression for active signals and calculates performance attribution.
+    Enforces Version 6.0:
+      - Ordered priority execution via signal_fsm.evaluate_tick()
+      - Breakeven Ratchet (+0.8R)
+      - Staged Exits (T1 50% booked + Runner to T2)
+      - Independent Two-Clock time-stop handling
+      - Fill Reconciler & Statutory cost deductions
     """
 
-    def update_with_price(self, underlying: str, current_price: Decimal | float) -> list[dict]:
+    def update_with_price(self, underlying: str, current_price: Decimal | float, now_ms: Optional[int] = None) -> list[dict]:
         d_price = Decimal(str(current_price))
+        ts_now = now_ms or int(__import__("time").time() * 1000)
         active = signal_fsm.list_active(underlying=underlying)
         events = []
 
@@ -54,64 +66,62 @@ class SignalOutcomeTracker:
             if sig.outcome_status is not None:
                 continue
             st = sig.fsm_state
-            if st in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+            if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
                 continue
             direction = sig.direction
 
             # ── 1. TRIGGER & CONFIRMATION ──
             if st in ("VALIDATED", "ARMED"):
+                triggered = False
                 if direction == "LONG_CALL" and d_price >= sig.trigger:
-                    signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
-                    signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
-                    events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price)})
+                    triggered = True
                 elif direction == "LONG_PUT" and d_price <= sig.trigger:
+                    triggered = True
+
+                if triggered:
                     signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
                     signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
                     events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price)})
 
-            # ── 2. TARGET & STOP LOSS MONITORING ──
-            elif st == "CONFIRMED":
-                if direction == "LONG_CALL":
-                    # Check Target 2 Hit (Highest Priority Win)
-                    if d_price >= sig.target_2:
-                        signal_fsm.transition(sig.signal_id, "TARGET_2_HIT", market_price=d_price, reason="TARGET_2_ACHIEVED")
-                        events.append({"signal_id": sig.signal_id, "event": "TARGET_2_HIT", "price": float(d_price), "rr": sig.risk_reward_t2})
-                    # Check Target 1 Hit
-                    elif d_price >= sig.target_1 and st != "TARGET_1_HIT":
-                        signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=d_price, reason="TARGET_1_ACHIEVED")
-                        events.append({"signal_id": sig.signal_id, "event": "TARGET_1_HIT", "price": float(d_price), "rr": sig.risk_reward_t1})
-                    # Check Stop Loss Hit
-                    elif d_price <= sig.stop_loss:
-                        signal_fsm.transition(sig.signal_id, "STOP_LOSS_HIT", market_price=d_price, reason="STOP_LOSS_TOUCHED")
-                        events.append({"signal_id": sig.signal_id, "event": "STOP_LOSS_HIT", "price": float(d_price), "rr": -1.0})
-
-                elif direction == "LONG_PUT":
-                    if d_price <= sig.target_2:
-                        signal_fsm.transition(sig.signal_id, "TARGET_2_HIT", market_price=d_price, reason="TARGET_2_ACHIEVED")
-                        events.append({"signal_id": sig.signal_id, "event": "TARGET_2_HIT", "price": float(d_price), "rr": sig.risk_reward_t2})
-                    elif d_price <= sig.target_1 and st != "TARGET_1_HIT":
-                        signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=d_price, reason="TARGET_1_ACHIEVED")
-                        events.append({"signal_id": sig.signal_id, "event": "TARGET_1_HIT", "price": float(d_price), "rr": sig.risk_reward_t1})
-                    elif d_price >= sig.stop_loss:
-                        signal_fsm.transition(sig.signal_id, "STOP_LOSS_HIT", market_price=d_price, reason="STOP_LOSS_TOUCHED")
-                        events.append({"signal_id": sig.signal_id, "event": "STOP_LOSS_HIT", "price": float(d_price), "rr": -1.0})
+            # ── 2. ORDERED EVALUATION FOR CONFIRMED & TARGET_1_HIT (RUNNER) ──
+            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                res = signal_fsm.evaluate_tick(sig, d_price, ts_now)
+                if res == "BE_ACTIVATED":
+                    signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
+                    events.append({"signal_id": sig.signal_id, "event": "BREAKEVEN_RATCHET", "price": float(d_price)})
+                elif res:
+                    signal_fsm.transition(sig.signal_id, res, market_price=d_price, reason=f"{res}_TRIGGERED")
+                    events.append({
+                        "signal_id": sig.signal_id,
+                        "event": res,
+                        "price": float(d_price),
+                        "rr": float(sig.realized_rr or 0.0),
+                    })
 
         return events
 
-    async def process_price_update_async(self, underlying: str, current_price: Decimal | float) -> list[dict]:
+    async def process_price_update_async(
+        self,
+        underlying: str,
+        current_price: Decimal | float,
+        now_ms: Optional[int] = None,
+    ) -> list[dict]:
         """
         Asynchronous processing pipeline:
-          1. Evaluates active signals against live price
-          2. Auto-executes confirmed signals into Paper Trading
-          3. Auto-squares off positions on Target/Stop hit with exact actual P&L audit
-          4. Dispatches authoritative Telegram notifications and SSE broadcasts
+          1. Evaluates active signals against live price using deterministic evaluate_tick priority
+          2. Auto-executes confirmed signals into Paper Trading & registers entry fill
+          3. Staged T1 exit: 50% booked, SL ratchets to cost, runner clock starts
+          4. Final exit (T2, SL, Time-Stop, Runner Time-Stop) with exact actual option P&L
+          5. Dispatches Telegram notifications and SSE broadcasts
         """
         from app.signals.paper_engine import signal_paper_engine
         from app.signals.audit_ledger import signal_audit_ledger
         from app.signals.sse import signal_sse_hub
         from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
+        from app.signals.fill_reconciler import option_fill_reconciler
 
         d_price = Decimal(str(current_price))
+        ts_now = now_ms or int(__import__("time").time() * 1000)
         active = signal_fsm.list_active(underlying=underlying)
         processed_events: list[dict] = []
 
@@ -119,7 +129,7 @@ class SignalOutcomeTracker:
             if sig.outcome_status is not None:
                 continue
             st = sig.fsm_state
-            if st in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+            if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
                 continue
             direction = sig.direction
 
@@ -134,7 +144,7 @@ class SignalOutcomeTracker:
                 if triggered:
                     signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
                     signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
-                    
+
                     # Automated paper trade execution upon confirmation
                     paper_res = None
                     lots_to_trade = (sig.option_contract or {}).get("lots") or getattr(sig, "lots", None) or 1
@@ -142,6 +152,23 @@ class SignalOutcomeTracker:
                         paper_res = await signal_paper_engine.execute_signal(sig.signal_id, lots_override=lots_to_trade)
                     except Exception as pe:
                         logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
+
+                    # Reconcile entry fill
+                    if paper_res and paper_res.success:
+                        opt_rec = option_fill_reconciler.reconcile_entry(
+                            sig=sig,
+                            fill_price=paper_res.fill_price,
+                            quantity=paper_res.quantity,
+                            lot_size=int((sig.option_contract or {}).get("lot_size", 75)),
+                        )
+                    else:
+                        # Fallback synthetic entry fill at estimated premium
+                        opt = sig.option_contract or {}
+                        strike = float(opt.get("strike", float(sig.trigger)))
+                        opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
+                        est_fill = option_fill_reconciler.estimate_option_premium(float(d_price), strike, opt_type)
+                        lot_sz = int(opt.get("lot_size", 75))
+                        opt_rec = option_fill_reconciler.reconcile_entry(sig, est_fill, lot_sz * lots_to_trade, lot_sz)
 
                     # Dispatch Telegram notification for Confirmed Signal
                     try:
@@ -160,8 +187,8 @@ class SignalOutcomeTracker:
                             target_high=float(sig.target_2),
                             confidence=float(sig.confidence),
                             paper_order_id=paper_res.order_id if paper_res else None,
-                            paper_fill_price=paper_res.fill_price if paper_res else None,
-                            paper_filled_qty=paper_res.quantity if paper_res else None,
+                            paper_fill_price=paper_res.fill_price if paper_res else float(sig.entry_price or 0.0),
+                            paper_filled_qty=paper_res.quantity if paper_res else int(sig.intended_qty),
                             paper_status="FILLED" if paper_res else None,
                             paper_side="BUY" if "CALL" in sig.direction else "SELL",
                         )
@@ -171,52 +198,112 @@ class SignalOutcomeTracker:
 
                     # Broadcast SSE
                     await signal_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
-                    processed_events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price), "paper_order": paper_res.model_dump() if paper_res else None})
+                    processed_events.append({
+                        "signal_id": sig.signal_id,
+                        "event": "CONFIRMED",
+                        "price": float(d_price),
+                        "paper_order": paper_res.model_dump() if paper_res else None,
+                    })
 
-            # ── 2. TARGET & STOP LOSS -> AUTO SQUARE-OFF WITH ACTUAL P&L ──
-            elif st == "CONFIRMED":
-                exit_event = None
-                rr_val = None
+            # ── 2. ORDERED TICK EVALUATION (CONFIRMED & TARGET_1_HIT RUNNERS) ──
+            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                eval_action = signal_fsm.evaluate_tick(sig, d_price, ts_now)
+                if not eval_action:
+                    continue
 
-                if direction == "LONG_CALL":
-                    if d_price >= sig.target_2:
-                        exit_event = "TARGET_2_HIT"
-                        rr_val = sig.risk_reward_t2
-                    elif d_price >= sig.target_1 and st != "TARGET_1_HIT":
-                        exit_event = "TARGET_1_HIT"
-                        rr_val = sig.risk_reward_t1
-                    elif d_price <= sig.stop_loss:
-                        exit_event = "STOP_LOSS_HIT"
-                        rr_val = -1.0
-                elif direction == "LONG_PUT":
-                    if d_price <= sig.target_2:
-                        exit_event = "TARGET_2_HIT"
-                        rr_val = sig.risk_reward_t2
-                    elif d_price <= sig.target_1 and st != "TARGET_1_HIT":
-                        exit_event = "TARGET_1_HIT"
-                        rr_val = sig.risk_reward_t1
-                    elif d_price >= sig.stop_loss:
-                        exit_event = "STOP_LOSS_HIT"
-                        rr_val = -1.0
+                opt = sig.option_contract or {}
+                strike = float(opt.get("strike", float(sig.trigger)))
+                opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
+                est_opt_price = option_fill_reconciler.estimate_option_premium(float(d_price), strike, opt_type)
 
-                if exit_event:
-                    signal_fsm.transition(sig.signal_id, exit_event, market_price=d_price, reason=f"{exit_event}_TRIGGERED")
+                if eval_action == "BE_ACTIVATED":
+                    ratcheted = signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
+                    if ratcheted:
+                        await signal_sse_hub.broadcast(
+                            "signal_breakeven",
+                            {"signal_id": sig.signal_id, "new_stop_loss": float(sig.current_stop_loss or 0.0)},
+                            priority="P1",
+                        )
+                        processed_events.append({"signal_id": sig.signal_id, "event": "BREAKEVEN_RATCHET", "price": float(d_price)})
 
-                    # Auto square-off paper trade and compute exact actual PnL
-                    audit_rec = None
+                elif eval_action == "TARGET_1_HIT" and st == "CONFIRMED":
+                    # Transition FSM to TARGET_1_HIT (Runner Mode begins)
+                    signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=d_price, reason="TARGET_1_ACHIEVED")
+
+                    # Reconcile T1 Staged Exit (50% position booked)
+                    recon = option_fill_reconciler.reconcile_t1_exit(sig, est_opt_price, ts_now)
+
+                    # Partial square-off in paper engine
                     try:
-                        audit_rec = await signal_paper_engine.close_signal_position(sig.signal_id, float(d_price), reason=exit_event)
-                    except Exception as ce:
-                        logger.warning("auto_paper_square_off_failed", signal_id=sig.signal_id, error=str(ce))
+                        await signal_paper_engine.close_signal_position(
+                            sig.signal_id,
+                            float(d_price),
+                            reason="TARGET_1_HIT",
+                            quantity_to_close=recon.t1_qty,
+                        )
+                    except Exception as pe:
+                        logger.warning("paper_t1_close_failed", signal_id=sig.signal_id, error=str(pe))
 
-                    # Dispatch Telegram notifications (TARGET_HIT / STOP_HIT + SIGNAL_RESULT)
+                    # Dispatch Telegram for T1 Staged Exit
                     try:
-                        actual_pnl = audit_rec.actual_pnl_inr if audit_rec else None
-                        theo_pnl = audit_rec.theoretical_pnl_inr if audit_rec else None
-                        holding_str = audit_rec.holding_time_str if audit_rec else None
-                        points_diff = audit_rec.actual_pnl_points if audit_rec else (float(d_price) - float(sig.trigger))
+                        t1_ev = SignalEvent(
+                            event_type="TARGET_HIT",
+                            signal_id=sig.signal_id,
+                            instrument=sig.underlying,
+                            candle_timeframe=sig.timeframe,
+                            setup_type=sig.strategy,
+                            direction="BULLISH" if "CALL" in sig.direction else "BEARISH",
+                            status="TARGET_1_HIT",
+                            result="TARGET_1_HIT",
+                            theoretical_entry=float(sig.trigger),
+                            exit_price=float(d_price),
+                            actual_pnl_amount=recon.t1_realized_pnl,
+                            current_price=float(d_price),
+                        )
+                        await telegram_notification_queue.publish_signal_event(t1_ev)
+                    except Exception as te:
+                        logger.warning("telegram_t1_failed", signal_id=sig.signal_id, error=str(te))
 
-                        ev_type = "TARGET_HIT" if "TARGET" in exit_event else "STOP_HIT"
+                    await signal_sse_hub.broadcast(
+                        "signal_staged_exit",
+                        {
+                            "signal_id": sig.signal_id,
+                            "event": "TARGET_1_HIT",
+                            "closed_qty": recon.t1_qty,
+                            "remaining_qty": recon.remaining_qty,
+                            "t1_pnl": recon.t1_realized_pnl,
+                            "runner_ttl_seconds": sig.runner_ttl_seconds or 300,
+                        },
+                        priority="P0",
+                    )
+                    processed_events.append({
+                        "signal_id": sig.signal_id,
+                        "event": "TARGET_1_HIT",
+                        "price": float(d_price),
+                        "t1_pnl": recon.t1_realized_pnl,
+                        "remaining_qty": recon.remaining_qty,
+                    })
+
+                elif eval_action in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT"):
+                    # Final Exit
+                    signal_fsm.transition(sig.signal_id, eval_action, market_price=d_price, reason=f"{eval_action}_TRIGGERED")
+
+                    # Reconcile final exit and close residual quantity
+                    recon = option_fill_reconciler.reconcile_final_exit(sig, est_opt_price, exit_reason=eval_action, exit_time_ms=ts_now)
+
+                    # Full square-off in paper engine
+                    try:
+                        await signal_paper_engine.close_signal_position(
+                            sig.signal_id,
+                            float(d_price),
+                            reason=eval_action,
+                        )
+                    except Exception as pe:
+                        logger.warning("paper_final_close_failed", signal_id=sig.signal_id, error=str(pe))
+
+                    # Dispatch Telegram notifications
+                    try:
+                        ev_type = "TARGET_HIT" if "TARGET" in eval_action else ("STOP_HIT" if "STOP" in eval_action else "TIME_STOP")
                         res_ev = SignalEvent(
                             event_type=ev_type,
                             signal_id=sig.signal_id,
@@ -224,44 +311,55 @@ class SignalOutcomeTracker:
                             candle_timeframe=sig.timeframe,
                             setup_type=sig.strategy,
                             direction="BULLISH" if "CALL" in sig.direction else "BEARISH",
-                            status=exit_event,
-                            result=exit_event,
+                            status=eval_action,
+                            result=eval_action,
                             theoretical_entry=float(sig.trigger),
                             exit_price=float(d_price),
-                            theoretical_pnl_points=float(points_diff),
-                            theoretical_pnl_amount=float(theo_pnl) if theo_pnl is not None else None,
-                            actual_pnl_amount=float(actual_pnl) if actual_pnl is not None else None,
-                            holding_time=holding_str,
+                            actual_pnl_amount=recon.net_realized_pnl_inr,
                             current_price=float(d_price),
                         )
                         await telegram_notification_queue.publish_signal_event(res_ev)
-
-                        # Also publish canonical SIGNAL_RESULT
                         res_ev2 = res_ev.model_copy(update={"event_type": "SIGNAL_RESULT"})
                         await telegram_notification_queue.publish_signal_event(res_ev2)
                     except Exception as te:
-                        logger.warning("telegram_outcome_dispatch_failed", signal_id=sig.signal_id, error=str(te))
+                        logger.warning("telegram_final_failed", signal_id=sig.signal_id, error=str(te))
 
                     # Broadcast SSE
-                    await signal_sse_hub.broadcast("signal_outcome", {"signal_id": sig.signal_id, "event": exit_event, "price": float(d_price), "audit": audit_rec.model_dump() if audit_rec else None}, priority="P0")
-                    processed_events.append({"signal_id": sig.signal_id, "event": exit_event, "price": float(d_price), "rr": rr_val, "actual_pnl": audit_rec.actual_pnl_inr if audit_rec else None})
+                    await signal_sse_hub.broadcast(
+                        "signal_outcome",
+                        {
+                            "signal_id": sig.signal_id,
+                            "event": eval_action,
+                            "price": float(d_price),
+                            "reconciliation": recon.model_dump(),
+                        },
+                        priority="P0",
+                    )
+                    processed_events.append({
+                        "signal_id": sig.signal_id,
+                        "event": eval_action,
+                        "price": float(d_price),
+                        "actual_pnl": recon.net_realized_pnl_inr,
+                        "realized_rr": recon.realized_rr,
+                    })
 
         return processed_events
 
     def get_performance_metrics(self) -> PerformanceMetrics:
-        """Calculate complete historical performance attribution."""
+        """Calculate complete historical performance attribution split across Desks (§31)."""
         all_signals = list(signal_fsm._signals.values())
         total = len(all_signals)
-        active_ct = sum(1 for s in all_signals if s.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED"))
-        
+        active_ct = sum(1 for s in all_signals if s.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT"))
+
         t1_hits = sum(1 for s in all_signals if s.fsm_state == "TARGET_1_HIT" or s.outcome_status == "WIN_T1")
         t2_hits = sum(1 for s in all_signals if s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2")
         sl_hits = sum(1 for s in all_signals if s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL")
+        time_stops = sum(1 for s in all_signals if s.fsm_state in ("TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("TIME_STOP", "RUNNER_TIME_STOP"))
         expired = sum(1 for s in all_signals if s.fsm_state == "EXPIRED" or s.outcome_status == "EXPIRED")
 
-        completed_trades = (t1_hits + t2_hits) + sl_hits
+        completed_trades = (t1_hits + t2_hits) + sl_hits + time_stops
         wins = t1_hits + t2_hits
-        losses = sl_hits
+        losses = sl_hits + time_stops
 
         win_rate = (wins / completed_trades * 100.0) if completed_trades > 0 else 0.0
 
@@ -271,6 +369,18 @@ class SignalOutcomeTracker:
         profit_factor = (gross_profit_r / gross_loss_r) if gross_loss_r > 0 else (gross_profit_r if gross_profit_r > 0 else 1.0)
         expectancy = ((win_rate / 100.0 * 2.0) - ((1.0 - (win_rate / 100.0)) * 1.0)) if completed_trades > 0 else 0.0
 
+        # Desk breakdowns
+        def _calc_desk(sub_list: list[SignalInstance]) -> dict:
+            sub_total = len(sub_list)
+            sub_w = sum(1 for s in sub_list if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"))
+            sub_l = sum(1 for s in sub_list if s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"))
+            sub_comp = sub_w + sub_l
+            sub_wr = round((sub_w / sub_comp * 100.0), 1) if sub_comp > 0 else 0.0
+            return {"total": sub_total, "completed": sub_comp, "wins": sub_w, "losses": sub_l, "win_rate_pct": sub_wr}
+
+        scalp_sigs = [s for s in all_signals if getattr(s, "is_scalp", False)]
+        intraday_sigs = [s for s in all_signals if not getattr(s, "is_scalp", False)]
+
         # Strategy breakdown
         strat_breakdown = {}
         for s in all_signals:
@@ -279,7 +389,7 @@ class SignalOutcomeTracker:
             entry["total"] += 1
             if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"):
                 entry["wins"] += 1
-            elif s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL":
+            elif s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"):
                 entry["losses"] += 1
             entry["win_rate"] = round((entry["wins"] / (entry["wins"] + entry["losses"]) * 100.0), 1) if (entry["wins"] + entry["losses"]) > 0 else 0.0
 
@@ -291,7 +401,7 @@ class SignalOutcomeTracker:
             entry["total"] += 1
             if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"):
                 entry["wins"] += 1
-            elif s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL":
+            elif s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"):
                 entry["losses"] += 1
             entry["win_rate"] = round((entry["wins"] / (entry["wins"] + entry["losses"]) * 100.0), 1) if (entry["wins"] + entry["losses"]) > 0 else 0.0
 
@@ -316,10 +426,15 @@ class SignalOutcomeTracker:
             target_1_hits=t1_hits,
             target_2_hits=t2_hits,
             stop_loss_hits=sl_hits,
+            time_stop_hits=time_stops,
+            runner_time_stop_hits=time_stops,
             strategy_breakdown=strat_breakdown,
             underlying_breakdown=under_breakdown,
+            scalp_summary=_calc_desk(scalp_sigs),
+            intraday_summary=_calc_desk(intraday_sigs),
             audit_summary=audit_stats,
         )
 
 
 outcome_tracker = SignalOutcomeTracker()
+
