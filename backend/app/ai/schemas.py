@@ -323,6 +323,117 @@ class AIEvaluationMetrics(BaseModel):
     by_time_of_day: dict = Field(default_factory=dict)
 
 
+class DeepInsightTimeframeEntry(BaseModel):
+    timeframe: str
+    direction: Direction = Direction.NEUTRAL
+    strength: int = Field(default=50, ge=0, le=100)
+    structure: str = ""
+
+
+class DeepInsightMarketLevels(BaseModel):
+    current_price: float = 0.0
+    vwap: float = 0.0
+    support: float = 0.0
+    resistance: float = 0.0
+    vwap_relation: Literal["Above", "Below", "At"] = "At"
+
+
+class DeepInsightMomentum(BaseModel):
+    status: str = "Unknown"
+    value: float = 0.0
+
+
+class DeepInsightVolume(BaseModel):
+    relative_value: float = 1.0
+    status: Literal["High", "Normal", "Low"] = "Normal"
+
+
+class DeepInsightMarket(BaseModel):
+    regime: Regime = Regime.UNKNOWN
+    direction: Direction = Direction.NEUTRAL
+    regime_strength: int = 0
+    volatility: VolatilityLevel = VolatilityLevel.MEDIUM
+    levels: DeepInsightMarketLevels = Field(default_factory=DeepInsightMarketLevels)
+    momentum: DeepInsightMomentum = Field(default_factory=DeepInsightMomentum)
+    volume: DeepInsightVolume = Field(default_factory=DeepInsightVolume)
+
+
+class DeepInsightOptionsEvidence(BaseModel):
+    bias: Direction = Direction.NEUTRAL
+    pcr: float = 1.0
+    put_support: float = 0.0
+    call_resistance: float = 0.0
+    oi_trend: Literal["Increasing", "Decreasing", "Stable"] = "Stable"
+    iv: str = "Moderate"
+    interpretation: str = ""
+
+
+class DeepInsightHistoricalEvidence(BaseModel):
+    similar_states: int = 0
+    continuation: float = 0.0
+    failure: float = 0.0
+    reversal: float = 0.0
+    median_move: float = 0.0
+    median_duration: str = ""
+    sample_quality: SampleQuality = SampleQuality.POOR
+
+
+class DeepInsightSetup(BaseModel):
+    setup_type: SetupType = SetupType.CONTINUATION
+    entry_zone: str = ""
+    stop_loss: float = 0.0
+    target: str = ""
+    risk_reward: float = 0.0
+
+
+class DeepInsightSignalState(BaseModel):
+    state: Literal["ANALYZING", "ACTIVE", "VALIDATING", "APPROVED", "REJECTED", "EXPIRED", "SUPERSEDED", "AI_UNAVAILABLE"] = "AI_UNAVAILABLE"
+    age: int = 0
+    ttl: int = 0
+    ttl_remaining: int = 0
+
+
+class DeepInsightValidation(BaseModel):
+    status: ValidationStatus = ValidationStatus.REJECT
+    rejection_reason: Optional[str] = None
+
+
+class DeepInsightProvider(BaseModel):
+    name: str = ""
+    model: str = ""
+    latency_ms: int = 0
+
+
+class DeepInsightDataQuality(BaseModel):
+    completeness: float = 0.0
+    status: Literal["Complete", "Partial", "Incomplete"] = "Incomplete"
+
+
+class DeepInsightPayload(BaseModel):
+    symbol: str = "NIFTY"
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    market: DeepInsightMarket = Field(default_factory=DeepInsightMarket)
+    regime: Regime = Regime.UNKNOWN
+    multi_timeframe: list[DeepInsightTimeframeEntry] = Field(default_factory=list)
+
+    ai_view: dict = Field(default_factory=dict)
+    technical_evidence: dict = Field(default_factory=dict)
+    options_evidence: DeepInsightOptionsEvidence = Field(default_factory=DeepInsightOptionsEvidence)
+    historical_evidence: DeepInsightHistoricalEvidence = Field(default_factory=DeepInsightHistoricalEvidence)
+
+    setup: DeepInsightSetup = Field(default_factory=DeepInsightSetup)
+    risks: dict = Field(default_factory=dict)
+    invalidation: list[str] = Field(default_factory=list)
+
+    signal_state: DeepInsightSignalState = Field(default_factory=DeepInsightSignalState)
+    data_quality: DeepInsightDataQuality = Field(default_factory=DeepInsightDataQuality)
+    validation: DeepInsightValidation = Field(default_factory=DeepInsightValidation)
+    provider: DeepInsightProvider = Field(default_factory=DeepInsightProvider)
+
+    error: Optional[str] = None
+
+
 ALLOWED_BIASES = ("BUY", "SELL", "HOLD", "NO_TRADE", "WAIT_FOR_CONFIRMATION")
 
 LEGACY_BIAS_MAP = {

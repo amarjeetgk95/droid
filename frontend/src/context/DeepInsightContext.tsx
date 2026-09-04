@@ -4,30 +4,65 @@ import React, { createContext, useContext, useReducer, useCallback, useEffect, u
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
 import type {
-  DeepInsightState,
+  DeepInsightPayload,
   DeepInsightApiResponse,
-  DeepInsightSignal,
   DeepInsightMarket,
-  DeepInsightTimeframe,
-  DeepInsightOptions,
-  DeepInsightHistorical,
-  DeepInsightEvidence,
-  DeepInsightRisk,
+  DeepInsightTimeframeEntry,
+  DeepInsightOptionsEvidence,
+  DeepInsightHistoricalEvidence,
+  DeepInsightTechnicalEvidence,
+  DeepInsightRisks,
   DeepInsightSetup,
   DeepInsightValidation,
-  DeepInsightExecution,
+  DeepInsightSignalState,
   DeepInsightProvider,
   DeepInsightDataQuality,
-  DeepInsightDecision,
-  DeepInsightRegime,
-  DeepInsightDirection,
-  DeepInsightVolatility,
-  DeepInsightSetupType,
+  DeepInsightAiView,
 } from '@/lib/deep-insight-types';
 
+interface DeepInsightState {
+  status: 'idle' | 'loading' | 'success' | 'error' | 'stale' | 'expired' | 'unavailable';
+  payload: DeepInsightPayload | null;
+  market: DeepInsightMarket | null;
+  multiTimeframe: DeepInsightTimeframeEntry[];
+  aiView: DeepInsightAiView | null;
+  technicalEvidence: DeepInsightTechnicalEvidence | null;
+  optionsEvidence: DeepInsightOptionsEvidence | null;
+  historicalEvidence: DeepInsightHistoricalEvidence | null;
+  setup: DeepInsightSetup | null;
+  risks: DeepInsightRisks | null;
+  invalidation: string[];
+  signalState: DeepInsightSignalState | null;
+  dataQuality: DeepInsightDataQuality | null;
+  validation: DeepInsightValidation | null;
+  provider: DeepInsightProvider | null;
+  lastUpdated: string | null;
+  error: string | null;
+}
+
+const initialState: DeepInsightState = {
+  status: 'idle',
+  payload: null,
+  market: null,
+  multiTimeframe: [],
+  aiView: null,
+  technicalEvidence: null,
+  optionsEvidence: null,
+  historicalEvidence: null,
+  setup: null,
+  risks: null,
+  invalidation: [],
+  signalState: null,
+  dataQuality: null,
+  validation: null,
+  provider: null,
+  lastUpdated: null,
+  error: null,
+};
+
 type DeepInsightAction =
-  | { type: 'FETCH_START'; symbol: string }
-  | { type: 'FETCH_SUCCESS'; payload: DeepInsightApiResponse; symbol: string }
+  | { type: 'FETCH_START' }
+  | { type: 'FETCH_SUCCESS'; payload: DeepInsightPayload }
   | { type: 'FETCH_ERROR'; error: string }
   | { type: 'SET_STALE'; message: string }
   | { type: 'SET_EXPIRED' }
@@ -35,90 +70,63 @@ type DeepInsightAction =
   | { type: 'TICK' }
   | { type: 'RESET' };
 
-const initialState: DeepInsightState = {
-  status: 'idle',
-  market: null,
-  signal: null,
-  multiTimeframe: [],
-  options: null,
-  historical: null,
-  evidence: null,
-  risk: null,
-  setup: null,
-  validation: null,
-  execution: null,
-  provider: null,
-  dataQuality: null,
-  lastUpdated: null,
-  error: null,
-  staleMessage: null,
-};
-
 function deepInsightReducer(state: DeepInsightState, action: DeepInsightAction): DeepInsightState {
   switch (action.type) {
     case 'FETCH_START':
-      return {
-        ...initialState,
-        status: 'loading',
-      };
+      return { ...initialState, status: 'loading' };
     case 'FETCH_SUCCESS': {
-      const { signal, execution } = action.payload.data;
+      const p = action.payload;
       const now = new Date().toISOString();
-      const signalTime = new Date(signal.timestamp);
-      const age = Math.floor((Date.now() - signalTime.getTime()) / 1000);
-      const ttlRemaining = signal.expires_at
-        ? Math.max(0, Math.floor((new Date(signal.expires_at).getTime() - Date.now()) / 1000))
-        : signal.ttl_seconds - age;
+      const signalState = p.signal_state;
+      const ttlRemaining = signalState?.ttl_remaining ?? 0;
+
+      let status: DeepInsightState['status'] = 'success';
+      if (p.error) {
+        status = 'error';
+      } else if (signalState?.state === 'EXPIRED' || ttlRemaining <= 0) {
+        status = 'expired';
+      } else if (signalState?.state === 'AI_UNAVAILABLE') {
+        status = 'unavailable';
+      }
 
       return {
         ...state,
-        status: 'success',
-        signal: mapSignal(signal, age, ttlRemaining),
-        execution: mapExecution(execution),
-        validation: mapValidation(signal),
-        provider: mapProvider(signal),
-        setup: mapSetup(signal),
-        risk: mapRisk(signal),
-        evidence: mapEvidence(signal),
+        status,
+        payload: p,
+        market: p.market ?? null,
+        multiTimeframe: p.multi_timeframe ?? [],
+        aiView: (p.ai_view && Object.keys(p.ai_view).length > 0) ? p.ai_view as DeepInsightAiView : null,
+        technicalEvidence: (p.technical_evidence && Object.keys(p.technical_evidence).length > 0) ? p.technical_evidence as DeepInsightTechnicalEvidence : null,
+        optionsEvidence: p.options_evidence ?? null,
+        historicalEvidence: p.historical_evidence ?? null,
+        setup: p.setup ?? null,
+        risks: (p.risks && Object.keys(p.risks).length > 0) ? p.risks as DeepInsightRisks : null,
+        invalidation: p.invalidation ?? [],
+        signalState: signalState ?? null,
+        dataQuality: p.data_quality ?? null,
+        validation: p.validation ?? null,
+        provider: p.provider ?? null,
         lastUpdated: now,
-        error: null,
-        staleMessage: null,
+        error: p.error ?? null,
       };
     }
     case 'FETCH_ERROR':
-      return {
-        ...state,
-        status: 'error',
-        error: action.error,
-      };
+      return { ...state, status: 'error', error: action.error };
     case 'SET_STALE':
-      return {
-        ...state,
-        status: 'stale',
-        staleMessage: action.message,
-      };
+      return { ...state, status: 'stale' };
     case 'SET_EXPIRED':
-      return {
-        ...state,
-        status: 'expired',
-      };
+      return { ...state, status: 'expired' };
     case 'SET_UNAVAILABLE':
-      return {
-        ...state,
-        status: 'unavailable',
-        error: action.message,
-      };
+      return { ...state, status: 'unavailable' };
     case 'TICK': {
-      if (!state.signal || state.status !== 'success') return state;
-      const age = state.signal.age + 1;
-      const ttlRemaining = Math.max(0, state.signal.ttl - age);
-      if (ttlRemaining <= 0) {
-        return { ...state, status: 'expired' };
+      if (!state.signalState || state.status !== 'success') return state;
+      const newAge = state.signalState.age + 1;
+      const newRemaining = Math.max(0, state.signalState.ttl - newAge);
+      const updatedSignalState = { ...state.signalState, age: newAge, ttl_remaining: newRemaining };
+      if (newRemaining <= 0) {
+        return { ...state, status: 'expired', signalState: updatedSignalState };
       }
-      return {
-        ...state,
-        signal: { ...state.signal, age, ttlRemaining },
-      };
+      return { ...state, signalState: updatedSignalState };
     }
     case 'RESET':
       return initialState;
@@ -127,91 +135,10 @@ function deepInsightReducer(state: DeepInsightState, action: DeepInsightAction):
   }
 }
 
-function mapSignal(
-  s: DeepInsightApiResponse['data']['signal'],
-  age: number,
-  ttlRemaining: number
-): DeepInsightSignal {
-  return {
-    signalId: s.signal_id,
-    symbol: s.symbol,
-    timestamp: s.timestamp,
-    state: ttlRemaining <= 0 ? 'EXPIRED' : 'ACTIVE',
-    age,
-    ttl: s.ttl_seconds,
-    ttlRemaining,
-    regime: s.regime as DeepInsightRegime,
-    direction: s.direction as DeepInsightDirection,
-    volatility: 'NORMAL' as DeepInsightVolatility,
-    aiBias: s.decision as DeepInsightDecision,
-    confidence: s.raw_confidence,
-    calibratedConfidence: s.calibrated_confidence || s.raw_confidence,
-    setupType: s.setup_type as DeepInsightSetupType,
-    timeframe: '5M',
-  };
-}
-
-function mapExecution(e: DeepInsightApiResponse['data']['execution']): DeepInsightExecution {
-  return {
-    decision: e.decision,
-    reasonCode: e.reason_code,
-    reasonDetail: e.reason_detail,
-  };
-}
-
-function mapValidation(s: DeepInsightApiResponse['data']['signal']): DeepInsightValidation {
-  return {
-    decision: s.validation_result,
-    rejectionReason: s.rejection_reason_code,
-    rejectionDetail: s.rejection_detail,
-  };
-}
-
-function mapProvider(s: DeepInsightApiResponse['data']['signal']): DeepInsightProvider {
-  return {
-    name: s.provider || 'AI Engine',
-    model: s.model || 'Configured model',
-    latencyMs: s.latency_ms,
-  };
-}
-
-function mapSetup(s: DeepInsightApiResponse['data']['signal']): DeepInsightSetup {
-  const entry = s.entry;
-  const stop = s.stop_loss;
-  const target = s.target;
-  const risk = Math.abs(entry - stop);
-  const reward = Math.abs(target - entry);
-  const rr = risk > 0 ? reward / risk : 0;
-
-  return {
-    entryZone: `${entry.toFixed(0)}`,
-    stopLoss: stop,
-    target: `${target.toFixed(0)}`,
-    riskReward: parseFloat(rr.toFixed(1)),
-    setupType: s.setup_type as DeepInsightSetupType,
-  };
-}
-
-function mapRisk(s: DeepInsightApiResponse['data']['signal']): DeepInsightRisk {
-  return {
-    mainRisks: s.invalidation.slice(0, 3),
-    invalidation: s.rejection_reason_code
-      ? [`Rejection: ${s.rejection_reason_code}`]
-      : [],
-  };
-}
-
-function mapEvidence(s: DeepInsightApiResponse['data']['signal']): DeepInsightEvidence {
-  return {
-    positive: s.reasons.slice(0, 4),
-    supporting: s.reasons.slice(4, 8),
-  };
-}
-
 interface DeepInsightContextValue {
   state: DeepInsightState;
   symbol: string;
-  evaluate: (symbol?: string, regimeHint?: string) => Promise<void>;
+  refresh: (symbol?: string) => Promise<void>;
   setSymbol: (symbol: string) => void;
   reset: () => void;
 }
@@ -222,15 +149,16 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
   const [state, dispatch] = useReducer(deepInsightReducer, initialState);
   const [symbol, setSymbolState] = React.useState('NIFTY');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const tickIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const setSymbol = useCallback((s: string) => {
     setSymbolState(s);
   }, []);
 
-  const evaluate = useCallback(async (sym?: string, regimeHint?: string) => {
+  const refresh = useCallback(async (sym?: string) => {
     const targetSymbol = sym || symbol;
-    dispatch({ type: 'FETCH_START', symbol: targetSymbol });
+    dispatch({ type: 'FETCH_START' });
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -238,13 +166,7 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/ai/v2/evaluate/${targetSymbol}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: targetSymbol,
-          regime_hint: regimeHint,
-        }),
+      const response = await fetch(`${API_BASE}/api/v1/ai/deep-insight/${targetSymbol}`, {
         signal: abortControllerRef.current.signal,
       });
 
@@ -254,11 +176,11 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
 
       const data: DeepInsightApiResponse = await response.json();
 
-      if (data.error) {
+      if (data.error && !data.data) {
         throw new Error(data.error);
       }
 
-      dispatch({ type: 'FETCH_SUCCESS', payload: data, symbol: targetSymbol });
+      dispatch({ type: 'FETCH_SUCCESS', payload: data.data });
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -270,6 +192,10 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     if (tickIntervalRef.current) {
       clearInterval(tickIntervalRef.current);
       tickIntervalRef.current = null;
@@ -277,19 +203,51 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
     dispatch({ type: 'RESET' });
   }, []);
 
+  // Auto-refresh every 10s when active
   useEffect(() => {
+    if (state.status === 'success' && state.signalState?.state === 'ACTIVE') {
+      pollIntervalRef.current = setInterval(() => {
+        refresh();
+      }, 10000);
+    } else if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
       }
+    };
+  }, [state.status, state.signalState?.state, refresh]);
+
+  // Tick every second to update age/remaining
+  useEffect(() => {
+    if (state.status === 'success' && state.signalState?.state === 'ACTIVE') {
+      tickIntervalRef.current = setInterval(() => {
+        dispatch({ type: 'TICK' });
+      }, 1000);
+    } else if (tickIntervalRef.current) {
+      clearInterval(tickIntervalRef.current);
+      tickIntervalRef.current = null;
+    }
+    return () => {
       if (tickIntervalRef.current) {
         clearInterval(tickIntervalRef.current);
       }
     };
+  }, [state.status, state.signalState?.state]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (tickIntervalRef.current) clearInterval(tickIntervalRef.current);
+    };
   }, []);
 
   return (
-    <DeepInsightContext.Provider value={{ state, symbol, evaluate, setSymbol, reset }}>
+    <DeepInsightContext.Provider value={{ state, symbol, refresh, setSymbol, reset }}>
       {children}
     </DeepInsightContext.Provider>
   );

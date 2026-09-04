@@ -783,3 +783,27 @@ async def get_market_briefing(
         logger.error("briefing_endpoint_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ---------------------------------------------------------------------------
+# Deep Insight — Unified Frontend Intelligence
+# ---------------------------------------------------------------------------
+
+@router.get("/deep-insight/{symbol}")
+async def get_deep_insight(symbol: str):
+    """Unified Deep Insight payload aggregating market regime, options, multi-TF, and AI signal.
+
+    Returns one structured response containing all information required by the
+    frontend AI Deep Insight module per §14 of the integration specification.
+    """
+    try:
+        from app.services.deep_insight_service import deep_insight_service
+        payload = await deep_insight_service.get_deep_insight(symbol.upper())
+        return {
+            "data": payload.model_dump(mode="json"),
+            "error": payload.error,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        logger.error("deep_insight_error", symbol=symbol, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
