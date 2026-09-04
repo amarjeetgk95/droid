@@ -108,8 +108,14 @@ async def seed_defaults(
 ):
     """One-click bootstrap — enable all derivatives and load their history."""
     try:
-        return _ok(hpi_service.seed_defaults(
-            force=force, sampling_interval=sampling_interval, retention_days=retention_days))
+        import asyncio
+        res = await asyncio.to_thread(
+            hpi_service.seed_defaults,
+            force=force,
+            sampling_interval=sampling_interval,
+            retention_days=retention_days,
+        )
+        return _ok(res)
     except Exception as e:
         _err(e)
 
@@ -124,7 +130,9 @@ async def storage_report():
 async def import_history(req: ImportRequest):
     """§16 — estimate (estimate_only=true) or execute the historical import."""
     try:
-        return _ok(hpi_service.run_import(req).model_dump(mode="json"))
+        import asyncio
+        res = await asyncio.to_thread(hpi_service.run_import, req)
+        return _ok(res.model_dump(mode="json"))
     except Exception as e:
         _err(e)
 

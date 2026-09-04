@@ -31,9 +31,9 @@ class ApiClient {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.baseUrl}${cleanPath}`;
 
-    // Adaptive timeout: 90s for AI inference / import / historical scans; 60s for standard requests (accommodates cloud cold-starts)
+    // Adaptive timeout: 180s for AI inference / import / historical scans; 60s for standard requests (accommodates cloud cold-starts)
     const isHeavy = cleanPath.includes('/ai/') || cleanPath.includes('/hpi/import') || cleanPath.includes('/historical/analogs') || cleanPath.includes('/hpi/seed');
-    const timeoutMs = options?.timeoutMs ?? (isHeavy ? 90_000 : 60_000);
+    const timeoutMs = options?.timeoutMs ?? (isHeavy ? 180_000 : 60_000);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

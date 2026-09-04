@@ -495,13 +495,17 @@ async def generate_signal(req: GenerateSignalRequest):
 
     fsm_st = "CONFIRMED" if (req.execute_paper or req.status == "CONFIRMED") else "ARMED"
 
-    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (req.strategy in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
+    strat_val = req.strategy.upper()
+    if strat_val in ("VWAP_REJECTION", "VWAP"):
+        strat_val = "VWAP_SCALP"
+
+    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
     sig_type = "SCALP" if is_scalp_setup else (req.signal_type or "INTRADAY")
     ttl_s = req.time_stop_seconds or (180 if is_scalp_setup else 300)
 
     instance = SignalInstance(
         underlying=u,
-        strategy=req.strategy,
+        strategy=strat_val,
         direction=dir_val,
         timeframe=tf,
         spot_price=spot,

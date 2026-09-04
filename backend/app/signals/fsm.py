@@ -184,10 +184,11 @@ class SignalFSMManager:
         signal.state_history.append(audit)
         self._audit_log.append(audit)
 
-        # Asynchronously persist newly registered signal to Supabase
+        # Persist newly registered signal locally and to PostgreSQL
         try:
             import asyncio
-            from app.signals.signals_persistence import persist_executed_signal
+            from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+            save_signals_state_local()
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 loop.create_task(persist_executed_signal(signal))
@@ -204,6 +205,11 @@ class SignalFSMManager:
         if signal_id in self._signals:
             del self._signals[signal_id]
             self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
+            try:
+                from app.signals.signals_persistence import save_signals_state_local
+                save_signals_state_local()
+            except Exception:
+                pass
             logger.info("fsm_signal_deleted", signal_id=signal_id)
             return True
         return False
@@ -338,10 +344,11 @@ class SignalFSMManager:
         except Exception as te:
             logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
 
-        # Asynchronously persist updated SignalInstance to Supabase
+        # Persist updated SignalInstance locally and to PostgreSQL
         try:
             import asyncio
-            from app.signals.signals_persistence import persist_executed_signal
+            from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+            save_signals_state_local()
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 loop.create_task(persist_executed_signal(sig))
@@ -383,6 +390,13 @@ class SignalFSMManager:
         sig.state_history.append(audit)
         self._audit_log.append(audit)
         logger.info("fsm_breakeven_ratchet", signal_id=signal_id, new_sl=float(new_sl))
+
+        try:
+            from app.signals.signals_persistence import save_signals_state_local
+            save_signals_state_local()
+        except Exception:
+            pass
+
         return True
 
     def evaluate_tick(

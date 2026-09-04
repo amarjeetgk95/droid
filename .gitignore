@@ -62,6 +62,8 @@ telegram_state.json
 backend/telegram_state.json
 market_snapshot.json
 backend/market_snapshot.json
+signals_state.json
+backend/signals_state.json
 
 # Firebase CLI deploy cache
 .firebase/

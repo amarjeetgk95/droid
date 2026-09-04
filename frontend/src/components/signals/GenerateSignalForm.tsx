@@ -14,7 +14,7 @@ const STRATEGIES = [
   { id: 'TREND_PULLBACK', label: 'Trend Pullback (20 EMA Retest)', desk: 'INTRADAY' },
   { id: 'GAMMA_SQUEEZE', label: 'Gamma Squeeze (0DTE OI Unwinding)', desk: 'INTRADAY' },
   { id: 'ORB', label: 'Opening Range Breakout (15M High/Low)', desk: 'INTRADAY' },
-  { id: 'VWAP_REJECTION', label: '⚡ VWAP Rejection (Mean Reversion Scalp)', desk: 'SCALP' },
+  { id: 'VWAP_SCALP', label: '⚡ VWAP Rejection (Mean Reversion Scalp)', desk: 'SCALP' },
   { id: 'MICRO_MOMENTUM', label: '⚡ Micro-Momentum (Breakout Scalp)', desk: 'SCALP' },
   { id: 'EMA_RIBBON', label: '⚡ EMA Ribbon (Pullback Scalp)', desk: 'SCALP' },
   { id: 'GAMMA_SPIKE', label: '⚡ Expiry Gamma Spike (0-DTE Scalp)', desk: 'SCALP' },
@@ -107,7 +107,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
 
   const handleStrategySelect = (val: string) => {
     setStrategy(val);
-    const isScalp = ['VWAP_REJECTION', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(val);
+    const isScalp = ['VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(val);
     if (isScalp && timeframe !== '1M' && timeframe !== '3M') {
       setTimeframe('1M');
     } else if (!isScalp && (timeframe === '1M' || timeframe === '3M')) {
@@ -120,7 +120,7 @@ export function GenerateSignalForm({ onGenerated }: Props) {
     setError(null);
     setResult(null);
     try {
-      const isScalp = ['VWAP_REJECTION', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(strategy) || timeframe === '1M' || timeframe === '3M';
+      const isScalp = ['VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'].includes(strategy) || timeframe === '1M' || timeframe === '3M';
       const payload: Record<string, any> = {
         underlying,
         strategy,

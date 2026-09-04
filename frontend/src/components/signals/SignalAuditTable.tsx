@@ -198,14 +198,14 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
       // Live trade: lookup current tick
       const tick = latestTicks[t.underlying] || latestTicks[`${t.underlying} 50`] || latestTicks[t.underlying.replace('50', '')];
-      const livePrice = tick?.ltp ? Number(tick.ltp) : (t.current_price ?? t.actual_fill_price ?? t.trigger_price);
-      const entryPrice = t.actual_fill_price || t.trigger_price;
+      const livePrice = tick?.ltp ? Number(tick.ltp) : (t.current_price ?? t.trigger_price);
+      const entryPrice = t.trigger_price || t.spot_price_at_creation || t.actual_fill_price || livePrice;
       const isBullish = (t.direction.includes('CALL') || t.direction === 'BULLISH') && !t.direction.includes('PUT') && !t.direction.includes('BEARISH');
       const ptsDiff = isBullish ? livePrice - entryPrice : entryPrice - livePrice;
-      const livePnlInr = t.unrealized_pnl_inr !== undefined && t.unrealized_pnl_inr !== null && !tick
+      const livePnlInr = (t.unrealized_pnl_inr !== undefined && t.unrealized_pnl_inr !== null)
         ? t.unrealized_pnl_inr
         : Math.round(ptsDiff * t.quantity * 100) / 100;
-      const margin = t.margin_used || (entryPrice * t.quantity);
+      const margin = t.margin_used || (entryPrice * t.quantity * 0.15);
       const livePct = margin > 0 ? Math.round((livePnlInr / margin * 100) * 100) / 100 : 0;
 
       return {

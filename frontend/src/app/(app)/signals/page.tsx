@@ -105,7 +105,7 @@ export default function SignalsPage() {
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
   const [auditLoading, setAuditLoading] = useState<boolean>(false);
 
-  const prevSignalsCount = useRef<number>(0);
+  const knownSignalIds = useRef<Set<string>>(new Set());
 
   // Fetch active signals
   const fetchActive = useCallback(
@@ -120,13 +120,17 @@ export default function SignalsPage() {
         });
         const list: SignalDTO[] = res.signals || res.data?.signals || [];
         
-        // Check if new confirmed signal arrived -> play chime
-        if (soundEnabled && list.length > prevSignalsCount.current && prevSignalsCount.current > 0) {
-          const hasNewConfirmed = list.some((s) => s.fsm_state === 'CONFIRMED' || s.fsm_state.includes('TARGET'));
-          const isScalp = list.some((s) => s.is_scalp || s.signal_type === 'SCALP');
-          if (hasNewConfirmed) playAlertChime(true, isScalp);
+        // Check if a truly new confirmed signal arrived -> play chime
+        if (soundEnabled && knownSignalIds.current.size > 0) {
+          const newConfirmed = list.filter(
+            (s) => !knownSignalIds.current.has(s.signal_id) && (s.fsm_state === 'CONFIRMED' || s.fsm_state.includes('TARGET'))
+          );
+          if (newConfirmed.length > 0) {
+            const isScalp = newConfirmed.some((s) => s.is_scalp || s.signal_type === 'SCALP');
+            playAlertChime(true, isScalp);
+          }
         }
-        prevSignalsCount.current = list.length;
+        list.forEach((s) => knownSignalIds.current.add(s.signal_id));
         setActive(list);
       } catch (e: any) {
         setError(e.message || 'Failed to load quantitative signals');
@@ -150,16 +154,16 @@ export default function SignalsPage() {
     }
   }, []);
 
-  // Fetch Signal Audit Ledger
-  const fetchAudit = useCallback(async () => {
-    setAuditLoading(true);
+  // Fetch Signal Audit Ledger without flickering background spinners
+  const fetchAudit = useCallback(async (showLoading = false) => {
+    if (showLoading) setAuditLoading(true);
     try {
       const res: any = await api.getSignalsAudit();
       setAuditTrades(res.trades || []);
       setAuditSummary(res.summary || null);
     } catch {
     } finally {
-      setAuditLoading(false);
+      if (showLoading) setAuditLoading(false);
     }
   }, []);
 
@@ -175,13 +179,13 @@ export default function SignalsPage() {
   useEffect(() => {
     fetchActive(true);
     fetchScanner();
-    fetchAudit();
+    fetchAudit(true);
 
     let timer: ReturnType<typeof setInterval> | null = null;
     timer = setInterval(() => {
       if (!document.hidden) {
         void fetchActive(false);
-        void fetchAudit();
+        void fetchAudit(false);
       }
     }, 3000);
 

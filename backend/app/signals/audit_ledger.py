@@ -128,6 +128,20 @@ class SignalAuditLedger:
         self._trades: dict[str, AuditTradeRecord] = {}  # signal_id -> AuditTradeRecord
         self._max_records = max_records
 
+    def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
+        return self._trades.get(signal_id)
+
+    def delete_trade(self, signal_id: str) -> bool:
+        if signal_id in self._trades:
+            del self._trades[signal_id]
+            try:
+                from app.signals.signals_persistence import save_signals_state_local
+                save_signals_state_local()
+            except Exception:
+                pass
+            return True
+        return False
+
     def record_signal_created(
         self,
         signal_id: str,

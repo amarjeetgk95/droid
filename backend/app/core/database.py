@@ -18,14 +18,23 @@ def get_async_engine():
         db_url = settings.database_url
         if not db_url:
             return None
-        _async_engine = create_async_engine(
-            db_url,
-            pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
-            echo=False,
-        )
-        logger.info("async_db_engine_created")
+        # Normalize database URL for asyncpg
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        try:
+            _async_engine = create_async_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_size=10,
+                max_overflow=20,
+                echo=False,
+            )
+            logger.info("async_db_engine_created")
+        except Exception as e:
+            logger.warning("async_db_engine_create_failed", error=str(e))
+            return None
     return _async_engine
 
 
@@ -58,14 +67,20 @@ def get_sync_engine():
         if not db_url:
             return None
         # Convert async URL to sync for sync operations
-        sync_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-        _sync_engine = create_engine(
-            sync_url,
-            pool_pre_ping=True,
-            pool_size=5,
-            echo=False,
-        )
-        logger.info("sync_db_engine_created")
+        sync_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        if sync_url.startswith("postgres://"):
+            sync_url = sync_url.replace("postgres://", "postgresql://", 1)
+        try:
+            _sync_engine = create_engine(
+                sync_url,
+                pool_pre_ping=True,
+                pool_size=5,
+                echo=False,
+            )
+            logger.info("sync_db_engine_created")
+        except Exception as e:
+            logger.warning("sync_db_engine_create_failed", error=str(e))
+            return None
     return _sync_engine
 
 

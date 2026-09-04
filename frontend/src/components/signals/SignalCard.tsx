@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -111,12 +111,20 @@ export function SignalCard({
   const [executing, setExecuting] = useState(false);
   const [paperResult, setPaperResult] = useState<any>(signal.paper_order || null);
   const [execError, setExecError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const isCall = signal.direction?.includes('CALL') || signal.direction === 'BULLISH';
   const isConfirmed = signal.fsm_state === 'CONFIRMED';
   const isTargetHit = signal.fsm_state.includes('TARGET');
   const isStopHit = signal.fsm_state === 'STOP_LOSS_HIT';
-  const isExpired = signal.fsm_state === 'EXPIRED' || (signal.expires_at_utc ? Date.now() > signal.expires_at_utc : false);
+  const isExpired = signal.fsm_state === 'EXPIRED' || (
+    ['DETECTED', 'VALIDATED', 'ARMED'].includes(signal.fsm_state) && signal.expires_at_utc ? nowMs > signal.expires_at_utc : false
+  );
 
   const borderClass = isTargetHit
     ? 'border-emerald-500 bg-emerald-50/70 border-2'
@@ -200,7 +208,7 @@ export function SignalCard({
           <span className="font-bold flex items-center gap-1">
             <Clock className="w-3 h-3 text-emerald-600" />
             {signal.runner_time_stop_at_utc
-              ? `${Math.max(0, Math.round((signal.runner_time_stop_at_utc - Date.now()) / 1000))}s Runner TTL`
+              ? `${Math.max(0, Math.round((signal.runner_time_stop_at_utc - nowMs) / 1000))}s Runner TTL`
               : 'Runner Clock'}
           </span>
         </div>
@@ -212,7 +220,7 @@ export function SignalCard({
           <span className="font-bold flex items-center gap-1">
             <Clock className="w-3 h-3 text-amber-600" />
             {signal.time_stop_at_utc
-              ? `${Math.max(0, Math.round((signal.time_stop_at_utc - Date.now()) / 1000))}s Time-Stop`
+              ? `${Math.max(0, Math.round((signal.time_stop_at_utc - nowMs) / 1000))}s Time-Stop`
               : `${signal.ttl_seconds || 120}s TTL`}
           </span>
         </div>
@@ -271,10 +279,10 @@ export function SignalCard({
               <span className="text-[10px] text-muted-foreground">{paperResult.order_id}</span>
             </div>
             {(() => {
-              const fillP = Number(paperResult.fill_price || signal.spot_price);
               const spotP = Number(signal.spot_price);
+              const trigP = Number(signal.trigger || signal.spot_price);
               const isBull = signal.direction.includes('CALL') || signal.direction === 'BULLISH';
-              const pts = isBull ? spotP - fillP : fillP - spotP;
+              const pts = trigP > 0 ? (isBull ? spotP - trigP : trigP - spotP) : 0;
               const pnl = pts * Number(paperResult.quantity || 75);
               const isProfit = pnl >= 0;
               return (

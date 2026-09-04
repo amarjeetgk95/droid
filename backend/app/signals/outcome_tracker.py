@@ -301,6 +301,39 @@ class SignalOutcomeTracker:
                     except Exception as pe:
                         logger.warning("paper_final_close_failed", signal_id=sig.signal_id, error=str(pe))
 
+                    # Ensure authoritative square-off is recorded in Signal Audit Ledger
+                    try:
+                        audit_rec = signal_audit_ledger.get(sig.signal_id)
+                        if not audit_rec:
+                            signal_audit_ledger.record_signal_created(
+                                signal_id=sig.signal_id,
+                                underlying=sig.underlying,
+                                strategy=sig.strategy,
+                                direction=sig.direction,
+                                timeframe=sig.timeframe,
+                                spot_price=float(sig.spot_price),
+                                trigger=float(sig.trigger),
+                                stop_loss=float(sig.stop_loss),
+                                target_1=float(sig.target_1),
+                                target_2=float(sig.target_2),
+                                confidence=float(sig.confidence),
+                                option_contract=sig.option_contract,
+                            )
+                        sq_rec = signal_audit_ledger.record_square_off(
+                            signal_id=sig.signal_id,
+                            exit_price=float(d_price),
+                            exit_reason=eval_action,
+                            exit_time_ms=ts_now,
+                        )
+                        if sq_rec and recon:
+                            sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
+                            sq_rec.total_pnl_inr = recon.net_realized_pnl_inr
+                            sq_rec.is_winner = recon.net_realized_pnl_inr > 0
+                            sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
+                            signal_audit_ledger._schedule_persist(sq_rec)
+                    except Exception as le:
+                        logger.warning("audit_square_off_failed", signal_id=sig.signal_id, error=str(le))
+
                     # Dispatch Telegram notifications
                     try:
                         ev_type = "TARGET_HIT" if "TARGET" in eval_action else ("STOP_HIT" if "STOP" in eval_action else "TIME_STOP")

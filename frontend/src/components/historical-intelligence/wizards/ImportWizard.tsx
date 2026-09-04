@@ -279,7 +279,7 @@ export function ImportWizard({ symbol, derivative, initialCategories, initialSam
             disabled={busy || (step === 'review' && blocked)}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
           >
-            {busy ? 'Working…' : step === 'review' ? (<><Download className="w-3.5 h-3.5" /> Confirm import</>) : (<>Next <ChevronRight className="w-3.5 h-3.5" /></>)}
+            {busy ? (step === 'period' ? 'Calculating estimate…' : 'Importing dataset…') : step === 'review' ? (<><Download className="w-3.5 h-3.5" /> Confirm import</>) : (<>Next <ChevronRight className="w-3.5 h-3.5" /></>)}
           </button>
         </footer>
       </div>
