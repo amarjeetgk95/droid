@@ -98,10 +98,26 @@ class OpenAIProvider(AIProvider):
                         c = parts[1]
                         if c.lstrip().startswith("json"):
                             c = c.lstrip()[4:]
-                    c = c.strip()
-                parsed = json.loads(c)
+                        c = c.strip()
+                    else:
+                        c = c.strip("`").strip()
+                try:
+                    parsed = json.loads(c)
+                except json.JSONDecodeError:
+                    start_idx = c.find("{")
+                    end_idx = c.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        try:
+                            parsed = json.loads(c[start_idx : end_idx + 1])
+                        except json.JSONDecodeError as je:
+                            raise ValueError(f"OpenAI returned non-JSON content: {c[:400]} (json error: {je})")
+                    else:
+                        raise ValueError(f"OpenAI returned non-JSON content: {c[:400]}")
             else:
                 parsed = content
+
+            if not isinstance(parsed, dict):
+                raise ValueError(f"OpenAI response root is not a JSON object: {type(parsed)}")
 
             if "market_bias" in parsed:
                 raw_bias = str(parsed.get("market_bias", "NEUTRAL")).upper()
@@ -117,7 +133,7 @@ class OpenAIProvider(AIProvider):
                 symbol=symbol,
                 timestamp=datetime.now(timezone.utc),
                 market_bias=parsed.get("market_bias", "NEUTRAL"),
-                confidence=float(parsed.get("confidence", 75.0)),
+                confidence=parsed.get("confidence", 75.0),
                 executive_summary=parsed.get("executive_summary", ""),
                 simple_takeaway=parsed.get("simple_takeaway", ""),
                 options_interpretation=parsed.get("options_interpretation", ""),

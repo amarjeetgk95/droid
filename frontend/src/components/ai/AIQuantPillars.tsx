@@ -32,7 +32,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
             {insight.regime_and_levels || 'Price is trading within the defined daily pivot range.'}
           </p>
         </div>
@@ -58,7 +58,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
             {insight.options_interpretation || 'Option chain shows balanced Put-Call OI distribution.'}
           </p>
         </div>
@@ -84,7 +84,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
             {insight.futures_flow_analysis || 'Futures basis and institutional flow show neutral rollover.'}
           </p>
         </div>

@@ -17,6 +17,10 @@ from app.signals.signals_persistence import (
     persist_executed_signal,
     SIGNALS_STATE_FILE,
 )
+@pytest.fixture(autouse=True)
+def _open_market(mock_market_open):
+    """Ensure market is considered open for signal persistence tests."""
+    pass
 
 
 @pytest.mark.asyncio

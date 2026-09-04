@@ -83,18 +83,37 @@ class NovitaProvider(AIProvider):
             if isinstance(content, str):
                 c = content.strip()
                 if c.startswith("```"):
-                    c = c.split("```")[1]
-                    if c.lstrip().startswith("json"):
-                        c = c.lstrip()[4:]
-                    c = c.strip()
-                parsed = json.loads(c)
+                    parts = c.split("```")
+                    if len(parts) >= 2:
+                        c = parts[1]
+                        if c.lstrip().startswith("json"):
+                            c = c.lstrip()[4:]
+                        c = c.strip()
+                    else:
+                        c = c.strip("`").strip()
+                try:
+                    parsed = json.loads(c)
+                except json.JSONDecodeError:
+                    start_idx = c.find("{")
+                    end_idx = c.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        try:
+                            parsed = json.loads(c[start_idx : end_idx + 1])
+                        except json.JSONDecodeError as je:
+                            raise ValueError(f"Novita returned non-JSON content: {c[:400]} (json error: {je})")
+                    else:
+                        raise ValueError(f"Novita returned non-JSON content: {c[:400]}")
             else:
                 parsed = content
+
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Novita response root is not a JSON object: {type(parsed)}")
+
             return AIInsightResponse(
                 symbol=symbol,
                 timestamp=datetime.now(timezone.utc),
                 market_bias=parsed.get("market_bias", "NEUTRAL"),
-                confidence=float(parsed.get("confidence", 75.0)),
+                confidence=parsed.get("confidence", 75.0),
                 executive_summary=parsed.get("executive_summary", ""),
                 simple_takeaway=parsed.get("simple_takeaway", ""),
                 options_interpretation=parsed.get("options_interpretation", ""),

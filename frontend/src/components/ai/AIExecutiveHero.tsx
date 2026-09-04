@@ -116,7 +116,7 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
           <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
           In simple words
         </h4>
-        <p className="text-sm text-foreground/90 leading-relaxed font-medium">
+        <p className="text-sm text-foreground/90 leading-relaxed font-medium whitespace-pre-line">
           {insight.simple_takeaway || insight.executive_summary}
         </p>
       </div>
@@ -127,7 +127,7 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
           <Target className="w-3.5 h-3.5 text-primary" />
           Full detail
         </h4>
-        <p className="text-xs text-foreground/90 leading-relaxed font-sans font-medium">
+        <p className="text-xs text-foreground/90 leading-relaxed font-sans font-medium whitespace-pre-line">
           {insight.executive_summary}
         </p>
       </div>

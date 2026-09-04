@@ -72,10 +72,19 @@ class OpenRouterProvider(BaseLLMProvider):
         }
         use_structured = should_use_structured_outputs(self.model)
         prompted_suffix = "\n\nReturn ONLY one valid JSON object. Do not use markdown. Do not include explanations outside the JSON. Do not include code fences."
+        response_rule = (
+            "\n\nRESPONSE RULE: Output ONLY a valid JSON object with keys: "
+            "market_bias, confidence, executive_summary, simple_takeaway, options_interpretation, "
+            "futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. "
+            "CRITICAL SCHEMA RULE: Every field except 'confidence' MUST be a flat plain text string (NOT nested objects, NOT dictionaries, NOT lists/arrays). "
+            "'confidence' must be a number (0-100). "
+            "simple_takeaway is REQUIRED: exactly 2-3 very simple sentences for a beginner. "
+            "No markdown code fences, no extra text."
+        )
         base_payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, simple_takeaway, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. simple_takeaway is REQUIRED: 2-3 very simple sentences for a beginner. No markdown, no extra text." + ("" if use_structured else prompted_suffix)},
+                {"role": "system", "content": system_prompt + response_rule + ("" if use_structured else prompted_suffix)},
                 {"role": "user", "content": user_prompt + ("" if use_structured else prompted_suffix)},
             ],
             "temperature": 0.2,
@@ -118,41 +127,27 @@ class OpenRouterProvider(BaseLLMProvider):
                             c = c.strip("`").strip()
                     try:
                         parsed = json.loads(c)
-                    except json.JSONDecodeError as je:
-                        raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]} (json error: {je})")
+                    except json.JSONDecodeError:
+                        start_idx = c.find("{")
+                        end_idx = c.rfind("}")
+                        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                            try:
+                                parsed = json.loads(c[start_idx : end_idx + 1])
+                            except json.JSONDecodeError as je:
+                                raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]} (json error: {je})")
+                        else:
+                            raise ValueError(f"OpenRouter returned non-JSON content: {c[:400]}")
                 else:
                     parsed = content
 
-                raw_bias = str(parsed.get("market_bias", "NEUTRAL")).strip()
-                bias_upper = raw_bias.upper()
-                if bias_upper in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
-                    parsed["market_bias"] = bias_upper
-                else:
-                    if "BULL" in bias_upper:
-                        parsed["market_bias"] = "BULLISH"
-                    elif "BEAR" in bias_upper:
-                        parsed["market_bias"] = "BEARISH"
-                    elif "VOLATILE" in bias_upper or "VOLATILITY" in bias_upper:
-                        parsed["market_bias"] = "VOLATILE"
-                    else:
-                        parsed["market_bias"] = "NEUTRAL"
-
-                try:
-                    raw_conf = parsed.get("confidence", 80.0)
-                    conf_val = float(str(raw_conf).strip().replace("%", ""))
-                    if 0 < conf_val <= 1.0:
-                        conf_val = conf_val * 100
-                    parsed["confidence"] = conf_val
-                except Exception:
-                    raise ValueError(f"OpenRouter confidence must be numeric, got '{parsed.get('confidence')}'.")
-
-                conf_val = float(parsed["confidence"])
+                if not isinstance(parsed, dict):
+                    raise ValueError(f"OpenRouter response root is not a JSON object: {type(parsed)}")
 
                 return AIInsightResponse(
                     symbol=symbol,
                     timestamp=datetime.now(timezone.utc),
                     market_bias=parsed.get("market_bias", "NEUTRAL"),
-                    confidence=conf_val,
+                    confidence=parsed.get("confidence", 80.0),
                     executive_summary=parsed.get("executive_summary", ""),
                     simple_takeaway=parsed.get("simple_takeaway", ""),
                     options_interpretation=parsed.get("options_interpretation", ""),

@@ -123,13 +123,21 @@ class OllamaProvider(BaseLLMProvider):
                 response_text = data.get("response", "").strip()
                 if not response_text:
                     raise ValueError("Ollama returned empty response.")
-                # Ollama may wrap JSON in markdown
-                if response_text.startswith("```"):
-                    response_text = response_text.split("```")[1]
-                    if response_text.startswith("json"):
-                        response_text = response_text[4:]
-                    response_text = response_text.strip()
-                parsed_json = json.loads(response_text)
+                try:
+                    parsed_json = json.loads(response_text)
+                except json.JSONDecodeError:
+                    start_idx = response_text.find("{")
+                    end_idx = response_text.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        try:
+                            parsed_json = json.loads(response_text[start_idx : end_idx + 1])
+                        except json.JSONDecodeError as je:
+                            raise ValueError(f"Ollama returned non-JSON content: {response_text[:300]} (json error: {je})")
+                    else:
+                        raise ValueError(f"Ollama returned non-JSON content: {response_text[:300]}")
+
+                if not isinstance(parsed_json, dict):
+                    raise ValueError(f"Ollama response root is not a JSON object: {type(parsed_json)}")
                 # Validate required fields
                 required = ["market_bias", "confidence", "executive_summary"]
                 missing = [f for f in required if f not in parsed_json]

@@ -35,7 +35,7 @@ export function AITradePlaybook({ insight }: AITradePlaybookProps) {
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
             <span>Suggested game plan</span>
           </div>
-          <p className="text-muted-foreground leading-relaxed font-sans">
+          <p className="text-muted-foreground leading-relaxed font-sans whitespace-pre-line">
             {insight.recommended_strategy_framework || 'Maintain defined-risk option spreads with positive theta decay.'}
           </p>
         </div>
@@ -46,7 +46,7 @@ export function AITradePlaybook({ insight }: AITradePlaybookProps) {
             <ShieldAlert className="w-4 h-4 text-amber-500" />
             <span>When to exit if it goes wrong</span>
           </div>
-          <p className="text-muted-foreground leading-relaxed font-sans">
+          <p className="text-muted-foreground leading-relaxed font-sans whitespace-pre-line">
             {insight.risk_management_notes || 'Always enforce maximum 1-2% account risk per trade and exit upon breach of key S/R pivots.'}
           </p>
         </div>

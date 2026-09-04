@@ -1,30 +1,129 @@
 from datetime import datetime, timezone
 from typing import Literal, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 MarketBias = Literal["BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"]
 AIChatRole = Literal["system", "user", "assistant", "tool"]
 
 
+def coerce_to_text(v: Any) -> str:
+    """Coerce any LLM output (dict, list, int, etc.) into a clean human-readable text string."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, list):
+        items = []
+        for item in v:
+            text = coerce_to_text(item).strip()
+            if text:
+                if not text.startswith(("-", "•", "*", "1.", "2.", "3.", "4.", "5.")):
+                    items.append(f"• {text}")
+                else:
+                    items.append(text)
+        return "\n".join(items)
+    if isinstance(v, dict):
+        lines = []
+        for k, val in v.items():
+            label = str(k).replace("_", " ").strip().title()
+            if isinstance(val, (dict, list)):
+                sub_text = coerce_to_text(val).strip()
+                lines.append(f"{label}:\n{sub_text}")
+            else:
+                lines.append(f"{label}: {val}")
+        return "\n".join(lines)
+    return str(v)
+
+
+def coerce_to_string_list(v: Any) -> list[str]:
+    """Coerce any LLM output into a list of strings."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if x is not None and str(x).strip()]
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        # If separated by newlines
+        if "\n" in s:
+            return [line.strip().lstrip("-*•0123456789. ") for line in s.splitlines() if line.strip()]
+        return [s]
+    if isinstance(v, dict):
+        return [f"{str(k).replace('_', ' ').title()}: {val}" for k, val in v.items()]
+    return [str(v)]
+
+
 class AIInsightResponse(BaseModel):
     """Structured, explainable AI market intelligence report."""
-    symbol: str
-    timestamp: datetime
-    market_bias: MarketBias
-    confidence: float = Field(description="Confidence percentage (0-100%)")
-    executive_summary: str
+    symbol: str = "NIFTY"
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    market_bias: MarketBias = "NEUTRAL"
+    confidence: float = Field(default=75.0, description="Confidence percentage (0-100%)")
+    executive_summary: str = ""
     # Plain-language 2-3 sentence takeaway for non-expert readers. Empty when
     # the model predates this field — frontend falls back to executive_summary.
     simple_takeaway: str = ""
-    options_interpretation: str
-    futures_flow_analysis: str
-    regime_and_levels: str
-    recommended_strategy_framework: str
-    risk_management_notes: str
+    options_interpretation: str = ""
+    futures_flow_analysis: str = ""
+    regime_and_levels: str = ""
+    recommended_strategy_framework: str = ""
+    risk_management_notes: str = ""
     disclaimer: str = Field(
         default="This AI analysis is strictly for quantitative research and education. It does not constitute financial advice or trade recommendations."
     )
     provider_used: str = "gemini"
+
+    @field_validator(
+        "executive_summary",
+        "simple_takeaway",
+        "options_interpretation",
+        "futures_flow_analysis",
+        "regime_and_levels",
+        "recommended_strategy_framework",
+        "risk_management_notes",
+        "disclaimer",
+        mode="before",
+    )
+    @classmethod
+    def validate_text_fields(cls, v: Any) -> str:
+        return coerce_to_text(v)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def validate_confidence(cls, v: Any) -> float:
+        if v is None:
+            return 75.0
+        if isinstance(v, str):
+            v_clean = v.strip().replace("%", "")
+            try:
+                val = float(v_clean)
+            except Exception:
+                return 75.0
+        elif isinstance(v, (int, float)):
+            val = float(v)
+        else:
+            return 75.0
+
+        if 0 < val <= 1.0:
+            val = val * 100.0
+        return max(0.0, min(100.0, val))
+
+    @field_validator("market_bias", mode="before")
+    @classmethod
+    def validate_market_bias(cls, v: Any) -> str:
+        if not v:
+            return "NEUTRAL"
+        v_str = str(v).strip().upper()
+        if v_str in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
+            return v_str
+        if "BULL" in v_str or "BUY" in v_str or "LONG" in v_str:
+            return "BULLISH"
+        if "BEAR" in v_str or "SELL" in v_str or "SHORT" in v_str:
+            return "BEARISH"
+        if "VOLATIL" in v_str or "CHOP" in v_str or "WAIT" in v_str:
+            return "VOLATILE"
+        return "NEUTRAL"
 
 
 class AIInsightPayload(BaseModel):
@@ -121,6 +220,16 @@ class AIOptionsStrategyRecommendation(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     provider_used: str = "openrouter"
 
+    @field_validator("strategy_name", "market_outlook", "rationale", "risk_management", mode="before")
+    @classmethod
+    def validate_text(cls, v: Any) -> str:
+        return coerce_to_text(v)
+
+    @field_validator("entry_rules", "exit_rules", mode="before")
+    @classmethod
+    def validate_lists(cls, v: Any) -> list[str]:
+        return coerce_to_string_list(v)
+
 
 class AIOptionsStrategyRequest(BaseModel):
     symbol: str = "NIFTY"
@@ -168,6 +277,16 @@ class AITradeValidationResponse(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     provider_used: str = "openrouter"
 
+    @field_validator("technical_alignment", "derivatives_alignment", "volatility_regime_check", "executive_verdict", mode="before")
+    @classmethod
+    def validate_text(cls, v: Any) -> str:
+        return coerce_to_text(v)
+
+    @field_validator("invalidation_conditions", "warning_traps", mode="before")
+    @classmethod
+    def validate_lists(cls, v: Any) -> list[str]:
+        return coerce_to_string_list(v)
+
 
 # ---------------------------------------------------------------------------
 # Daily Market Briefings
@@ -183,3 +302,13 @@ class AIDailyBriefingResponse(BaseModel):
     fii_dii_implication: str
     actionable_playbook: list[str] = []
     provider_used: str = "openrouter"
+
+    @field_validator("executive_summary", "options_pin_and_pivots", "fii_dii_implication", mode="before")
+    @classmethod
+    def validate_text(cls, v: Any) -> str:
+        return coerce_to_text(v)
+
+    @field_validator("actionable_playbook", mode="before")
+    @classmethod
+    def validate_lists(cls, v: Any) -> list[str]:
+        return coerce_to_string_list(v)
