@@ -5,9 +5,11 @@ Evaluates NIFTY, BANKNIFTY, SENSEX across all 5 Quant Strategies against live ma
 from __future__ import annotations
 
 import asyncio
+import time
 from decimal import Decimal
 from typing import Optional, Any
 import structlog
+from pydantic import BaseModel, Field
 
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying, resolve_option_contract
 from app.signals.strategies.base import StrategyContext, SignalCandidate
@@ -19,6 +21,22 @@ from app.signals.scalp_confirmation import scalp_confirmation_engine
 logger = structlog.get_logger()
 
 
+class ScanDiagnostics(BaseModel):
+    """Per-underlying scan health — explains WHY a scan is empty instead of silent []."""
+    underlying: str = "UNKNOWN"
+    data_quality: str = "UNKNOWN"  # LIVE | DEGRADED | OFFLINE
+    quote_status: str = "UNKNOWN"
+    provider: str = "UNKNOWN"
+    spot_price: Optional[float] = None
+    candles_count: int = 0
+    strategies_evaluated: int = 0
+    candidates_found: int = 0
+    registered: int = 0
+    reasons: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    duration_ms: int = 0
+
+
 class SignalScanner:
     """
     Dual-Cadence Quantitative Scanner Engine:
@@ -26,41 +44,122 @@ class SignalScanner:
       - Intraday Desk (5M / 15M): Breakout, Mean Reversion, Trend Pullback, Gamma Squeeze, ORB
     """
 
+    def __init__(self, scan_cache_ttl_s: float = 10.0):
+        self._last_diagnostics: dict[str, ScanDiagnostics] = {}
+        self._scan_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._scan_cache_ttl_s = scan_cache_ttl_s
+
+    def get_last_diagnostics(self) -> dict[str, Any]:
+        return {k: v.model_dump() for k, v in self._last_diagnostics.items()}
+
+    @staticmethod
+    def _is_fallback_quote(quote: Any) -> bool:
+        try:
+            status = str(getattr(quote, "status", "") or "").upper()
+            provider = str(getattr(quote, "provider", "") or "").lower()
+            if "OFFLINE" in status or "DEGRADED" in status:
+                return True
+            if provider in ("fallback", "synthetic", "mock"):
+                return True
+        except Exception:
+            pass
+        return False
+
     async def scan_instrument(
         self,
         underlying: str,
         timeframe: str = "5M",
         desk: Optional[str] = None,
     ) -> list[SignalCandidate]:
+        started = time.time()
         u = validate_underlying(underlying)
+        diag = ScanDiagnostics(underlying=u)
         from app.services.market_service import MarketService
         from app.technical_analysis.analyzer import analyze_timeframe
         from app.multi_timeframe.alignment import compute_alignment
 
         market_svc = MarketService()
-        quote = await market_svc.get_quote(u)
+        try:
+            quote = await asyncio.wait_for(market_svc.get_quote(u), timeout=8.0)
+        except asyncio.TimeoutError:
+            diag.data_quality = "OFFLINE"
+            diag.error = "quote_timeout_after_8s"
+            diag.reasons.append("Quote fetch timed out — feed unreachable")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+            return []
+        except ValueError:
+            raise
+        except Exception as e:
+            diag.data_quality = "OFFLINE"
+            diag.error = f"quote_failed: {str(e)[:120]}"
+            diag.reasons.append(f"Quote fetch failed: {str(e)[:120]}")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+            return []
         if not quote or getattr(quote, "ltp", None) is None:
-            logger.debug("scanner_no_quote", underlying=u)
+            diag.data_quality = "OFFLINE"
+            diag.error = "no_quote"
+            diag.reasons.append("No quote available from provider")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
 
-        spot = Decimal(str(quote.ltp))
+            raw_status = getattr(quote, "status", "UNKNOWN")
+            diag.quote_status = str(getattr(raw_status, "value", raw_status))
+            diag.provider = str(getattr(quote, "provider", "UNKNOWN"))
+        try:
+            diag.spot_price = float(quote.ltp)
+        except Exception:
+            diag.spot_price = None
 
-        # Fetch real candles for indicators
+        # ── Trust gate: never generate signals off fabricated fallback prices ──
+        if self._is_fallback_quote(quote):
+            diag.data_quality = "OFFLINE"
+            diag.error = "fallback_quote"
+            diag.reasons.append(
+                f"Provider={diag.provider} status={diag.quote_status} — fallback price rejected, no signals generated"
+            )
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+            logger.info("scanner_fallback_quote_rejected", underlying=u, provider=diag.provider)
+            return []
+
+        try:
+            spot = Decimal(str(quote.ltp))
+        except Exception:
+            diag.data_quality = "OFFLINE"
+            diag.error = "invalid_spot_price"
+            diag.reasons.append("Quote LTP is not numeric")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+            return []
+
+        # Fetch real candles for indicators (bounded timeout, never fatal)
         candles_dict = {}
         try:
             from app.services.candles_service import candles_service
-            candles_dict = await candles_service.get_multi_timeframe_candles(u, timeframes=["1m", "5m", "15m", "1h"])
-        except Exception:
-            pass
+            candles_dict = await asyncio.wait_for(
+                candles_service.get_multi_timeframe_candles(u, timeframes=["1m", "5m", "15m", "1h"]),
+                timeout=8.0,
+            ) or {}
+        except asyncio.TimeoutError:
+            diag.reasons.append("Candle fetch timed out — indicators degraded")
+        except Exception as e:
+            diag.reasons.append(f"Candle fetch failed: {str(e)[:120]}")
 
         target_tf = timeframe.lower()
         active_candles = candles_dict.get(target_tf) or candles_dict.get("5m") or candles_dict.get("1m") or []
+        diag.candles_count = len(active_candles)
+        if not active_candles:
+            diag.reasons.append("No candles available — S/R, volume and MTF use synthetic defaults")
 
-        ta_analysis = {}
+        ta_analysis: dict[str, Any] = {}
         if active_candles:
             try:
-                ta_analysis = analyze_timeframe(active_candles, symbol=u, timeframe=timeframe)
+                ta_analysis = analyze_timeframe(active_candles, symbol=u, timeframe=timeframe) or {}
             except Exception as e:
+                diag.reasons.append(f"TA analysis failed: {str(e)[:100]} — using defaults")
                 logger.debug("ta_analysis_failed", underlying=u, error=str(e))
 
         # Multi-Timeframe Alignment
@@ -73,12 +172,20 @@ class SignalScanner:
                     pass
         mtf_result = compute_alignment(mtf_analyses) if mtf_analyses else {"overall_bias": ta_analysis.get("bias", "NEUTRAL"), "alignment_score": 70.0}
 
-        # F&O Context
+        # F&O Context (bounded, falls back to neutral — flagged in diagnostics)
         fno_data = {}
+        fno_degraded = False
         try:
             from app.fno.context import get_fno_context
-            fno_data = await get_fno_context(u)
-        except Exception:
+            fno_data = await asyncio.wait_for(get_fno_context(u), timeout=6.0) or {}
+        except asyncio.TimeoutError:
+            fno_degraded = True
+            diag.reasons.append("F&O context timed out — PCR/OI neutral")
+        except Exception as e:
+            fno_degraded = True
+            diag.reasons.append(f"F&O context failed: {str(e)[:100]}")
+        if not fno_data:
+            fno_degraded = True
             fno_data = {"pcr": 1.05, "oi_change_pct": 5.2, "atm_iv": 14.2, "max_pain": float(spot)}
 
         # Market Regime
@@ -132,6 +239,7 @@ class SignalScanner:
             strategies_to_run = STRATEGY_REGISTRY
 
         candidates: list[SignalCandidate] = []
+        rejected_gates: list[str] = []
         for strat_name, strat in strategies_to_run.items():
             try:
                 candidate = strat.detect(ctx)
@@ -145,6 +253,7 @@ class SignalScanner:
                             candle_timestamp_ms=ctx.timestamp_ms,
                         )
                         if not confirm_res.passed:
+                            rejected_gates.append(f"{strat_name}:{confirm_res.reason_code or 'REJECTED'}")
                             logger.info(
                                 "scalp_candidate_rejected_gate",
                                 strategy=strat_name,
@@ -158,8 +267,24 @@ class SignalScanner:
 
                     candidates.append(candidate)
             except Exception as e:
+                diag.reasons.append(f"{strat_name} detect failed: {str(e)[:100]}")
                 logger.warning("strategy_detect_failed", strategy=strat_name, underlying=u, error=str(e))
 
+        diag.strategies_evaluated = len(strategies_to_run)
+        diag.candidates_found = len(candidates)
+        if rejected_gates:
+            diag.reasons.append(f"Scalp gates rejected: {', '.join(rejected_gates[:4])}")
+        if not candidates:
+            diag.reasons.append(
+                f"No strategy triggered on {u} {timeframe} (regime={regime}, volume_ratio≈{float(ta_analysis.get('volume_ratio', 0) or 0):.2f})"
+            )
+        # Data quality: LIVE only when real quote + real candles + real F&O
+        if not diag.candles_count or fno_degraded:
+            diag.data_quality = "DEGRADED"
+        else:
+            diag.data_quality = "LIVE"
+        diag.duration_ms = int((time.time() - started) * 1000)
+        self._last_diagnostics[f"{u}:{timeframe}"] = diag
         return candidates
 
     async def _process_candidates(self, candidates: list[SignalCandidate]) -> list[SignalInstance]:
@@ -265,61 +390,147 @@ class SignalScanner:
 
         return registered_signals
 
-    async def scan_scalp(self, underlying: Optional[str] = None) -> dict[str, Any]:
-        """Scans 1M candles for Scalping setups (VWAP, Micro-Momentum, EMA Ribbon, Gamma Spike)."""
-        universe = [underlying] if underlying else sorted(list(APPROVED_UNDERLYINGS))
-        tasks = [self.scan_instrument(u, timeframe="1M", desk="SCALP") for u in universe]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    def _cache_get(self, key: str) -> Optional[dict[str, Any]]:
+        entry = self._scan_cache.get(key)
+        if not entry:
+            return None
+        ts, result = entry
+        if (time.time() - ts) > self._scan_cache_ttl_s:
+            self._scan_cache.pop(key, None)
+            return None
+        cached = dict(result)
+        cached["cache_hit"] = True
+        return cached
 
+    def _cache_put(self, key: str, result: dict[str, Any]) -> None:
+        # Bound cache size (avoid unbounded growth)
+        if len(self._scan_cache) > 32:
+            oldest = min(self._scan_cache.items(), key=lambda kv: kv[1][0])[0]
+            self._scan_cache.pop(oldest, None)
+        self._scan_cache[key] = (time.time(), result)
+
+    async def _scan_universe(
+        self, universe: list[str], timeframe: str, desk: str
+    ) -> tuple[list[SignalCandidate], list[dict[str, Any]], dict[str, str]]:
+        tasks = [self.scan_instrument(u, timeframe=timeframe, desk=desk) for u in universe]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         candidates: list[SignalCandidate] = []
-        for res in results:
+        errors: dict[str, str] = {}
+        for u, res in zip(universe, results):
             if isinstance(res, list):
                 candidates.extend(res)
+            elif isinstance(res, BaseException):
+                if isinstance(res, ValueError):
+                    errors[u] = str(res)[:200]
+                else:
+                    errors[u] = f"{type(res).__name__}: {str(res)[:180]}"
+                logger.warning("scanner_instrument_failed", underlying=u, error=str(res)[:200])
+        diagnostics = [self._last_diagnostics.get(f"{u}:{timeframe}", ScanDiagnostics(underlying=u)).model_dump() for u in universe]
+        return candidates, diagnostics, errors
 
+    @staticmethod
+    def _summarize_quality(diagnostics: list[dict[str, Any]], errors: dict[str, str]) -> tuple[str, list[str]]:
+        qualities = [d.get("data_quality", "UNKNOWN") for d in diagnostics]
+        degraded = [d.get("underlying", "?") for d in diagnostics if d.get("data_quality") in ("DEGRADED", "OFFLINE", "UNKNOWN")]
+        degraded.extend([u for u in errors if u not in degraded])
+        if not qualities or all(q == "OFFLINE" for q in qualities):
+            return "OFFLINE", sorted(set(degraded))
+        if any(q in ("DEGRADED", "OFFLINE", "UNKNOWN") for q in qualities) or errors:
+            return "DEGRADED", sorted(set(degraded))
+        return "LIVE", []
+
+    async def scan_scalp(self, underlying: Optional[str] = None) -> dict[str, Any]:
+        """Scans 1M candles for Scalping setups (VWAP, Micro-Momentum, EMA Ribbon, Gamma Spike)."""
+        if underlying:
+            u = validate_underlying(underlying)
+            universe = [u]
+        else:
+            universe = sorted(list(APPROVED_UNDERLYINGS))
+        cache_key = f"scalp:{','.join(universe)}"
+        cached = self._cache_get(cache_key)
+        if cached:
+            return cached
+
+        candidates, diagnostics, errors = await self._scan_universe(universe, timeframe="1M", desk="SCALP")
         registered = await self._process_candidates(candidates)
-        return {
+        quality, degraded = self._summarize_quality(diagnostics, errors)
+        result: dict[str, Any] = {
             "desk": "SCALP",
             "timeframe": "1M",
+            "scanned_underlyings": universe,
             "total_candidates": len(candidates),
             "new_signals": [s.model_dump() for s in registered],
-            "timestamp_ms": int(__import__("time").time() * 1000),
+            "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
+            "data_quality": quality,
+            "degraded_underlyings": degraded,
+            "errors": errors,
+            "diagnostics": diagnostics,
+            "cache_hit": False,
+            "timestamp_ms": int(time.time() * 1000),
         }
+        self._cache_put(cache_key, result)
+        return result
 
     async def scan_intraday(self, underlying: Optional[str] = None) -> dict[str, Any]:
         """Scans 5M candles for Core Intraday setups (Breakout, Mean Rev, Trend Pullback, Gamma, ORB)."""
-        universe = [underlying] if underlying else sorted(list(APPROVED_UNDERLYINGS))
-        tasks = [self.scan_instrument(u, timeframe="5M", desk="INTRADAY") for u in universe]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        if underlying:
+            u = validate_underlying(underlying)
+            universe = [u]
+        else:
+            universe = sorted(list(APPROVED_UNDERLYINGS))
+        cache_key = f"intraday:{','.join(universe)}"
+        cached = self._cache_get(cache_key)
+        if cached:
+            return cached
 
-        candidates: list[SignalCandidate] = []
-        for res in results:
-            if isinstance(res, list):
-                candidates.extend(res)
-
+        candidates, diagnostics, errors = await self._scan_universe(universe, timeframe="5M", desk="INTRADAY")
         registered = await self._process_candidates(candidates)
-        return {
+        quality, degraded = self._summarize_quality(diagnostics, errors)
+        result: dict[str, Any] = {
             "desk": "INTRADAY",
             "timeframe": "5M",
+            "scanned_underlyings": universe,
             "total_candidates": len(candidates),
             "new_signals": [s.model_dump() for s in registered],
-            "timestamp_ms": int(__import__("time").time() * 1000),
+            "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
+            "data_quality": quality,
+            "degraded_underlyings": degraded,
+            "errors": errors,
+            "diagnostics": diagnostics,
+            "cache_hit": False,
+            "timestamp_ms": int(time.time() * 1000),
         }
+        self._cache_put(cache_key, result)
+        return result
 
     async def scan_all(self) -> dict[str, Any]:
         """Scan both Scalping (1M) and Intraday (5M) desks across all approved underlyings."""
+        cached = self._cache_get("all")
+        if cached:
+            return cached
         scalp_res = await self.scan_scalp()
         intraday_res = await self.scan_intraday()
 
         all_new = scalp_res["new_signals"] + intraday_res["new_signals"]
-        return {
-            "scanned_underlyings": list(APPROVED_UNDERLYINGS),
+        diagnostics_all = list(scalp_res.get("diagnostics", [])) + list(intraday_res.get("diagnostics", []))
+        errors_all = {**scalp_res.get("errors", {}), **intraday_res.get("errors", {})}
+        quality, degraded = self._summarize_quality(diagnostics_all, errors_all)
+        result: dict[str, Any] = {
+            "scanned_underlyings": sorted(list(APPROVED_UNDERLYINGS)),
             "total_candidates": scalp_res["total_candidates"] + intraday_res["total_candidates"],
             "new_signals": all_new,
             "active_signals": [s.model_dump() for s in signal_fsm.list_active()],
             "scalp_desk": scalp_res,
             "intraday_desk": intraday_res,
-            "timestamp_ms": int(__import__("time").time() * 1000),
+            "diagnostics": diagnostics_all,
+            "errors": errors_all,
+            "data_quality": quality,
+            "degraded_underlyings": degraded,
+            "cache_hit": False,
+            "timestamp_ms": int(time.time() * 1000),
         }
+        self._cache_put("all", result)
+        return result
 
 
 scanner_engine = SignalScanner()

@@ -20,12 +20,23 @@ class CentralMarketDataFeed:
     - Section 12 (Morning Market-Open Staged Warmup)
     """
 
+    # Backpressure tuning — bounded 50-item buffer + drop-oldest + eviction.
+    CLIENT_QUEUE_MAXSIZE = 50
+    # Evict a client after this many consecutive broadcast drops (slow consumer).
+    SLOW_CONSUMER_MAX_CONSECUTIVE_DROPS = 50
+    # Hard cap: evict clients whose queue stays full beyond this many broadcasts.
+    SLOW_CONSUMER_MAX_TOTAL_DROPS = 500
+
     def __init__(self):
-        self._subscribers: Set[WebSocket] = set()
+        self._subscribers: dict[WebSocket, asyncio.Queue] = {}
         self._canonical_subscriptions: Set[str] = {"NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX"}
         self._running: bool = False
         self._worker_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        # Slow-consumer tracking: id(ws) -> consecutive + total drop counts.
+        self._drop_counts: dict[int, dict[str, int]] = {}
+        self._evicted_clients: int = 0
+        self._dropped_messages: int = 0
 
         # Latest tick cache per symbol — used so REST get_quote can return LIVE even when Groww REST fails for indices
         # Frontend merges WS ticks, but REST status must also be LIVE when WS has recent tick (fixes offline statue with HEALTHY LIVE)
@@ -57,27 +68,65 @@ class CentralMarketDataFeed:
                 pass
         logger.info("central_market_data_feed_stopped")
 
-    async def register_client(self, websocket: WebSocket) -> None:
-        """Register a connected frontend WebSocket client (subscribe-only).
-
-        Adds the socket to the broadcast set. Does NOT start any upstream
-        service — the FYERS stream is backend-owned (lifespan) and already
-        running independently of how many clients are connected.
-        """
+    async def register_client(self, websocket: WebSocket) -> asyncio.Queue:
+        """Register a connected frontend WebSocket client with a bounded queue (max 50)."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=self.CLIENT_QUEUE_MAXSIZE)
         async with self._lock:
-            self._subscribers.add(websocket)
+            self._subscribers[websocket] = queue
+            self._drop_counts.pop(id(websocket), None)
             logger.info("ws_client_connected", total_clients=len(self._subscribers))
+        return queue
 
     async def unregister_client(self, websocket: WebSocket) -> None:
-        """Unregister a disconnected frontend WebSocket client (remove-only).
-
-        NEVER stops the upstream FYERS stream or Telegram services, even when
-        zero clients remain — ingestion continues so the next browser that
-        opens instantly receives live data.
-        """
+        """Unregister a disconnected frontend WebSocket client."""
         async with self._lock:
-            self._subscribers.discard(websocket)
+            self._subscribers.pop(websocket, None)
+            self._drop_counts.pop(id(websocket), None)
             logger.info("ws_client_disconnected", total_clients=len(self._subscribers))
+
+    async def get_snapshot(self) -> dict[str, Any]:
+        """Latest cached market snapshot for catch-up on connect/reconnect.
+
+        Prefers coordinator-cached index cards (single-flight, O(1) upstream);
+        falls back to latest ingested ticks when the coordinator has no data.
+        """
+        ticks: list[dict[str, Any]] = []
+        try:
+            from app.services.market_service import MarketService
+
+            cards = await MarketService().get_index_cards()
+            if cards:
+                for c in cards:
+                    if c.ltp is not None and c.ltp > 0:
+                        ticks.append(
+                            {
+                                "symbol": c.symbol,
+                                "instrument_token": c.symbol,
+                                "ltp": float(c.ltp),
+                                "open": float(c.open) if c.open else float(c.ltp),
+                                "high": float(c.high) if c.high else float(c.ltp),
+                                "low": float(c.low) if c.low else float(c.ltp),
+                                "close": float(c.previous_close) if c.previous_close else float(c.ltp),
+                                "volume": int(c.volume) if c.volume else 0,
+                                "open_interest": c.open_interest,
+                                "provider": c.provider,
+                            }
+                        )
+                if ticks:
+                    return {"ticks": ticks, "source": "coordinator"}
+        except Exception as e:
+            logger.debug("central_feed_snapshot_coordinator_failed", error=str(e)[:150])
+        # Fallback: latest ingested ticks (up to 60s old, see get_latest_tick).
+        try:
+            for tick in list(self._latest_ticks.values()):
+                fresh = self.get_latest_tick(tick.symbol)
+                if fresh is not None:
+                    ticks.append(fresh.model_dump(mode="json"))
+            if ticks:
+                return {"ticks": ticks, "source": "latest_ticks"}
+        except Exception:
+            pass
+        return {"ticks": [], "source": "empty"}
 
     def add_subscription(self, symbol: str) -> None:
         """Add symbol to canonical subscription registry."""
@@ -138,11 +187,48 @@ class CentralMarketDataFeed:
                 }
                 raw_message = json.dumps(payload)
 
-                # Broadcast to all connected clients
-                disconnected = []
-                for ws in list(self._subscribers):
+                # Broadcast to all connected clients via bounded queues (drop-oldest backpressure)
+                async with self._lock:
+                    subscribers = list(self._subscribers.items())
+
+                disconnected: list = []
+                for ws, q in subscribers:
+                    ws_id = id(ws)
                     try:
-                        await ws.send_text(raw_message)
+                        if q.full():
+                            try:
+                                q.get_nowait()  # Drop oldest superseded tick batch
+                            except asyncio.QueueEmpty:
+                                pass
+                            # Track backpressure per slow client.
+                            counts = self._drop_counts.get(ws_id)
+                            if counts is None:
+                                counts = {"consecutive": 0, "total": 0}
+                                self._drop_counts[ws_id] = counts
+                            counts["consecutive"] += 1
+                            counts["total"] += 1
+                            self._dropped_messages += 1
+                            if (
+                                counts["consecutive"] >= self.SLOW_CONSUMER_MAX_CONSECUTIVE_DROPS
+                                or counts["total"] >= self.SLOW_CONSUMER_MAX_TOTAL_DROPS
+                            ):
+                                logger.warning(
+                                    "ws_slow_consumer_evicted",
+                                    consecutive=counts["consecutive"],
+                                    total=counts["total"],
+                                )
+                                disconnected.append(ws)
+                                try:
+                                    await ws.close(code=1013, reason="slow consumer")
+                                except Exception:
+                                    pass
+                                continue
+                        else:
+                            # Healthy drain resets the consecutive counter.
+                            counts = self._drop_counts.get(ws_id)
+                            if counts:
+                                counts["consecutive"] = 0
+                        q.put_nowait(raw_message)
                     except Exception:
                         disconnected.append(ws)
 
@@ -150,7 +236,9 @@ class CentralMarketDataFeed:
                 if disconnected:
                     async with self._lock:
                         for ws in disconnected:
-                            self._subscribers.discard(ws)
+                            self._subscribers.pop(ws, None)
+                            self._drop_counts.pop(id(ws), None)
+                            self._evicted_clients += 1
 
                 self.broadcast_count += len(batch)
                 self.last_broadcast_at = datetime.now(timezone.utc)
@@ -172,6 +260,10 @@ class CentralMarketDataFeed:
             "last_broadcast_at": self.last_broadcast_at.isoformat() if self.last_broadcast_at else None,
             "buffer_metrics": event_buffer.health(),
             "quality_metrics": data_quality_engine.get_metrics(),
+            "client_queue_maxsize": self.CLIENT_QUEUE_MAXSIZE,
+            "dropped_messages": self._dropped_messages,
+            "evicted_clients": self._evicted_clients,
+            "slow_consumer_threshold": self.SLOW_CONSUMER_MAX_CONSECUTIVE_DROPS,
         }
 
 

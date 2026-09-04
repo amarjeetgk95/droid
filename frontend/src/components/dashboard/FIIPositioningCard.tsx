@@ -5,20 +5,38 @@ import { api } from '@/lib/api';
 import { FIIDIIOverviewResponse } from '@/lib/types';
 import { Landmark } from 'lucide-react';
 import { safeNum, safeStr, safeInt } from '@/lib/utils';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+
+/** Tier D institutional card — prefers shared Dashboard context (15-min TTL). */
+const FALLBACK_POLL_MS = 15 * 60 * 1000;
 
 export function FIIPositioningCard({ refreshKey }: { refreshKey?: number } = {}) {
-  const [data, setData] = useState<FIIDIIOverviewResponse | null>(null);
+  let contextData: FIIDIIOverviewResponse | null = null;
+  try {
+    contextData = (useOptionalMarketDataContext()?.fiiDii as FIIDIIOverviewResponse | null) ?? null;
+  } catch {
+    contextData = null;
+  }
+  const [fallback, setFallback] = useState<FIIDIIOverviewResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const data: FIIDIIOverviewResponse | null = contextData ?? fallback;
+
   useEffect(() => {
+    // Context already serves institutional data — no independent fetch needed.
+    if (contextData) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let isMounted = true;
 
     const loadData = async () => {
       try {
         const res = await api.getFIIDIIOverview();
         if (isMounted) {
-          setData(res.data);
+          setFallback(res.data);
           setError(null);
         }
       } catch (err) {
@@ -31,23 +49,25 @@ export function FIIPositioningCard({ refreshKey }: { refreshKey?: number } = {})
     };
 
     loadData();
-    // Chained timeout with jitter so clients don't sync up polls.
+    // Relaxed standalone fallback poll (15 min) with jitter so clients don't sync up.
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
       timeout = setTimeout(() => {
-        if (!document.hidden) loadData();
+        if (!document.hidden) void loadData();
         schedule();
-      }, 15000 * (0.8 + Math.random() * 0.4));
+      }, FALLBACK_POLL_MS * (0.8 + Math.random() * 0.4));
     };
     schedule();
-    const onVis = () => { if (!document.hidden) loadData(); };
+    const onVis = () => { if (!document.hidden) void loadData(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [refreshKey]);
+    // refreshKey forces a manual reload (dashboard Refresh button).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, contextData ? 'ctx' : 'noctx']);
 
   if (loading && !data) {
     return (
@@ -70,7 +90,7 @@ export function FIIPositioningCard({ refreshKey }: { refreshKey?: number } = {})
           onClick={() => {
             setLoading(true);
             api.getFIIDIIOverview()
-              .then(res => { setData(res.data); setError(null); })
+              .then(res => { setFallback(res.data); setError(null); })
               .catch(err => setError(err instanceof Error ? err.message : 'Failed to fetch FII/DII data'))
               .finally(() => setLoading(false));
           }}

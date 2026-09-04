@@ -6,11 +6,16 @@ import { TopHeader } from '@/components/layout/TopHeader';
 import { MarketTicker } from '@/components/layout/MarketTicker';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { MarketDataProvider, useMarketDataContext } from '@/context/MarketDataContext';
+import { LiveMarketProvider, useLiveMarketContext } from '@/context/LiveMarketContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
 
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
-  const { cards, health, marketStatus, loading: dataLoading, streamState } = useMarketDataContext();
+  // Subscribe only to stable low-frequency state here so tick updates
+  // (LiveMarketContext.cards) don't re-render the whole layout.
+  // MarketTicker consumes live cards directly via useLiveMarketContext.
+  const { health, marketStatus } = useMarketDataContext();
+  const { streamState } = useLiveMarketContext();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -29,29 +34,33 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
-        <Sidebar collapsed={collapsed} onCollapsedChange={handleCollapsedChange} mobileOpen={mobileOpen} onMobileOpenChange={setMobileOpen} />
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <TopHeader
-            health={health}
-            marketStatus={marketStatus}
-            streamState={streamState}
-            onMenuClick={() => setMobileOpen(true)}
-          />
-          <MarketTicker cards={cards} loading={dataLoading} />
-          <main className="flex-1 overflow-auto p-4">
-            {children}
-          </main>
-        </div>
+      <Sidebar collapsed={collapsed} onCollapsedChange={handleCollapsedChange} mobileOpen={mobileOpen} onMobileOpenChange={setMobileOpen} />
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <TopHeader
+          health={health}
+          marketStatus={marketStatus}
+          streamState={streamState}
+          onMenuClick={() => setMobileOpen(true)}
+        />
+        <MarketTicker />
+        <main className="flex-1 overflow-auto p-4">
+          {children}
+        </main>
       </div>
+    </div>
   );
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  // LiveMarket outer so Dashboard (MarketData) context can read stable WS
+  // health for adaptive REST polling without subscribing to tick updates.
   return (
-    <MarketDataProvider refreshInterval={1000}>
-      <AuthGuard>
-        <AppLayoutInner>{children}</AppLayoutInner>
-      </AuthGuard>
-    </MarketDataProvider>
+    <LiveMarketProvider>
+      <MarketDataProvider refreshInterval={5000} useSummaryEndpoint={true}>
+        <AuthGuard>
+          <AppLayoutInner>{children}</AppLayoutInner>
+        </AuthGuard>
+      </MarketDataProvider>
+    </LiveMarketProvider>
   );
 }

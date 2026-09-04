@@ -1,7 +1,24 @@
+import { memo, useMemo } from 'react';
 import { IndexCard } from '@/lib/types';
 import { safeNum, safeInt } from '@/lib/utils';
+import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 
-export function MarketTicker({ cards, loading }: { cards: IndexCard[]; loading: boolean }) {
+function MarketTickerInner({ cards: cardsProp, loading: loadingProp }: { cards?: IndexCard[]; loading?: boolean }) {
+  // Prefer live tick-merged cards from LiveMarketContext; fall back to props
+  // for isolated usage (stories/tests) without a provider.
+  let contextCards: IndexCard[] | undefined;
+  let contextLoading: boolean | undefined;
+  try {
+    const live = useOptionalLiveMarketContext();
+    contextCards = live?.cards;
+    contextLoading = live?.loading;
+  } catch {
+    // No provider — use props.
+  }
+  const cards = cardsProp ?? contextCards ?? [];
+  const loading = loadingProp ?? contextLoading ?? false;
+  const loopCards = useMemo(() => (!cards || cards.length === 0 ? [] : [...cards, ...cards]), [cards]);
+
   if (loading) {
     return (
       <div className="h-8 border-b border-border bg-card overflow-hidden flex items-center px-4 gap-6">
@@ -19,9 +36,6 @@ export function MarketTicker({ cards, loading }: { cards: IndexCard[]; loading: 
   }
 
   if (!cards || cards.length === 0) return null;
-
-  // Duplicate for seamless loop
-  const loopCards = [...cards, ...cards];
 
   return (
     <div className="group relative h-8 border-b border-border bg-card overflow-hidden flex items-center">
@@ -66,3 +80,6 @@ export function MarketTicker({ cards, loading }: { cards: IndexCard[]; loading: 
     </div>
   );
 }
+
+export const MarketTicker = memo(MarketTickerInner);
+

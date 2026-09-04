@@ -14,6 +14,7 @@ Robustness rules:
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from app.models.market import ApiMeta, DataStatus
 from app.services.regime_service import regime_service
 from app.services.paper_service import paper_service
 from app.services.market_service import MarketService
+from app.services.market_data_coordinator import market_data_coordinator
 
 logger = structlog.get_logger(__name__)
 
@@ -47,7 +49,7 @@ SYMBOL_ALIASES = {
     "VIX": "INDIA VIX",
 }
 
-CACHE_TTL_SECONDS = 0.8
+CACHE_TTL_SECONDS = 3.0
 _cache: dict[str, tuple[float, "DashboardData"]] = {}
 
 
@@ -261,7 +263,7 @@ class DashboardSummary(BaseModel):
     generated_at: str
 
 
-SUMMARY_CACHE_TTL = 0.8
+SUMMARY_CACHE_TTL = 5.0
 _summary_cache: dict[str, tuple[float, DashboardSummary]] = {}
 
 
@@ -287,66 +289,106 @@ async def get_dashboard_summary():
     errors: dict[str, str] = {}
     service = MarketService()
 
+    async def _fetch_cards():
+        c = await service.get_index_cards()
+        return [x.model_dump(mode="json") for x in c]
+
+    async def _fetch_breadth():
+        b = await service.get_market_breadth()
+        return b.model_dump(mode="json")
+
+    async def _fetch_health():
+        h = await service.get_health()
+        return h.model_dump(mode="json")
+
+    async def _fetch_status():
+        s = await service.get_market_status()
+        return s.model_dump(mode="json")
+
+    async def _fetch_ml():
+        async def _run():
+            from app.ml.predictor import ml_predictor
+            m = await ml_predictor.predict_probabilities("NIFTY")
+            return m.model_dump(mode="json")
+        val = await market_data_coordinator.get_or_compute("ml", _run, source_name="ml_predictor")
+        return val.data
+
+    async def _fetch_fii():
+        async def _run():
+            from app.services.fii_dii_service import fii_dii_service
+            f = await fii_dii_service.get_fii_dii_overview()
+            return f.model_dump(mode="json")
+        val = await market_data_coordinator.get_or_compute("fii_dii", _run, source_name="fii_dii_service")
+        return val.data
+
+    async def _fetch_regime():
+        async def _run():
+            r = await regime_service.classify_market_regime("NIFTY")
+            return r.model_dump(mode="json")
+        val = await market_data_coordinator.get_or_compute("regime", _run, source_name="regime_service")
+        return val.data
+
+    results = await asyncio.gather(
+        _fetch_cards(),
+        _fetch_breadth(),
+        _fetch_health(),
+        _fetch_status(),
+        _fetch_ml(),
+        _fetch_fii(),
+        _fetch_regime(),
+        return_exceptions=True,
+    )
+
+    cards_res, breadth_res, health_res, status_res, ml_res, fii_res, regime_res = results
+
     cards: list[dict[str, Any]] = []
-    breadth_dict: dict[str, Any] | None = None
-    health_dict: dict[str, Any] | None = None
-    status_dict: dict[str, Any] | None = None
-    ml_dict: dict[str, Any] | None = None
-    fii_dict: dict[str, Any] | None = None
-    regime_dict: dict[str, Any] | None = None
-
-    try:
-        index_cards = await service.get_index_cards()
-        cards = [c.model_dump(mode="json") for c in index_cards]
-    except Exception:
-        logger.exception("dashboard_summary.cards_failed")
+    if isinstance(cards_res, Exception):
+        logger.exception("dashboard_summary.cards_failed", error=str(cards_res))
         errors["cards"] = "Index cards unavailable"
+    else:
+        cards = cards_res or []
 
-    try:
-        breadth = await service.get_market_breadth()
-        breadth_dict = breadth.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.breadth_failed")
+    breadth_dict = None
+    if isinstance(breadth_res, Exception):
+        logger.exception("dashboard_summary.breadth_failed", error=str(breadth_res))
         errors["breadth"] = "Market breadth unavailable"
+    else:
+        breadth_dict = breadth_res
 
-    try:
-        health = await service.get_health()
-        health_dict = health.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.health_failed")
+    health_dict = None
+    if isinstance(health_res, Exception):
+        logger.exception("dashboard_summary.health_failed", error=str(health_res))
         errors["health"] = "Market health unavailable"
+    else:
+        health_dict = health_res
 
-    try:
-        status = await service.get_market_status()
-        status_dict = status.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.status_failed")
+    status_dict = None
+    if isinstance(status_res, Exception):
+        logger.exception("dashboard_summary.status_failed", error=str(status_res))
         errors["status"] = "Market status unavailable"
+    else:
+        status_dict = status_res
 
-    try:
-        from app.ml.predictor import ml_predictor
-
-        ml_pred = await ml_predictor.predict_probabilities("NIFTY")
-        ml_dict = ml_pred.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.ml_failed")
+    ml_dict = None
+    if isinstance(ml_res, Exception):
+        logger.exception("dashboard_summary.ml_failed", error=str(ml_res))
         errors["ml"] = "ML prediction unavailable"
+    else:
+        ml_dict = ml_res
 
-    try:
-        from app.services.fii_dii_service import fii_dii_service
-
-        fii_overview = await fii_dii_service.get_fii_dii_overview()
-        fii_dict = fii_overview.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.fii_dii_failed")
+    fii_dict = None
+    if isinstance(fii_res, Exception):
+        logger.exception("dashboard_summary.fii_dii_failed", error=str(fii_res))
         errors["fii_dii"] = "FII/DII data unavailable"
+    else:
+        fii_dict = fii_res
 
-    try:
-        regime = await regime_service.classify_market_regime("NIFTY")
-        regime_dict = regime.model_dump(mode="json")
-    except Exception:
-        logger.exception("dashboard_summary.regime_failed")
+    regime_dict = None
+    if isinstance(regime_res, Exception):
+        logger.exception("dashboard_summary.regime_failed", error=str(regime_res))
         errors["regime"] = "Regime classification unavailable"
+    else:
+        regime_dict = regime_res
 
     data = DashboardSummary(
         cards=cards,

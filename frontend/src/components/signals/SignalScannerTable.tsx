@@ -15,6 +15,9 @@ import {
   Zap,
 } from 'lucide-react';
 import { SignalDTO } from './SignalCard';
+import { safeNum, safeState } from '@/lib/signal-utils';
+
+const STRATEGY_FILTERS = ['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB', 'VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'];
 
 interface Props {
   signals: SignalDTO[];
@@ -28,9 +31,11 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
   const [strategyFilter, setStrategyFilter] = useState('ALL');
   const [executingId, setExecutingId] = useState<string | null>(null);
 
-  const filtered = signals.filter((s) => {
-    const matchesSearch = s.underlying.toLowerCase().includes(searchTerm.toLowerCase()) || s.strategy.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStrat = strategyFilter === 'ALL' || s.strategy === strategyFilter;
+  const filtered = (signals || []).filter((s) => {
+    const underlying = String(s?.underlying || '').toLowerCase();
+    const strategy = String(s?.strategy || '').toLowerCase();
+    const matchesSearch = underlying.includes(searchTerm.toLowerCase()) || strategy.includes(searchTerm.toLowerCase());
+    const matchesStrat = strategyFilter === 'ALL' || s?.strategy === strategyFilter;
     return matchesSearch && matchesStrat;
   });
 
@@ -62,8 +67,8 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
             />
           </div>
 
-          <div className="flex items-center gap-1">
-            {['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB'].map((st) => (
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {STRATEGY_FILTERS.map((st) => (
               <button
                 key={st}
                 onClick={() => setStrategyFilter(st)}
@@ -107,7 +112,9 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
               </tr>
             ) : (
               filtered.map((s) => {
+                if (!s?.signal_id) return null;
                 const isCall = s.direction?.includes('CALL');
+                const fsm = safeState(s.fsm_state);
                 return (
                   <tr
                     key={s.signal_id}
@@ -133,28 +140,28 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
                         {s.direction}
                       </span>
                     </td>
-                    <td className="p-3 text-right font-medium">₹{Number(s.spot_price).toLocaleString('en-IN')}</td>
+                    <td className="p-3 text-right font-medium">₹{safeNum(s.spot_price)}</td>
                     <td className="p-3 text-right font-bold text-foreground">
-                      <div>₹{Number(s.trigger).toLocaleString('en-IN')}</div>
-                      {s.distance_to_trigger_pts !== null && s.distance_to_trigger_pts !== undefined && (
+                      <div>₹{safeNum(s.trigger)}</div>
+                      {typeof s.distance_to_trigger_pts === 'number' && Number.isFinite(s.distance_to_trigger_pts) && (
                         <div className="text-[10px] text-muted-foreground font-normal">
                           {s.distance_to_trigger_pts.toFixed(1)} pts away
                         </div>
                       )}
                     </td>
-                    <td className="p-3 text-right text-destructive font-semibold">₹{Number(s.stop_loss).toLocaleString('en-IN')}</td>
+                    <td className="p-3 text-right text-destructive font-semibold">₹{safeNum(s.stop_loss)}</td>
                     <td className="p-3 text-right text-emerald-600 font-semibold">
-                      <div>₹{Number(s.target_1).toLocaleString('en-IN')} (T1)</div>
-                      <div className="text-[10px] text-emerald-700 font-bold">₹{Number(s.target_2).toLocaleString('en-IN')} (T2)</div>
+                      <div>₹{safeNum(s.target_1)} (T1)</div>
+                      <div className="text-[10px] text-emerald-700 font-bold">₹{safeNum(s.target_2)} (T2)</div>
                     </td>
-                    <td className="p-3 text-center font-bold text-emerald-600">1:{s.risk_reward_t2 || 3.0}</td>
-                    <td className="p-3 text-center font-bold text-primary">{s.confidence}%</td>
+                    <td className="p-3 text-center font-bold text-emerald-600">1:{safeNum(s.risk_reward_t2 ?? 3.0, 1)}</td>
+                    <td className="p-3 text-center font-bold text-primary">{safeNum(s.confidence, 1)}%</td>
                     <td className="p-3 text-center">
                       <Badge
-                        variant={s.fsm_state.includes('TARGET') ? 'default' : s.fsm_state === 'STOP_LOSS_HIT' ? 'destructive' : 'outline'}
+                        variant={fsm.includes('TARGET') ? 'default' : fsm === 'STOP_LOSS_HIT' ? 'destructive' : 'outline'}
                         className="text-[10px]"
                       >
-                        {s.fsm_state}
+                        {fsm}
                       </Badge>
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>

@@ -16,9 +16,10 @@ export function DataHealthPanel({ refreshKey }: { refreshKey?: number } = {}) {
       }
     }
     fetchH();
+    // Relaxed 30s standalone poll (Tier B health) with jitter — paused when hidden.
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
-      const jittered = 10000 * (0.8 + Math.random() * 0.4);
+      const jittered = 30000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
         if (!document.hidden && !cancelled) void fetchH();
         schedule();

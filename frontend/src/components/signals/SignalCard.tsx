@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
+import { safeNum, safeState, ttlLabel } from '@/lib/signal-utils';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -118,12 +119,13 @@ export function SignalCard({
     return () => clearInterval(interval);
   }, []);
 
+  const fsm = safeState(signal.fsm_state);
   const isCall = signal.direction?.includes('CALL') || signal.direction === 'BULLISH';
-  const isConfirmed = signal.fsm_state === 'CONFIRMED';
-  const isTargetHit = signal.fsm_state.includes('TARGET');
-  const isStopHit = signal.fsm_state === 'STOP_LOSS_HIT';
-  const isExpired = signal.fsm_state === 'EXPIRED' || (
-    ['DETECTED', 'VALIDATED', 'ARMED'].includes(signal.fsm_state) && signal.expires_at_utc ? nowMs > signal.expires_at_utc : false
+  const isConfirmed = fsm === 'CONFIRMED';
+  const isTargetHit = fsm.includes('TARGET');
+  const isStopHit = fsm === 'STOP_LOSS_HIT';
+  const isExpired = fsm === 'EXPIRED' || (
+    ['DETECTED', 'VALIDATED', 'ARMED'].includes(fsm) && signal.expires_at_utc ? nowMs > signal.expires_at_utc : false
   );
 
   const borderClass = isTargetHit
@@ -187,7 +189,7 @@ export function SignalCard({
           </div>
 
           <div className="text-xs font-mono text-muted-foreground flex items-center gap-2">
-            <span>Spot ₹{Number(signal.spot_price).toLocaleString('en-IN')}</span>
+            <span>Spot ₹{safeNum(signal.spot_price)}</span>
             {signal.option_contract?.strike && (
               <span className="bg-secondary/60 px-1.5 py-0.5 rounded text-[11px] border">
                 {signal.option_contract.strike} {signal.option_contract.option_type} ({signal.option_contract.lot_size} lot)
@@ -196,11 +198,11 @@ export function SignalCard({
           </div>
         </div>
 
-        <StatusBadge status={signal.fsm_state} />
+        <StatusBadge status={fsm} />
       </div>
 
       {/* Two-Clock Lifecycle Banner (§6, §20) */}
-      {signal.fsm_state === 'TARGET_1_HIT' ? (
+      {fsm === 'TARGET_1_HIT' ? (
         <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
           <span className="flex items-center gap-1 font-semibold">
             🎯 50% Profit Booked • Runner Mode Active
@@ -212,28 +214,26 @@ export function SignalCard({
               : 'Runner Clock'}
           </span>
         </div>
-      ) : signal.fsm_state === 'CONFIRMED' && (signal.is_scalp || signal.signal_type === 'SCALP') ? (
+      ) : fsm === 'CONFIRMED' && (signal.is_scalp || signal.signal_type === 'SCALP') ? (
         <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300">
           <span className="flex items-center gap-1 font-semibold">
             ⚡ High-Frequency Scalp Active
           </span>
           <span className="font-bold flex items-center gap-1">
             <Clock className="w-3 h-3 text-amber-600" />
-            {signal.time_stop_at_utc
-              ? `${Math.max(0, Math.round((signal.time_stop_at_utc - nowMs) / 1000))}s Time-Stop`
-              : `${signal.ttl_seconds || 120}s TTL`}
+            {ttlLabel(signal, nowMs)}
           </span>
         </div>
       ) : null}
 
       {/* Live Distance to Trigger Banner */}
-      {signal.distance_to_trigger_pts !== null && signal.distance_to_trigger_pts !== undefined && !isExpired && !isTargetHit && !isStopHit && signal.fsm_state !== 'CONFIRMED' && (
+      {typeof signal.distance_to_trigger_pts === 'number' && Number.isFinite(signal.distance_to_trigger_pts) && !isExpired && !isTargetHit && !isStopHit && fsm !== 'CONFIRMED' && (
         <div className="flex items-center justify-between text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-secondary/40 border">
           <span className="text-muted-foreground flex items-center gap-1">
-            <Crosshair className="w-3.5 h-3.5 text-primary" /> Trigger Level: <span className="font-bold text-foreground">₹{Number(signal.trigger).toLocaleString('en-IN')}</span>
+            <Crosshair className="w-3.5 h-3.5 text-primary" /> Trigger Level: <span className="font-bold text-foreground">₹{safeNum(signal.trigger)}</span>
           </span>
-          <span className={`font-bold ${signal.distance_to_trigger_pct! <= 0.1 ? 'text-emerald-600 animate-pulse' : 'text-primary'}`}>
-            {signal.distance_to_trigger_pts > 0 ? `${signal.distance_to_trigger_pts.toFixed(1)} pts (${signal.distance_to_trigger_pct}%) away` : '⚡ Trigger Zone'}
+          <span className={`font-bold ${typeof signal.distance_to_trigger_pct === 'number' && signal.distance_to_trigger_pct <= 0.1 ? 'text-emerald-600 animate-pulse' : 'text-primary'}`}>
+            {signal.distance_to_trigger_pts > 0 ? `${signal.distance_to_trigger_pts.toFixed(1)} pts (${safeNum(signal.distance_to_trigger_pct)}%) away` : '⚡ Trigger Zone'}
           </span>
         </div>
       )}
@@ -242,11 +242,11 @@ export function SignalCard({
       <div className="space-y-1 pt-1">
         <div className="flex justify-between text-[11px] font-mono text-muted-foreground">
           <span className="text-destructive font-semibold">
-            SL ₹{Number(signal.current_stop_loss || signal.stop_loss).toLocaleString('en-IN')}
+            SL ₹{safeNum(signal.current_stop_loss ?? signal.stop_loss)}
             {signal.breakeven_activated && ' (Cost)'}
           </span>
-          <span className="text-emerald-600 font-semibold">T1 ₹{Number(signal.target_1).toLocaleString('en-IN')} (1.5R)</span>
-          <span className="text-emerald-700 font-bold">T2 ₹{Number(signal.target_2).toLocaleString('en-IN')} (3.0R)</span>
+          <span className="text-emerald-600 font-semibold">T1 ₹{safeNum(signal.target_1)} (1.5R)</span>
+          <span className="text-emerald-700 font-bold">T2 ₹{safeNum(signal.target_2)} (3.0R)</span>
         </div>
         <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden flex">
           <div className="h-full bg-destructive/60 w-1/4" title="Stop Loss Zone" />
@@ -260,13 +260,16 @@ export function SignalCard({
       <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t">
         <div className="flex justify-between items-center">
           <span className="text-muted-foreground text-[11px]">Confidence</span>
-          <span className="font-mono font-bold text-primary">{signal.confidence}%</span>
+          <span className="font-mono font-bold text-primary">{safeNum(signal.confidence, 1)}%</span>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-muted-foreground text-[11px]">Risk:Reward</span>
-          <span className="font-mono font-bold text-emerald-600">1:{signal.risk_reward_t2 || 3.0} R:R</span>
+          <span className="font-mono font-bold text-emerald-600">1:{safeNum(signal.risk_reward_t2 ?? 3.0, 1)} R:R</span>
         </div>
       </div>
+      {(signal as { data_quality?: string }).data_quality === 'DEGRADED' && (
+        <p className="text-[10px] text-amber-600 font-mono">⚠ Live price degraded — distance/TTL may be stale</p>
+      )}
 
       {/* Paper Trading Status & 1-Click Action */}
       <div className="pt-2 flex items-center justify-between gap-2 border-t text-xs">
@@ -274,16 +277,19 @@ export function SignalCard({
           <div className="flex flex-col gap-1 w-full text-[11px] bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2 font-mono">
             <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300">
               <span className="flex items-center gap-1 font-bold text-[11px]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Paper: {paperResult.side} {paperResult.quantity} Qty @ ₹{Number(paperResult.fill_price).toLocaleString('en-IN')}
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Paper: {safeNum(paperResult.quantity, 0)} Qty @ ₹{safeNum(paperResult.fill_price)}
               </span>
-              <span className="text-[10px] text-muted-foreground">{paperResult.order_id}</span>
+              <span className="text-[10px] text-muted-foreground">{paperResult.order_id || ''}</span>
             </div>
             {(() => {
               const spotP = Number(signal.spot_price);
-              const trigP = Number(signal.trigger || signal.spot_price);
-              const isBull = signal.direction.includes('CALL') || signal.direction === 'BULLISH';
-              const pts = trigP > 0 ? (isBull ? spotP - trigP : trigP - spotP) : 0;
-              const pnl = pts * Number(paperResult.quantity || 75);
+              const trigP = Number(signal.trigger ?? signal.spot_price);
+              if (!Number.isFinite(spotP) || !Number.isFinite(trigP) || trigP <= 0) return null;
+              const isBull = signal.direction?.includes('CALL') || signal.direction === 'BULLISH';
+              const pts = isBull ? spotP - trigP : trigP - spotP;
+              const qty = Number(paperResult.quantity || 75);
+              if (!Number.isFinite(qty) || qty <= 0) return null;
+              const pnl = pts * qty;
               const isProfit = pnl >= 0;
               return (
                 <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-[10px]">

@@ -214,12 +214,54 @@ class SignalFSMManager:
             return True
         return False
 
+    def sweep_expired(self, now_ms: Optional[int] = None) -> dict[str, int]:
+        """Expire stale pre-trigger signals and stale runners; prune terminal overflow.
+
+        Returns counts {expired, runner_stopped, pruned} so callers can log/broadcast.
+        Safe to call on every read path (active list, scanner, outcome tick).
+        """
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+        expired = 0
+        runner_stopped = 0
+        # 1. Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
+        for sig in list(self._signals.values()):
+            try:
+                if sig.is_expired(now_ms) and sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
+                    ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
+                    if ok:
+                        expired += 1
+                # 2. Runner TTL expiry — TARGET_1_HIT runners must not block dedup forever
+                elif sig.fsm_state == "TARGET_1_HIT" and sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc:
+                    ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
+                    if ok:
+                        runner_stopped += 1
+                # 3. Scalp active time-stop auto-fire (prevents CONFIRMED scalp zombies)
+                elif sig.fsm_state == "CONFIRMED" and getattr(sig, "is_scalp", False) and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
+                    ok, _ = self.transition(sig.signal_id, "TIME_STOP_HIT", reason="TIME_STOP_EXCEEDED")
+                    if ok:
+                        runner_stopped += 1
+            except Exception:
+                continue
+        # 4. Bound memory: prune oldest terminal signals beyond cap
+        pruned = 0
+        try:
+            if len(self._signals) > 200:
+                terminal = [s for s in self._signals.values() if s.fsm_state in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")]
+                terminal.sort(key=lambda s: s.last_updated_utc)
+                overflow = len(self._signals) - 200
+                for s in terminal[:overflow]:
+                    self._signals.pop(s.signal_id, None)
+                    pruned += 1
+        except Exception:
+            pass
+        if expired or runner_stopped or pruned:
+            logger.info("fsm_sweep", expired=expired, runner_stopped=runner_stopped, pruned=pruned)
+        return {"expired": expired, "runner_stopped": runner_stopped, "pruned": pruned}
+
     def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None) -> list[SignalInstance]:
-        now_ms = int(time.time() * 1000)
+        self.sweep_expired()
         res = []
         for s in self._signals.values():
-            if s.is_expired(now_ms) and s.fsm_state not in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED"):
-                self.transition(s.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
             if underlying and s.underlying != underlying.upper():
                 continue
             if strategy and s.strategy != strategy.upper():

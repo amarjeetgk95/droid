@@ -2,8 +2,9 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode, useRef } from 'react';
 import { api } from '@/lib/api';
-import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResponse, DataStatus } from '@/lib/types';
-import { useMarketStream, StreamConnectionState, TimestampedTick } from '@/hooks/useMarketStream';
+import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResponse, MarketRegimeOverview } from '@/lib/types';
+import type { StreamConnectionState } from '@/hooks/useMarketStream';
+import { useStreamHealth } from './LiveMarketContext';
 
 type SectionErrors = {
   cards: string | null;
@@ -13,10 +14,20 @@ type SectionErrors = {
 };
 
 type MarketDataContextType = {
+  /**
+   * REST snapshot cards (Tier A snapshot, updates on quiet sync cadence).
+   * Live tick-merged prices live in LiveMarketContext — prefer
+   * useLiveMarketContext().cards for ticker / price displays to avoid
+   * re-rendering analytical panels on every tick.
+   * @deprecated Use useLiveMarketContext().cards for live prices.
+   */
   cards: IndexCard[];
   breadth: MarketBreadthData | null;
   health: MarketHealthStatus | null;
   marketStatus: MarketStatusResponse | null;
+  regimeOverview: MarketRegimeOverview | null;
+  mlPrediction: any | null;
+  fiiDii: any | null;
   loading: boolean;
   /** First non-null section error — back-compat convenience. */
   error: string | null;
@@ -31,23 +42,36 @@ type MarketDataContextType = {
 
 const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
-const DEFAULT_REFRESH_MS = 1000;
+const DEFAULT_REFRESH_MS = 5000;
 
 const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, marketStatus: null };
 
 const errMessage = (err: unknown) => (err instanceof Error ? err.message : 'Failed to fetch market data');
 
-export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH_MS, useSummaryEndpoint = false }: { children: ReactNode; refreshInterval?: number; useSummaryEndpoint?: boolean }) {
+export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH_MS, useSummaryEndpoint = true }: { children: ReactNode; refreshInterval?: number; useSummaryEndpoint?: boolean }) {
   const [cards, setCards] = useState<IndexCard[]>([]);
   const [breadth, setBreadth] = useState<MarketBreadthData | null>(null);
   const [health, setHealth] = useState<MarketHealthStatus | null>(null);
   const [marketStatus, setMarketStatus] = useState<MarketStatusResponse | null>(null);
+  const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
+  const [mlPrediction, setMlPrediction] = useState<any | null>(null);
+  const [fiiDii, setFiiDii] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<SectionErrors>(EMPTY_ERRORS);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [activeInterval, setActiveInterval] = useState<number>(refreshInterval);
 
-  const { latestTicks, streamState, ticksFresh } = useMarketStream();
+  // Stable WS health (streamState + ticksFresh only — no re-render on ticks).
+  // LiveMarketProvider is outer in layout; falls back gracefully when absent.
+  let streamState: StreamConnectionState = 'CONNECTING';
+  let ticksFresh = false;
+  try {
+    const h = useStreamHealth();
+    streamState = h.streamState;
+    ticksFresh = h.ticksFresh;
+  } catch {
+    // Standalone usage without LiveMarketProvider — REST fallback cadence.
+  }
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -67,14 +91,16 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
         }
         if (!mountedRef.current) return;
 
-        const errors: SectionErrors = {
-          cards: summaryData?.errors?.cards ?? null,
-          breadth: summaryData?.errors?.breadth ?? null,
-          health: summaryData?.errors?.health ?? null,
-          marketStatus: summaryData?.errors?.status ?? null,
+        const nextErrors: SectionErrors = {
+          cards: summaryData?.errors?.cards ?? (summaryData ? null : 'Dashboard summary unavailable'),
+          breadth: summaryData?.errors?.breadth ?? (summaryData ? null : 'Dashboard summary unavailable'),
+          health: summaryData?.errors?.health ?? (summaryData ? null : 'Dashboard summary unavailable'),
+          marketStatus: summaryData?.errors?.status ?? (summaryData ? null : 'Dashboard summary unavailable'),
         };
 
         if (summaryData) {
+          // REST snapshot only — no WS tick merge here. Live prices come from
+          // LiveMarketContext so analytical panels stay referentially stable.
           if (summaryData.cards && mountedRef.current) {
             setCards((prevCards) => {
               const newCards = summaryData.cards as IndexCard[];
@@ -104,8 +130,11 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
           if (summaryData.breadth && mountedRef.current) setBreadth(summaryData.breadth as MarketBreadthData);
           if (summaryData.health && mountedRef.current) setHealth(summaryData.health as MarketHealthStatus);
           if (summaryData.market_status && mountedRef.current) setMarketStatus(summaryData.market_status as MarketStatusResponse);
+          if (summaryData.regime_overview && mountedRef.current) setRegimeOverview(summaryData.regime_overview as MarketRegimeOverview);
+          if (summaryData.ml_prediction && mountedRef.current) setMlPrediction(summaryData.ml_prediction);
+          if (summaryData.fii_dii && mountedRef.current) setFiiDii(summaryData.fii_dii);
         }
-        setErrors(errors);
+        setErrors(nextErrors);
         setLastFetch(new Date());
       } else {
         const [cardsRes, breadthRes, healthRes, statusRes] = await Promise.allSettled([
@@ -165,21 +194,32 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     mountedRef.current = true;
     let timeout: ReturnType<typeof setTimeout> | null = null;
 
-    // Chained timeout with ±20% jitter — otherwise all clients hit the backend
-    // in lockstep every 15s (thundering herd on the free Render instance).
+    // Adaptive scheduler:
+    // When WebSocket is CONNECTED and ticks are fresh, REST only needs a quiet sync (25s).
+    // When WebSocket is disconnected or connecting, REST polls at 5s fallback.
+    // When document.hidden, completely pause polling.
     const schedule = () => {
-      const interval = Math.max(500, activeInterval);
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const isLiveWs = streamState === 'CONNECTED' && ticksFresh;
+      const baseInterval = isLiveWs ? 25000 : Math.max(4000, activeInterval);
+      const jitter = baseInterval * (0.85 + Math.random() * 0.3); // ±15% jitter
       timeout = setTimeout(() => {
         void fetchData();
         schedule();
-      }, interval);
+      }, jitter);
     };
 
     void fetchData();
     schedule();
 
     const onVisibility = () => {
-      if (!document.hidden) void fetchData(); // refetch immediately when tab becomes visible
+      if (!document.hidden) {
+        void fetchData(); // refetch immediately when tab becomes visible
+        if (timeout) clearTimeout(timeout);
+        schedule();
+      } else {
+        if (timeout) clearTimeout(timeout);
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -187,91 +227,16 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [activeInterval, fetchData]);
-
-  // Merge live ticks into cards — per-symbol memoized to avoid re-rendering unchanged cards.
-  // latestTicks keeps the last-ever tick batch; `ticksFresh` flips false after FEED_STALE_MS without a message.
-  // Each unchanged card keeps its original reference so React.memo(MarketCard) skips re-render.
-  const prevDisplayedRef = useRef<Map<string, IndexCard>>(new Map());
-  const displayedCards = useMemo(() => {
-    if (!latestTicks || Object.keys(latestTicks).length === 0) {
-      prevDisplayedRef.current.clear();
-      cards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return cards;
-    }
-    if (streamState !== 'CONNECTED' || !ticksFresh) {
-      prevDisplayedRef.current.clear();
-      cards.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return cards;
-    }
-
-    const next: IndexCard[] = [];
-    for (const card of cards) {
-      const tick: TimestampedTick | undefined = latestTicks[card.symbol];
-      if (!tick) {
-        // Keep previous reference if symbol unchanged to preserve memo equality
-        const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev === card) {
-          next.push(card);
-        } else if (prev && deepCardsEqual(prev, card)) {
-          // If card object is new but deep equal and no tick, reuse prev reference
-          next.push(prev);
-        } else {
-          prevDisplayedRef.current.set(card.symbol, card);
-          next.push(card);
-        }
-        continue;
-      }
-      const newLtp = Number(tick.ltp);
-      if (!Number.isFinite(newLtp) || newLtp <= 0) {
-        const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev.ltp === card.ltp) next.push(prev);
-        else {
-          prevDisplayedRef.current.set(card.symbol, card);
-          next.push(card);
-        }
-        continue;
-      }
-      const prev = prevDisplayedRef.current.get(card.symbol);
-      // Fast path: if tick ltp same as previous displayed ltp and volume unchanged, reuse prev
-      if (prev && prev.ltp === newLtp && prev.volume === (tick.volume ?? card.volume) && prev.status === 'LIVE') {
-        next.push(prev);
-        continue;
-      }
-      const change = newLtp - card.previous_close;
-      const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
-      // Only clone sparkline when we actually update it — avoid spread on every tick for unchanged
-      let sparkline = card.sparkline;
-      if (card.sparkline.length > 0 && card.sparkline[card.sparkline.length - 1] !== newLtp) {
-        sparkline = card.sparkline.slice();
-        sparkline[sparkline.length - 1] = newLtp;
-      }
-      const merged: IndexCard = {
-        ...card,
-        ltp: newLtp,
-        change: Number(change.toFixed(2)),
-        change_percent: Number(changePercent.toFixed(2)),
-        sparkline,
-        volume: tick.volume ?? card.volume,
-        open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
-        status: 'LIVE' as DataStatus,
-        provider: tick.provider || card.provider,
-      };
-      prevDisplayedRef.current.set(card.symbol, merged);
-      next.push(merged);
-    }
-    return next;
-  }, [cards, latestTicks, streamState, ticksFresh]);
-
-  function deepCardsEqual(a: IndexCard, b: IndexCard): boolean {
-    return a.ltp === b.ltp && a.change === b.change && a.change_percent === b.change_percent && a.volume === b.volume && a.status === b.status && a.sparkline === b.sparkline;
-  }
+  }, [activeInterval, fetchData, streamState, ticksFresh]);
 
   const value = useMemo<MarketDataContextType>(() => ({
-    cards: displayedCards,
+    cards,
     breadth,
     health,
     marketStatus,
+    regimeOverview,
+    mlPrediction,
+    fiiDii,
     loading,
     error: errors.cards ?? errors.breadth ?? errors.health ?? errors.marketStatus,
     errors,
@@ -280,7 +245,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     refreshInterval: activeInterval,
     setRefreshInterval: setActiveInterval,
     refetch: fetchData,
-  }), [displayedCards, breadth, health, marketStatus, loading, errors, lastFetch, streamState, activeInterval, fetchData]);
+  }), [cards, breadth, health, marketStatus, regimeOverview, mlPrediction, fiiDii, loading, errors, lastFetch, streamState, activeInterval, fetchData]);
 
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
 }
@@ -289,4 +254,8 @@ export function useMarketDataContext(options?: { useSummaryEndpoint?: boolean })
   const ctx = useContext(MarketDataContext);
   if (!ctx) throw new Error('useMarketDataContext must be used within MarketDataProvider');
   return ctx;
+}
+
+export function useOptionalMarketDataContext() {
+  return useContext(MarketDataContext);
 }

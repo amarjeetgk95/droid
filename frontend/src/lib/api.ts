@@ -1134,6 +1134,16 @@ class ApiClient {
       },
     );
   }
+
+  async getSignalsStatus() {
+    return this.request<{
+      active_count: number;
+      confirmed_count: number;
+      armed_count: number;
+      diagnostics: Record<string, unknown>;
+      timestamp_ms: number;
+    }>(`/api/v1/signals/status`);
+  }
 }
 
 export const api = new ApiClient(API_BASE);

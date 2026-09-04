@@ -6,18 +6,19 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
+import { withJitter } from '@/lib/signal-utils';
+import { useSignalStream } from '@/hooks/useSignalStream';
 import { SignalCard, type SignalDTO } from '@/components/signals/SignalCard';
 import { SignalScannerTable } from '@/components/signals/SignalScannerTable';
 import { SignalPerformanceView } from '@/components/signals/SignalPerformanceView';
 import { GenerateSignalForm } from '@/components/signals/GenerateSignalForm';
 import { SignalDeepDiveModal } from '@/components/signals/SignalDeepDiveModal';
 import { SignalAuditTable, type AuditTradeRecord, type AuditSummary } from '@/components/signals/SignalAuditTable';
+import { SignalErrorBoundary } from '@/components/signals/SignalErrorBoundary';
 import {
   Activity,
   AlertTriangle,
   Award,
-  Bell,
-  BellOff,
   CheckCircle2,
   Clock,
   Crosshair,
@@ -49,17 +50,29 @@ type FilterStrategy =
   | 'EMA_RIBBON'
   | 'GAMMA_SPIKE';
 
-// Web Audio synthesizer chime for low-latency alerts without external mp3 files
+interface ScanDiagnostics {
+  underlying?: string;
+  data_quality?: string;
+  reasons?: string[];
+  candidates_found?: number;
+  error?: string | null;
+}
+
+// Shared AudioContext — created once, reused for every chime (no per-alert leak)
+let sharedAudioCtx: AudioContext | null = null;
 function playAlertChime(isWin = false, isScalp = false) {
   try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return;
+    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+      sharedAudioCtx = new AC();
+    }
+    const ctx = sharedAudioCtx;
+    if (ctx.state === 'suspended') void ctx.resume();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
     if (isScalp) {
-      // High-frequency dual beep for fast scalping alerts
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(880.0, ctx.currentTime);
       osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08);
@@ -82,12 +95,32 @@ function playAlertChime(isWin = false, isScalp = false) {
 
     osc.start();
     osc.stop(ctx.currentTime + (isScalp ? 0.25 : 0.35));
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch {}
+    };
   } catch {}
+}
+
+function upsertSignal(list: SignalDTO[], incoming: SignalDTO): SignalDTO[] {
+  if (!incoming?.signal_id) return list;
+  const idx = list.findIndex((s) => s.signal_id === incoming.signal_id);
+  if (idx >= 0) {
+    const next = list.slice();
+    next[idx] = { ...next[idx], ...incoming };
+    return next;
+  }
+  return [incoming, ...list].slice(0, 100);
 }
 
 export default function SignalsPage() {
   const [active, setActive] = useState<SignalDTO[]>([]);
+  const [activeQuality, setActiveQuality] = useState<string>('LIVE');
   const [scannerData, setScannerData] = useState<SignalDTO[]>([]);
+  const [scanDiagnostics, setScanDiagnostics] = useState<ScanDiagnostics[]>([]);
+  const [scanQuality, setScanQuality] = useState<string>('LIVE');
   const [loading, setLoading] = useState(false);
   const [scannerLoading, setScannerLoading] = useState(false);
 
@@ -99,19 +132,27 @@ export default function SignalsPage() {
 
   const [inspectSignalId, setInspectSignalId] = useState<string | null>(null);
   const [perfSummary, setPerfSummary] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [activeError, setActiveError] = useState<string | null>(null);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   const [auditTrades, setAuditTrades] = useState<AuditTradeRecord[]>([]);
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
   const [auditLoading, setAuditLoading] = useState<boolean>(false);
 
   const knownSignalIds = useRef<Set<string>>(new Set());
+  const activeInFlight = useRef(false);
+  const auditInFlight = useRef(false);
+  const scannerInFlight = useRef(false);
+  const sseRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fetch active signals
+  // Fetch active signals — single-flight guarded so polls never stack
   const fetchActive = useCallback(
     async (showLoading = true) => {
+      if (activeInFlight.current) return;
+      activeInFlight.current = true;
       if (showLoading) setLoading(true);
-      setError(null);
+      setActiveError(null);
       try {
         const res: any = await api.getSignalsActive({
           instrument: filterInstr !== 'ALL' ? filterInstr : undefined,
@@ -119,53 +160,114 @@ export default function SignalsPage() {
           desk: filterDesk !== 'ALL' ? filterDesk : undefined,
         });
         const list: SignalDTO[] = res.signals || res.data?.signals || [];
-        
-        // Check if a truly new confirmed signal arrived -> play chime
+        setActiveQuality(res.data_quality || res.data?.data_quality || 'LIVE');
+
         if (soundEnabled && knownSignalIds.current.size > 0) {
           const newConfirmed = list.filter(
-            (s) => !knownSignalIds.current.has(s.signal_id) && (s.fsm_state === 'CONFIRMED' || s.fsm_state.includes('TARGET'))
+            (s) => s?.signal_id && !knownSignalIds.current.has(s.signal_id) && (s.fsm_state === 'CONFIRMED' || String(s.fsm_state || '').includes('TARGET'))
           );
           if (newConfirmed.length > 0) {
             const isScalp = newConfirmed.some((s) => s.is_scalp || s.signal_type === 'SCALP');
             playAlertChime(true, isScalp);
           }
         }
-        list.forEach((s) => knownSignalIds.current.add(s.signal_id));
+        list.forEach((s) => {
+          if (s?.signal_id) knownSignalIds.current.add(s.signal_id);
+        });
         setActive(list);
       } catch (e: any) {
-        setError(e.message || 'Failed to load quantitative signals');
+        setActiveError(e.message || 'Failed to load quantitative signals');
       } finally {
         setLoading(false);
+        activeInFlight.current = false;
       }
     },
     [filterInstr, filterStrat, filterDesk, soundEnabled],
   );
 
-  // Run full scanner
-  const fetchScanner = useCallback(async () => {
-    setScannerLoading(true);
+  // Run scanner — manual + slow poll; results carry diagnostics explaining emptiness
+  const fetchScanner = useCallback(async (showLoading = true) => {
+    if (scannerInFlight.current) return;
+    scannerInFlight.current = true;
+    if (showLoading) setScannerLoading(true);
+    setScannerError(null);
     try {
       const res: any = await api.getSignalsScanner();
       const list: SignalDTO[] = res.active_signals || res.new_signals || [];
       setScannerData(list);
-    } catch {
+      setScanDiagnostics(res.diagnostics || res.scalp_desk?.diagnostics || []);
+      setScanQuality(res.data_quality || 'LIVE');
+      if (res.errors && Object.keys(res.errors).length > 0) {
+        setScannerError(
+          Object.entries(res.errors)
+            .map(([u, msg]) => `${u}: ${msg}`)
+            .join(' • ')
+            .slice(0, 300)
+        );
+      }
+    } catch (e: any) {
+      setScannerError(e.message || 'Scanner unavailable');
     } finally {
       setScannerLoading(false);
+      scannerInFlight.current = false;
     }
   }, []);
 
   // Fetch Signal Audit Ledger without flickering background spinners
   const fetchAudit = useCallback(async (showLoading = false) => {
+    if (auditInFlight.current) return;
+    auditInFlight.current = true;
     if (showLoading) setAuditLoading(true);
+    setAuditError(null);
     try {
       const res: any = await api.getSignalsAudit();
       setAuditTrades(res.trades || []);
       setAuditSummary(res.summary || null);
-    } catch {
+    } catch (e: any) {
+      setAuditError(e.message || 'Audit ledger unavailable');
     } finally {
       if (showLoading) setAuditLoading(false);
+      auditInFlight.current = false;
     }
   }, []);
+
+  // SSE-first live updates: patch the active list locally, debounce full refetch
+  const scheduleSseRefresh = useCallback(() => {
+    if (sseRefreshTimer.current) return;
+    sseRefreshTimer.current = setTimeout(() => {
+      sseRefreshTimer.current = null;
+      if (!document.hidden) {
+        void fetchActive(false);
+        void fetchAudit(false);
+      }
+    }, 1500);
+  }, [fetchActive, fetchAudit]);
+
+  const handleStreamEvent = useCallback(
+    (e: { type: string; payload: unknown }) => {
+      const t = e.type;
+      const p = e.payload as Record<string, unknown>;
+      const signal = (p?.signal || p) as SignalDTO | undefined;
+      if (t === 'signal_deleted' && typeof p?.signal_id === 'string') {
+        setActive((prev) => prev.filter((s) => s.signal_id !== p.signal_id));
+        return;
+      }
+      if (signal?.signal_id && (t.includes('signal') || t.includes('paper') || t.includes('execution') || t.includes('outcome') || t.includes('staged'))) {
+        setActive((prev) => upsertSignal(prev, signal));
+        knownSignalIds.current.add(signal.signal_id);
+        if (soundEnabled && (signal.fsm_state === 'CONFIRMED' || String(signal.fsm_state || '').includes('TARGET'))) {
+          playAlertChime(true, Boolean(signal.is_scalp));
+        }
+        return;
+      }
+      if (t === 'scanner_update') {
+        scheduleSseRefresh();
+      }
+    },
+    [scheduleSseRefresh, soundEnabled]
+  );
+
+  const { streamState } = useSignalStream(true, handleStreamEvent);
 
   // Quick stats
   useEffect(() => {
@@ -175,24 +277,49 @@ export default function SignalsPage() {
       .catch(() => {});
   }, []);
 
-  // Polling with tab-visibility backoff (3s interval)
+  // Polling fallback with jitter + hidden-tab pause (SSE owns realtime; poll is safety net)
   useEffect(() => {
-    fetchActive(true);
-    fetchScanner();
-    fetchAudit(true);
+    void fetchActive(true);
+    void fetchScanner(true);
+    void fetchAudit(true);
 
-    let timer: ReturnType<typeof setInterval> | null = null;
-    timer = setInterval(() => {
-      if (!document.hidden) {
-        void fetchActive(false);
-        void fetchAudit(false);
-      }
-    }, 3000);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      timeout = setTimeout(() => {
+        if (!document.hidden) {
+          void fetchActive(false);
+          void fetchAudit(false);
+        }
+        loop();
+      }, withJitter(8000));
+    };
+    // Scanner is expensive (full universe TA) — poll it 4x slower than active list
+    let scanTimeout: ReturnType<typeof setTimeout> | null = null;
+    const scanLoop = () => {
+      if (stopped) return;
+      scanTimeout = setTimeout(() => {
+        if (!document.hidden) void fetchScanner(false);
+        scanLoop();
+      }, withJitter(32000));
+    };
+    loop();
+    scanLoop();
 
     return () => {
-      if (timer) clearInterval(timer);
+      stopped = true;
+      if (timeout) clearTimeout(timeout);
+      if (scanTimeout) clearTimeout(scanTimeout);
+      if (sseRefreshTimer.current) clearTimeout(sseRefreshTimer.current);
     };
   }, [fetchActive, fetchScanner, fetchAudit]);
+
+  const degraded = activeQuality !== 'LIVE' || scanQuality !== 'LIVE';
+  const emptyReasons = scanDiagnostics
+    .filter((d) => d?.reasons?.length)
+    .slice(0, 3)
+    .flatMap((d) => (d.reasons || []).slice(0, 1).map((r) => `${d.underlying || '?'}: ${r}`));
 
   return (
     <div className="space-y-4 max-w-[1440px] mx-auto pb-12">
@@ -206,8 +333,19 @@ export default function SignalsPage() {
               Deterministic Index Options Intelligence (NIFTY • BANKNIFTY • SENSEX)
             </span>
           </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
             Real-time multi-strategy scanner with FSM lifecycle management and FYERS execution parity.
+            <span
+              className={`inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                streamState === 'CONNECTED'
+                  ? 'text-emerald-600 border-emerald-500/30 bg-emerald-500/10'
+                  : 'text-amber-600 border-amber-500/30 bg-amber-500/10'
+              }`}
+              title="SSE live stream state — polling continues as fallback"
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${streamState === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              {streamState === 'CONNECTED' ? 'LIVE STREAM' : `STREAM ${streamState} • POLL FALLBACK`}
+            </span>
           </p>
         </div>
 
@@ -223,7 +361,7 @@ export default function SignalsPage() {
             <span className="hidden sm:inline">{soundEnabled ? 'Audio Alerts' : 'Muted'}</span>
           </Button>
 
-          <Button variant="outline" size="sm" onClick={() => fetchActive(true)} disabled={loading} className="h-8 text-xs gap-1">
+          <Button variant="outline" size="sm" onClick={() => { void fetchActive(true); void fetchScanner(true); }} disabled={loading} className="h-8 text-xs gap-1">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
 
@@ -234,6 +372,24 @@ export default function SignalsPage() {
           </Link>
         </div>
       </div>
+
+      {degraded && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
+          <div>
+            <p className="font-semibold text-amber-700 dark:text-amber-400">
+              Market data degraded (signals {activeQuality} / scanner {scanQuality}) — prices and distances may be stale. No signals are fabricated; empty means no confirmed setup.
+            </p>
+            {emptyReasons.length > 0 && (
+              <ul className="text-muted-foreground mt-1 space-y-0.5">
+                {emptyReasons.map((r, i) => (
+                  <li key={i} className="font-mono text-[11px]">• {r}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── TOP KPI SUMMARY STRIP (DUAL-DESK PERFORMANCE) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -397,7 +553,7 @@ export default function SignalsPage() {
                   </button>
                 </div>
                 <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
-                  <Clock className="w-3 h-3" /> Live 3s SSE/Poll
+                  <Clock className="w-3 h-3" /> {streamState === 'CONNECTED' ? 'SSE live + 8s safety poll' : '8s poll (SSE reconnecting)'}
                 </span>
               </div>
             </div>
@@ -466,13 +622,16 @@ export default function SignalsPage() {
             </div>
           </Card>
 
-          {error && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" /> {error}
+          {activeError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 flex-wrap">
+              <AlertTriangle className="w-4 h-4" /> {activeError}
+              <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={() => void fetchActive(true)}>
+                Retry
+              </Button>
             </div>
           )}
 
-          {loading && active.length === 0 && (
+          {loading && active.length === 0 && !activeError && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
                 <Card key={i} className="p-4 space-y-3 animate-pulse">
@@ -483,13 +642,20 @@ export default function SignalsPage() {
             </div>
           )}
 
-          {!loading && active.length === 0 && !error && (
+          {!loading && active.length === 0 && !activeError && (
             <Card className="p-8 text-center space-y-2">
               <div className="text-sm font-semibold">No active setups match criteria</div>
               <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                No strategy conditions are currently triggered on {filterInstr} with {filterStrat}. Try running the Multi-Strategy Scanner or generating a setup in the Studio.
+                No strategy conditions are currently triggered on {filterInstr} with {filterStrat}. Empty is honest — the scanner only registers validated breakouts, never placeholders.
               </p>
-              <Button size="sm" variant="outline" onClick={() => fetchScanner()} className="mt-2 text-xs gap-1">
+              {emptyReasons.length > 0 && (
+                <ul className="text-[11px] font-mono text-muted-foreground max-w-lg mx-auto space-y-0.5">
+                  {emptyReasons.map((r, i) => (
+                    <li key={i}>• {r}</li>
+                  ))}
+                </ul>
+              )}
+              <Button size="sm" variant="outline" onClick={() => { void fetchScanner(true); }} className="mt-2 text-xs gap-1">
                 <Zap className="w-3 h-3" /> Scan Universe Now
               </Button>
             </Card>
@@ -500,24 +666,27 @@ export default function SignalsPage() {
               {viewMode === 'grid' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {active.map((sig) => (
-                    <SignalCard
-                      key={sig.signal_id}
-                      signal={sig}
-                      onInspect={(id) => setInspectSignalId(id)}
-                      onPaperExecuted={() => {
-                        fetchActive(false);
-                        fetchAudit();
-                      }}
-                    />
+                    <SignalErrorBoundary key={sig.signal_id} label={sig.underlying || 'Signal'}>
+                      <SignalCard
+                        signal={sig}
+                        onInspect={(id) => setInspectSignalId(id)}
+                        onPaperExecuted={() => {
+                          void fetchActive(false);
+                          void fetchAudit(false);
+                        }}
+                      />
+                    </SignalErrorBoundary>
                   ))}
                 </div>
               ) : (
-                <SignalScannerTable
-                  signals={active}
-                  onInspect={(id) => setInspectSignalId(id)}
-                  onRefresh={() => fetchActive(false)}
-                  loading={loading}
-                />
+                <SignalErrorBoundary label="Scanner table">
+                  <SignalScannerTable
+                    signals={active}
+                    onInspect={(id) => setInspectSignalId(id)}
+                    onRefresh={() => void fetchActive(false)}
+                    loading={loading}
+                  />
+                </SignalErrorBoundary>
               )}
             </>
           )}
@@ -527,28 +696,55 @@ export default function SignalsPage() {
         <TabsContent value="scanner" className="space-y-4 pt-2">
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Layers className="w-4 h-4 text-primary" /> Multi-Strategy Radar Matrix
+                    <Badge variant="outline" className={`text-[10px] font-mono ${scanQuality === 'LIVE' ? 'text-emerald-600 border-emerald-500/30' : 'text-amber-600 border-amber-500/30'}`}>
+                      {scanQuality}
+                    </Badge>
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Simultaneously scans NIFTY, BANKNIFTY, and SENSEX across Breakout, Mean Reversion, Trend Pullback, Gamma Squeeze, and ORB.
                   </CardDescription>
                 </div>
-                <Button size="sm" onClick={() => fetchScanner()} disabled={scannerLoading} className="h-8 text-xs gap-1">
+                <Button size="sm" onClick={() => void fetchScanner(true)} disabled={scannerLoading} className="h-8 text-xs gap-1">
                   <RefreshCw className={`w-3 h-3 ${scannerLoading ? 'animate-spin' : ''}`} />
                   {scannerLoading ? 'Scanning Universe…' : 'Run Full Scan'}
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <SignalScannerTable
-                signals={scannerData.length > 0 ? scannerData : active}
-                onInspect={(id) => setInspectSignalId(id)}
-                onRefresh={fetchScanner}
-                loading={scannerLoading}
-              />
+            <CardContent className="space-y-3">
+              {scannerError && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-2 flex-wrap">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Scanner degraded: {scannerError}
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] ml-auto" onClick={() => void fetchScanner(true)}>
+                    Retry scan
+                  </Button>
+                </div>
+              )}
+              {scanDiagnostics.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {scanDiagnostics.slice(0, 6).map((d, i) => (
+                    <div key={i} className="text-[11px] font-mono border rounded-lg p-2 bg-secondary/30">
+                      <span className="font-bold">{d.underlying || '?'}</span>
+                      <span className={`ml-1.5 ${d.data_quality === 'LIVE' ? 'text-emerald-600' : 'text-amber-600'}`}>{d.data_quality || '?'}</span>
+                      <span className="text-muted-foreground ml-1.5">{d.candidates_found ?? 0} candidates</span>
+                      {(d.reasons || []).slice(0, 1).map((r, j) => (
+                        <p key={j} className="text-muted-foreground mt-0.5 break-words">{r.slice(0, 140)}</p>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <SignalErrorBoundary label="Scanner matrix">
+                <SignalScannerTable
+                  signals={scannerData.length > 0 ? scannerData : active}
+                  onInspect={(id) => setInspectSignalId(id)}
+                  onRefresh={() => void fetchScanner(true)}
+                  loading={scannerLoading}
+                />
+              </SignalErrorBoundary>
             </CardContent>
           </Card>
         </TabsContent>
@@ -557,8 +753,8 @@ export default function SignalsPage() {
         <TabsContent value="studio" className="pt-2">
           <GenerateSignalForm
             onGenerated={() => {
-              fetchActive(false);
-              fetchScanner();
+              void fetchActive(false);
+              void fetchScanner(true);
             }}
           />
         </TabsContent>
@@ -570,11 +766,19 @@ export default function SignalsPage() {
 
         {/* ── TAB 5: AUDIT LEDGER & ACTUAL P&L ── */}
         <TabsContent value="audit" className="pt-2">
+          {auditError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 mb-3 flex-wrap">
+              <AlertTriangle className="w-4 h-4" /> {auditError}
+              <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={() => void fetchAudit(true)}>
+                Retry
+              </Button>
+            </div>
+          )}
           <SignalAuditTable
             trades={auditTrades}
             summary={auditSummary}
             loading={auditLoading}
-            onRefresh={fetchAudit}
+            onRefresh={() => void fetchAudit(true)}
             onSelectSignal={(sigId) => setInspectSignalId(sigId)}
           />
         </TabsContent>
@@ -586,8 +790,8 @@ export default function SignalsPage() {
           signalId={inspectSignalId}
           onClose={() => setInspectSignalId(null)}
           onPaperExecuted={() => {
-            fetchActive(false);
-            fetchAudit();
+            void fetchActive(false);
+            void fetchAudit(false);
           }}
         />
       )}

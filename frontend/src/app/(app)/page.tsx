@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useMarketDataContext } from '@/context/MarketDataContext';
+import { useLiveMarketContext } from '@/context/LiveMarketContext';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { MarketCard } from '@/components/dashboard/MarketCard';
 import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
@@ -72,18 +73,21 @@ function SectionError({ message }: { message: string }) {
 }
 
 export default function DashboardPage() {
+  // Tier A live prices from LiveMarketContext (isolated re-renders);
+  // Tiers B/C/D analytical data from Dashboard (MarketData) context.
+  const { cards, streamState, loading: liveLoading } = useLiveMarketContext();
   const {
-    cards,
     breadth,
     health,
     marketStatus,
-    loading,
+    regimeOverview: contextRegime,
+    loading: dashboardLoading,
     error,
     errors,
     lastFetch,
-    streamState,
     refetch,
   } = useMarketDataContext({ useSummaryEndpoint: true });
+  const loading = liveLoading && dashboardLoading && cards.length === 0;
 
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
   const [viewMode, setViewMode] = useState<'intelligence' | 'chart'>('intelligence');
@@ -102,14 +106,24 @@ export default function DashboardPage() {
       ? 'BTCUSD'
       : 'NIFTY';
 
+  // Sync context regime when activeSymbol is NIFTY
+  useEffect(() => {
+    if (activeSymbol === 'NIFTY' && contextRegime) {
+      setRegimeOverview(contextRegime);
+      setRegimeLoading(false);
+    }
+  }, [activeSymbol, contextRegime]);
+
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
       await Promise.allSettled([
         refetch(),
-        api.getRegimeOverview(activeSymbol).then((res) => {
-          setRegimeOverview(res.data);
-        }),
+        activeSymbol !== 'NIFTY'
+          ? api.getRegimeOverview(activeSymbol).then((res) => {
+              setRegimeOverview(res.data);
+            })
+          : Promise.resolve(),
       ]);
       setDashboardRefreshKey((k) => k + 1);
     } finally {
@@ -124,8 +138,20 @@ export default function DashboardPage() {
     else setSelectedSymbol('NIFTY');
   }, []);
 
+  // Regime: NIFTY comes straight from shared context (no independent poll).
+  // Non-NIFTY symbols fetch once per symbol change / manual refresh only —
+  // no background interval (Tier C, 30–60s TTL served by coordinator + context).
   useEffect(() => {
+    if (activeSymbol === 'NIFTY') {
+      if (contextRegime) {
+        setRegimeOverview(contextRegime);
+        setRegimeLoading(false);
+      }
+      return;
+    }
+
     let isMounted = true;
+    setRegimeLoading(true);
     const fetchRegime = async () => {
       try {
         const res = await api.getRegimeOverview(activeSymbol);
@@ -138,23 +164,10 @@ export default function DashboardPage() {
       }
     };
     fetchRegime();
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      const jittered = 10000 * (0.8 + Math.random() * 0.4);
-      timeout = setTimeout(async () => {
-        if (!document.hidden) await fetchRegime();
-        schedule();
-      }, jittered);
-    };
-    schedule();
-    const onVis = () => { if (!document.hidden) void fetchRegime(); };
-    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
-      if (timeout) clearTimeout(timeout);
-      document.removeEventListener('visibilitychange', onVis);
     };
-  }, [activeSymbol]);
+  }, [activeSymbol, contextRegime]);
 
   if (error && !cards.length && !breadth && !health && !marketStatus) {
     return (

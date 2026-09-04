@@ -8,6 +8,7 @@ from app.models.market import (
 from app.core.circuit_breaker import CircuitBreaker, CircuitState
 from app.core.cache import cache_service
 from app.core.config import settings
+from app.services.market_data_coordinator import market_data_coordinator
 from datetime import datetime, timezone
 import structlog
 
@@ -51,32 +52,48 @@ class MarketService:
         resolved = symbol_map.get(symbol_upper, symbol)
 
         async def _fetch():
-            return await self._provider.get_quote(resolved)
+            async def _raw_fetch():
+                return await self._provider.get_quote(resolved)
 
-        def _fallback():
-            return NormalizedQuote(
-                symbol=resolved,
-                display_name=resolved,
-                timestamp=datetime.now(timezone.utc),
-                ltp=25000.0,
-                open=24950.0,
-                high=25050.0,
-                low=24900.0,
-                previous_close=24900.0,
-                change=100.0,
-                change_percent=0.4,
-                volume=100000,
-                status=DataStatus.OFFLINE,
-                provider="fallback",
-            )
+            def _fallback():
+                return NormalizedQuote(
+                    symbol=resolved,
+                    display_name=resolved,
+                    timestamp=datetime.now(timezone.utc),
+                    ltp=25000.0,
+                    open=24950.0,
+                    high=25050.0,
+                    low=24900.0,
+                    previous_close=24900.0,
+                    change=100.0,
+                    change_percent=0.4,
+                    volume=100000,
+                    status=DataStatus.OFFLINE,
+                    provider="fallback",
+                )
 
-        return await self._circuit_breaker.call(_fetch, fallback=_fallback)
+            return await self._circuit_breaker.call(_raw_fetch, fallback=_fallback)
+
+        val = await market_data_coordinator.get_or_compute(
+            f"quote:{resolved}",
+            _fetch,
+            source_name=self._provider.provider_name,
+        )
+        return val.data
 
     async def get_quotes(self) -> list[NormalizedQuote]:
-        return await self._circuit_breaker.call(
-            self._provider.get_quotes,
-            fallback=lambda: [],
+        async def _fetch():
+            return await self._circuit_breaker.call(
+                self._provider.get_quotes,
+                fallback=lambda: [],
+            )
+
+        val = await market_data_coordinator.get_or_compute(
+            "quotes",
+            _fetch,
+            source_name=self._provider.provider_name,
         )
+        return val.data or []
 
     async def get_candles(
         self,
@@ -112,28 +129,52 @@ class MarketService:
         )
 
     async def get_index_cards(self) -> list[IndexCard]:
-        return await self._circuit_breaker.call(
-            self._provider.get_index_cards,
-            fallback=lambda: [],
+        async def _fetch():
+            return await self._circuit_breaker.call(
+                self._provider.get_index_cards,
+                fallback=lambda: [],
+            )
+
+        val = await market_data_coordinator.get_or_compute(
+            "cards",
+            _fetch,
+            source_name=self._provider.provider_name,
         )
+        return val.data or []
 
     async def get_market_status(self) -> MarketStatusResponse:
-        return await self._provider.get_market_status()
+        async def _fetch():
+            return await self._provider.get_market_status()
+
+        val = await market_data_coordinator.get_or_compute(
+            "status",
+            _fetch,
+            source_name=self._provider.provider_name,
+        )
+        return val.data
 
     async def get_market_breadth(self) -> MarketBreadthData:
-        return await self._circuit_breaker.call(
-            self._provider.get_market_breadth,
-            fallback=lambda: MarketBreadthData(
-                advancing=250,
-                declining=250,
-                unchanged=0,
-                advance_decline_ratio=1.0,
-                sentiment="NEUTRAL",
-                sentiment_score=50.0,
-                status=DataStatus.OFFLINE,
-                timestamp=datetime.now(timezone.utc),
-            ),
+        async def _fetch():
+            return await self._circuit_breaker.call(
+                self._provider.get_market_breadth,
+                fallback=lambda: MarketBreadthData(
+                    advancing=250,
+                    declining=250,
+                    unchanged=0,
+                    advance_decline_ratio=1.0,
+                    sentiment="NEUTRAL",
+                    sentiment_score=50.0,
+                    status=DataStatus.OFFLINE,
+                    timestamp=datetime.now(timezone.utc),
+                ),
+            )
+
+        val = await market_data_coordinator.get_or_compute(
+            "breadth",
+            _fetch,
+            source_name=self._provider.provider_name,
         )
+        return val.data
 
     async def get_option_chain(
         self,
@@ -180,24 +221,32 @@ class MarketService:
         return await self._provider.get_expiries(resolved)
 
     async def get_health(self) -> MarketHealthStatus:
-        from app.services.event_buffer import event_buffer
-        health = await self._provider.get_health()
-        buf_health = event_buffer.health()
-        cb_status = self._circuit_breaker.get_status()
+        async def _fetch():
+            from app.services.event_buffer import event_buffer
+            health = await self._provider.get_health()
+            buf_health = event_buffer.health()
+            cb_status = self._circuit_breaker.get_status()
 
-        return MarketHealthStatus(
-            status="UNHEALTHY" if cb_status["state"] == "OPEN" else health.status,
-            provider=health.provider,
-            mode=health.mode,
-            last_update=health.last_update,
-            data_age_seconds=health.data_age_seconds,
-            latency_ms=health.latency_ms,
-            active_instruments=health.active_instruments,
-            reconnect_count=health.reconnect_count,
-            subscriptions=health.subscriptions,
-            buffer_depth=buf_health["depth"],
-            dropped_events=buf_health["total_dropped"],
-            circuit_breaker_state=cb_status["state"],
-            last_heartbeat=health.last_heartbeat,
-            message=f"Circuit Breaker: {cb_status['state']} | {health.message}",
+            return MarketHealthStatus(
+                status="UNHEALTHY" if cb_status["state"] == "OPEN" else health.status,
+                provider=health.provider,
+                mode=health.mode,
+                last_update=health.last_update,
+                data_age_seconds=health.data_age_seconds,
+                latency_ms=health.latency_ms,
+                active_instruments=health.active_instruments,
+                reconnect_count=health.reconnect_count,
+                subscriptions=health.subscriptions,
+                buffer_depth=buf_health["depth"],
+                dropped_events=buf_health["total_dropped"],
+                circuit_breaker_state=cb_status["state"],
+                last_heartbeat=health.last_heartbeat,
+                message=f"Circuit Breaker: {cb_status['state']} | {health.message}",
+            )
+
+        val = await market_data_coordinator.get_or_compute(
+            "health",
+            _fetch,
+            source_name=self._provider.provider_name,
         )
+        return val.data

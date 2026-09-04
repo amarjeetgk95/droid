@@ -12,7 +12,8 @@ import {
 } from './nav-config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SidebarHeader, SidebarNavItem, SidebarFlyout, SidebarStatusDock } from './Sidebar/index';
-import { useMarketDataContext } from '@/context/MarketDataContext';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 
 // ---------------------------------------------------------------------------
 // Storage key & helpers
@@ -56,13 +57,14 @@ export function Sidebar({
   const router = useRouter();
   const pathname = usePathname();
 
-  // Telemetry / Market Data Context
-  let marketCtx: ReturnType<typeof useMarketDataContext> | null = null;
+  // Telemetry / stream health — prefer LiveMarket (stable health context),
+  // fall back to Dashboard context for isolated usage.
+  let streamState: import('@/hooks/useMarketStream').StreamConnectionState = 'CONNECTED';
   try {
-    marketCtx = useMarketDataContext();
-  } catch {}
-
-  const streamState = marketCtx?.streamState ?? 'CONNECTED';
+    streamState = useOptionalLiveMarketContext()?.streamState ?? useOptionalMarketDataContext()?.streamState ?? 'CONNECTED';
+  } catch {
+    streamState = 'CONNECTED';
+  }
 
   // Collapsed state
   const [internalCollapsed, setInternalCollapsed] = useState<boolean>(() => loadCollapsed());

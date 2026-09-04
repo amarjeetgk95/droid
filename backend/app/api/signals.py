@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import asyncio
 from decimal import Decimal
 from typing import Literal, Any, Optional
 
@@ -105,6 +106,19 @@ class PaperWalletCapitalRequest(BaseModel):
 
 # ── 1. ACTIVE SIGNALS LIST ───────────────────────────────────────────
 
+VALID_INSTRUMENTS = {"NIFTY", "BANKNIFTY", "SENSEX"}
+VALID_DESKS = {"SCALP", "INTRADAY", "ALL"}
+
+
+def _quote_is_fallback(quote: Any) -> bool:
+    try:
+        status = str(getattr(quote, "status", "") or "").upper()
+        provider = str(getattr(quote, "provider", "") or "").lower()
+        return "OFFLINE" in status or provider in ("fallback", "synthetic", "mock")
+    except Exception:
+        return False
+
+
 @router.get("/active")
 async def list_active_signals(
     instrument: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
@@ -115,13 +129,49 @@ async def list_active_signals(
 ):
     """
     Returns active signals with live price distance, contract specs, R:R metrics, and desk categorization.
+    Never fails hard on a stale quote — per-signal quotes degrade independently (allSettled pattern).
     """
+    import asyncio
+
+    if instrument and instrument.upper() not in VALID_INSTRUMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown instrument '{instrument}'. Approved universe: {sorted(VALID_INSTRUMENTS)}",
+        )
+    if desk and desk.upper() not in VALID_DESKS:
+        raise HTTPException(status_code=422, detail=f"Unknown desk '{desk}'. Use SCALP, INTRADAY, or ALL.")
+
     signals = signal_fsm.list_active(underlying=instrument, strategy=strategy)
-    
+
     # Update outcomes with latest prices
     market_svc = MarketService()
+
+    # ── Parallel quote fetch (bounded, single-flight per underlying) ──
+    underlyings = sorted({s.underlying for s in signals})
+    quotes: dict[str, Any] = {}
+    quote_errors: dict[str, str] = {}
+    degraded_underlyings: list[str] = []
+
+    async def _fetch_quote(u: str):
+        try:
+            q = await asyncio.wait_for(market_svc.get_quote(u), timeout=6.0)
+            if q is None or getattr(q, "ltp", None) is None or _quote_is_fallback(q):
+                quote_errors[u] = f"stale_or_fallback provider={getattr(q, 'provider', '?')}"
+                degraded_underlyings.append(u)
+                return
+            quotes[u] = q
+        except asyncio.TimeoutError:
+            quote_errors[u] = "quote_timeout_after_6s"
+            degraded_underlyings.append(u)
+        except Exception as e:
+            quote_errors[u] = str(e)[:150]
+            degraded_underlyings.append(u)
+
+    if underlyings:
+        await asyncio.gather(*[_fetch_quote(u) for u in underlyings])
+
     dto_list = []
-    
+
     for s in signals:
         if status and status != "ALL" and s.fsm_state != status:
             continue
@@ -132,31 +182,44 @@ async def list_active_signals(
         if is_scalp is not None and getattr(s, "is_scalp", False) != is_scalp:
             continue
             
-        # Compute live distance to trigger
+        # Compute live distance to trigger (from pre-fetched quotes — no N+1)
         distance_pts = None
         distance_pct = None
+        data_quality = "LIVE"
+        quote = quotes.get(s.underlying)
         try:
-            quote = await market_svc.get_quote(s.underlying)
-            if quote and quote.ltp is not None:
+            if quote is not None and getattr(quote, "ltp", None) is not None:
                 curr_p = Decimal(str(quote.ltp))
-                # Check outcome progression
-                outcome_tracker.update_with_price(s.underlying, curr_p)
-                
-                diff = abs(curr_p - s.trigger)
-                distance_pts = float(diff.quantize(Decimal("0.05")))
-                distance_pct = float((diff / s.trigger * Decimal("100")).quantize(Decimal("0.01"))) if s.trigger > 0 else 0.0
+                # Check outcome progression (best-effort, never breaks listing)
+                try:
+                    outcome_tracker.update_with_price(s.underlying, curr_p)
+                except Exception:
+                    pass
+
+                trig = s.trigger if s.trigger and s.trigger > 0 else None
+                if trig:
+                    diff = abs(curr_p - trig)
+                    distance_pts = float(diff.quantize(Decimal("0.05")))
+                    distance_pct = float((diff / trig * Decimal("100")).quantize(Decimal("0.01")))
+            else:
+                data_quality = "DEGRADED" if s.underlying not in quote_errors else "OFFLINE"
         except Exception:
-            pass
+            data_quality = "DEGRADED"
 
         d = s.model_dump()
         d["distance_to_trigger_pts"] = distance_pts
         d["distance_to_trigger_pct"] = distance_pct
         d["ttl_remaining_seconds"] = s.ttl_remaining_seconds()
+        d["data_quality"] = data_quality
         dto_list.append(d)
 
+    degraded = sorted(set(degraded_underlyings))
     return {
         "signals": dto_list,
         "count": len(dto_list),
+        "data_quality": "DEGRADED" if degraded else "LIVE",
+        "degraded_underlyings": degraded,
+        "errors": quote_errors,
         "timestamp_ms": int(time.time() * 1000),
     }
 
@@ -167,18 +230,48 @@ async def list_active_signals(
 async def run_scanner(desk: Optional[str] = Query(None, description="SCALP, INTRADAY, or ALL")):
     """
     Scans NIFTY, BANKNIFTY, SENSEX across requested Desk or all strategies simultaneously.
+    Partial failures degrade per-underlying (errors + diagnostics) instead of 500ing the whole scan.
+    Results are short-TTL cached (10s) to prevent poll storms.
     """
-    if desk == "SCALP":
-        scan_result = await scanner_engine.scan_scalp()
-    elif desk == "INTRADAY":
-        scan_result = await scanner_engine.scan_intraday()
-    else:
-        scan_result = await scanner_engine.scan_all()
+    desk_norm = (desk or "ALL").upper()
+    if desk_norm not in VALID_DESKS:
+        raise HTTPException(status_code=422, detail=f"Unknown desk '{desk}'. Use SCALP, INTRADAY, or ALL.")
+    try:
+        if desk_norm == "SCALP":
+            scan_result = await scanner_engine.scan_scalp()
+        elif desk_norm == "INTRADAY":
+            scan_result = await scanner_engine.scan_intraday()
+        else:
+            scan_result = await scanner_engine.scan_all()
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    except Exception as e:
+        logger.error("scanner_failed", error=str(e))
+        raise HTTPException(status_code=503, detail=f"Scanner temporarily unavailable: {str(e)[:200]}")
 
-    # Broadcast P2 scan event via SSE
-    active_count = len(scan_result.get("active_signals", [])) if "active_signals" in scan_result else len(scan_result.get("new_signals", []))
-    await signal_sse_hub.broadcast("scanner_update", {"total_signals": active_count, "desk": desk or "ALL"}, priority="P2")
+    # Broadcast P2 scan event via SSE (best-effort — never breaks the scan)
+    try:
+        active_count = len(scan_result.get("active_signals", [])) if "active_signals" in scan_result else len(scan_result.get("new_signals", []))
+        await signal_sse_hub.broadcast("scanner_update", {"total_signals": active_count, "desk": desk_norm}, priority="P2")
+    except Exception:
+        pass
     return scan_result
+
+
+@router.get("/status")
+async def get_signals_status():
+    """Lightweight health probe for the Signal Centre (no scan, no quotes)."""
+    try:
+        active = signal_fsm.list_active()
+        return {
+            "active_count": len(active),
+            "confirmed_count": sum(1 for s in active if s.fsm_state == "CONFIRMED"),
+            "armed_count": sum(1 for s in active if s.fsm_state in ("ARMED", "VALIDATED", "TRIGGERED")),
+            "diagnostics": scanner_engine.get_last_diagnostics(),
+            "timestamp_ms": int(time.time() * 1000),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Status unavailable: {str(e)[:150]}")
 
 
 # ── 3. PERFORMANCE ATTRIBUTION & ANALYTICS ────────────────────────────
@@ -398,9 +491,14 @@ async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest
 async def auto_detect_setup(req: AutoDetectRequest):
     """
     Evaluates live candles and indicators to automatically pre-fill realistic Entry, SL, and Target levels.
+    Returns detected=False with baseline levels when no setup triggers (never 500s on empty).
     """
     try:
-        candidates = await scanner_engine.scan_instrument(req.underlying, timeframe=req.timeframe)
+        u = validate_underlying(req.underlying)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    try:
+        candidates = await scanner_engine.scan_instrument(u, timeframe=req.timeframe)
         # Filter for requested strategy if available
         matched = [c for c in candidates if c.strategy == req.strategy.upper()]
         selected = matched[0] if matched else (candidates[0] if candidates else None)
@@ -453,21 +551,41 @@ async def auto_detect_setup(req: AutoDetectRequest):
 async def generate_signal(req: GenerateSignalRequest):
     """
     Manual authoritative signal generation with FSM registration, optional paper execution, and Telegram dispatch.
+    Rejects unknown underlyings (422) and incoherent levels (400); never fabricates fills off fallback quotes.
     """
     raw_u = req.underlying or req.instrument_id or "NIFTY"
-    u = validate_underlying(raw_u)
-    tf = req.timeframe or req.candle_timeframe or "5M"
+    try:
+        u = validate_underlying(raw_u)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    tf = (req.timeframe or req.candle_timeframe or "5M").upper()
+    if tf not in ("1M", "3M", "5M", "15M", "1H", "1D"):
+        raise HTTPException(status_code=422, detail=f"Unknown timeframe '{tf}'. Use 1M, 3M, 5M, 15M, 1H, or 1D.")
     raw_dir = (req.direction or "LONG_CALL").upper()
     if raw_dir in ("BULLISH", "LONG", "BUY"):
         dir_val = "LONG_CALL"
     elif raw_dir in ("BEARISH", "SHORT", "SELL"):
         dir_val = "LONG_PUT"
+    elif raw_dir not in ("LONG_CALL", "LONG_PUT"):
+        raise HTTPException(status_code=422, detail=f"Unknown direction '{req.direction}'. Use LONG_CALL / LONG_PUT (or BULLISH / BEARISH).")
     else:
         dir_val = raw_dir
 
     market_svc = MarketService()
-    quote = await market_svc.get_quote(u)
-    spot = Decimal(str(quote.ltp if quote and quote.ltp else (req.current_price or req.trigger or req.trigger_level or 24800.0)))
+    try:
+        quote = await asyncio.wait_for(market_svc.get_quote(u), timeout=6.0)
+    except Exception:
+        quote = None
+    quote_ok = quote is not None and getattr(quote, "ltp", None) is not None and not _quote_is_fallback(quote)
+    spot = Decimal(str(quote.ltp)) if quote_ok else None
+    if spot is None:
+        if req.current_price or req.trigger or req.trigger_level:
+            spot = Decimal(str(req.current_price or req.trigger or req.trigger_level))
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Live price for {u} is unavailable (feed degraded) and no manual price was supplied. Retry when LIVE.",
+            )
     tick = Decimal("0.05")
 
     is_put = "PUT" in dir_val or "BEARISH" in dir_val
@@ -490,14 +608,30 @@ async def generate_signal(req: GenerateSignalRequest):
     rr_t1 = float((abs(t1 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 1.5
     rr_t2 = float((abs(t2 - entry_min) / risk_pts).quantize(Decimal("0.1"))) if risk_pts > 0 else 3.0
 
-    opt_type = "CE" if "CALL" in dir_val else "PE"
-    contract = resolve_option_contract(u, spot, opt_type, strike_offset=0)
+    # ── Level sanity: reject incoherent manuals instead of registering doomed signals ──
+    if risk_pts <= 0:
+        raise HTTPException(status_code=400, detail="Stop-loss must differ from entry (zero risk points).")
+    if is_put and not (stop_loss > entry_max and t1 < entry_max and t2 < t1):
+        raise HTTPException(status_code=400, detail="PUT levels incoherent: need SL > entry > T1 > T2.")
+    if not is_put and not (stop_loss < entry_min and t1 > entry_min and t2 > t1):
+        raise HTTPException(status_code=400, detail="CALL levels incoherent: need SL < entry < T1 < T2.")
+
+    try:
+        opt_type = "CE" if "CALL" in dir_val else "PE"
+        contract = resolve_option_contract(u, spot, opt_type, strike_offset=0)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
 
     fsm_st = "CONFIRMED" if (req.execute_paper or req.status == "CONFIRMED") else "ARMED"
 
     strat_val = req.strategy.upper()
     if strat_val in ("VWAP_REJECTION", "VWAP"):
         strat_val = "VWAP_SCALP"
+    if strat_val not in STRATEGY_REGISTRY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown strategy '{req.strategy}'. Valid: {sorted(STRATEGY_REGISTRY.keys())}",
+        )
 
     is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
     sig_type = "SCALP" if is_scalp_setup else (req.signal_type or "INTRADAY")

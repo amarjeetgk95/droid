@@ -5,20 +5,43 @@ import { api } from '@/lib/api';
 import { MLPredictionResponse } from '@/lib/types';
 import { Cpu, TrendingUp, TrendingDown, ShieldCheck } from 'lucide-react';
 import { safeNum, safeStr } from '@/lib/utils';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+
+/** Tier C analytical card — prefers shared Dashboard context (30–60s TTL). */
+const FALLBACK_POLL_MS = 45000;
 
 export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: string; refreshKey?: number }) {
-  const [prediction, setPrediction] = useState<MLPredictionResponse | null>(null);
+  // Shared context first (populated by the batched /dashboard/summary call).
+  let contextPrediction: any | null = null;
+  try {
+    contextPrediction = useOptionalMarketDataContext()?.mlPrediction ?? null;
+  } catch {
+    contextPrediction = null;
+  }
+  const [fallback, setFallback] = useState<MLPredictionResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Only use context value when it matches the requested symbol (or is symbol-agnostic).
+  const contextMatches =
+    contextPrediction &&
+    (!contextPrediction.symbol || String(contextPrediction.symbol).toUpperCase() === symbol.toUpperCase());
+  const prediction: MLPredictionResponse | null = (contextMatches ? contextPrediction : null) ?? fallback;
+
   useEffect(() => {
+    // Context already serves this symbol — no independent fetch needed.
+    if (contextMatches) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let isMounted = true;
 
     const loadPrediction = async () => {
       try {
         const res = await api.getMLPrediction(symbol);
         if (isMounted) {
-          setPrediction(res.data);
+          setFallback(res.data);
           setError(null);
         }
       } catch (err) {
@@ -31,23 +54,23 @@ export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: st
     };
 
     loadPrediction();
-    // Chained timeout with jitter so clients don't sync up polls.
+    // Relaxed standalone fallback poll (45s) with jitter so clients don't sync up.
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
       timeout = setTimeout(() => {
-        if (!document.hidden) loadPrediction();
+        if (!document.hidden) void loadPrediction();
         schedule();
-      }, 10000 * (0.8 + Math.random() * 0.4));
+      }, FALLBACK_POLL_MS * (0.8 + Math.random() * 0.4));
     };
     schedule();
-    const onVis = () => { if (!document.hidden) loadPrediction(); };
+    const onVis = () => { if (!document.hidden) void loadPrediction(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [symbol, refreshKey]);
+  }, [symbol, refreshKey, contextMatches]);
 
   if (loading && !prediction) {
     return (
@@ -70,7 +93,7 @@ export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: st
           onClick={() => {
             setLoading(true);
             api.getMLPrediction(symbol)
-              .then(res => { setPrediction(res.data); setError(null); })
+              .then(res => { setFallback(res.data); setError(null); })
               .catch(err => setError(err instanceof Error ? err.message : 'Failed to fetch ML prediction'))
               .finally(() => setLoading(false));
           }}
