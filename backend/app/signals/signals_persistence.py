@@ -471,7 +471,13 @@ async def restore_signals_from_db() -> int:
             from app.signals.fsm import signal_fsm, SignalInstance
 
             async with factory() as session:
-                res = await session.execute(text("SELECT * FROM executed_signals ORDER BY created_at_utc ASC"))
+                try:
+                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%'"))
+                    await session.commit()
+                except Exception:
+                    pass
+
+                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' ORDER BY created_at_utc ASC"))
                 rows = res.mappings().all()
 
                 valid_fsm_states = {
