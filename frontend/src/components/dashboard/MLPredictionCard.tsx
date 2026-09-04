@@ -11,37 +11,29 @@ import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 const FALLBACK_POLL_MS = 45000;
 
 export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: string; refreshKey?: number }) {
-  // Shared context first (populated by the batched /dashboard/summary call).
-  let contextPrediction: any | null = null;
-  try {
-    contextPrediction = useOptionalMarketDataContext()?.mlPrediction ?? null;
-  } catch {
-    contextPrediction = null;
-  }
-  const [fallback, setFallback] = useState<MLPredictionResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const marketCtx = useOptionalMarketDataContext();
+  const contextPrediction = symbol === 'NIFTY' ? marketCtx?.mlPrediction : null;
+  const [prediction, setPrediction] = useState<MLPredictionResponse | null>(contextPrediction);
+  const [loading, setLoading] = useState<boolean>(!contextPrediction);
   const [error, setError] = useState<string | null>(null);
 
-  // Only use context value when it matches the requested symbol (or is symbol-agnostic).
-  const contextMatches =
-    contextPrediction &&
-    (!contextPrediction.symbol || String(contextPrediction.symbol).toUpperCase() === symbol.toUpperCase());
-  const prediction: MLPredictionResponse | null = (contextMatches ? contextPrediction : null) ?? fallback;
-
+  // Sync with context if available
   useEffect(() => {
-    // Context already serves this symbol — no independent fetch needed.
-    if (contextMatches) {
+    if (contextPrediction) {
+      setPrediction(contextPrediction);
       setLoading(false);
       setError(null);
-      return;
     }
+  }, [contextPrediction]);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadPrediction = async () => {
       try {
         const res = await api.getMLPrediction(symbol);
         if (isMounted) {
-          setFallback(res.data);
+          setPrediction(res.data);
           setError(null);
         }
       } catch (err) {
@@ -53,24 +45,32 @@ export function MLPredictionCard({ symbol = 'NIFTY', refreshKey }: { symbol?: st
       }
     };
 
+    // If context already provides prediction for NIFTY, don't run independent polling
+    if (symbol === 'NIFTY' && marketCtx) {
+      if (!contextPrediction) {
+        loadPrediction();
+      }
+      return;
+    }
+
     loadPrediction();
-    // Relaxed standalone fallback poll (45s) with jitter so clients don't sync up.
+    // Relaxed chained timeout with jitter for standalone or non-NIFTY symbols (45s)
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
       timeout = setTimeout(() => {
-        if (!document.hidden) void loadPrediction();
+        if (!document.hidden && isMounted) loadPrediction();
         schedule();
-      }, FALLBACK_POLL_MS * (0.8 + Math.random() * 0.4));
+      }, 45000 * (0.8 + Math.random() * 0.4));
     };
     schedule();
-    const onVis = () => { if (!document.hidden) void loadPrediction(); };
+    const onVis = () => { if (!document.hidden && isMounted) loadPrediction(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [symbol, refreshKey, contextMatches]);
+  }, [symbol, refreshKey, marketCtx, contextPrediction]);
 
   if (loading && !prediction) {
     return (

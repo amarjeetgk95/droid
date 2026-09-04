@@ -122,6 +122,7 @@ class FyersProvider(MarketDataProvider):
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("s") == "ok" and "d" in data and isinstance(data["d"], list):
+                        self._consecutive_failures = 0
                         inv_map = {v: k for k, v in self.symbol_map.items()}
                         quotes_map = {}
                         for item in data["d"]:
@@ -159,7 +160,19 @@ class FyersProvider(MarketDataProvider):
                             quotes_map[int_sym] = nq
                             self._last_known_quotes[int_sym] = nq
                         return quotes_map
+                    else:
+                        self._consecutive_failures += 1
+                        logger.warning("fyers_quotes_api_error", response=data)
+                        if "token" in str(data).lower() or "auth" in str(data).lower() or data.get("code") in (-100, 401, 403):
+                            self.token_manager.mark_expired("FYERS token expired or invalid")
+                elif resp.status_code in (401, 403):
+                    self._consecutive_failures += 1
+                    logger.warning("fyers_quotes_unauthorized", status_code=resp.status_code)
+                    self.token_manager.mark_expired(f"FYERS unauthorized (HTTP {resp.status_code})")
+                else:
+                    self._consecutive_failures += 1
         except Exception as e:
+            self._consecutive_failures += 1
             logger.debug("fyers_api_quotes_failed", error=str(e)[:150])
         return {}
 
@@ -382,7 +395,7 @@ class FyersProvider(MarketDataProvider):
         # records RECONNECTING + consecutive failures in exactly that case, so
         # surface it instead of reporting HEALTHY/LIVE with zero data flowing.
         # When the market is closed, missing ticks are expected — don't cry wolf.
-        token_ok = bool(diag["is_token_valid"])
+        token_ok = bool(diag["is_token_valid"]) and self.token_manager.state != ConnectionState.AUTH_EXPIRED
         flowing = (
             token_ok
             and self.token_manager.state == ConnectionState.CONNECTED
@@ -392,23 +405,31 @@ class FyersProvider(MarketDataProvider):
             market_open = calendar_service.is_market_open_now()
         except Exception:
             market_open = True  # fail honest: assume open so outages stay visible
-        healthy = flowing or not market_open
+
         if not token_ok:
+            status = "DEGRADED"
+            mode = "OFFLINE"
             message = "Awaiting authentication token — re-auth FYERS (daily token expired/missing)"
-        elif flowing:
-            message = "FYERS API v3 connected"
         elif not market_open:
+            status = "HEALTHY" if self._consecutive_failures == 0 else "DEGRADED"
+            mode = "OFFLINE"
             message = "Market closed — serving last-known snapshot"
+        elif flowing:
+            status = "HEALTHY"
+            mode = "LIVE"
+            message = "FYERS API v3 connected"
         else:
+            status = "DEGRADED"
+            mode = "OFFLINE"
             message = (
                 f"FYERS quote pipeline failing ({self._consecutive_failures} consecutive, "
                 f"state={self.token_manager.state.value}) — re-auth FYERS if persistent"
             )
 
         return MarketHealthStatus(
-            status="HEALTHY" if healthy else "DEGRADED",
+            status=status,
             provider=self.provider_name,
-            mode="LIVE" if (token_ok and (flowing or not market_open)) else "OFFLINE",
+            mode=mode,
             last_update=datetime.now(timezone.utc),
             data_age_seconds=diag["data_lag_seconds"] or 0.5,
             latency_ms=25.0,

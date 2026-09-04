@@ -189,6 +189,7 @@ export default function DashboardPage() {
     );
   }
 
+  const isMarketClosed = marketStatus?.session === 'CLOSED' || marketStatus?.is_trading_day === false;
   // LIVE requires actual ticks flowing — an open socket with only heartbeats
   // (broker outage) must read as stale, never as live.
   const isStreamLive = streamState === 'CONNECTED' && ticksFresh;
@@ -232,13 +233,21 @@ export default function DashboardPage() {
               className={`w-2 h-2 rounded-full ${
                 isStreamLive
                   ? 'bg-emerald-500 animate-pulse'
-                  : isStreamWaiting
-                    ? 'bg-amber-400 animate-pulse'
-                    : 'bg-red-500'
+                  : isMarketClosed
+                    ? 'bg-slate-400'
+                    : isStreamWaiting
+                      ? 'bg-amber-400 animate-pulse'
+                      : 'bg-red-500'
               }`}
             />
             <span className="font-mono font-semibold text-foreground text-[11px]">
-              {isStreamLive ? 'FEED LIVE (WS)' : isStreamWaiting ? 'FEED STALE — RETRYING' : 'FEED DOWN'}
+              {isStreamLive
+                ? 'FEED LIVE (WS)'
+                : isMarketClosed
+                  ? 'SESSION CLOSED'
+                  : isStreamWaiting
+                    ? 'FEED STALE — RETRYING'
+                    : 'FEED DOWN'}
             </span>
             {health?.latency_ms !== null && health?.latency_ms !== undefined && (
               <span className="text-[10px] text-muted-foreground font-mono">

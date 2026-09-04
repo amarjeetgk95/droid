@@ -301,10 +301,12 @@ class MarketDataCoordinator:
         fetcher: Callable[[], Coroutine[Any, Any, Any]],
         source_name: str = "coordinator",
         force_refresh: bool = False,
+        ttl_seconds: float | None = None,
+        fallback_stale: bool = True,
     ) -> CachedValue:
         """Get cached value, or compute using single-flight request coalescing."""
         now_mono = time.monotonic()
-        ttl = self._get_ttl(key)
+        ttl = ttl_seconds if ttl_seconds is not None else self._get_ttl(key)
 
         # 1. Fast path: check cache under no lock
         cached_entry = await self._cache_get(key)
