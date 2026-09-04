@@ -4,6 +4,18 @@ import React from 'react';
 import { useDeepInsight } from '@/context/DeepInsightContext';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  Activity,
+  Layers,
+  Sparkles,
+  ShieldAlert,
+  ShieldCheck,
+  Sliders,
+  BarChart3,
+  Clock,
+  CheckCircle2,
+} from 'lucide-react';
 import type { DeepInsightDirection, DeepInsightRegime, DeepInsightSignalState } from '@/lib/deep-insight-types';
 
 function fmt(n: number | undefined | null, digits = 2): string {
@@ -11,7 +23,7 @@ function fmt(n: number | undefined | null, digits = 2): string {
   return n.toFixed(digits);
 }
 
-function directionVariant(d: DeepInsightDirection | string): 'default' | 'success' | 'destructive' | 'secondary' {
+function directionVariant(d: DeepInsightDirection | string | undefined | null): 'default' | 'success' | 'destructive' | 'secondary' {
   switch (d) {
     case 'BULLISH': return 'success';
     case 'BEARISH': return 'destructive';
@@ -20,7 +32,7 @@ function directionVariant(d: DeepInsightDirection | string): 'default' | 'succes
   }
 }
 
-function regimeVariant(r: DeepInsightRegime | string): 'default' | 'success' | 'destructive' | 'secondary' {
+function regimeVariant(r: DeepInsightRegime | string | undefined | null): 'default' | 'success' | 'destructive' | 'secondary' {
   switch (r) {
     case 'TREND': return 'success';
     case 'RANGE': return 'secondary';
@@ -30,25 +42,27 @@ function regimeVariant(r: DeepInsightRegime | string): 'default' | 'success' | '
   }
 }
 
-function ConfidenceBar({ value }: { value: number }) {
-  if (value <= 0) return null;
-  const color = value >= 70 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-red-500';
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
-      </div>
-      <span className="text-xs font-medium w-7 text-right">{value}</span>
-    </div>
-  );
+function formatTime(ts: string | number | undefined | null): string {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return String(ts);
+  }
 }
 
 function LoadingState() {
   return (
-    <div className="flex items-center justify-center py-16">
+    <div className="h-full flex items-center justify-center py-16">
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm text-muted-foreground">Fetching market intelligence...</span>
+        <span className="text-sm font-medium text-muted-foreground">Synthesizing real-time market intelligence...</span>
       </div>
     </div>
   );
@@ -56,10 +70,10 @@ function LoadingState() {
 
 function ErrorState({ msg }: { msg: string }) {
   return (
-    <div className="flex items-center justify-center py-16">
-      <div className="text-center">
-        <div className="text-red-500 font-semibold mb-1">Error</div>
-        <div className="text-muted-foreground text-sm">{msg || 'Failed to load deep insight'}</div>
+    <div className="h-full flex items-center justify-center py-16">
+      <div className="text-center max-w-md p-6 bg-card border border-border rounded-xl">
+        <div className="text-red-500 font-bold mb-1">Intelligence Error</div>
+        <div className="text-muted-foreground text-xs leading-relaxed">{msg || 'Failed to load deep insight'}</div>
       </div>
     </div>
   );
@@ -67,417 +81,532 @@ function ErrorState({ msg }: { msg: string }) {
 
 function UnavailableState({ msg }: { msg?: string | null }) {
   return (
-    <div className="flex items-center justify-center py-16">
-      <div className="text-center">
-        <div className="text-muted-foreground font-semibold mb-1">AI Unavailable</div>
-        {msg && <div className="text-muted-foreground text-sm">{msg}</div>}
+    <div className="h-full flex items-center justify-center py-16">
+      <div className="text-center max-w-md p-6 bg-card border border-border rounded-xl">
+        <div className="text-muted-foreground font-semibold mb-1">AI Engine Unavailable</div>
+        <div className="text-muted-foreground text-xs">{msg || 'Select an instrument to evaluate live conditions'}</div>
       </div>
     </div>
   );
 }
 
-function SignalBadge({ state }: { state: DeepInsightSignalState | null }) {
-  if (!state) return null;
-  const colors: Record<string, string> = {
-    ACTIVE: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-    ANALYZING: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-    VALIDATING: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-    APPROVED: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-    REJECTED: 'bg-red-500/10 text-red-600 border-red-500/20',
-    EXPIRED: 'bg-muted text-muted-foreground border-border',
-    SUPERSEDED: 'bg-muted text-muted-foreground border-border',
-    AI_UNAVAILABLE: 'bg-muted text-muted-foreground border-border',
-  };
-  return (
-    <Badge className={`border ${colors[state.state] || colors.AI_UNAVAILABLE}`}>
-      {state.state}
-    </Badge>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN DECISION TABLE — the primary user-facing product per §4
+// CARD 1: MARKET STRUCTURE & REGIME
 // ─────────────────────────────────────────────────────────────────────────────
-function MainDecisionTable() {
+function MarketRegimeCard() {
   const { state } = useDeepInsight();
-  const { market, aiView, signalState, multiTimeframe, setup, validation } = state;
+  const { market } = state;
+  if (!market) return null;
 
-  const tfMap: Record<string, DeepInsightDirection> = {};
-  const tfStruct: Record<string, string> = {};
-  const tfStrength: Record<string, number> = {};
-  for (const tf of multiTimeframe) {
-    tfMap[tf.timeframe] = tf.direction;
-    tfStruct[tf.timeframe] = tf.structure;
-    tfStrength[tf.timeframe] = tf.strength;
-  }
-
-  type Row = [string, React.ReactNode, string];
-  const rows: Row[] = [
-    ['Market Regime', market ? (
-      <div className="flex items-center gap-2">
-        <Badge variant={regimeVariant(market.regime)}>{market.regime}</Badge>
-        <Badge variant={directionVariant(market.direction)}>{market.direction}</Badge>
-      </div>
-    ) : '—', market ? `${fmt(market.regime_strength)}/100` : '—'],
-    ['AI Bias', aiView ? (
-      <div className="flex items-center gap-2">
-        <Badge variant={aiView.bias === 'LONG' ? 'success' : aiView.bias === 'SHORT' ? 'destructive' : 'default'}>{aiView.bias}</Badge>
-        <ConfidenceBar value={aiView.confidence} />
-      </div>
-    ) : '—', aiView ? `${aiView.confidence}/100` : '—'],
-    ['1M', tfMap['1M'] ? <Badge variant={directionVariant(tfMap['1M'])}>{tfMap['1M']}</Badge> : '—', tfStruct['1M'] || '—'],
-    ['3M', tfMap['3M'] ? <Badge variant={directionVariant(tfMap['3M'])}>{tfMap['3M']}</Badge> : '—', tfStruct['3M'] || '—'],
-    ['5M', tfMap['5M'] ? <Badge variant={directionVariant(tfMap['5M'])}>{tfMap['5M']}</Badge> : '—', tfStruct['5M'] || '—'],
-    ['15M', tfMap['15M'] ? <Badge variant={directionVariant(tfMap['15M'])}>{tfMap['15M']}</Badge> : '—', tfStruct['15M'] || '—'],
-    ['VWAP', market?.levels ? (
-      <span className={`font-medium ${market.levels.vwap_relation === 'Above' ? 'text-emerald-600' : market.levels.vwap_relation === 'Below' ? 'text-red-600' : 'text-muted-foreground'}`}>
-        {market.levels.vwap_relation}
-      </span>
-    ) : '—', market?.levels?.vwap ? `${fmt(market.levels.vwap)}` : '—'],
-    ['Momentum', market?.momentum ? (
-      <span className={market.momentum.status === 'Positive' ? 'text-emerald-600' : market.momentum.status === 'Negative' ? 'text-red-600' : 'text-muted-foreground'}>
-        {market.momentum.status}
-      </span>
-    ) : '—', market?.momentum?.value !== undefined ? `${fmt(market.momentum.value)}` : '—'],
-    ['Volume', market?.volume ? (
-      <Badge variant={market.volume.status === 'High' ? 'success' : market.volume.status === 'Low' ? 'destructive' : 'secondary'}>{market.volume.status}</Badge>
-    ) : '—', market?.volume?.relative_value !== undefined ? `${fmt(market.volume.relative_value)}× avg` : '—'],
-    ['Support', market?.levels?.support ? <span className="font-medium">{fmt(market.levels.support)}</span> : '—', 'Key level'],
-    ['Resistance', market?.levels?.resistance ? <span className="font-medium">{fmt(market.levels.resistance)}</span> : '—', 'Decision level'],
-    ['Setup', setup?.setup_type && setup.setup_type !== 'NO_SETUP' ? <Badge>{setup.setup_type}</Badge> : <span className="text-xs text-muted-foreground">No active setup</span>, setup && setup.risk_reward > 0 ? `R:R 1:${fmt(setup.risk_reward)}` : '—'],
-    ['Entry Zone', setup && setup.entry_zone && setup.entry_zone !== '0' && setup.entry_zone !== '—' ? <span className="font-medium">{setup.entry_zone}</span> : '—', setup && setup.stop_loss > 0 ? `SL ${fmt(setup.stop_loss)}` : '—'],
-    ['Target', setup && setup.target && setup.target !== '0' && setup.target !== '—' ? <span className="font-medium">{setup.target}</span> : '—', setup && setup.target && setup.target !== '0' && setup.target !== '—' ? 'Proposed' : '—'],
-    ['Stop Loss', setup && setup.stop_loss > 0 ? <span className="text-red-500 font-medium">{fmt(setup.stop_loss)}</span> : '—', setup && setup.stop_loss > 0 ? 'Invalidation' : '—'],
-    ['Backend Validation', validation ? (
-      <Badge variant={validation.status === 'ACCEPT' || validation.status === 'PASS' ? 'success' : 'destructive'}>{validation.status}</Badge>
-    ) : '—', validation?.rejection_reason || '—'],
-    /* eslint-disable-next-line react/jsx-key */ // rendered via map; key assigned at map site
-    ['Signal Status', <SignalBadge state={signalState} />, signalState ? `${signalState.age}s old · ${signalState.ttl_remaining}s left` : '—'],
-  ];
+  const spot = market.levels?.current_price;
+  const vwap = market.levels?.vwap;
+  const support = market.levels?.support;
+  const resistance = market.levels?.resistance;
+  const vwapRel = market.levels?.vwap_relation;
+  const momentum = market.momentum;
+  const volume = market.volume;
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Factor</th>
-            <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Current Finding</th>
-            <th className="text-left py-2 font-semibold text-muted-foreground">Strength / Evidence</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([factor, finding, evidence]) => (
-            <tr key={factor} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-              <td className="py-1.5 pr-4 text-muted-foreground font-medium">{factor}</td>
-              <td className="py-1.5 pr-4">{finding}</td>
-              <td className="py-1.5 text-muted-foreground">{evidence}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Card className="flex-1 min-h-0 flex flex-col border-border/70 shadow-xs bg-card/60">
+      <CardContent className="p-3 flex flex-col h-full min-h-0 justify-between gap-2">
+        {/* Header: Title + Volatility Tag */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5 text-primary" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Market Structure</span>
+          </div>
+          <Badge variant="outline" className="text-[10px] uppercase font-semibold px-1.5 py-0 h-4.5">
+            Vol: {market.volatility}
+          </Badge>
+        </div>
+
+        {/* Regime Banner */}
+        <div className="bg-muted/40 border border-border/40 rounded-lg p-2">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <Badge variant={regimeVariant(market.regime)} className="font-bold text-xs h-5 px-2">
+                {market.regime}
+              </Badge>
+              <Badge variant={directionVariant(market.direction)} className="text-[10px] h-4.5 px-1.5 font-semibold">
+                {market.direction}
+              </Badge>
+            </div>
+            <span className="text-xs font-mono font-bold text-foreground">
+              {market.regime_strength}/100
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all rounded-full ${
+                market.direction === 'BULLISH' ? 'bg-emerald-500' : market.direction === 'BEARISH' ? 'bg-red-500' : 'bg-primary'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, market.regime_strength))}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Indicators 3-col Mini Grid */}
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">VWAP</span>
+            <span className={`font-bold font-mono text-xs ${
+              vwapRel === 'Above' ? 'text-emerald-500' : vwapRel === 'Below' ? 'text-red-500' : 'text-foreground'
+            }`}>
+              {vwap ? fmt(vwap, 1) : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">{vwapRel || 'At'} VWAP</span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Momentum</span>
+            <span className="font-bold font-mono text-xs text-foreground">
+              {momentum?.value !== undefined ? fmt(momentum.value, 1) : '—'}
+            </span>
+            <span className={`text-[10px] font-medium ${
+              momentum?.status === 'Positive' ? 'text-emerald-500' : momentum?.status === 'Negative' ? 'text-red-500' : 'text-muted-foreground'
+            }`}>
+              {momentum?.status || 'Neutral'}
+            </span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Volume</span>
+            <span className="font-bold font-mono text-xs text-foreground">
+              {volume?.relative_value !== undefined ? `${fmt(volume.relative_value, 2)}×` : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">{volume?.status || 'Normal'}</span>
+          </div>
+        </div>
+
+        {/* Key Levels: Support & Resistance Bar */}
+        <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex items-center justify-between text-xs">
+          <div className="flex flex-col">
+            <span className="text-[10px] text-emerald-500 font-semibold uppercase">Support</span>
+            <span className="font-mono font-bold text-foreground">{support ? fmt(support, 1) : '—'}</span>
+          </div>
+          <div className="h-6 w-px bg-border/60" />
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] text-muted-foreground font-medium uppercase">Current</span>
+            <span className="font-mono font-bold text-primary">{spot ? fmt(spot, 1) : '—'}</span>
+          </div>
+          <div className="h-6 w-px bg-border/60" />
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-red-500 font-semibold uppercase">Resistance</span>
+            <span className="font-mono font-bold text-foreground">{resistance ? fmt(resistance, 1) : '—'}</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MULTI-TIMEFRAME VIEW — per §6
+// CARD 2: MULTI-TIMEFRAME ALIGNMENT
 // ─────────────────────────────────────────────────────────────────────────────
-function MultiTimeframeTable() {
+function MultiTimeframeCard() {
   const { state } = useDeepInsight();
   const { multiTimeframe } = state;
-
-  if (!multiTimeframe || multiTimeframe.length === 0) {
-    return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
-  }
+  if (!multiTimeframe || multiTimeframe.length === 0) return null;
 
   const bullCount = multiTimeframe.filter(t => t.direction === 'BULLISH').length;
   const bearCount = multiTimeframe.filter(t => t.direction === 'BEARISH').length;
   const total = multiTimeframe.length;
-  const alignment = bullCount === total ? 'STRONG BULLISH' : bearCount === total ? 'STRONG BEARISH' : bullCount === 0 && bearCount === 0 ? 'MIXED' : bullCount > bearCount ? 'BULLISH LEAD' : 'BEARISH LEAD';
+  const alignment = bullCount === total ? 'STRONG BULLISH' : bearCount === total ? 'STRONG BEARISH' : bullCount === 0 && bearCount === 0 ? 'MIXED' : bullCount > bearCount ? 'BULLISH BIAS' : 'BEARISH BIAS';
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">MULTI-TF ALIGNMENT:</span>
-        <Badge variant={bullCount > bearCount ? 'success' : bearCount > bullCount ? 'destructive' : 'secondary'}>{alignment}</Badge>
-      </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="text-left py-1.5 pr-4 font-semibold text-muted-foreground">Timeframe</th>
-            <th className="text-left py-1.5 pr-4 font-semibold text-muted-foreground">Direction</th>
-            <th className="text-right py-1.5 pr-4 font-semibold text-muted-foreground">Strength</th>
-            <th className="text-left py-1.5 font-semibold text-muted-foreground">Structure</th>
-          </tr>
-        </thead>
-        <tbody>
+    <Card className="flex-1 min-h-0 flex flex-col border-border/70 shadow-xs bg-card/60">
+      <CardContent className="p-3 flex flex-col h-full min-h-0 justify-between gap-2">
+        {/* Header with Alignment Badge */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-primary" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Multi-Timeframe</span>
+          </div>
+          <Badge
+            variant={bullCount > bearCount ? 'success' : bearCount > bullCount ? 'destructive' : 'secondary'}
+            className="text-[10px] font-bold uppercase px-2 py-0 h-4.5"
+          >
+            {alignment}
+          </Badge>
+        </div>
+
+        {/* 4 Timeframe Rows */}
+        <div className="space-y-1.5 flex-1 min-h-0 flex flex-col justify-around">
           {multiTimeframe.map((tf) => (
-            <tr key={tf.timeframe} className="border-b border-border/50">
-              <td className="py-1.5 pr-4 font-medium">{tf.timeframe}</td>
-              <td className="py-1.5 pr-4"><Badge variant={directionVariant(tf.direction)}>{tf.direction}</Badge></td>
-              <td className="py-1.5 pr-4 text-right">
-                <div className="flex items-center justify-end gap-2">
-                  <div className="w-12 h-1 bg-muted rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${tf.direction === 'BULLISH' ? 'bg-emerald-500' : tf.direction === 'BEARISH' ? 'bg-red-500' : 'bg-muted'}`}
-                      style={{ width: `${tf.strength}%` }} />
-                  </div>
-                  <span className="text-xs w-6 text-right">{tf.strength}</span>
+            <div key={tf.timeframe} className="flex items-center justify-between text-xs bg-muted/20 hover:bg-muted/40 border border-border/30 rounded-lg px-2.5 py-1.5 transition-colors">
+              <div className="flex items-center gap-2 min-w-[75px]">
+                <span className="font-mono font-bold text-foreground text-xs">{tf.timeframe}</span>
+                <Badge variant={directionVariant(tf.direction)} className="text-[10px] px-1.5 py-0 h-4 font-semibold">
+                  {tf.direction}
+                </Badge>
+              </div>
+
+              {/* Mini Strength Bar */}
+              <div className="flex items-center gap-2 flex-1 max-w-[100px] mx-2">
+                <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      tf.direction === 'BULLISH' ? 'bg-emerald-500' : tf.direction === 'BEARISH' ? 'bg-red-500' : 'bg-muted-foreground'
+                    }`}
+                    style={{ width: `${tf.strength}%` }}
+                  />
                 </div>
-              </td>
-              <td className="py-1.5 text-muted-foreground">{tf.structure}</td>
-            </tr>
+                <span className="text-[10px] font-mono text-muted-foreground w-6 text-right">{tf.strength}</span>
+              </div>
+
+              <span className="text-[11px] text-muted-foreground truncate max-w-[85px] text-right font-medium">
+                {tf.structure}
+              </span>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HISTORICAL INSIGHT — per §7
+// CARD 3: HERO ACTIONABLE TRADE SETUP
 // ─────────────────────────────────────────────────────────────────────────────
-function HistoricalTable() {
+function HeroTradeSetupCard() {
+  const { state } = useDeepInsight();
+  const { setup, aiView, signalState } = state;
+
+  const bias = aiView?.bias || 'NO_TRADE';
+  const confidence = aiView?.confidence ?? 0;
+  const calibrated = aiView?.calibrated_confidence;
+  const isNoSetup = !setup?.setup_type || setup.setup_type === 'NO_SETUP' || setup.entry_zone === '—' || setup.entry_zone === '0';
+  const setupType = isNoSetup ? 'No Active Setup' : setup?.setup_type;
+  const ttl = signalState?.ttl_remaining ?? 0;
+
+  return (
+    <Card className="border-border/80 shadow-xs bg-card/80 shrink-0">
+      <CardContent className="p-3 space-y-2.5">
+        {/* Top row: Bias Banner + Setup Type + TTL */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Badge
+              variant={bias === 'LONG' ? 'success' : bias === 'SHORT' ? 'destructive' : 'default'}
+              className="text-sm font-extrabold px-2.5 py-0.5 tracking-wide shadow-xs"
+            >
+              {bias}
+            </Badge>
+            <Badge variant={isNoSetup ? 'secondary' : 'outline'} className="text-xs font-semibold px-2 py-0.5">
+              {setupType}
+            </Badge>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            {confidence > 0 && (
+              <span className="font-mono font-bold text-foreground">
+                Confidence {confidence}%
+                {calibrated && calibrated !== confidence ? ` (Calibrated ${calibrated}%)` : ''}
+              </span>
+            )}
+            {signalState && (
+              <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground px-1.5 py-0 h-5">
+                {signalState.state} · {ttl}s left
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {/* 4 Execution Metrics Grid */}
+        <div className="grid grid-cols-4 gap-2 text-center">
+          <div className="bg-muted/40 border border-border/40 rounded-xl p-2 flex flex-col justify-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">Entry Zone</span>
+            <span className="text-base font-extrabold font-mono text-foreground">
+              {!isNoSetup && setup?.entry_zone && setup.entry_zone !== '0' ? setup.entry_zone : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">Trigger</span>
+          </div>
+
+          <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-2 flex flex-col justify-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500 mb-0.5">Stop Loss</span>
+            <span className="text-base font-extrabold font-mono text-rose-500">
+              {!isNoSetup && setup && setup.stop_loss > 0 ? fmt(setup.stop_loss, 1) : '—'}
+            </span>
+            <span className="text-[10px] text-rose-500/70">Invalidation</span>
+          </div>
+
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-2 flex flex-col justify-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500 mb-0.5">Target</span>
+            <span className="text-base font-extrabold font-mono text-emerald-500">
+              {!isNoSetup && setup?.target && setup.target !== '0' ? setup.target : '—'}
+            </span>
+            <span className="text-[10px] text-emerald-500/70">Proposed</span>
+          </div>
+
+          <div className="bg-muted/40 border border-border/40 rounded-xl p-2 flex flex-col justify-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">R : R</span>
+            <span className="text-base font-extrabold font-mono text-foreground">
+              {!isNoSetup && setup && setup.risk_reward > 0 ? `1 : ${fmt(setup.risk_reward, 1)}` : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">Ratio</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARD 4: AI THESIS, RISKS & TELEMETRY TABS
+// ─────────────────────────────────────────────────────────────────────────────
+function AiThesisTabsCard() {
+  const { state } = useDeepInsight();
+  const { aiView, technicalEvidence, risks, invalidation, validation, provider, dataQuality, payload } = state;
+
+  return (
+    <Card className="flex-1 min-h-0 flex flex-col border-border/70 shadow-xs bg-card/60">
+      <CardContent className="p-3 flex flex-col h-full min-h-0">
+        <Tabs defaultValue="thesis" className="flex-1 flex flex-col min-h-0">
+          <TabsList className="grid grid-cols-3 h-8 p-0.5 bg-muted/60 mb-2 shrink-0">
+            <TabsTrigger value="thesis" className="text-xs font-semibold py-1 gap-1">
+              <Sparkles className="w-3 h-3 text-primary" />
+              <span>Synthesis</span>
+            </TabsTrigger>
+            <TabsTrigger value="risks" className="text-xs font-semibold py-1 gap-1">
+              <ShieldAlert className="w-3 h-3 text-amber-500" />
+              <span>Risks</span>
+            </TabsTrigger>
+            <TabsTrigger value="system" className="text-xs font-semibold py-1 gap-1">
+              <Sliders className="w-3 h-3 text-blue-500" />
+              <span>System</span>
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Tab 1: Synthesis & Triggers */}
+          <TabsContent value="thesis" className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
+            <div className="bg-muted/40 border border-border/40 rounded-lg p-2 text-xs">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">AI Executive Summary</div>
+              <p className="text-foreground leading-relaxed font-medium">
+                {aiView?.summary || 'No trade signal active. Market conditions currently being evaluated.'}
+              </p>
+            </div>
+
+            {technicalEvidence && technicalEvidence.positive && technicalEvidence.positive.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Catalysts & Triggers</div>
+                <div className="space-y-1">
+                  {technicalEvidence.positive.map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs text-foreground bg-muted/20 border border-border/20 rounded-md p-1.5">
+                      <span className="text-emerald-500 font-bold shrink-0 mt-0.5">✓</span>
+                      <span className="leading-snug">{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Tab 2: Risks & Invalidation */}
+          <TabsContent value="risks" className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
+            {((risks?.main_risks && risks.main_risks.length > 0) || (invalidation && invalidation.length > 0)) ? (
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-500">Risk Factors & Invalidation</div>
+                <div className="space-y-1">
+                  {[...(risks?.main_risks || []), ...(invalidation || [])].slice(0, 5).map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs text-foreground bg-amber-500/5 border border-amber-500/20 rounded-md p-1.5">
+                      <span className="text-amber-500 font-bold shrink-0 mt-0.5">⚠</span>
+                      <span className="leading-snug">{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground text-center py-6">No active risk flags recorded.</div>
+            )}
+          </TabsContent>
+
+          {/* Tab 3: Model & System Telemetry */}
+          <TabsContent value="system" className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
+            {validation && (
+              <div className="bg-muted/40 border border-border/40 rounded-lg p-2 space-y-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Validation:</span>
+                  <Badge variant={validation.status === 'ACCEPT' || validation.status === 'PASS' ? 'success' : 'destructive'} className="text-[10px] h-4.5 px-1.5">
+                    {validation.status}
+                  </Badge>
+                </div>
+                {validation.rejection_reason && (
+                  <p className="text-xs text-red-400 font-mono leading-snug bg-red-950/20 border border-red-900/30 p-2 rounded">
+                    {validation.rejection_reason}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-muted/30 border border-border/30 rounded-lg p-2">
+                <span className="text-[10px] text-muted-foreground block">AI Provider</span>
+                <span className="font-semibold text-foreground">{provider?.name || 'AI Engine'}</span>
+              </div>
+              <div className="bg-muted/30 border border-border/30 rounded-lg p-2">
+                <span className="text-[10px] text-muted-foreground block">Model</span>
+                <span className="font-semibold text-foreground truncate block">{provider?.model || 'Configured'}</span>
+              </div>
+              <div className="bg-muted/30 border border-border/30 rounded-lg p-2">
+                <span className="text-[10px] text-muted-foreground block">Latency</span>
+                <span className="font-semibold font-mono text-foreground">{provider?.latency_ms ?? 0}ms</span>
+              </div>
+              <div className="bg-muted/30 border border-border/30 rounded-lg p-2">
+                <span className="text-[10px] text-muted-foreground block">Data Completeness</span>
+                <span className="font-semibold font-mono text-foreground">{dataQuality ? `${fmt(dataQuality.completeness, 0)}%` : '100%'}</span>
+              </div>
+            </div>
+
+            {payload?.timestamp && (
+              <div className="text-[10px] text-muted-foreground text-right pt-0.5">
+                Synced: {formatTime(payload.timestamp)}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARD 5: OPTIONS FLOW & SENTIMENT
+// ─────────────────────────────────────────────────────────────────────────────
+function OptionsFlowCard() {
+  const { state } = useDeepInsight();
+  const { optionsEvidence } = state;
+  if (!optionsEvidence) return null;
+
+  const o = optionsEvidence;
+  const pcrSentiment = o.pcr >= 1.2 ? 'BULLISH' : o.pcr <= 0.8 ? 'BEARISH' : 'NEUTRAL';
+
+  return (
+    <Card className="flex-1 min-h-0 flex flex-col border-border/70 shadow-xs bg-card/60">
+      <CardContent className="p-3 flex flex-col h-full min-h-0 justify-between gap-2">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <BarChart3 className="w-3.5 h-3.5 text-primary" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Options Flow</span>
+          </div>
+          <Badge variant={directionVariant(o.bias)} className="text-[10px] font-bold px-2 py-0 h-4.5 uppercase">
+            {o.bias}
+          </Badge>
+        </div>
+
+        {/* PCR & Strikes 2-Col Grid */}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">PCR (OI)</span>
+            <span className="font-bold font-mono text-sm text-foreground">{fmt(o.pcr, 2)}</span>
+            <span className={`text-[10px] font-semibold ${
+              pcrSentiment === 'BULLISH' ? 'text-emerald-500' : pcrSentiment === 'BEARISH' ? 'text-red-500' : 'text-muted-foreground'
+            }`}>
+              {pcrSentiment}
+            </span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">OI Trend</span>
+            <span className="font-bold font-mono text-xs text-foreground">{o.oi_trend}</span>
+            <span className="text-[10px] text-muted-foreground">{o.iv} IV</span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-emerald-500 font-semibold uppercase">Put Support</span>
+            <span className="font-bold font-mono text-xs text-foreground">
+              {o.put_support > 0 ? fmt(o.put_support, 0) : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">Max Put OI</span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-red-500 font-semibold uppercase">Call Resist.</span>
+            <span className="font-bold font-mono text-xs text-foreground">
+              {o.call_resistance > 0 ? fmt(o.call_resistance, 0) : '—'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">Max Call OI</span>
+          </div>
+        </div>
+
+        {/* Flow Interpretation */}
+        {o.interpretation && (
+          <div className="bg-muted/20 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground italic flex items-center gap-1.5">
+            <span className="text-primary font-bold">ℹ</span>
+            <span className="truncate">{o.interpretation}</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARD 6: STATISTICAL EDGE & HISTORICAL CONTEXT
+// ─────────────────────────────────────────────────────────────────────────────
+function HistoricalEdgeCard() {
   const { state } = useDeepInsight();
   const { historicalEvidence } = state;
-
-  if (!historicalEvidence) {
-    return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
-  }
+  if (!historicalEvidence) return null;
 
   const h = historicalEvidence;
   const qualityVariant = h.sample_quality === 'GOOD' ? 'success' : h.sample_quality === 'FAIR' ? 'secondary' : 'destructive';
 
-  type HRow = [string, string | number | boolean | null | undefined, 'text' | 'badge'];
-  const rows: HRow[] = [
-    ['Similar States', h.similar_states > 0 ? h.similar_states : '—', 'text'],
-    ['Continuation', h.continuation > 0 ? `${h.continuation.toFixed(0)}%` : '—', 'text'],
-    ['Failure', h.failure > 0 ? `${h.failure.toFixed(0)}%` : '—', 'text'],
-    ['Reversal', h.reversal > 0 ? `${h.reversal.toFixed(0)}%` : '—', 'text'],
-    ['Median Move', h.median_move !== 0 ? `${h.median_move > 0 ? '+' : ''}${fmt(h.median_move, 0)} pts` : '—', 'text'],
-    ['Median Duration', h.median_duration || '—', 'text'],
-    ['Sample Quality', h.sample_quality || '—', 'badge'],
-  ];
-
   return (
-    <div>
-      <div className="text-xs text-muted-foreground mb-2 italic">Historical evidence — not a prediction</div>
-      <table className="w-full text-sm">
-        <tbody>
-          {rows.map(([label, value, style]) => (
-            <tr key={label} className="border-b border-border/50">
-              <td className="py-1.5 pr-4 text-muted-foreground">{label}</td>
-              <td className="py-1.5 font-medium text-right">
-                {style === 'badge' ? (
-                  <Badge variant={qualityVariant}>{value}</Badge>
-                ) : (
-                  <span>{value}</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OPTIONS INSIGHT — per §8
-// ─────────────────────────────────────────────────────────────────────────────
-function OptionsTable() {
-  const { state } = useDeepInsight();
-  const { optionsEvidence } = state;
-
-  if (!optionsEvidence) {
-    return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
-  }
-
-  const o = optionsEvidence;
-  type ORow = [string, string | number | boolean | null | undefined, 'badge' | 'text' | 'span-badge'];
-  const rows: ORow[] = [
-    ['Overall Bias', o.bias, 'badge'],
-    ['PCR (OI)', fmt(o.pcr), 'text'],
-    ['Put Support', o.put_support > 0 ? fmt(o.put_support) : '—', 'text'],
-    ['Call Resistance', o.call_resistance > 0 ? fmt(o.call_resistance) : '—', 'text'],
-    ['OI Trend', o.oi_trend, 'badge'],
-    ['IV Context', o.iv, 'text'],
-    ['Interpretation', o.interpretation || '—', 'text'],
-  ];
-
-  return (
-    <table className="w-full text-sm">
-      <tbody>
-        {rows.map(([label, value, style]) => (
-          <tr key={label} className="border-b border-border/50">
-            <td className="py-1.5 pr-4 text-muted-foreground">{label}</td>
-            <td className="py-1.5 font-medium text-right">
-              {style === 'badge' ? (
-                <Badge variant={directionVariant(value as DeepInsightDirection)}>{value}</Badge>
-              ) : (
-                <span>{value}</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// AI VIEW / EVIDENCE / RISK — per §5
-// ─────────────────────────────────────────────────────────────────────────────
-function AiViewSection() {
-  const { state } = useDeepInsight();
-  const { aiView, technicalEvidence, risks, invalidation } = state;
-
-  if (!aiView || Object.keys(aiView).length === 0) {
-    return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="p-3 bg-muted/30 rounded-lg">
-        <div className="text-xs text-muted-foreground mb-1 font-semibold">AI SUMMARY</div>
-        <div className="text-sm font-medium mb-2">{aiView.summary || '—'}</div>
-        <div className="flex items-center gap-2">
-          <Badge variant={aiView.bias === 'LONG' ? 'success' : aiView.bias === 'SHORT' ? 'destructive' : 'default'}>{aiView.bias}</Badge>
-          <span className="text-xs text-muted-foreground">Confidence {aiView.confidence}/100</span>
-          {Boolean(aiView.calibrated_confidence && aiView.calibrated_confidence !== aiView.confidence) && (
-            <span className="text-xs text-muted-foreground">· Calibrated {aiView.calibrated_confidence}/100</span>
-          )}
+    <Card className="flex-1 min-h-0 flex flex-col border-border/70 shadow-xs bg-card/60">
+      <CardContent className="p-3 flex flex-col h-full min-h-0 justify-between gap-2">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-primary" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Historical Edge</span>
+          </div>
+          <Badge variant={qualityVariant} className="text-[10px] font-bold px-1.5 py-0 h-4.5 uppercase">
+            {h.sample_quality} Quality
+          </Badge>
         </div>
-      </div>
 
-      {technicalEvidence && technicalEvidence.positive && technicalEvidence.positive.length > 0 && (
-        <div>
-          <div className="text-xs text-muted-foreground mb-1 font-semibold">WHY AI LIKES IT</div>
-          <div className="space-y-1">
-            {technicalEvidence.positive.map((item, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <span className="text-emerald-500 shrink-0 mt-0.5">✓</span>
-                <span>{item}</span>
-              </div>
-            ))}
+        {/* 4-Stat Grid */}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Continuation</span>
+            <span className="font-bold font-mono text-sm text-foreground">
+              {h.continuation > 0 ? `${fmt(h.continuation, 0)}%` : '—'}
+            </span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Reversal</span>
+            <span className="font-bold font-mono text-sm text-foreground">
+              {h.reversal > 0 ? `${fmt(h.reversal, 0)}%` : '—'}
+            </span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Failure</span>
+            <span className="font-bold font-mono text-sm text-foreground">
+              {h.failure > 0 ? `${fmt(h.failure, 0)}%` : '—'}
+            </span>
+          </div>
+
+          <div className="bg-muted/30 border border-border/30 rounded-lg p-2 flex flex-col">
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">Median Move</span>
+            <span className="font-bold font-mono text-sm text-foreground">
+              {h.median_move !== 0 ? `${h.median_move > 0 ? '+' : ''}${fmt(h.median_move, 0)} pts` : '—'}
+            </span>
           </div>
         </div>
-      )}
 
-      {risks && risks.main_risks && risks.main_risks.length > 0 && (
-        <div>
-          <div className="text-xs text-muted-foreground mb-1 font-semibold">RISKS / INVALIDATION</div>
-          <div className="space-y-1">
-            {[...risks.main_risks, ...invalidation].slice(0, 5).map((item, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <span className="text-amber-500 shrink-0 mt-0.5">•</span>
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
+        {/* Footer Disclaimer */}
+        <div className="text-[10px] text-muted-foreground italic text-center">
+          Historical pattern edge · Not predictive
         </div>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SETUP TABLE — per §9
-// ─────────────────────────────────────────────────────────────────────────────
-function SetupTable() {
-  const { state } = useDeepInsight();
-  const { setup, signalState } = state;
-
-  if (!setup) {
-    return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
-  }
-
-  const isNoSetup = !setup.setup_type || setup.setup_type === 'NO_SETUP';
-  type SRow = [string, string | number, 'text' | 'badge' | 'stop'];
-  const rows: SRow[] = [
-    ['Setup Type', isNoSetup ? 'No active setup' : setup.setup_type, 'badge'],
-    ['Entry Zone', !isNoSetup && setup.entry_zone && setup.entry_zone !== '0' && setup.entry_zone !== '—' ? setup.entry_zone : '—', 'text'],
-    ['Stop Loss', !isNoSetup && setup.stop_loss > 0 ? fmt(setup.stop_loss) : '—', 'stop'],
-    ['Target', !isNoSetup && setup.target && setup.target !== '0' && setup.target !== '—' ? setup.target : '—', 'text'],
-    ['Risk:Reward', !isNoSetup && setup.risk_reward > 0 ? `1:${fmt(setup.risk_reward)}` : '—', 'text'],
-    ['Signal Age', signalState ? `${signalState.age}s` : '—', 'text'],
-    ['Remaining TTL', signalState ? `${signalState.ttl_remaining}s` : '—', 'text'],
-  ];
-
-  return (
-    <table className="w-full text-sm">
-      <tbody>
-        {rows.map(([label, value, style]) => (
-          <tr key={label} className="border-b border-border/50">
-            <td className="py-1.5 pr-4 text-muted-foreground">{label}</td>
-            <td className="py-1.5 font-medium text-right">
-              {style === 'badge' ? (
-                <Badge variant={value === 'No active setup' ? 'secondary' : 'default'}>{value}</Badge>
-              ) : style === 'stop' ? (
-                <span className="text-red-500 font-medium">{value}</span>
-              ) : (
-                <span>{value}</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VALIDATION & SYSTEM — per §18
-// ─────────────────────────────────────────────────────────────────────────────
-function ValidationSection() {
-  const { state } = useDeepInsight();
-  const { validation, provider, dataQuality, payload } = state;
-
-  return (
-    <div className="space-y-3">
-      {validation && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground font-semibold">VALIDATION:</span>
-          <Badge variant={validation.status === 'ACCEPT' || validation.status === 'PASS' ? 'success' : 'destructive'}>{validation.status}</Badge>
-          {validation.rejection_reason && (
-            <span className="text-xs text-muted-foreground">{validation.rejection_reason}</span>
-          )}
-        </div>
-      )}
-      {provider && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <span className="text-muted-foreground">Provider</span>
-          <span className="font-medium">{provider.name}</span>
-          <span className="text-muted-foreground">Model</span>
-          <span className="font-medium">{provider.model}</span>
-          <span className="text-muted-foreground">Latency</span>
-          <span className="font-medium">{provider.latency_ms}ms</span>
-        </div>
-      )}
-      {dataQuality && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <span className="text-muted-foreground">Data Quality</span>
-          <span className="font-medium">{fmt(dataQuality.completeness, 0)}%</span>
-          <span className="text-muted-foreground">Status</span>
-          <span className="font-medium">{dataQuality.status}</span>
-        </div>
-      )}
-      {payload?.timestamp && (
-        <div className="text-xs text-muted-foreground">
-          Updated: {(() => {
-            try {
-              return new Date(payload.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
-            } catch {
-              return String(payload.timestamp);
-            }
-          })()}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN EXPORT
+// MAIN BENTO EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 export function DeepInsightPanel() {
   const { state } = useDeepInsight();
@@ -488,63 +617,25 @@ export function DeepInsightPanel() {
   if (state.status === 'idle') return <UnavailableState msg="Select a symbol to analyze" />;
 
   return (
-    <div className="space-y-4">
-      {/* Main Decision Table */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
-            AI Deep Insight
-          </div>
-          <MainDecisionTable />
-        </CardContent>
-      </Card>
-
-      {/* 2-column grid for secondary tables */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Multi-Timeframe</div>
-            <MultiTimeframeTable />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Historical Insight</div>
-            <HistoricalTable />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Options Evidence</div>
-            <OptionsTable />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Trade Setup</div>
-            <SetupTable />
-          </CardContent>
-        </Card>
+    <div className="h-full min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2.5">
+      {/* Left Column (33.3%): Market Structure & Multi-TF */}
+      <div className="lg:col-span-4 flex flex-col gap-2.5 h-full min-h-0">
+        <MarketRegimeCard />
+        <MultiTimeframeCard />
       </div>
 
-      {/* AI View / Evidence / Risk */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">AI View</div>
-          <AiViewSection />
-        </CardContent>
-      </Card>
+      {/* Center Column (41.7%): Hero Setup & AI Thesis Tabs */}
+      <div className="lg:col-span-5 flex flex-col gap-2.5 h-full min-h-0">
+        <HeroTradeSetupCard />
+        <AiThesisTabsCard />
+      </div>
 
-      {/* Validation & System */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">System</div>
-          <ValidationSection />
-        </CardContent>
-      </Card>
+      {/* Right Column (25%): Options Flow & Statistical Edge */}
+      <div className="lg:col-span-3 flex flex-col gap-2.5 h-full min-h-0">
+        <OptionsFlowCard />
+        <HistoricalEdgeCard />
+      </div>
     </div>
   );
 }
+
