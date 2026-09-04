@@ -55,6 +55,8 @@ class AuditTradeRecord(BaseModel):
     risk_reward_t1: float = 1.5
     risk_reward_t2: float = 3.0
     confidence: float = 80.0
+    is_scalp: bool = False
+    signal_type: str = "INTRADAY"
 
     # Paper execution details
     paper_order_id: Optional[str] = None
@@ -158,10 +160,27 @@ class SignalAuditLedger:
         option_contract: Optional[dict] = None,
         lots: int = 1,
         status: str = "ARMED",
+        risk_reward_t1: float = 1.5,
+        risk_reward_t2: float = 3.0,
+        is_scalp: bool = False,
+        signal_type: str = "INTRADAY",
     ) -> AuditTradeRecord:
         opt = option_contract or {}
         lot_sz = int(opt.get("lot_size", 75 if underlying == "NIFTY" else (30 if underlying == "BANKNIFTY" else 10)))
         qty = lots * lot_sz
+
+        # Inherit from active FSM signal if already registered
+        fsm_sig = None
+        try:
+            from app.signals.fsm import signal_fsm
+            fsm_sig = signal_fsm.get(signal_id)
+        except Exception:
+            pass
+
+        actual_is_scalp = is_scalp or (fsm_sig.is_scalp if fsm_sig else False)
+        actual_sig_type = signal_type if signal_type != "INTRADAY" else (fsm_sig.signal_type if fsm_sig else "INTRADAY")
+        actual_rr_t1 = risk_reward_t1 if risk_reward_t1 != 1.5 else (fsm_sig.risk_reward_t1 if fsm_sig else 1.5)
+        actual_rr_t2 = risk_reward_t2 if risk_reward_t2 != 3.0 else (fsm_sig.risk_reward_t2 if fsm_sig else 3.0)
 
         rec = AuditTradeRecord(
             signal_id=signal_id,
@@ -184,6 +203,10 @@ class SignalAuditLedger:
             risk_points=abs(trigger - stop_loss),
             confidence=confidence,
             status="CONFIRMED" if status == "CONFIRMED" else "ARMED",
+            risk_reward_t1=actual_rr_t1,
+            risk_reward_t2=actual_rr_t2,
+            is_scalp=actual_is_scalp,
+            signal_type=actual_sig_type,
         )
         rec.state_history.append(
             AuditStateEvent(

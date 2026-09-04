@@ -273,10 +273,10 @@ async def persist_executed_signal(record: Any) -> bool:
                 state_history = EXCLUDED.state_history,
                 confidence = COALESCE(EXCLUDED.confidence, executed_signals.confidence),
                 risk_points = COALESCE(EXCLUDED.risk_points, executed_signals.risk_points),
-                risk_reward_t1 = COALESCE(EXCLUDED.risk_reward_t1, executed_signals.risk_reward_t1),
-                risk_reward_t2 = COALESCE(EXCLUDED.risk_reward_t2, executed_signals.risk_reward_t2),
-                is_scalp = COALESCE(EXCLUDED.is_scalp, executed_signals.is_scalp),
-                signal_type = COALESCE(EXCLUDED.signal_type, executed_signals.signal_type),
+                risk_reward_t1 = CASE WHEN EXCLUDED.risk_reward_t1 != 1.5 THEN EXCLUDED.risk_reward_t1 ELSE COALESCE(executed_signals.risk_reward_t1, EXCLUDED.risk_reward_t1) END,
+                risk_reward_t2 = CASE WHEN EXCLUDED.risk_reward_t2 != 3.0 THEN EXCLUDED.risk_reward_t2 ELSE COALESCE(executed_signals.risk_reward_t2, EXCLUDED.risk_reward_t2) END,
+                is_scalp = (EXCLUDED.is_scalp OR executed_signals.is_scalp),
+                signal_type = CASE WHEN EXCLUDED.signal_type != 'INTRADAY' THEN EXCLUDED.signal_type ELSE COALESCE(executed_signals.signal_type, EXCLUDED.signal_type) END,
                 time_stop_at_utc = COALESCE(EXCLUDED.time_stop_at_utc, executed_signals.time_stop_at_utc),
                 runner_time_stop_at_utc = COALESCE(EXCLUDED.runner_time_stop_at_utc, executed_signals.runner_time_stop_at_utc),
                 breakeven_activated = COALESCE(EXCLUDED.breakeven_activated, executed_signals.breakeven_activated),
@@ -286,6 +286,18 @@ async def persist_executed_signal(record: Any) -> bool:
                 net_realized_pnl_inr = COALESCE(EXCLUDED.net_realized_pnl_inr, executed_signals.net_realized_pnl_inr),
                 updated_at_utc = EXCLUDED.updated_at_utc;
         """)
+
+        fsm_sig = None
+        try:
+            from app.signals.fsm import signal_fsm
+            fsm_sig = signal_fsm.get(record.signal_id)
+        except Exception:
+            pass
+
+        rec_is_scalp = bool(getattr(record, "is_scalp", getattr(fsm_sig, "is_scalp", False)))
+        rec_sig_type = str(getattr(record, "signal_type", getattr(fsm_sig, "signal_type", "INTRADAY")))
+        rec_rr_t1 = float(getattr(record, "risk_reward_t1", getattr(fsm_sig, "risk_reward_t1", 1.5)) or 1.5)
+        rec_rr_t2 = float(getattr(record, "risk_reward_t2", getattr(fsm_sig, "risk_reward_t2", 3.0)) or 3.0)
 
         trig = float(getattr(record, "trigger_price", getattr(record, "trigger", 0.0)) or 0.0)
         sl = float(getattr(record, "stop_loss", 0.0) or 0.0)
@@ -330,10 +342,10 @@ async def persist_executed_signal(record: Any) -> bool:
             "state_history": hist_json,
             "confidence": float(getattr(record, "confidence", 80.0) or 80.0),
             "risk_points": rp,
-            "risk_reward_t1": float(getattr(record, "risk_reward_t1", 1.5) or 1.5),
-            "risk_reward_t2": float(getattr(record, "risk_reward_t2", 3.0) or 3.0),
-            "is_scalp": bool(getattr(record, "is_scalp", False)),
-            "signal_type": str(getattr(record, "signal_type", "INTRADAY")),
+            "risk_reward_t1": rec_rr_t1,
+            "risk_reward_t2": rec_rr_t2,
+            "is_scalp": rec_is_scalp,
+            "signal_type": rec_sig_type,
             "time_stop_seconds": getattr(record, "time_stop_seconds", None),
             "runner_ttl_seconds": getattr(record, "runner_ttl_seconds", None),
             "time_stop_at_utc": getattr(record, "time_stop_at_utc", None),
@@ -404,130 +416,143 @@ async def restore_signals_from_db() -> int:
                 res = await session.execute(text("SELECT * FROM executed_signals ORDER BY created_at_utc ASC"))
                 rows = res.mappings().all()
 
+                valid_fsm_states = {
+                    "DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED",
+                    "TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT",
+                    "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "EXPIRED", "INVALIDATED", "CLOSED"
+                }
+
                 for row in rows:
-                    sid = row["signal_id"]
-                    st = row["status"]
+                    try:
+                        sid = row["signal_id"]
+                        st = row.get("status", "ARMED")
 
-                    # Reconstitute state history
-                    raw_hist = row.get("state_history") or []
-                    if isinstance(raw_hist, str):
-                        try:
-                            raw_hist = json.loads(raw_hist)
-                        except Exception:
-                            raw_hist = []
-
-                    state_events = []
-                    for h in raw_hist:
-                        if isinstance(h, dict):
-                            state_events.append(
-                                AuditStateEvent(
-                                    timestamp_utc=h.get("timestamp_utc", row["created_at_utc"]),
-                                    from_state=h.get("from_state", "DETECTED"),
-                                    to_state=h.get("to_state", st),
-                                    market_price=h.get("market_price"),
-                                    reason=h.get("reason", "RESTORED"),
-                                )
-                            )
-
-                    rec = AuditTradeRecord(
-                        audit_id=row["audit_id"],
-                        signal_id=sid,
-                        underlying=row["underlying"],
-                        strategy=row["strategy"],
-                        direction=row["direction"],
-                        timeframe=row.get("timeframe", "5M"),
-                        option_symbol=row.get("option_symbol"),
-                        option_type=row.get("option_type"),
-                        option_strike=row.get("option_strike"),
-                        lot_size=row.get("lot_size", 75),
-                        lots=row.get("lots", 1),
-                        quantity=row.get("quantity", 75),
-                        spot_price_at_creation=row.get("spot_price_at_creation") or 0.0,
-                        trigger_price=row.get("trigger_price") or 0.0,
-                        stop_loss=row.get("stop_loss") or 0.0,
-                        target_1=row.get("target_1") or 0.0,
-                        target_2=row.get("target_2") or 0.0,
-                        paper_order_id=row.get("paper_order_id"),
-                        paper_side=row.get("paper_side"),
-                        actual_fill_price=row.get("actual_fill_price"),
-                        executed_at_utc=row.get("executed_at_utc"),
-                        exit_price=row.get("exit_price"),
-                        exited_at_utc=row.get("exited_at_utc"),
-                        exit_reason=row.get("exit_reason"),
-                        actual_pnl_inr=row.get("actual_pnl_inr"),
-                        actual_pnl_points=row.get("actual_pnl_points"),
-                        status=st,
-                        is_winner=row.get("is_winner"),
-                        state_history=state_events,
-                        created_at_utc=row["created_at_utc"],
-                        updated_at_utc=row["updated_at_utc"],
-                    )
-                    signal_audit_ledger._trades[sid] = rec
-
-                    # Reconstruct FSM instance with Version 6.0 fields
-                    if not signal_fsm.get(sid):
-                        opt_dict = row.get("option_contract")
-                        if isinstance(opt_dict, str):
+                        # Reconstitute state history
+                        raw_hist = row.get("state_history") or []
+                        if isinstance(raw_hist, str):
                             try:
-                                opt_dict = json.loads(opt_dict)
+                                raw_hist = json.loads(raw_hist)
                             except Exception:
-                                opt_dict = {}
+                                raw_hist = []
 
-                        valid_fsm_states = (
-                            "DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED",
-                            "EXECUTED", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT",
-                            "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "EXPIRED", "INVALIDATED", "CLOSED"
-                        )
-                        resolved_fsm_state = st if st in valid_fsm_states else (
-                            "TARGET_1_HIT" if st == "WON" else ("STOP_LOSS_HIT" if st == "LOST" else "ARMED")
-                        )
+                        state_events = []
+                        for h in raw_hist:
+                            if isinstance(h, dict):
+                                state_events.append(
+                                    AuditStateEvent(
+                                        timestamp_utc=h.get("timestamp_utc", row["created_at_utc"]),
+                                        from_state=h.get("from_state", "DETECTED"),
+                                        to_state=h.get("to_state", st),
+                                        market_price=h.get("market_price"),
+                                        reason=h.get("reason", "RESTORED"),
+                                    )
+                                )
 
-                        sl_val = Decimal(str(row.get("stop_loss") or 0.0))
-                        cur_sl_val = Decimal(str(row.get("current_stop_loss") or sl_val))
-
-                        fsm_inst = SignalInstance(
+                        rec = AuditTradeRecord(
+                            audit_id=row["audit_id"],
                             signal_id=sid,
                             underlying=row["underlying"],
                             strategy=row["strategy"],
                             direction=row["direction"],
                             timeframe=row.get("timeframe", "5M"),
-                            spot_price=Decimal(str(row.get("spot_price_at_creation") or 0.0)),
-                            entry_min=Decimal(str(row.get("trigger_price") or 0.0)),
-                            entry_max=Decimal(str(row.get("trigger_price") or 0.0)),
-                            trigger=Decimal(str(row.get("trigger_price") or 0.0)),
-                            stop_loss=sl_val,
-                            initial_stop_loss=sl_val,
-                            current_stop_loss=cur_sl_val,
-                            target_1=Decimal(str(row.get("target_1") or 0.0)),
-                            target_2=Decimal(str(row.get("target_2") or 0.0)),
-                            risk_points=Decimal(str(row.get("risk_points") or abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
-                            risk_reward_t1=float(row.get("risk_reward_t1") or 1.5),
-                            risk_reward_t2=float(row.get("risk_reward_t2") or 3.0),
-                            confidence=float(row.get("confidence") or 80.0),
-                            option_contract=opt_dict,
-                            signal_type=str(row.get("signal_type") or "INTRADAY"),
-                            is_scalp=bool(row.get("is_scalp") or False),
-                            time_stop_seconds=row.get("time_stop_seconds"),
-                            runner_ttl_seconds=row.get("runner_ttl_seconds"),
-                            time_stop_at_utc=row.get("time_stop_at_utc"),
-                            runner_time_stop_at_utc=row.get("runner_time_stop_at_utc"),
-                            breakeven_activated=bool(row.get("breakeven_activated") or False),
-                            t1_hit=bool(row.get("t1_hit") or False),
-                            fsm_state=resolved_fsm_state,
+                            option_symbol=row.get("option_symbol"),
+                            option_type=row.get("option_type"),
+                            option_strike=row.get("option_strike"),
+                            lot_size=row.get("lot_size", 75),
+                            lots=row.get("lots", 1),
+                            quantity=row.get("quantity", 75),
+                            spot_price_at_creation=row.get("spot_price_at_creation") or 0.0,
+                            trigger_price=row.get("trigger_price") or 0.0,
+                            stop_loss=row.get("stop_loss") or 0.0,
+                            target_1=row.get("target_1") or 0.0,
+                            target_2=row.get("target_2") or 0.0,
+                            paper_order_id=row.get("paper_order_id"),
+                            paper_side=row.get("paper_side"),
+                            actual_fill_price=row.get("actual_fill_price"),
+                            executed_at_utc=row.get("executed_at_utc"),
+                            exit_price=row.get("exit_price"),
+                            exited_at_utc=row.get("exited_at_utc"),
+                            exit_reason=row.get("exit_reason"),
+                            actual_pnl_inr=row.get("actual_pnl_inr"),
+                            actual_pnl_points=row.get("actual_pnl_points"),
+                            status=st,
+                            is_winner=row.get("is_winner"),
+                            state_history=state_events,
                             created_at_utc=row["created_at_utc"],
+                            updated_at_utc=row["updated_at_utc"],
                         )
-                        signal_fsm._signals[sid] = fsm_inst
+                        signal_audit_ledger._trades[sid] = rec
 
-                    db_restored_count += 1
+                        # Reconstruct FSM instance with Version 6.0 fields
+                        if not signal_fsm.get(sid):
+                            opt_dict = row.get("option_contract")
+                            if isinstance(opt_dict, str):
+                                try:
+                                    opt_dict = json.loads(opt_dict)
+                                except Exception:
+                                    opt_dict = {}
+
+                            # Map legacy status strings to valid FSM states
+                            if st in valid_fsm_states:
+                                resolved_fsm_state = st
+                            elif st in ("EXECUTED", "ACTIVE", "OPEN"):
+                                resolved_fsm_state = "CONFIRMED"
+                            elif st == "WON":
+                                resolved_fsm_state = "TARGET_1_HIT"
+                            elif st == "LOST":
+                                resolved_fsm_state = "STOP_LOSS_HIT"
+                            elif st in ("CANCELLED", "CANCEL"):
+                                resolved_fsm_state = "CLOSED"
+                            else:
+                                resolved_fsm_state = "ARMED"
+
+                            sl_val = Decimal(str(row.get("stop_loss") or 0.0))
+                            cur_sl_val = Decimal(str(row.get("current_stop_loss") or sl_val))
+
+                            fsm_inst = SignalInstance(
+                                signal_id=sid,
+                                underlying=row["underlying"],
+                                strategy=row["strategy"],
+                                direction=row["direction"],
+                                timeframe=row.get("timeframe", "5M"),
+                                spot_price=Decimal(str(row.get("spot_price_at_creation") or 0.0)),
+                                entry_min=Decimal(str(row.get("trigger_price") or 0.0)),
+                                entry_max=Decimal(str(row.get("trigger_price") or 0.0)),
+                                trigger=Decimal(str(row.get("trigger_price") or 0.0)),
+                                stop_loss=sl_val,
+                                initial_stop_loss=sl_val,
+                                current_stop_loss=cur_sl_val,
+                                target_1=Decimal(str(row.get("target_1") or 0.0)),
+                                target_2=Decimal(str(row.get("target_2") or 0.0)),
+                                risk_points=Decimal(str(row.get("risk_points") or abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
+                                risk_reward_t1=float(row.get("risk_reward_t1") or 1.5),
+                                risk_reward_t2=float(row.get("risk_reward_t2") or 3.0),
+                                confidence=float(row.get("confidence") or 80.0),
+                                option_contract=opt_dict,
+                                signal_type=str(row.get("signal_type") or "INTRADAY"),
+                                is_scalp=bool(row.get("is_scalp") or False),
+                                time_stop_seconds=row.get("time_stop_seconds"),
+                                runner_ttl_seconds=row.get("runner_ttl_seconds"),
+                                time_stop_at_utc=row.get("time_stop_at_utc"),
+                                runner_time_stop_at_utc=row.get("runner_time_stop_at_utc"),
+                                breakeven_activated=bool(row.get("breakeven_activated") or False),
+                                t1_hit=bool(row.get("t1_hit") or False),
+                                fsm_state=resolved_fsm_state,
+                                created_at_utc=row["created_at_utc"],
+                            )
+                            signal_fsm._signals[sid] = fsm_inst
+
+                        db_restored_count += 1
+                    except Exception as row_err:
+                        logger.warning("restore_signal_row_failed", signal_id=row.get("signal_id"), error=str(row_err)[:200])
 
                 logger.info("signals_restored_from_supabase", count=db_restored_count)
-                # Synchronize to local backup cache
-                if db_restored_count > 0:
-                    save_signals_state_local()
-                return db_restored_count
+                # Also restore any signals present in local cache not yet in Supabase
+                local_count = restore_signals_state_local()
+                return db_restored_count + local_count
         except Exception as e:
             logger.warning("restore_signals_from_db_failed", error=str(e)[:250])
 
-    # If DB restoration yielded 0 records or failed, restore from local cache
+    # If DB restoration failed or was not configured, restore from local cache
     local_count = restore_signals_state_local()
     return local_count
