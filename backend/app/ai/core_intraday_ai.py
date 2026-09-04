@@ -336,10 +336,25 @@ class CoreIntradayAI:
         regime: "Regime",
         market_context: "MarketContext",
     ) -> "AISignal":
-        """Generate a core intraday signal. Uses analyze internally."""
+        """Generate a core intraday signal. Returns NO_TRADE if no provider available."""
         from app.ai.provider_manager import provider_manager
-        provider = provider_manager.get_primary_provider()
-        if not provider:
+        try:
+            provider_name = provider_manager.get_provider("core", ["openrouter", "gemini"])
+            if not provider_name:
+                return AISignal(
+                    signal_id=str(uuid.uuid4()),
+                    symbol=symbol.upper(),
+                    decision=Decision.NO_TRADE,
+                    setup_type=SetupType.CONTINUATION,
+                    regime=regime,
+                    raw_confidence=0,
+                    reasons=["No AI provider configured"],
+                )
+            from app.ai.registry import get_llm_provider
+            provider = get_llm_provider(provider_name)
+            return await self.analyze(market_context, provider, symbol, timeframe="5M")
+        except Exception as e:
+            logger.error("core_intraday_generate_failed", symbol=symbol, error=str(e))
             return AISignal(
                 signal_id=str(uuid.uuid4()),
                 symbol=symbol.upper(),
@@ -347,9 +362,8 @@ class CoreIntradayAI:
                 setup_type=SetupType.CONTINUATION,
                 regime=regime,
                 raw_confidence=0,
-                reasons=["No AI provider available"],
+                reasons=[f"Error: {str(e)[:100]}"],
             )
-        return await self.analyze(market_context, provider, symbol, timeframe="5M")
 
 
 core_intraday_ai = CoreIntradayAI()
