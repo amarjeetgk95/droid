@@ -84,5 +84,8 @@ class FIIDIIService:
             recent_cash_flows=cash_flows,
         )
 
+    # Alias for consistency
+    get_fii_dii_overview = get_institutional_overview
+
 
 fii_dii_service = FIIDIIService()

@@ -72,13 +72,19 @@ async def websocket_market_feed(websocket: WebSocket):
         The queue is bounded (maxsize=50) with drop-oldest backpressure in the
         broadcast worker, so this loop never blocks the hub. A slow client that
         stops draining is evicted by the hub (see SLOW_CONSUMER thresholds).
+        Dispatches lightweight heartbeat when idle for 15.0s, eliminating
+        concurrent socket write collisions.
         """
         while not stop_event.is_set():
             try:
                 try:
-                    msg = await asyncio.wait_for(client_queue.get(), timeout=30.0)
+                    msg = await asyncio.wait_for(client_queue.get(), timeout=15.0)
                 except asyncio.TimeoutError:
-                    # Idle but alive — let heartbeat_loop prove liveness.
+                    if not stop_event.is_set():
+                        await websocket.send_text(json.dumps({
+                            "type": "HEARTBEAT",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }))
                     continue
                 await websocket.send_text(msg)
             except asyncio.CancelledError:
@@ -86,22 +92,7 @@ async def websocket_market_feed(websocket: WebSocket):
             except Exception:
                 break
 
-    async def heartbeat_loop():
-        """Lightweight keepalive heartbeat loop — does not fetch market data."""
-        while not stop_event.is_set():
-            try:
-                await asyncio.sleep(15.0)
-                if stop_event.is_set():
-                    break
-                await websocket.send_text(json.dumps({
-                    "type": "HEARTBEAT",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }))
-            except Exception:
-                break
-
     sender_task = asyncio.create_task(sender_loop())
-    feed_task = asyncio.create_task(heartbeat_loop())
 
     try:
         while True:
@@ -133,13 +124,11 @@ async def websocket_market_feed(websocket: WebSocket):
         await central_feed.unregister_client(websocket)
     finally:
         stop_event.set()
-        feed_task.cancel()
         sender_task.cancel()
-        for t in (feed_task, sender_task):
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+        try:
+            await sender_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 @router.websocket("/api/v1/ws/crypto")

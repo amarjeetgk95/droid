@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
@@ -15,12 +15,15 @@ import { GenerateSignalForm } from '@/components/signals/GenerateSignalForm';
 import { SignalDeepDiveModal } from '@/components/signals/SignalDeepDiveModal';
 import { SignalAuditTable, type AuditTradeRecord, type AuditSummary } from '@/components/signals/SignalAuditTable';
 import { SignalErrorBoundary } from '@/components/signals/SignalErrorBoundary';
+import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
+import type { CryptoSignal } from '@/lib/types';
 import {
   Activity,
   AlertTriangle,
   Award,
   CheckCircle2,
   Clock,
+  Coins,
   Crosshair,
   Grid,
   Layers,
@@ -38,6 +41,9 @@ import Link from 'next/link';
 
 type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
 type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
+type FilterAssetClass = 'ALL' | 'INDEX' | 'CRYPTO';
+type OppSource = 'live' | 'scanner';
+type TrackView = 'performance' | 'ledger';
 type FilterStrategy =
   | 'ALL'
   | 'BREAKOUT'
@@ -127,6 +133,12 @@ export default function SignalsPage() {
   const [filterDesk, setFilterDesk] = useState<FilterDesk>('ALL');
   const [filterInstr, setFilterInstr] = useState<FilterInstrument>('ALL');
   const [filterStrat, setFilterStrat] = useState<FilterStrategy>('ALL');
+  const [assetClass, setAssetClass] = useState<FilterAssetClass>('ALL');
+  const [oppSource, setOppSource] = useState<OppSource>('live');
+  const [trackView, setTrackView] = useState<TrackView>('ledger');
+  const [cryptoSignals, setCryptoSignals] = useState<CryptoSignal[]>([]);
+  const [cryptoLoading, setCryptoLoading] = useState(false);
+  const [cryptoError, setCryptoError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
@@ -144,6 +156,7 @@ export default function SignalsPage() {
   const activeInFlight = useRef(false);
   const auditInFlight = useRef(false);
   const scannerInFlight = useRef(false);
+  const cryptoInFlight = useRef(false);
   const sseRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch active signals — single-flight guarded so polls never stack
@@ -210,6 +223,24 @@ export default function SignalsPage() {
     } finally {
       setScannerLoading(false);
       scannerInFlight.current = false;
+    }
+  }, []);
+
+  // Fetch crypto quant signals (BTC/ETH) — auto-only, no FSM/paper backend
+  const fetchCrypto = useCallback(async (showLoading = true) => {
+    if (cryptoInFlight.current) return;
+    cryptoInFlight.current = true;
+    if (showLoading) setCryptoLoading(true);
+    setCryptoError(null);
+    try {
+      const res: any = await api.getCryptoSignals();
+      const list: CryptoSignal[] = res?.data?.signals || res?.signals || [];
+      setCryptoSignals(Array.isArray(list) ? list : []);
+    } catch (e: any) {
+      setCryptoError(e.message || 'Crypto signals unavailable');
+    } finally {
+      if (showLoading) setCryptoLoading(false);
+      cryptoInFlight.current = false;
     }
   }, []);
 
@@ -282,6 +313,7 @@ export default function SignalsPage() {
     void fetchActive(true);
     void fetchScanner(true);
     void fetchAudit(true);
+    void fetchCrypto(true);
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
@@ -291,6 +323,7 @@ export default function SignalsPage() {
         if (!document.hidden) {
           void fetchActive(false);
           void fetchAudit(false);
+          void fetchCrypto(false);
         }
         loop();
       }, withJitter(8000));
@@ -313,7 +346,7 @@ export default function SignalsPage() {
       if (scanTimeout) clearTimeout(scanTimeout);
       if (sseRefreshTimer.current) clearTimeout(sseRefreshTimer.current);
     };
-  }, [fetchActive, fetchScanner, fetchAudit]);
+  }, [fetchActive, fetchScanner, fetchAudit, fetchCrypto]);
 
   const degraded = activeQuality !== 'LIVE' || scanQuality !== 'LIVE';
   const emptyReasons = scanDiagnostics
@@ -330,11 +363,11 @@ export default function SignalsPage() {
             <Radio className="w-5 h-5 text-primary" /> Signal Centre
             <Badge className="bg-primary text-primary-foreground font-mono text-[10px]">QUANT RADAR</Badge>
             <span className="text-xs font-normal text-muted-foreground ml-2 hidden md:inline">
-              Deterministic Index Options Intelligence (NIFTY • BANKNIFTY • SENSEX)
+              Unified Index + Crypto Intelligence (NIFTY • BANKNIFTY • SENSEX • BTC • ETH)
             </span>
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-            Real-time multi-strategy scanner with FSM lifecycle management and FYERS execution parity.
+            Real-time multi-strategy scanner with FSM lifecycle (index) + order-book signals (crypto).
             <span
               className={`inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border ${
                 streamState === 'CONNECTED'
@@ -361,7 +394,7 @@ export default function SignalsPage() {
             <span className="hidden sm:inline">{soundEnabled ? 'Audio Alerts' : 'Muted'}</span>
           </Button>
 
-          <Button variant="outline" size="sm" onClick={() => { void fetchActive(true); void fetchScanner(true); }} disabled={loading} className="h-8 text-xs gap-1">
+          <Button variant="outline" size="sm" onClick={() => { void fetchActive(true); void fetchScanner(true); void fetchCrypto(true); }} disabled={loading} className="h-8 text-xs gap-1">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
 
@@ -391,13 +424,14 @@ export default function SignalsPage() {
         </div>
       )}
 
-      {/* ── TOP KPI SUMMARY STRIP (DUAL-DESK PERFORMANCE) ── */}
+      {/* ── TOP KPI SUMMARY STRIP (UNIFIED INDEX + CRYPTO) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="bg-secondary/20">
           <CardContent className="p-3 flex items-center justify-between">
             <div>
-              <span className="text-[11px] text-muted-foreground font-medium">Active Radar Setups</span>
-              <div className="text-lg font-bold font-mono text-primary">{active.length} Signals</div>
+              <span className="text-[11px] text-muted-foreground font-medium">Opportunities ({assetClass === 'ALL' ? 'Index + Crypto' : assetClass})</span>
+              <div className="text-lg font-bold font-mono text-primary">{active.length + cryptoSignals.length} Signals</div>
+              <div className="text-[10px] font-mono text-muted-foreground">{active.length} index • {cryptoSignals.length} crypto</div>
             </div>
             <Activity className="w-5 h-5 text-primary/60" />
           </CardContent>
@@ -452,23 +486,17 @@ export default function SignalsPage() {
         </Card>
       </div>
 
-      {/* ── 4 MODULAR TABS ── */}
-      <Tabs defaultValue="active" className="w-full">
+      {/* ── 3 UNIFIED TABS: Opportunities / Create / Track ── */}
+      <Tabs defaultValue="opportunities" className="w-full">
         <TabsList className="w-full justify-start flex-wrap h-auto bg-muted/60 p-1 rounded-xl">
-          <TabsTrigger value="active" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
-            <Radio className="w-3.5 h-3.5" /> Active Radar ({active.length})
+          <TabsTrigger value="opportunities" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
+            <Radio className="w-3.5 h-3.5" /> Opportunities ({active.length + cryptoSignals.length})
           </TabsTrigger>
-          <TabsTrigger value="scanner" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
-            <Layers className="w-3.5 h-3.5" /> Multi-Strategy Scanner Matrix
+          <TabsTrigger value="create" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
+            <Sparkles className="w-3.5 h-3.5" /> Create
           </TabsTrigger>
-          <TabsTrigger value="studio" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
-            <Sparkles className="w-3.5 h-3.5" /> Signal Studio (Auto-Detect)
-          </TabsTrigger>
-          <TabsTrigger value="performance" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
-            <Award className="w-3.5 h-3.5" /> Performance & Attribution
-          </TabsTrigger>
-          <TabsTrigger value="audit" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Audit Ledger & Actual P&L
+          <TabsTrigger value="track" className="gap-1.5 text-xs font-semibold py-1.5 px-3">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Track Record
             {auditSummary?.total_pnl_inr !== undefined && (
               <Badge
                 variant="outline"
@@ -486,10 +514,55 @@ export default function SignalsPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ── TAB 1: ACTIVE RADAR ── */}
-        <TabsContent value="active" className="space-y-4 pt-2">
+        {/* ── TAB 1: OPPORTUNITIES (Index Live+Scanner + Crypto merged) ── */}
+        <TabsContent value="opportunities" className="space-y-4 pt-2">
           {/* Filters & View Toggle Bar */}
           <Card className="p-3 space-y-2.5">
+            {/* Row 0: Asset class + Source (3-tab merge) */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Market:</span>
+                {(['ALL', 'INDEX', 'CRYPTO'] as const).map((a) => (
+                  <button
+                    key={a}
+                    onClick={() => setAssetClass(a)}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
+                      assetClass === a
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                    }`}
+                  >
+                    {a === 'CRYPTO' && <Coins className="w-3.5 h-3.5" />}
+                    {a === 'ALL' ? '🌐 All Markets' : a === 'INDEX' ? 'NIFTY • BANK • SENSEX' : 'BTC • ETH'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Source:</span>
+                <button
+                  onClick={() => setOppSource('live')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
+                    oppSource === 'live'
+                      ? 'bg-emerald-600 text-white border-emerald-700'
+                      : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                  }`}
+                >
+                  Live Setups
+                </button>
+                <button
+                  onClick={() => setOppSource('scanner')}
+                  disabled={assetClass === 'CRYPTO'}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
+                    oppSource === 'scanner'
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-secondary/60 hover:bg-secondary border-transparent disabled:opacity-40'
+                  }`}
+                  title={assetClass === 'CRYPTO' ? 'Scanner is index-only; crypto is auto-streamed' : 'Full-universe scan'}
+                >
+                  Scanner Feed
+                </button>
+              </div>
+            </div>
             {/* Top Row: Desk Switcher */}
             <div className="flex items-center justify-between gap-2 pb-2 border-b flex-wrap">
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -622,7 +695,7 @@ export default function SignalsPage() {
             </div>
           </Card>
 
-          {activeError && (
+          {assetClass !== 'CRYPTO' && activeError && oppSource === 'live' && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 flex-wrap">
               <AlertTriangle className="w-4 h-4" /> {activeError}
               <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={() => void fetchActive(true)}>
@@ -631,7 +704,7 @@ export default function SignalsPage() {
             </div>
           )}
 
-          {loading && active.length === 0 && !activeError && (
+          {(loading || scannerLoading) && active.length === 0 && scannerData.length === 0 && assetClass !== 'CRYPTO' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
                 <Card key={i} className="p-4 space-y-3 animate-pulse">
@@ -642,145 +715,165 @@ export default function SignalsPage() {
             </div>
           )}
 
-          {!loading && active.length === 0 && !activeError && (
-            <Card className="p-8 text-center space-y-2">
-              <div className="text-sm font-semibold">No active setups match criteria</div>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                No strategy conditions are currently triggered on {filterInstr} with {filterStrat}. Empty is honest — the scanner only registers validated breakouts, never placeholders.
-              </p>
-              {emptyReasons.length > 0 && (
-                <ul className="text-[11px] font-mono text-muted-foreground max-w-lg mx-auto space-y-0.5">
-                  {emptyReasons.map((r, i) => (
-                    <li key={i}>• {r}</li>
-                  ))}
-                </ul>
-              )}
-              <Button size="sm" variant="outline" onClick={() => { void fetchScanner(true); }} className="mt-2 text-xs gap-1">
-                <Zap className="w-3 h-3" /> Scan Universe Now
-              </Button>
-            </Card>
-          )}
-
-          {active.length > 0 && (
+          {assetClass !== 'CRYPTO' && (
             <>
-              {viewMode === 'grid' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {active.map((sig) => (
-                    <SignalErrorBoundary key={sig.signal_id} label={sig.underlying || 'Signal'}>
-                      <SignalCard
-                        signal={sig}
-                        onInspect={(id) => setInspectSignalId(id)}
-                        onPaperExecuted={() => {
-                          void fetchActive(false);
-                          void fetchAudit(false);
-                        }}
-                      />
-                    </SignalErrorBoundary>
-                  ))}
-                </div>
-              ) : (
-                <SignalErrorBoundary label="Scanner table">
-                  <SignalScannerTable
-                    signals={active}
-                    onInspect={(id) => setInspectSignalId(id)}
-                    onRefresh={() => void fetchActive(false)}
-                    loading={loading}
-                  />
-                </SignalErrorBoundary>
-              )}
+              {(() => {
+                const oppSignals = oppSource === 'live' ? active : scannerData.length > 0 ? scannerData : active;
+                const isScannerMode = oppSource === 'scanner';
+                return (
+                  <>
+                    {isScannerMode && (
+                      <Card className="p-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                          <div className="text-xs font-semibold flex items-center gap-2">
+                            <Layers className="w-3.5 h-3.5 text-primary" /> Scanner Feed
+                            <Badge variant="outline" className={`text-[10px] font-mono ${scanQuality === 'LIVE' ? 'text-emerald-600 border-emerald-500/30' : 'text-amber-600 border-amber-500/30'}`}>
+                              {scanQuality}
+                            </Badge>
+                          </div>
+                          <Button size="sm" onClick={() => void fetchScanner(true)} disabled={scannerLoading} className="h-7 text-xs gap-1">
+                            <RefreshCw className={`w-3 h-3 ${scannerLoading ? 'animate-spin' : ''}`} />
+                            {scannerLoading ? 'Scanning…' : 'Run Full Scan'}
+                          </Button>
+                        </div>
+                        {scannerError && (
+                          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-700 flex items-center gap-2 mb-2">
+                            <AlertTriangle className="w-3.5 h-3.5" /> {scannerError}
+                          </div>
+                        )}
+                        {scanDiagnostics.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            {scanDiagnostics.slice(0, 3).map((d, i) => (
+                              <div key={i} className="text-[11px] font-mono border rounded-lg p-2 bg-secondary/30">
+                                <span className="font-bold">{d.underlying || '?'}</span>
+                                <span className={`ml-1.5 ${d.data_quality === 'LIVE' ? 'text-emerald-600' : 'text-amber-600'}`}>{d.data_quality || '?'}</span>
+                                <span className="text-muted-foreground ml-1.5">{d.candidates_found ?? 0} candidates</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </Card>
+                    )}
+                    {oppSignals.length > 0 ? (
+                      <>
+                        {viewMode === 'grid' ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {oppSignals.map((sig) => (
+                              <SignalErrorBoundary key={sig.signal_id} label={sig.underlying || 'Signal'}>
+                                <SignalCard
+                                  signal={sig}
+                                  onInspect={(id) => setInspectSignalId(id)}
+                                  onPaperExecuted={() => {
+                                    void fetchActive(false);
+                                    void fetchAudit(false);
+                                  }}
+                                />
+                              </SignalErrorBoundary>
+                            ))}
+                          </div>
+                        ) : (
+                          <SignalErrorBoundary label="Scanner table">
+                            <SignalScannerTable
+                              signals={oppSignals}
+                              onInspect={(id) => setInspectSignalId(id)}
+                              onRefresh={() => (isScannerMode ? void fetchScanner(false) : void fetchActive(false))}
+                              loading={isScannerMode ? scannerLoading : loading}
+                            />
+                          </SignalErrorBoundary>
+                        )}
+                      </>
+                    ) : (
+                      !loading && !scannerLoading && (
+                        <Card className="p-8 text-center space-y-2">
+                          <div className="text-sm font-semibold">No {isScannerMode ? 'scanner' : 'active'} index setups match criteria</div>
+                          <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                            No strategy conditions on {filterInstr} with {filterStrat}. Empty is honest — only validated breakouts register.
+                          </p>
+                        </Card>
+                      )
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
-        </TabsContent>
 
-        {/* ── TAB 2: MULTI-STRATEGY SCANNER MATRIX ── */}
-        <TabsContent value="scanner" className="space-y-4 pt-2">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-primary" /> Multi-Strategy Radar Matrix
-                    <Badge variant="outline" className={`text-[10px] font-mono ${scanQuality === 'LIVE' ? 'text-emerald-600 border-emerald-500/30' : 'text-amber-600 border-amber-500/30'}`}>
-                      {scanQuality}
-                    </Badge>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Simultaneously scans NIFTY, BANKNIFTY, and SENSEX across Breakout, Mean Reversion, Trend Pullback, Gamma Squeeze, and ORB.
-                  </CardDescription>
-                </div>
-                <Button size="sm" onClick={() => void fetchScanner(true)} disabled={scannerLoading} className="h-8 text-xs gap-1">
-                  <RefreshCw className={`w-3 h-3 ${scannerLoading ? 'animate-spin' : ''}`} />
-                  {scannerLoading ? 'Scanning Universe…' : 'Run Full Scan'}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {scannerError && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-2 flex-wrap">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Scanner degraded: {scannerError}
-                  <Button size="sm" variant="outline" className="h-6 text-[10px] ml-auto" onClick={() => void fetchScanner(true)}>
-                    Retry scan
+          {assetClass !== 'INDEX' && (
+            <div className="space-y-2">
+              {cryptoError && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-700 flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Crypto feed degraded: {cryptoError}
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] ml-auto" onClick={() => void fetchCrypto(true)}>
+                    Retry
                   </Button>
                 </div>
               )}
-              {scanDiagnostics.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {scanDiagnostics.slice(0, 6).map((d, i) => (
-                    <div key={i} className="text-[11px] font-mono border rounded-lg p-2 bg-secondary/30">
-                      <span className="font-bold">{d.underlying || '?'}</span>
-                      <span className={`ml-1.5 ${d.data_quality === 'LIVE' ? 'text-emerald-600' : 'text-amber-600'}`}>{d.data_quality || '?'}</span>
-                      <span className="text-muted-foreground ml-1.5">{d.candidates_found ?? 0} candidates</span>
-                      {(d.reasons || []).slice(0, 1).map((r, j) => (
-                        <p key={j} className="text-muted-foreground mt-0.5 break-words">{r.slice(0, 140)}</p>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <SignalErrorBoundary label="Scanner matrix">
-                <SignalScannerTable
-                  signals={scannerData.length > 0 ? scannerData : active}
-                  onInspect={(id) => setInspectSignalId(id)}
-                  onRefresh={() => void fetchScanner(true)}
-                  loading={scannerLoading}
-                />
+              <SignalErrorBoundary label="Crypto signals">
+                <CryptoSignalsCard signals={cryptoSignals} loading={cryptoLoading} selectedAsset="BTC" onSelectAsset={() => {}} />
               </SignalErrorBoundary>
-            </CardContent>
-          </Card>
+              <p className="text-[11px] text-muted-foreground font-mono px-1">
+                Crypto signals are auto-derived from Binance order-book + funding (read-only, copy-plan). Paper execution + audit ledger remain index-only.
+              </p>
+            </div>
+          )}
         </TabsContent>
 
-        {/* ── TAB 3: SIGNAL STUDIO (BUILDER) ── */}
-        <TabsContent value="studio" className="pt-2">
+        {/* ── TAB 2: CREATE ── */}
+        <TabsContent value="create" className="pt-2 space-y-3">
           <GenerateSignalForm
             onGenerated={() => {
               void fetchActive(false);
               void fetchScanner(true);
             }}
           />
+          <p className="text-[11px] text-muted-foreground font-mono px-1">
+            Manual creation is index-only (NIFTY/BANKNIFTY/SENSEX). Crypto setups are fully automated — see Opportunities → Crypto.
+          </p>
         </TabsContent>
 
-        {/* ── TAB 4: PERFORMANCE & ATTRIBUTION ── */}
-        <TabsContent value="performance" className="pt-2">
-          <SignalPerformanceView />
-        </TabsContent>
+        {/* ── TAB 3: TRACK RECORD (Performance + Ledger) ── */}
+        <TabsContent value="track" className="pt-2 space-y-4">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setTrackView('ledger')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${
+                trackView === 'ledger' ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/60 hover:bg-secondary border-transparent'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" /> Ledger & P&L
+            </button>
+            <button
+              onClick={() => setTrackView('performance')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${
+                trackView === 'performance' ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/60 hover:bg-secondary border-transparent'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5" /> Performance
+            </button>
+            <span className="text-[11px] text-muted-foreground font-mono ml-2 hidden sm:inline">Index paper trades only • crypto is read-only</span>
+          </div>
 
-        {/* ── TAB 5: AUDIT LEDGER & ACTUAL P&L ── */}
-        <TabsContent value="audit" className="pt-2">
-          {auditError && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 mb-3 flex-wrap">
-              <AlertTriangle className="w-4 h-4" /> {auditError}
-              <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={() => void fetchAudit(true)}>
-                Retry
-              </Button>
-            </div>
+          {trackView === 'performance' ? (
+            <SignalPerformanceView />
+          ) : (
+            <>
+              {auditError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 flex-wrap">
+                  <AlertTriangle className="w-4 h-4" /> {auditError}
+                  <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={() => void fetchAudit(true)}>
+                    Retry
+                  </Button>
+                </div>
+              )}
+              <SignalAuditTable
+                trades={auditTrades}
+                summary={auditSummary}
+                loading={auditLoading}
+                onRefresh={() => void fetchAudit(true)}
+                onSelectSignal={(sigId) => setInspectSignalId(sigId)}
+              />
+            </>
           )}
-          <SignalAuditTable
-            trades={auditTrades}
-            summary={auditSummary}
-            loading={auditLoading}
-            onRefresh={() => void fetchAudit(true)}
-            onSelectSignal={(sigId) => setInspectSignalId(sigId)}
-          />
         </TabsContent>
       </Tabs>
 

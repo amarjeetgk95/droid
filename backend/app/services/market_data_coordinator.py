@@ -202,6 +202,13 @@ class MarketDataCoordinator:
     CLOSED_SESSION_TTL_MULTIPLIER = 4.0
 
     def __init__(self, cache_provider: CacheProvider | None = None):
+        if cache_provider is None:
+            try:
+                from app.core.config import settings
+                if getattr(settings, "redis_url", None):
+                    cache_provider = RedisCacheProvider(url=settings.redis_url)
+            except Exception:
+                pass
         self._cache_provider: CacheProvider = cache_provider or InMemoryCacheProvider()
         # Back-compat alias: some call sites/tests touch _cache directly.
         # Keep it pointing at the in-memory store when applicable.
@@ -303,6 +310,9 @@ class MarketDataCoordinator:
         force_refresh: bool = False,
         ttl_seconds: float | None = None,
         fallback_stale: bool = True,
+        max_retries: int = 1,
+        backoff_initial: float = 0.1,
+        derived_from: dict[str, str] | None = None,
     ) -> CachedValue:
         """Get cached value, or compute using single-flight request coalescing."""
         now_mono = time.monotonic()
@@ -360,27 +370,44 @@ class MarketDataCoordinator:
             self.stats["refreshes"] += 1
 
             try:
-                # Execute upstream fetcher with a bounded timeout (8.0s)
-                raw_data = await asyncio.wait_for(fetcher(), timeout=8.0)
-                new_val = CachedValue(
-                    data=raw_data,
-                    updated_at=datetime.now(timezone.utc),
-                    source=source_name,
-                    status="FRESH",
-                    age_ms=0,
-                )
-                await self._cache_set(key, (time.monotonic(), new_val))
-                if not current_future.done():
-                    current_future.set_result(new_val)
-                return new_val
+                attempt = 0
+                raw_data = None
+                last_exc: Exception | None = None
 
-            except Exception as exc:
+                while attempt <= max_retries:
+                    try:
+                        # Execute upstream fetcher with a bounded timeout (8.0s)
+                        raw_data = await asyncio.wait_for(fetcher(), timeout=8.0)
+                        last_exc = None
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        attempt += 1
+                        if attempt <= max_retries:
+                            await asyncio.sleep(backoff_initial * (2 ** (attempt - 1)))
+
+                if last_exc is None:
+                    new_val = CachedValue(
+                        data=raw_data,
+                        updated_at=datetime.now(timezone.utc),
+                        source=source_name,
+                        status="FRESH",
+                        age_ms=0,
+                        derived_from=derived_from,
+                    )
+                    await self._cache_set(key, (time.monotonic(), new_val))
+                    if not current_future.done():
+                        current_future.set_result(new_val)
+                    return new_val
+
+                # All retry attempts failed
                 self.stats["failures"] += 1
                 logger.warning(
                     "coordinator_fetch_failed",
                     key=key,
                     source=source_name,
-                    error=str(exc)[:200],
+                    error=str(last_exc)[:200],
+                    attempts=attempt,
                 )
 
                 # Graceful degraded fallback: if we have any prior cached value, return it as STALE/DEGRADED
@@ -399,6 +426,7 @@ class MarketDataCoordinator:
                     source=source_name,
                     status="UNAVAILABLE",
                     age_ms=0,
+                    derived_from=derived_from,
                 )
                 if not current_future.done():
                     current_future.set_result(unavailable_val)

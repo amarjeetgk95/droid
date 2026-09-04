@@ -259,3 +259,10 @@ export function useMarketDataContext(options?: { useSummaryEndpoint?: boolean })
 export function useOptionalMarketDataContext() {
   return useContext(MarketDataContext);
 }
+
+/** Semantic aliases for Phase 4 architecture clarity. */
+export const DashboardDataContext = MarketDataContext;
+export const DashboardDataProvider = MarketDataProvider;
+export const useDashboardDataContext = useMarketDataContext;
+export const useOptionalDashboardDataContext = useOptionalMarketDataContext;
+

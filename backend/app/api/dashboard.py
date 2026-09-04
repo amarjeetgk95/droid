@@ -290,66 +290,69 @@ async def get_dashboard_summary():
     service = MarketService()
 
     async def _fetch_cards():
-        c = await service.get_index_cards()
+        c = await service.fetch_index_cards_raw()
         return [x.model_dump(mode="json") for x in c]
 
     async def _fetch_breadth():
-        b = await service.get_market_breadth()
+        b = await service.fetch_market_breadth_raw()
         return b.model_dump(mode="json")
 
     async def _fetch_health():
-        h = await service.get_health()
+        h = await service.fetch_health_raw()
         return h.model_dump(mode="json")
 
     async def _fetch_status():
-        s = await service.get_market_status()
+        s = await service.fetch_market_status_raw()
         return s.model_dump(mode="json")
 
     async def _fetch_ml():
-        async def _run():
-            from app.ml.predictor import ml_predictor
-            m = await ml_predictor.predict_probabilities("NIFTY")
-            return m.model_dump(mode="json")
-        val = await market_data_coordinator.get_or_compute("ml", _run, source_name="ml_predictor")
-        return val.data
+        from app.ml.predictor import ml_predictor
+        m = await ml_predictor.predict_probabilities("NIFTY")
+        return m.model_dump(mode="json")
 
     async def _fetch_fii():
-        async def _run():
-            from app.services.fii_dii_service import fii_dii_service
-            f = await fii_dii_service.get_fii_dii_overview()
-            return f.model_dump(mode="json")
-        val = await market_data_coordinator.get_or_compute("fii_dii", _run, source_name="fii_dii_service")
-        return val.data
+        from app.services.fii_dii_service import fii_dii_service
+        fn = getattr(fii_dii_service, "get_fii_dii_overview", None) or getattr(fii_dii_service, "get_institutional_overview")
+        f = fn()
+        if hasattr(f, "__await__"):
+            f = await f
+        return f.model_dump(mode="json")
 
     async def _fetch_regime():
-        async def _run():
-            r = await regime_service.classify_market_regime("NIFTY")
-            return r.model_dump(mode="json")
-        val = await market_data_coordinator.get_or_compute("regime", _run, source_name="regime_service")
-        return val.data
+        r = await regime_service.classify_market_regime("NIFTY")
+        return r.model_dump(mode="json")
 
-    results = await asyncio.gather(
-        _fetch_cards(),
-        _fetch_breadth(),
-        _fetch_health(),
-        _fetch_status(),
-        _fetch_ml(),
-        _fetch_fii(),
-        _fetch_regime(),
-        return_exceptions=True,
-    )
+    fetch_specs = {
+        "cards": (_fetch_cards, "market_service"),
+        "breadth": (_fetch_breadth, "market_service"),
+        "health": (_fetch_health, "market_service"),
+        "status": (_fetch_status, "market_service"),
+        "ml": (_fetch_ml, "ml_predictor"),
+        "fii_dii": (_fetch_fii, "fii_dii_service"),
+        "regime": (_fetch_regime, "regime_service"),
+    }
 
-    cards_res, breadth_res, health_res, status_res, ml_res, fii_res, regime_res = results
+    results = await market_data_coordinator.get_many(fetch_specs)
 
+    def _to_dict(v: Any) -> Any:
+        if v is None:
+            return None
+        if hasattr(v, "model_dump"):
+            return v.model_dump(mode="json")
+        if isinstance(v, list):
+            return [_to_dict(x) for x in v]
+        return v
+
+    # Process cards
+    cards_val = results.get("cards")
     cards: list[dict[str, Any]] = []
-    if isinstance(cards_res, Exception):
-        logger.exception("dashboard_summary.cards_failed", error=str(cards_res))
+    if cards_val is None or cards_val.status == "UNAVAILABLE" or not cards_val.data:
+        cards_raw = cards_val.data if (cards_val and isinstance(cards_val.data, list)) else []
+        cards = [_to_dict(c) for c in cards_raw]
         errors["cards"] = "Index cards unavailable"
     else:
-        cards = cards_res or []
-        # An empty or all-OFFLINE/zero card set means no live quotes are flowing
-        # (dead broker token, upstream outage) — surface it so clients show an
-        # honest degraded state instead of silent 0.00 cards with degraded=false.
+        cards_raw = cards_val.data if isinstance(cards_val.data, list) else []
+        cards = [_to_dict(c) for c in cards_raw]
         if not cards or all(
             (c.get("ltp") or 0) <= 0 or str(c.get("status", "")).upper() == "OFFLINE"
             for c in cards
@@ -357,47 +360,45 @@ async def get_dashboard_summary():
         ):
             errors["cards"] = "Index cards offline — no live quotes (re-auth broker if persistent)"
 
-    breadth_dict = None
-    if isinstance(breadth_res, Exception):
-        logger.exception("dashboard_summary.breadth_failed", error=str(breadth_res))
+    # Process breadth
+    breadth_val = results.get("breadth")
+    breadth_dict = _to_dict(breadth_val.data) if breadth_val else None
+    if breadth_val is None or breadth_val.status == "UNAVAILABLE" or breadth_dict is None:
         errors["breadth"] = "Market breadth unavailable"
-    else:
-        breadth_dict = breadth_res
 
-    health_dict = None
-    if isinstance(health_res, Exception):
-        logger.exception("dashboard_summary.health_failed", error=str(health_res))
+    # Process health
+    health_val = results.get("health")
+    health_dict = _to_dict(health_val.data) if health_val else None
+    if health_val is None or health_val.status == "UNAVAILABLE" or health_dict is None:
         errors["health"] = "Market health unavailable"
-    else:
-        health_dict = health_res
 
-    status_dict = None
-    if isinstance(status_res, Exception):
-        logger.exception("dashboard_summary.status_failed", error=str(status_res))
+    # Process status
+    status_val = results.get("status")
+    status_dict = _to_dict(status_val.data) if status_val else None
+    if status_val is None or status_val.status == "UNAVAILABLE" or status_dict is None:
         errors["status"] = "Market status unavailable"
-    else:
-        status_dict = status_res
 
-    ml_dict = None
-    if isinstance(ml_res, Exception):
-        logger.exception("dashboard_summary.ml_failed", error=str(ml_res))
+    # Process ml
+    ml_val = results.get("ml")
+    ml_dict = _to_dict(ml_val.data) if ml_val else None
+    if ml_val is None or ml_val.status == "UNAVAILABLE" or ml_dict is None:
         errors["ml"] = "ML prediction unavailable"
-    else:
-        ml_dict = ml_res
 
-    fii_dict = None
-    if isinstance(fii_res, Exception):
-        logger.exception("dashboard_summary.fii_dii_failed", error=str(fii_res))
+    # Process fii_dii
+    fii_val = results.get("fii_dii")
+    fii_dict = _to_dict(fii_val.data) if fii_val else None
+    if fii_val is None or fii_val.status == "UNAVAILABLE" or fii_dict is None:
         errors["fii_dii"] = "FII/DII data unavailable"
-    else:
-        fii_dict = fii_res
 
-    regime_dict = None
-    if isinstance(regime_res, Exception):
-        logger.exception("dashboard_summary.regime_failed", error=str(regime_res))
+    # Process regime
+    regime_val = results.get("regime")
+    regime_dict = _to_dict(regime_val.data) if regime_val else None
+    if regime_val is None or regime_val.status == "UNAVAILABLE" or regime_dict is None:
         errors["regime"] = "Regime classification unavailable"
-    else:
-        regime_dict = regime_res
+
+    is_degraded = bool(errors) or any(
+        v.status == "DEGRADED" for v in results.values() if v is not None
+    )
 
     data = DashboardSummary(
         cards=cards,
@@ -408,7 +409,7 @@ async def get_dashboard_summary():
         fii_dii=fii_dict,
         regime_overview=regime_dict,
         errors=errors,
-        degraded=bool(errors),
+        degraded=is_degraded,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -418,7 +419,7 @@ async def get_dashboard_summary():
         "meta": _make_summary_meta(data.degraded).model_dump(),
     }
 
-    _summary_cache["default"] = (now, data)
+    _summary_cache["default"] = (time.monotonic(), data)
     return response
 
 
