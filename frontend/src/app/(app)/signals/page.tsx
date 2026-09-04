@@ -463,66 +463,44 @@ export default function SignalsPage() {
         </div>
       )}
 
-      {/* ── TOP KPI SUMMARY STRIP (UNIFIED INDEX + CRYPTO) ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card className="bg-secondary/20">
-          <CardContent className="p-3 flex items-center justify-between">
+      {/* ── SOBER TOP QUANT TICKER RIBBON ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-xl bg-muted/40 border text-xs font-mono">
+        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+          <div>
+            <span className="text-muted-foreground">Opportunities:</span>
+            <span className="ml-1 font-bold text-foreground">{active.length + cryptoSignals.length} Setups</span>
+            <span className="text-[10px] text-muted-foreground ml-1">({active.length} index • {cryptoSignals.length} crypto)</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">⚡ Scalp Win (1M):</span>
+            <span className="ml-1 font-bold text-amber-600 dark:text-amber-400">
+              {perfSummary?.scalp_summary?.win_rate_pct !== undefined ? `${perfSummary.scalp_summary.win_rate_pct}%` : '—'}
+            </span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">📊 Core Win (5M):</span>
+            <span className="ml-1 font-bold text-indigo-600 dark:text-indigo-400">
+              {perfSummary?.intraday_summary?.win_rate_pct !== undefined ? `${perfSummary.intraday_summary.win_rate_pct}%` : '—'}
+            </span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Profit Factor:</span>
+            <span className="ml-1 font-bold text-foreground">
+              {perfSummary?.profit_factor !== undefined ? `${perfSummary.profit_factor}x` : '—'}
+            </span>
+          </div>
+          {auditSummary?.total_pnl_inr !== undefined && (
             <div>
-              <span className="text-[11px] text-muted-foreground font-medium">Opportunities ({assetClass === 'ALL' ? 'Index + Crypto' : assetClass})</span>
-              <div className="text-lg font-bold font-mono text-primary">{active.length + cryptoSignals.length} Signals</div>
-              <div className="text-[10px] font-mono text-muted-foreground">{active.length} index • {cryptoSignals.length} crypto</div>
-            </div>
-            <Activity className="w-5 h-5 text-primary/60" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-amber-500/5 border-amber-500/20">
-          <CardContent className="p-3 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1">
-                <Zap className="w-3 h-3 text-amber-500" /> ⚡ Scalp Win Rate (1M)
+              <span className="text-muted-foreground">Live MTM:</span>
+              <span className={`ml-1 font-bold ${auditSummary.total_pnl_inr >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
+                {auditSummary.total_pnl_inr >= 0 ? `+₹${Math.round(auditSummary.total_pnl_inr).toLocaleString('en-IN')}` : `-₹${Math.round(Math.abs(auditSummary.total_pnl_inr)).toLocaleString('en-IN')}`}
               </span>
-              <div className="text-lg font-bold font-mono text-amber-600">
-                {perfSummary?.scalp_summary?.win_rate_pct !== undefined
-                  ? `${perfSummary.scalp_summary.win_rate_pct}%`
-                  : perfSummary?.win_rate_pct !== undefined
-                    ? `${perfSummary.win_rate_pct}%`
-                    : '—'}
-              </div>
             </div>
-            <Target className="w-5 h-5 text-amber-500/60" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-indigo-500/5 border-indigo-500/20">
-          <CardContent className="p-3 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] text-indigo-700 dark:text-indigo-400 font-medium flex items-center gap-1">
-                <Layers className="w-3 h-3 text-indigo-500" /> 📊 Intraday Win Rate (5M)
-              </span>
-              <div className="text-lg font-bold font-mono text-indigo-600">
-                {perfSummary?.intraday_summary?.win_rate_pct !== undefined
-                  ? `${perfSummary.intraday_summary.win_rate_pct}%`
-                  : perfSummary?.win_rate_pct !== undefined
-                    ? `${perfSummary.win_rate_pct}%`
-                    : '—'}
-              </div>
-            </div>
-            <Award className="w-5 h-5 text-indigo-500/60" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-secondary/20">
-          <CardContent className="p-3 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] text-muted-foreground font-medium">Profit Factor</span>
-              <div className="text-lg font-bold font-mono">
-                {perfSummary?.profit_factor !== undefined ? `${perfSummary.profit_factor}x` : '—'}
-              </div>
-            </div>
-            <Crosshair className="w-5 h-5 text-primary/60" />
-          </CardContent>
-        </Card>
+          )}
+        </div>
+        <div className="text-[11px] text-muted-foreground hidden lg:block">
+          Feed: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{activeQuality === 'LIVE' ? 'NSE Live (FYERS)' : 'Degraded'}</span>
+        </div>
       </div>
 
       {/* ── 3 UNIFIED TABS: Opportunities / Create / Track ── */}
@@ -555,64 +533,20 @@ export default function SignalsPage() {
 
         {/* ── TAB 1: OPPORTUNITIES (Index Live+Scanner + Crypto merged) ── */}
         <TabsContent value="opportunities" className="space-y-4 pt-2">
-          {/* Filters & View Toggle Bar */}
+          {/* Sober Unified Command Bar */}
           <Card className="p-3 space-y-2.5">
-            {/* Row 0: Asset class + Source (3-tab merge) */}
-            <div className="flex items-center justify-between gap-2 pb-2 border-b flex-wrap">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-semibold text-muted-foreground mr-1">Market:</span>
-                {(['ALL', 'INDEX', 'CRYPTO'] as const).map((a) => (
-                  <button
-                    key={a}
-                    onClick={() => setAssetClass(a)}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
-                      assetClass === a
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-secondary/60 hover:bg-secondary border-transparent'
-                    }`}
-                  >
-                    {a === 'CRYPTO' && <Coins className="w-3.5 h-3.5" />}
-                    {a === 'ALL' ? '🌐 All Markets' : a === 'INDEX' ? 'NIFTY • BANK • SENSEX' : 'BTC • ETH'}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-semibold text-muted-foreground mr-1">Source:</span>
-                <button
-                  onClick={() => setOppSource('live')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
-                    oppSource === 'live'
-                      ? 'bg-emerald-600 text-white border-emerald-700'
-                      : 'bg-secondary/60 hover:bg-secondary border-transparent'
-                  }`}
-                >
-                  Live Setups
-                </button>
-                <button
-                  onClick={() => setOppSource('scanner')}
-                  disabled={assetClass === 'CRYPTO'}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
-                    oppSource === 'scanner'
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-secondary/60 hover:bg-secondary border-transparent disabled:opacity-40'
-                  }`}
-                  title={assetClass === 'CRYPTO' ? 'Scanner is index-only; crypto is auto-streamed' : 'Full-universe scan'}
-                >
-                  Scanner Feed
-                </button>
-              </div>
-            </div>
-            {/* Top Row: Desk Switcher */}
-            <div className="flex items-center justify-between gap-2 pb-2 border-b flex-wrap">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-semibold text-muted-foreground mr-1">Trading Desk:</span>
+            {/* Top Row: Desk & Market Selector + Sources & View Switcher */}
+            <div className="flex items-center justify-between gap-3 pb-2 border-b flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Desk:</span>
                 <button
                   onClick={() => {
                     setFilterDesk('ALL');
+                    setAssetClass('ALL');
                     setFilterStrat('ALL');
                   }}
                   className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
-                    filterDesk === 'ALL'
+                    filterDesk === 'ALL' && assetClass === 'ALL'
                       ? 'bg-primary text-primary-foreground border-primary'
                       : 'bg-secondary/60 hover:bg-secondary border-transparent'
                   }`}
@@ -622,6 +556,7 @@ export default function SignalsPage() {
                 <button
                   onClick={() => {
                     setFilterDesk('SCALP');
+                    setAssetClass('INDEX');
                     setFilterStrat('ALL');
                   }}
                   className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
@@ -635,6 +570,7 @@ export default function SignalsPage() {
                 <button
                   onClick={() => {
                     setFilterDesk('INTRADAY');
+                    setAssetClass('INDEX');
                     setFilterStrat('ALL');
                   }}
                   className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
@@ -645,9 +581,48 @@ export default function SignalsPage() {
                 >
                   <Layers className="w-3.5 h-3.5" /> 📊 Core Intraday (5M/15M)
                 </button>
+                <button
+                  onClick={() => {
+                    setAssetClass('CRYPTO');
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 ${
+                    assetClass === 'CRYPTO'
+                      ? 'bg-cyan-600 text-white border-cyan-700'
+                      : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-600 border-cyan-500/30'
+                  }`}
+                >
+                  <Coins className="w-3.5 h-3.5" /> 🪙 Binance Crypto
+                </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Source Pill */}
+                <div className="inline-flex bg-muted/50 p-0.5 rounded-lg border text-xs">
+                  <button
+                    onClick={() => setOppSource('live')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
+                      oppSource === 'live'
+                        ? 'bg-background text-foreground shadow-sm font-bold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Live Setups
+                  </button>
+                  <button
+                    onClick={() => setOppSource('scanner')}
+                    disabled={assetClass === 'CRYPTO'}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
+                      oppSource === 'scanner'
+                        ? 'bg-background text-foreground shadow-sm font-bold'
+                        : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+                    }`}
+                    title={assetClass === 'CRYPTO' ? 'Scanner is index-only' : 'Full universe scanner'}
+                  >
+                    Scanner Feed
+                  </button>
+                </div>
+
+                {/* View Mode */}
                 <div className="flex items-center border rounded-lg overflow-hidden bg-background">
                   <button
                     onClick={() => setViewMode('grid')}
@@ -664,13 +639,10 @@ export default function SignalsPage() {
                     <List className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
-                  <Clock className="w-3 h-3" /> {streamState === 'CONNECTED' ? 'SSE live + 8s safety poll' : '8s poll (SSE reconnecting)'}
-                </span>
               </div>
             </div>
 
-            {/* Bottom Row: Index and Dynamic Strategy Pills */}
+            {/* Bottom Row: Instrument Chips & Strategy Pills */}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
