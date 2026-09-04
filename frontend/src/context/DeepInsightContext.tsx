@@ -1,6 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
+
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
 import type {
   DeepInsightState,
   DeepInsightApiResponse,
@@ -236,7 +238,7 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch('/api/v1/ai/v2/evaluate/' + targetSymbol, {
+      const response = await fetch(`${API_BASE}/api/v1/ai/v2/evaluate/${targetSymbol}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
