@@ -187,7 +187,7 @@ def create_app() -> FastAPI:
         return {
             "app": settings.app_name,
             "status": "online",
-            "version": settings.app_version,
+            "version": getattr(settings, "app_version", "1.0.0"),
             "docs_url": "/docs",
             "frontend_url": "https://fo-droid.web.app",
         }

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 router = APIRouter(tags=["health"])
 
 
+@router.get("/health")
 @router.get("/health/live")
 async def health_live():
     """Liveness check — process is running."""
