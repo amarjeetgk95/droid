@@ -152,6 +152,53 @@ async def generate_market_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class AIV2EvaluateRequest(BaseModel):
+    symbol: str = "NIFTY"
+    regime_hint: str | None = None
+    context_overrides: dict | None = None
+
+
+@router.post("/v2/evaluate/{symbol}")
+async def evaluate_v2(
+    symbol: str,
+    payload: AIV2EvaluateRequest | None = Body(default=None),
+):
+    """V2 AI evaluation: fast, deterministic, regime-aware signal generation.
+
+    Per v2 spec §21: orchestrates scalping/core intraday AI paths, scoring,
+    and deterministic validation to produce execution-ready signals.
+    """
+    try:
+        from app.ai.ai_evaluator import ai_evaluator
+        from app.ai.schemas import Regime
+
+        req = payload or AIV2EvaluateRequest(symbol=symbol)
+        regime_hint = None
+        if req.regime_hint:
+            try:
+                regime_hint = Regime(req.regime_hint.upper())
+            except ValueError:
+                pass
+
+        signal, execution = await ai_evaluator.evaluate(
+            symbol=req.symbol.upper(),
+            regime_hint=regime_hint,
+            context_overrides=req.context_overrides,
+        )
+
+        return {
+            "data": {
+                "signal": signal.model_dump(mode="json"),
+                "execution": execution.model_dump(mode="json"),
+            },
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        logger.error("v2_evaluate_failed", symbol=symbol, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/history/{symbol}")
 async def get_analysis_history(symbol: str):
     """Retrieve historical market intelligence reports for a symbol."""
