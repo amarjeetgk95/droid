@@ -37,9 +37,11 @@ function resolveSystemStatus(
 ): SystemStatus {
   const session = marketStatus?.session;
   const mode = health?.mode;
-  const isBrokerAuthed = health?.status === 'HEALTHY' && mode === 'LIVE';
   const brokerName = (activeBroker || 'FYERS').toUpperCase();
+  const isHealthyStatus = health?.status === 'HEALTHY' || health?.mode === 'LIVE';
+  const isBrokerConnected = isHealthyStatus && streamState === 'CONNECTED';
 
+  // 1. Fully Offline or Unhealthy Stream -> Red
   if (streamState === 'DISCONNECTED' || health?.status === 'UNHEALTHY') {
     return {
       tone: 'offline',
@@ -51,29 +53,7 @@ function resolveSystemStatus(
     };
   }
 
-  // If Indian broker needs daily token auth
-  if (isIndian && !isBrokerAuthed) {
-    return {
-      tone: 'degraded',
-      label: `AUTH ${brokerName}`,
-      mobileLabel: 'AUTH',
-      dot: 'bg-amber-500',
-      badge: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20',
-      animate: true,
-    };
-  }
-
-  if (mode === 'OFFLINE') {
-    return {
-      tone: 'demo',
-      label: session === 'OPEN' ? `${brokerName} • DEMO` : 'DEMO',
-      mobileLabel: 'DEMO',
-      dot: 'bg-amber-500',
-      badge: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
-      animate: false,
-    };
-  }
-
+  // 2. Connecting / Syncing -> Amber pulsing
   if (streamState === 'CONNECTING' || streamState === 'RECONNECTING') {
     return {
       tone: 'degraded',
@@ -85,45 +65,81 @@ function resolveSystemStatus(
     };
   }
 
-  if (session === 'CLOSED' || session === 'POST_CLOSE' || marketStatus?.is_trading_day === false) {
+  // 3. Broker is Authenticated & Connected -> GREEN!
+  if (isBrokerConnected) {
+    if (session === 'OPEN') {
+      return {
+        tone: 'live',
+        label: `${brokerName} • LIVE`,
+        mobileLabel: brokerName,
+        dot: 'bg-emerald-500',
+        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+        animate: true,
+      };
+    }
+    if (session === 'PRE_OPEN') {
+      return {
+        tone: 'live',
+        label: `${brokerName} • PRE-OPEN`,
+        mobileLabel: 'PRE-OPEN',
+        dot: 'bg-emerald-500',
+        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+        animate: false,
+      };
+    }
+    // Connected outside trading hours (after market / holiday) -> Solid Green Connected
     return {
-      tone: 'closed',
-      label: marketStatus?.is_trading_day === false ? `${brokerName} • HOLIDAY` : `${brokerName} • CLOSED`,
-      mobileLabel: marketStatus?.is_trading_day === false ? 'HOLIDAY' : 'CLOSED',
-      dot: 'bg-slate-400',
-      badge: 'bg-secondary text-slate-700 border-border hover:bg-secondary/80',
+      tone: 'live',
+      label: `${brokerName} • CONNECTED`,
+      mobileLabel: brokerName,
+      dot: 'bg-emerald-500',
+      badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
       animate: false,
     };
   }
 
-  if (session === 'PRE_OPEN') {
+  // 4. If Indian broker is degraded / needs token authentication
+  if (isIndian && !isHealthyStatus) {
+    if (session === 'CLOSED' || session === 'POST_CLOSE' || marketStatus?.is_trading_day === false) {
+      return {
+        tone: 'closed',
+        label: marketStatus?.is_trading_day === false ? `${brokerName} • HOLIDAY` : `${brokerName} • CLOSED`,
+        mobileLabel: marketStatus?.is_trading_day === false ? 'HOLIDAY' : 'CLOSED',
+        dot: 'bg-amber-500',
+        badge: 'bg-secondary text-slate-700 border-border hover:bg-secondary/80',
+        animate: false,
+      };
+    }
+
     return {
       tone: 'degraded',
-      label: `${brokerName} • PRE-OPEN`,
-      mobileLabel: 'PRE-OPEN',
+      label: `AUTH ${brokerName}`,
+      mobileLabel: 'AUTH',
+      dot: 'bg-amber-500',
+      badge: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20',
+      animate: true,
+    };
+  }
+
+  // 5. Explicit Offline / Demo Mode
+  if (mode === 'OFFLINE' && !isHealthyStatus) {
+    return {
+      tone: 'demo',
+      label: session === 'OPEN' ? `${brokerName} • DEMO` : 'DEMO',
+      mobileLabel: 'DEMO',
       dot: 'bg-amber-500',
       badge: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
       animate: false,
     };
   }
 
-  if (isBrokerAuthed && streamState === 'CONNECTED') {
-    return {
-      tone: 'live',
-      label: `${brokerName} • LIVE`,
-      mobileLabel: brokerName,
-      dot: 'bg-emerald-500',
-      badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
-      animate: true,
-    };
-  }
-
+  // Fallback Closed
   return {
-    tone: 'degraded',
-    label: `${brokerName} • DEGRADED`,
-    mobileLabel: 'DEGRADED',
-    dot: 'bg-amber-500',
-    badge: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
+    tone: 'closed',
+    label: `${brokerName} • CLOSED`,
+    mobileLabel: 'CLOSED',
+    dot: 'bg-slate-400',
+    badge: 'bg-secondary text-slate-700 border-border hover:bg-secondary/80',
     animate: false,
   };
 }
@@ -178,7 +194,7 @@ export function HeaderBrokerGateway({
   }, []);
 
   const status = resolveSystemStatus(health, marketStatus, streamState, activeBroker, isIndian);
-  const isHealthy = health?.status === 'HEALTHY' && health?.mode === 'LIVE';
+  const isHealthy = (health?.status === 'HEALTHY' || health?.mode === 'LIVE') && streamState === 'CONNECTED';
   const authLoginUrl = `${api.getBaseUrl()}/api/v1/tokens/${activeBroker}/login`;
 
   return (
@@ -198,7 +214,7 @@ export function HeaderBrokerGateway({
           <span className="sm:hidden font-semibold">{status.mobileLabel}</span>
 
           {health?.latency_ms != null && (
-            <span className="hidden lg:inline text-[11px] opacity-75 font-mono font-normal tabular-nums">
+            <span className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-black/5 text-foreground/80 tabular-nums">
               {health.latency_ms}ms
             </span>
           )}
@@ -207,24 +223,24 @@ export function HeaderBrokerGateway({
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-72 bg-card border-border shadow-xl p-2">
+      <DropdownMenuContent align="end" className="w-80 bg-card border-border shadow-xl p-2.5">
         <DropdownMenuLabel className="font-normal px-2 py-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-foreground">Broker & Data Feed</span>
             <span
               className={cn(
-                'text-[10px] font-bold px-1.5 py-0.2 rounded border',
+                'text-[10px] font-bold px-2 py-0.5 rounded-full border',
                 isHealthy
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-amber-50 text-amber-800 border-amber-200',
               )}
             >
-              {isHealthy ? 'LIVE FEED' : 'ACTION REQUIRED'}
+              {isHealthy ? 'CONNECTED' : 'ACTION REQUIRED'}
             </span>
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
             {isHealthy
-              ? `Connected to ${activeBroker.toUpperCase()} real-time tick engine.`
+              ? `Connected to ${activeBroker.toUpperCase()} real-time tick engine.${marketStatus?.session === 'CLOSED' ? ' Exchange is currently closed.' : ''}`
               : `${activeBroker.toUpperCase()} session requires active token authentication.`}
           </p>
         </DropdownMenuLabel>
@@ -237,14 +253,14 @@ export function HeaderBrokerGateway({
               target="_blank"
               rel="noreferrer"
               className={cn(
-                'flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors',
+                'flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-semibold transition-all shadow-2xs cursor-pointer',
                 !isHealthy
-                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-2xs'
+                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold'
                   : 'bg-secondary hover:bg-secondary/80 text-foreground border border-border',
               )}
             >
               <div className="flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 fill-current" />
+                <Zap className={cn('w-3.5 h-3.5', !isHealthy ? 'fill-current' : 'text-primary')} />
                 <span>{!isHealthy ? `Authorize ${activeBroker.toUpperCase()}` : 'Re-authorize Token'}</span>
               </div>
               <ExternalLink className="w-3 h-3 opacity-70" />
@@ -282,7 +298,7 @@ export function HeaderBrokerGateway({
           </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Provider Gateway</span>
-            <span className="font-semibold text-foreground font-mono">
+            <span className="font-semibold text-foreground font-mono uppercase">
               {health?.provider ?? marketStatus?.provider ?? activeBroker.toUpperCase()}
             </span>
           </div>
@@ -290,26 +306,26 @@ export function HeaderBrokerGateway({
 
         <DropdownMenuSeparator className="bg-border my-1.5" />
 
-        {/* Quick Links */}
+        {/* Quick Links with unified styling */}
         <div className="flex flex-col gap-0.5">
           <DropdownMenuItem
             onClick={onOpenDiagnostics}
-            className="cursor-pointer text-xs font-semibold text-primary flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-primary/10"
+            className="cursor-pointer text-xs font-medium text-foreground flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-secondary transition-colors"
           >
-            <div className="flex items-center gap-1.5">
-              <Activity className="w-3.5 h-3.5" />
+            <div className="flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-primary" />
               <span>Ingestion Diagnostics</span>
             </div>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/60" />
           </DropdownMenuItem>
 
-          <DropdownMenuItem asChild className="cursor-pointer text-xs font-medium text-muted-foreground flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-secondary">
+          <DropdownMenuItem asChild className="cursor-pointer text-xs font-medium text-foreground flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-secondary transition-colors">
             <Link href="/settings">
-              <div className="flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-2">
+                <Globe className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>Configure in Settings</span>
               </div>
-              <ArrowRight className="w-3.5 h-3.5 opacity-60" />
+              <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/60" />
             </Link>
           </DropdownMenuItem>
         </div>
