@@ -103,6 +103,7 @@ function MainDecisionTable() {
 
   const tfMap: Record<string, DeepInsightDirection> = {};
   const tfStruct: Record<string, string> = {};
+  const tfStrength: Record<string, number> = {};
   for (const tf of multiTimeframe) {
     tfMap[tf.timeframe] = tf.direction;
     tfStruct[tf.timeframe] = tf.structure;
@@ -474,7 +475,7 @@ export function DeepInsightPanel() {
   const { state } = useDeepInsight();
 
   if (state.status === 'loading') return <LoadingState />;
-  if (state.status === 'error') return <ErrorState msg={state.error} />;
+  if (state.status === 'error') return <ErrorState msg={state.error || 'Failed to load deep insight'} />;
   if (state.status === 'unavailable') return <UnavailableState msg={state.error} />;
   if (state.status === 'idle') return <UnavailableState msg="Select a symbol to analyze" />;
 

@@ -5,8 +5,9 @@ export type DeepInsightDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 export type DeepInsightVolatility = 'LOW' | 'NORMAL' | 'HIGH';
 export type DeepInsightSetupType = 'BREAKOUT' | 'CONTINUATION' | 'REVERSAL' | 'MEAN_REVERSION' | 'SCALPING' | 'MOMENTUM' | 'PULLBACK' | 'GAP_FILL' | 'VOLATILITY_CONTRACTION';
 export type DeepInsightDecision = 'LONG' | 'SHORT' | 'NO_TRADE';
-export type DeepInsightSignalState = 'ANALYZING' | 'ACTIVE' | 'VALIDATING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'SUPERSEDED' | 'AI_UNAVAILABLE';
-export type DeepInsightValidationStatus = 'ACCEPT' | 'REJECT';
+export type DeepInsightSignalStateType = 'ANALYZING' | 'ACTIVE' | 'VALIDATING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'SUPERSEDED' | 'AI_UNAVAILABLE';
+export type DeepInsightSignalStatus = DeepInsightSignalStateType;
+export type DeepInsightValidationStatus = 'ACCEPT' | 'REJECT' | 'PASS';
 export type DeepInsightSampleQuality = 'GOOD' | 'FAIR' | 'POOR';
 
 export interface DeepInsightTimeframeEntry {
@@ -73,7 +74,7 @@ export interface DeepInsightSetup {
 }
 
 export interface DeepInsightSignalState {
-  state: DeepInsightSignalState;
+  state: DeepInsightSignalStateType;
   age: number;
   ttl: number;
   ttl_remaining: number;

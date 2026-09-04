@@ -56,6 +56,17 @@ class RegimeDetector:
         Returns:
             RegimeObject with standardized regime classification
         """
+        if hasattr(adx_14, "regime") and hasattr(adx_14, "current_price"):
+            ctx = adx_14
+            if ctx.regime and getattr(ctx.regime, "regime", None) != Regime.UNKNOWN:
+                return ctx.regime
+            return self.detect(
+                adx_14=getattr(ctx, "momentum", 20.0) or 20.0,
+                current_price=getattr(ctx, "current_price", 0.0) or 0.0,
+            )
+        elif isinstance(adx_14, dict):
+            return self.detect_from_context(adx_14)
+
         is_strong_trend = adx_14 >= self.TREND_THRESHOLD_ADX
         is_bullish_rsi = rsi_14 >= self.TREND_THRESHOLD_RSI_HIGH
         is_bearish_rsi = rsi_14 <= self.TREND_THRESHOLD_RSI_LOW

@@ -52,6 +52,16 @@ def _volume_status(rel: float) -> str:
     return "Low"
 
 
+REGIME_STATE_TO_REGIME: dict[str, Regime] = {
+    "TRENDING_BULLISH": Regime.TREND,
+    "TRENDING_BEARISH": Regime.TREND,
+    "RANGEBOUND_LOW_VOL": Regime.RANGE,
+    "RANGEBOUND_HIGH_VOL": Regime.RANGE,
+    "VOLATILE_EXPANSION": Regime.HIGH_VOLATILITY,
+    "COMPRESSION_SQUEEZE": Regime.BREAKOUT,
+}
+
+
 class DeepInsightService:
     """Aggregates all intelligence needed for the Deep Insight frontend module."""
 
@@ -109,10 +119,10 @@ class DeepInsightService:
 
     async def _get_multi_timeframe(self, symbol: str) -> list[DeepInsightTimeframeEntry]:
         tf_map = {
-            "1M": ("1m", "1m"),
-            "3M": ("3m", "3m"),
-            "5M": ("5m", "5m"),
-            "15M": ("15m", "15m"),
+            "1M": "1m",
+            "3M": "5m",
+            "5M": "5m",
+            "15M": "15m",
         }
         results: list[DeepInsightTimeframeEntry] = []
         for label, tf_key in tf_map.items():
@@ -189,17 +199,21 @@ class DeepInsightService:
         # --- Build market levels ---
         spot = quote.ltp or regime_overview.spot_price or 24000.0
         vwap = getattr(regime_overview, "vwap", 0.0) or (spot * 0.9995)
-        support = key_levels.nearest_support if key_levels else (spot * 0.995)
-        resistance = key_levels.nearest_resistance if key_levels else (spot * 1.005)
+        support = getattr(key_levels, "nearest_support", spot * 0.995) or (spot * 0.995)
+        resistance = getattr(key_levels, "nearest_resistance", spot * 1.005) or (spot * 1.005)
 
         # --- Market ---
         regime_state = getattr(regime_overview, "regime_state", "UNKNOWN") or "UNKNOWN"
-        try:
-            regime_enum = Regime(regime_state.upper())
-        except (ValueError, AttributeError):
-            regime_enum = Regime.UNKNOWN
+        regime_upper = regime_state.upper()
+        if regime_upper in REGIME_STATE_TO_REGIME:
+            regime_enum = REGIME_STATE_TO_REGIME[regime_upper]
+        else:
+            try:
+                regime_enum = Regime(regime_upper)
+            except (ValueError, AttributeError):
+                regime_enum = Regime.UNKNOWN
 
-        regime_strength = int(getattr(regime_overview, "confidence", 50) or 50)
+        regime_strength = int(getattr(regime_overview, "confidence_score", getattr(regime_overview, "confidence", 50)) or 50)
         adx_val = 0.0
         if hasattr(regime_overview, "indicators"):
             adx_val = getattr(regime_overview.indicators, "adx_14", 0.0) or 0.0
@@ -213,9 +227,9 @@ class DeepInsightService:
                 volatility = VolatilityLevel.LOW
 
         direction = Direction.NEUTRAL
-        if regime_state.upper() in ("TRENDING_BULLISH", "BREAKOUT_BULLISH"):
+        if "BULLISH" in regime_upper:
             direction = Direction.BULLISH
-        elif regime_state.upper() in ("TRENDING_BEARISH", "BREAKOUT_BEARISH"):
+        elif "BEARISH" in regime_upper:
             direction = Direction.BEARISH
 
         market = DeepInsightMarket(

@@ -92,7 +92,14 @@ class AIEvaluator:
 
     def _detect_regime(self, market_context: MarketContext) -> Regime:
         """Detect market regime per §4."""
-        return self.regime_detector.detect(market_context)
+        if market_context.regime and market_context.regime.regime != Regime.UNKNOWN:
+            return market_context.regime.regime
+        res = self.regime_detector.detect(market_context)
+        if isinstance(res, Regime):
+            return res
+        if hasattr(res, "regime"):
+            return res.regime
+        return Regime.UNKNOWN
 
     async def _generate_signal(
         self, symbol: str, regime: Regime, market_context: MarketContext
@@ -110,7 +117,12 @@ class AIEvaluator:
 
     def _score_signal(self, signal: AISignal, market_context: MarketContext) -> None:
         """Score signal using composite scorer per §13."""
-        self.signal_scorer.score(signal, market_context)
+        self.signal_scorer.score(
+            signal=signal,
+            regime=market_context.regime,
+            historical=market_context.historical_context,
+            options=market_context.options_context,
+        )
 
     def validate_output(self, raw_output: str, timeframe: str) -> tuple[bool, Optional[AISignal], str]:
         """Validate AI provider output per §6.

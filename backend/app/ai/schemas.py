@@ -28,6 +28,7 @@ class SetupType(str, Enum):
     REVERSAL = "REVERSAL"
     GAP_FILL = "GAP_FILL"
     VOLATILITY_CONTRACTION = "VOLATILITY_CONTRACTION"
+    SCALPING = "SCALPING"
 
 
 class Regime(str, Enum):
@@ -54,6 +55,7 @@ class VolatilityLevel(str, Enum):
 
 class ValidationStatus(str, Enum):
     PASS = "PASS"
+    ACCEPT = "ACCEPT"
     REJECT = "REJECT"
 
 
@@ -166,6 +168,38 @@ class MarketContext(BaseModel):
     existing_position_state: str = "NONE"
 
     context_hash: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+    @property
+    def volatility(self) -> str:
+        if self.regime and hasattr(self.regime, "volatility"):
+            vol = self.regime.volatility
+            return vol.value if hasattr(vol, "value") else str(vol)
+        return "MEDIUM"
+
+    def to_market_state(self) -> dict:
+        return {
+            "is_market_open": self.market_status == "OPEN",
+            "is_trading_day": True,
+            "data_fresh": True,
+            "current_price": self.current_price,
+            "spread_pct": 0.05,
+            "max_spread_pct": 0.5,
+            "circuit_breaker": False,
+            "kill_switch": False,
+            "symbol": self.symbol,
+            "existing_position": None,
+        }
+
+    def to_risk_state(self) -> dict:
+        return {
+            "capital_available": 500000.0,
+            "margin_available": 500000.0,
+            "position_size": 0,
+            "daily_loss": 0.0,
+            "daily_loss_limit": 50000.0,
+            "max_position_size": 100,
+            "existing_exposure": {},
+        }
 
 
 class AISignal(BaseModel):

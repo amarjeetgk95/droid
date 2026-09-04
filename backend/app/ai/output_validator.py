@@ -171,6 +171,25 @@ class AIOutputValidator:
     def _extract_json(self, raw: str | dict) -> tuple[Optional[dict], Optional[str]]:
         if isinstance(raw, dict):
             return raw, None
+        if hasattr(raw, "model_dump"):
+            dumped = raw.model_dump(mode="json")
+            if "market_bias" in dumped and "decision" not in dumped:
+                bias = str(dumped.get("market_bias", "NEUTRAL")).upper()
+                dumped["decision"] = "LONG" if bias == "BULLISH" else "SHORT" if bias == "BEARISH" else "NO_TRADE"
+                dumped.setdefault("setup_type", "CONTINUATION")
+                dumped.setdefault("regime", "TREND" if bias in ("BULLISH", "BEARISH") else "RANGE")
+                dumped.setdefault("entry", 1.0)
+                dumped.setdefault("stop_loss", 0.99)
+                dumped.setdefault("target", 1.01)
+                dumped.setdefault("ttl_seconds", 60)
+                reasons = []
+                if dumped.get("simple_takeaway"):
+                    reasons.append(dumped["simple_takeaway"][:100])
+                elif dumped.get("executive_summary"):
+                    reasons.append(dumped["executive_summary"][:100])
+                dumped.setdefault("reasons", reasons or ["AI Analysis"])
+                dumped.setdefault("invalidation", ["Stop loss hit"])
+            return dumped, None
         if not isinstance(raw, str):
             return None, f"response not str/dict: {type(raw)}"
         c = raw.strip()

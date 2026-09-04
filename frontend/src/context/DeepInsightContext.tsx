@@ -139,6 +139,7 @@ interface DeepInsightContextValue {
   state: DeepInsightState;
   symbol: string;
   refresh: (symbol?: string) => Promise<void>;
+  evaluate: (symbol?: string) => Promise<void>;
   setSymbol: (symbol: string) => void;
   reset: () => void;
 }
@@ -247,7 +248,7 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
   }, []);
 
   return (
-    <DeepInsightContext.Provider value={{ state, symbol, refresh, setSymbol, reset }}>
+    <DeepInsightContext.Provider value={{ state, symbol, refresh, evaluate: refresh, setSymbol, reset }}>
       {children}
     </DeepInsightContext.Provider>
   );

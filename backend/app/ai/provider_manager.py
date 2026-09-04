@@ -122,6 +122,8 @@ class ProviderManager:
             state = self._providers.get(provider)
             if state and state.can_handle_request():
                 return provider
+        if not self._providers and failover_order:
+            return failover_order[0]
         return None
 
     def record_success(self, provider: str) -> None:

@@ -3,7 +3,7 @@
 import React, { useEffect, useCallback } from 'react';
 import { useDeepInsight, DeepInsightProvider } from '@/context/DeepInsightContext';
 import { DeepInsightPanel } from '@/components/ai/DeepInsightPanel';
-import { RefreshCw, Bot } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 
 const symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
 
