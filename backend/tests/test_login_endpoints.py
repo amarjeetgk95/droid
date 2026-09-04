@@ -79,6 +79,25 @@ def test_fyers_callback_exchange_internal_server_error(client, monkeypatch):
     assert resp.status_code == 400
     assert "Fyers Token Exchange Failed" in resp.text
     assert "internal server error" in resp.text
-    assert "Common Causes &amp; Fixes" in resp.text or "Common Causes & Fixes" in resp.text
+    assert "HVMUH3H2LQ-100" in resp.text
+
+
+def test_fyers_login_custom_credentials(client):
+    resp = client.get(
+        "/api/v1/tokens/fyers/login?app_id=CUSTOM_APP_200&secret_key=CUSTOM_SECRET_999",
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+    loc = resp.headers["location"]
+    assert "client_id=CUSTOM_APP_200" in loc
+    assert "state=c_" in loc
+
+
+def test_fyers_callback_error_redirect(client):
+    resp = client.get("/api/v1/tokens/fyers/callback?s=error&message=Invalid+Client+ID")
+    assert resp.status_code == 400
+    assert "Fyers Auth Redirect Error" in resp.text
+    assert "Invalid Client ID" in resp.text
+
 
 

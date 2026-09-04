@@ -195,7 +195,17 @@ export function HeaderBrokerGateway({
 
   const status = resolveSystemStatus(health, marketStatus, streamState, activeBroker, isIndian);
   const isHealthy = (health?.status === 'HEALTHY' || health?.mode === 'LIVE') && streamState === 'CONNECTED';
-  const authLoginUrl = `${api.getBaseUrl()}/api/v1/tokens/${activeBroker}/login`;
+  let authLoginUrl = `${api.getBaseUrl()}/api/v1/tokens/${activeBroker}/login`;
+  if (activeBroker === 'fyers') {
+    try {
+      const stored = getStoredSettings();
+      const cAppId = stored?.broker?.fyers?.appId?.trim();
+      const cSecret = stored?.broker?.fyers?.secret?.trim();
+      if (cAppId && cSecret) {
+        authLoginUrl = `${authLoginUrl}?app_id=${encodeURIComponent(cAppId)}&secret_key=${encodeURIComponent(cSecret)}`;
+      }
+    } catch {}
+  }
 
   return (
     <DropdownMenu>

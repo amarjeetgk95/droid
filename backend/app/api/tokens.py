@@ -6,7 +6,9 @@ from app.core.token_manager import ConnectionState, TokenInfo
 from app.models.market import ApiMeta, DataStatus
 from app.core.config import settings as cfg
 from datetime import datetime, timezone, timedelta
+import base64
 import hashlib
+import json
 import httpx
 import structlog
 
@@ -157,27 +159,40 @@ async def refresh_token(payload: dict | None = Body(default=None)):
 
 
 @router.get("/fyers/login")
-async def fyers_oauth_login(request: Request):
-    """Redirect user to Fyers OAuth authorization using Render server credentials."""
+async def fyers_oauth_login(
+    request: Request,
+    app_id: str | None = Query(default=None),
+    secret_key: str | None = Query(default=None),
+):
+    """Redirect user to Fyers OAuth authorization using Render server credentials or custom query overrides."""
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
-    app_id = (creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
+    
+    clean_app_id = (app_id or creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
+    clean_secret = (secret_key or creds.get("secret_key") or cfg.fyers_secret_key or "").strip().strip("\"'")
     redirect_uri = (creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback").strip()
     
-    if not app_id:
+    if not clean_app_id:
         return HTMLResponse(
             content="""
             <html><body style="font-family:system-ui;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;">
             <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;text-align:center;max-width:480px;">
-                <h3 style="color:#ef4444;margin-top:0;">FYERS_APP_ID Not Found in Render</h3>
-                <p style="color:#94a3b8;font-size:14px;">Please configure <code>FYERS_APP_ID</code> and <code>FYERS_SECRET_KEY</code> in Render Environment Variables.</p>
+                <h3 style="color:#ef4444;margin-top:0;">FYERS_APP_ID Not Found</h3>
+                <p style="color:#94a3b8;font-size:14px;">Please configure <code>FYERS_APP_ID</code> and <code>FYERS_SECRET_KEY</code> in Render Environment Variables or enter them in Droid Settings.</p>
             </div>
             </body></html>
             """,
             status_code=400,
         )
-    
-    url = f"https://api-t1.fyers.in/api/v3/generate-authcode?client_id={app_id}&redirect_uri={redirect_uri}&response_type=code&state=droid_fyers"
+
+    # If custom app_id or secret_key provided via query, pack them in state so callback has access
+    if app_id or secret_key:
+        state_payload = {"a": clean_app_id, "s": clean_secret}
+        state_val = "c_" + base64.urlsafe_b64encode(json.dumps(state_payload).encode("utf-8")).decode("utf-8")
+    else:
+        state_val = "droid_fyers"
+
+    url = f"https://api-t1.fyers.in/api/v3/generate-authcode?client_id={clean_app_id}&redirect_uri={redirect_uri}&response_type=code&state={state_val}"
     return RedirectResponse(url=url)
 
 
@@ -219,7 +234,31 @@ async def fyers_oauth_callback(
     Exchanges auth_code with appIdHash (SHA-256 of app_id:secret_key)
     via POST https://api-t1.fyers.in/api/v3/validate-authcode.
     """
-    effective_code = auth_code or code
+    # 1. Handle case where Fyers redirected with an error
+    if s == "error" or (message and not auth_code and not code):
+        fail_reason = message or "Fyers authentication was cancelled or rejected by Fyers server."
+        return HTMLResponse(
+            content=f"""
+            <!DOCTYPE html>
+            <html>
+            <head><title>FYERS Authentication Failed</title></head>
+            <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1rem;">
+                <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;max-width:520px;text-align:center;">
+                    <div style="font-size:36px;margin-bottom:8px;">⚠️</div>
+                    <h2 style="color:#ef4444;margin-top:0;">Fyers Auth Redirect Error</h2>
+                    <div style="background:#0f172a;padding:12px;border-radius:8px;border:1px solid #334155;margin-bottom:16px;text-align:left;">
+                        <p style="color:#94a3b8;font-size:13px;margin:0;"><strong>Fyers Message:</strong> <code style="color:#f87171;">{fail_reason}</code></p>
+                    </div>
+                    <a href="/api/v1/tokens/fyers/login" style="display:inline-block;padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:600;border-radius:6px;font-size:12px;">Retry Login</a>
+                </div>
+            </body>
+            </html>
+            """,
+            status_code=400,
+        )
+
+    # 2. Extract authorization code
+    effective_code = auth_code or (code if s != "error" else None)
     if not effective_code:
         return HTMLResponse(
             content="""
@@ -237,11 +276,24 @@ async def fyers_oauth_callback(
             status_code=200,
         )
 
-    # Get active Fyers credentials
+    # 3. Decode custom credentials if packed into state
+    custom_app_id = ""
+    custom_secret = ""
+    if state and state.startswith("c_"):
+        try:
+            raw_json = base64.urlsafe_b64decode(state[2:].encode("utf-8")).decode("utf-8")
+            parsed = json.loads(raw_json)
+            custom_app_id = (parsed.get("a") or "").strip().strip("\"'")
+            custom_secret = (parsed.get("s") or "").strip().strip("\"'")
+        except Exception as ex:
+            logger.warning("failed_to_decode_custom_state", error=str(ex))
+
+    # 4. Resolve credentials with fallback hierarchy
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
-    app_id = (creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
-    secret_key = (creds.get("secret_key") or cfg.fyers_secret_key or "").strip().strip("\"'")
+    app_id = custom_app_id or (creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
+    secret_key = custom_secret or (creds.get("secret_key") or cfg.fyers_secret_key or "").strip().strip("\"'")
+    cred_source = "Custom Browser Session" if custom_app_id else "Render Server Environment Variables"
 
     if not app_id or not secret_key:
         error_html = """
@@ -325,30 +377,78 @@ async def fyers_oauth_callback(
                 return HTMLResponse(content=success_html, status_code=200)
             else:
                 err_text = data.get("message") or str(data)
-                masked_app_id = (app_id[:4] + "****" + app_id[-4:]) if len(app_id) > 8 else app_id
-                logger.warning("fyers_oauth_exchange_failed", status_code=resp.status_code, response=data, app_id=masked_app_id)
+                logger.warning("fyers_oauth_exchange_failed", status_code=resp.status_code, response=data, app_id=app_id)
+                
+                # Secret fingerprint (length + preview) so user can immediately verify if Render has the right secret
+                if len(secret_key) >= 8:
+                    secret_preview = f"{secret_key[:3]}••••{secret_key[-3:]} ({len(secret_key)} chars)"
+                elif secret_key:
+                    secret_preview = f"•••• ({len(secret_key)} chars)"
+                else:
+                    secret_preview = "Not configured (empty)"
+                
+                redirect_uri = (creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback").strip()
+
                 fail_html = f"""
                 <!DOCTYPE html>
                 <html>
-                <head><title>FYERS Authentication Failed</title></head>
-                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1rem;">
-                    <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;max-width:520px;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <head>
+                    <title>FYERS Authentication Failed</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1.5rem;">
+                    <div style="background:#1e293b;padding:2rem;border-radius:14px;border:1px solid #ef4444;max-width:580px;width:100%;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.6);">
                         <div style="font-size:36px;margin-bottom:8px;">⚠️</div>
-                        <h2 style="color:#ef4444;margin-top:0;margin-bottom:12px;">Fyers Token Exchange Failed</h2>
-                        <div style="background:#0f172a;padding:12px;border-radius:8px;border:1px solid #334155;margin-bottom:16px;text-align:left;">
-                            <p style="color:#94a3b8;font-size:13px;margin:0 0 4px 0;"><strong>Error:</strong> <code style="color:#f87171;">{err_text}</code></p>
-                            <p style="color:#64748b;font-size:12px;margin:0;"><strong>App ID:</strong> <code>{masked_app_id}</code></p>
+                        <h2 style="color:#ef4444;margin:0 0 16px 0;font-size:22px;">Fyers Token Exchange Failed</h2>
+                        
+                        <div style="background:#0f172a;padding:14px;border-radius:10px;border:1px solid #334155;margin-bottom:20px;text-align:left;font-size:12px;line-height:1.7;">
+                            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e293b;padding-bottom:6px;margin-bottom:6px;">
+                                <span style="color:#94a3b8;">Fyers Error:</span>
+                                <code style="color:#f87171;font-weight:600;">{err_text} (HTTP {resp.status_code})</code>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e293b;padding-bottom:6px;margin-bottom:6px;">
+                                <span style="color:#94a3b8;">App ID Used:</span>
+                                <code style="color:#38bdf8;font-weight:600;">{app_id}</code>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e293b;padding-bottom:6px;margin-bottom:6px;">
+                                <span style="color:#94a3b8;">Secret Key Fingerprint:</span>
+                                <code style="color:#e2e8f0;font-weight:600;">{secret_preview}</code>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;">
+                                <span style="color:#94a3b8;">Credential Source:</span>
+                                <span style="color:#94a3b8;">{cred_source}</span>
+                            </div>
                         </div>
-                        <div style="text-align:left;background:#1e293b;border-top:1px solid #334155;padding-top:14px;color:#94a3b8;font-size:12px;line-height:1.6;">
-                            <p style="color:#e2e8f0;font-weight:600;margin:0 0 6px 0;">Common Causes & Fixes:</p>
+
+                        <!-- Direct Override & Retry Form -->
+                        <div style="background:#111827;border:1px solid #374151;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left;">
+                            <p style="color:#f3f4f6;font-weight:600;font-size:13px;margin:0 0 6px 0;">⚡ Re-authorize with Custom Credentials</p>
+                            <p style="color:#9ca3af;font-size:11px;margin:0 0 12px 0;">If your App ID or Secret in Render is outdated, enter your actual Fyers MyAPI credentials below to authenticate immediately:</p>
+                            <form action="/api/v1/tokens/fyers/login" method="GET" style="display:flex;flex-direction:column;gap:10px;">
+                                <div>
+                                    <label style="color:#9ca3af;font-size:11px;display:block;margin-bottom:4px;">Fyers App ID (e.g. from MyAPI Dashboard):</label>
+                                    <input type="text" name="app_id" value="{app_id}" placeholder="e.g. YOUR_APP_ID-100" required style="width:100%;box-sizing:border-box;background:#1f2937;border:1px solid #4b5563;color:#f9fafb;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;" />
+                                </div>
+                                <div>
+                                    <label style="color:#9ca3af;font-size:11px;display:block;margin-bottom:4px;">Secret ID (from MyAPI Dashboard):</label>
+                                    <input type="password" name="secret_key" placeholder="Enter Fyers Secret ID" required style="width:100%;box-sizing:border-box;background:#1f2937;border:1px solid #4b5563;color:#f9fafb;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;" />
+                                </div>
+                                <button type="submit" style="margin-top:4px;padding:9px 16px;background:#38bdf8;color:#0f172a;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;">Authorize With These Credentials</button>
+                            </form>
+                        </div>
+
+                        <div style="text-align:left;color:#94a3b8;font-size:12px;line-height:1.6;border-top:1px solid #334155;padding-top:14px;">
+                            <p style="color:#e2e8f0;font-weight:600;margin:0 0 6px 0;">Why Fyers returns "internal server error":</p>
                             <ol style="margin:0;padding-left:18px;">
-                                <li><strong>Secret Key Mismatch:</strong> The Secret Key in Render doesn't match this App ID, or was regenerated in Fyers.</li>
-                                <li><strong>Trailing Spaces:</strong> Ensure no spaces, newlines, or quotes were pasted into Render Environment Variables.</li>
-                                <li><strong>App Status:</strong> Check that your App is set to <em>Active</em> in the <a href="https://myapi.fyers.in/dashboard" target="_blank" style="color:#38bdf8;">Fyers MyAPI Dashboard</a>.</li>
+                                <li><strong>App ID Mismatch:</strong> In Fyers MyAPI, verify your App ID matches <code>{app_id}</code> character-by-character.</li>
+                                <li><strong>Secret ID Mismatch:</strong> In Fyers MyAPI, copy the <strong>Secret ID</strong> (not trading PIN). If you recently regenerated it, the old secret is invalid.</li>
+                                <li><strong>Redirect URL:</strong> In Fyers MyAPI Dashboard, ensure Redirect URL is exactly: <code style="color:#38bdf8;word-break:break-all;">{redirect_uri}</code></li>
+                                <li><strong>App Status:</strong> In <a href="https://myapi.fyers.in/dashboard" target="_blank" style="color:#38bdf8;">Fyers MyAPI Dashboard</a>, ensure app toggle is <strong>Active</strong>.</li>
                             </ol>
                         </div>
+                        
                         <div style="margin-top:20px;display:flex;gap:10px;justify-content:center;">
-                            <a href="/api/v1/tokens/fyers/login" style="display:inline-block;padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:600;border-radius:6px;font-size:12px;">Retry Login</a>
+                            <a href="/api/v1/tokens/fyers/login" style="display:inline-block;padding:8px 16px;background:#1e293b;border:1px solid #475569;color:#f8fafc;text-decoration:none;font-weight:600;border-radius:6px;font-size:12px;">Retry Server Login</a>
                             <a href="/" style="display:inline-block;padding:8px 16px;background:#334155;color:#f8fafc;text-decoration:none;font-weight:600;border-radius:6px;font-size:12px;">Return to Dashboard</a>
                         </div>
                     </div>
