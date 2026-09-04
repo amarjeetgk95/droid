@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
+import { getStoredSettings } from '@/lib/settings';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
 import type {
@@ -167,7 +168,38 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/ai/deep-insight/${targetSymbol}`, {
+      const s = getStoredSettings();
+      const headers: Record<string, string> = {};
+      const qp = new URLSearchParams();
+
+      const ai = s?.ai;
+      if (ai) {
+        const effProvider = ai.provider === 'mock_ai' ? 'openrouter' : (ai.provider || 'openrouter');
+        qp.set('provider', effProvider);
+        headers['X-AI-Provider'] = effProvider;
+
+        if (ai.openRouterApiKey) {
+          headers['X-OpenRouter-Key'] = ai.openRouterApiKey;
+          qp.set('openRouterApiKey', ai.openRouterApiKey);
+        }
+        const orModel = ai.openRouterSelectedModel || ai.openRouterModel;
+        if (orModel) {
+          headers['X-OpenRouter-Model'] = orModel;
+          qp.set('model', orModel);
+        }
+        if (ai.geminiApiKey) {
+          headers['X-Gemini-Key'] = ai.geminiApiKey;
+          qp.set('geminiApiKey', ai.geminiApiKey);
+        }
+        if (ai.geminiModel) {
+          headers['X-Gemini-Model'] = ai.geminiModel;
+        }
+      }
+
+      const queryString = qp.toString();
+      const endpoint = `${API_BASE}/api/v1/ai/deep-insight/${targetSymbol}${queryString ? `?${queryString}` : ''}`;
+      const response = await fetch(endpoint, {
+        headers,
         signal: abortControllerRef.current.signal,
       });
 

@@ -118,6 +118,12 @@ class GeminiProvider(BaseLLMProvider):
                     if not isinstance(parsed, dict):
                         raise ValueError(f"Gemini response root is not a JSON object: {type(parsed)}")
 
+                    is_signal_prompt = any(k in system_prompt for k in ("decision", "setup_type", "DROID Core Intraday AI", "DROID Scalping AI"))
+                    if is_signal_prompt:
+                        parsed.setdefault("provider", "gemini")
+                        parsed.setdefault("model", model_id)
+                        return parsed
+
                     if "market_bias" not in parsed or "executive_summary" not in parsed:
                         raise ValueError(f"Gemini JSON missing required fields. Got keys: {list(parsed.keys())}.")
                     return AIInsightResponse(

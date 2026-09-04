@@ -71,6 +71,7 @@ class OpenRouterProvider(BaseLLMProvider):
             "X-Title": "DROID F&O Analysis",
         }
         use_structured = should_use_structured_outputs(self.model)
+        is_signal_prompt = any(k in system_prompt for k in ("decision", "setup_type", "DROID Core Intraday AI", "DROID Scalping AI"))
         prompted_suffix = "\n\nReturn ONLY one valid JSON object. Do not use markdown. Do not include explanations outside the JSON. Do not include code fences."
         response_rule = (
             "\n\nRESPONSE RULE: Output ONLY a valid JSON object with keys: "
@@ -81,10 +82,11 @@ class OpenRouterProvider(BaseLLMProvider):
             "simple_takeaway is REQUIRED: exactly 2-3 very simple sentences for a beginner. "
             "No markdown code fences, no extra text."
         )
+        effective_rule = "" if is_signal_prompt else response_rule
         base_payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt + response_rule + ("" if use_structured else prompted_suffix)},
+                {"role": "system", "content": system_prompt + effective_rule + ("" if use_structured else prompted_suffix)},
                 {"role": "user", "content": user_prompt + ("" if use_structured else prompted_suffix)},
             ],
             "temperature": 0.2,
@@ -142,6 +144,11 @@ class OpenRouterProvider(BaseLLMProvider):
 
                 if not isinstance(parsed, dict):
                     raise ValueError(f"OpenRouter response root is not a JSON object: {type(parsed)}")
+
+                if is_signal_prompt:
+                    parsed.setdefault("provider", "openrouter")
+                    parsed.setdefault("model", self.model)
+                    return parsed
 
                 return AIInsightResponse(
                     symbol=symbol,

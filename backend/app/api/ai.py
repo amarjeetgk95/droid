@@ -789,7 +789,17 @@ async def get_market_briefing(
 # ---------------------------------------------------------------------------
 
 @router.get("/deep-insight/{symbol}")
-async def get_deep_insight(symbol: str):
+async def get_deep_insight(
+    symbol: str,
+    provider: str | None = Query(default=None),
+    model: str | None = Query(default=None),
+    openrouter_api_key: str | None = Query(default=None, alias="openRouterApiKey"),
+    x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_openrouter_model: str | None = Header(default=None, alias="X-OpenRouter-Model"),
+    gemini_api_key: str | None = Query(default=None, alias="geminiApiKey"),
+    x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+    x_ai_provider: str | None = Header(default=None, alias="X-AI-Provider"),
+):
     """Unified Deep Insight payload aggregating market regime, options, multi-TF, and AI signal.
 
     Returns one structured response containing all information required by the
@@ -797,7 +807,18 @@ async def get_deep_insight(symbol: str):
     """
     try:
         from app.services.deep_insight_service import deep_insight_service
-        payload = await deep_insight_service.get_deep_insight(symbol.upper())
+        effective_provider = (provider or x_ai_provider or "").strip() or None
+        effective_openrouter_key = (openrouter_api_key or x_openrouter_key or "").strip() or None
+        effective_gemini_key = (gemini_api_key or x_gemini_key or "").strip() or None
+        effective_model = (model or x_openrouter_model or "").strip() or None
+
+        payload = await deep_insight_service.get_deep_insight(
+            symbol.upper(),
+            provider=effective_provider,
+            model=effective_model,
+            openrouter_api_key=effective_openrouter_key,
+            gemini_api_key=effective_gemini_key,
+        )
         return {
             "data": payload.model_dump(mode="json"),
             "error": payload.error,

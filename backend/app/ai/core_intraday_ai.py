@@ -134,7 +134,7 @@ class CoreIntradayAI:
         """
         symbol = symbol.upper()
         timeout_ms = override_timeout_ms or CORE_TIMEOUT_MS
-        hard_ceiling = CORE_HARD_CEILING_MS
+        hard_ceiling = max(CORE_HARD_CEILING_MS, timeout_ms + 1000)
 
         context_hash = context.context_hash
         last_hash = self._last_context_hash.get(symbol)
@@ -335,12 +335,16 @@ class CoreIntradayAI:
         symbol: str,
         regime: "Regime",
         market_context: "MarketContext",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        openrouter_api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
     ) -> "AISignal":
         """Generate a core intraday signal. Returns NO_TRADE if no provider available."""
         from app.ai.provider_manager import provider_manager
         try:
-            provider_name = provider_manager.get_provider("core", ["openrouter", "gemini"])
-            if not provider_name:
+            target_provider = provider or provider_manager.get_provider("core", ["openrouter", "gemini"])
+            if not target_provider:
                 return AISignal(
                     signal_id=str(uuid.uuid4()),
                     symbol=symbol.upper(),
@@ -351,8 +355,16 @@ class CoreIntradayAI:
                     reasons=["No AI provider configured"],
                 )
             from app.ai.registry import get_llm_provider
-            provider = get_llm_provider(provider_name)
-            return await self.analyze(market_context, provider, symbol, timeframe="5M")
+            provider_instance = get_llm_provider(
+                target_provider,
+                openRouterApiKey=openrouter_api_key,
+                openRouterModel=model,
+                geminiApiKey=gemini_api_key,
+                geminiModel=model,
+                model=model,
+            )
+            timeout_ms = 15000 if (openrouter_api_key or gemini_api_key or model) else None
+            return await self.analyze(market_context, provider_instance, symbol, timeframe="5M", override_timeout_ms=timeout_ms)
         except Exception as e:
             logger.error("core_intraday_generate_failed", symbol=symbol, error=str(e))
             return AISignal(

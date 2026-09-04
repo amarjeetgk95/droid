@@ -48,6 +48,10 @@ class AIEvaluator:
         symbol: str,
         regime_hint: Optional[Regime] = None,
         context_overrides: Optional[dict] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        openrouter_api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
     ) -> tuple[AISignal, ExecutionDecision]:
         """Evaluate symbol and return (signal, execution_decision) per §21.
 
@@ -55,6 +59,10 @@ class AIEvaluator:
             symbol: Trading symbol
             regime_hint: Optional regime override
             context_overrides: Optional context modifications
+            provider: Optional provider override
+            model: Optional model override
+            openrouter_api_key: Optional OpenRouter API key
+            gemini_api_key: Optional Gemini API key
 
         Returns:
             Tuple of (AISignal, ExecutionDecision)
@@ -66,7 +74,15 @@ class AIEvaluator:
             logger.warning(f"Unknown regime for {symbol}, using RANGE fallback")
             regime = Regime.RANGE
 
-        signal = await self._generate_signal(symbol, regime, market_context)
+        signal = await self._generate_signal(
+            symbol,
+            regime,
+            market_context,
+            provider=provider,
+            model=model,
+            openrouter_api_key=openrouter_api_key,
+            gemini_api_key=gemini_api_key,
+        )
         self._score_signal(signal, market_context)
 
         execution = deterministic_trade_validator.validate(
@@ -102,7 +118,14 @@ class AIEvaluator:
         return Regime.UNKNOWN
 
     async def _generate_signal(
-        self, symbol: str, regime: Regime, market_context: MarketContext
+        self,
+        symbol: str,
+        regime: Regime,
+        market_context: MarketContext,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        openrouter_api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
     ) -> AISignal:
         """Generate signal via appropriate AI path per §3."""
         use_scalping = regime in {Regime.TREND, Regime.RANGE} and market_context.volatility in {
@@ -111,9 +134,25 @@ class AIEvaluator:
         }
 
         if use_scalping:
-            return await self.scalping_ai.generate(symbol, regime, market_context)
+            return await self.scalping_ai.generate(
+                symbol,
+                regime,
+                market_context,
+                provider=provider,
+                model=model,
+                openrouter_api_key=openrouter_api_key,
+                gemini_api_key=gemini_api_key,
+            )
         else:
-            return await self.core_intraday_ai.generate(symbol, regime, market_context)
+            return await self.core_intraday_ai.generate(
+                symbol,
+                regime,
+                market_context,
+                provider=provider,
+                model=model,
+                openrouter_api_key=openrouter_api_key,
+                gemini_api_key=gemini_api_key,
+            )
 
     def _score_signal(self, signal: AISignal, market_context: MarketContext) -> None:
         """Score signal using composite scorer per §13."""

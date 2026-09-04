@@ -176,7 +176,14 @@ class DeepInsightService:
             logger.warning("options_evidence_failed", symbol=symbol, error=str(e))
             return DeepInsightOptionsEvidence()
 
-    async def get_deep_insight(self, symbol: str) -> DeepInsightPayload:
+    async def get_deep_insight(
+        self,
+        symbol: str,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        openrouter_api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
+    ) -> DeepInsightPayload:
         """Build the complete Deep Insight payload for a symbol."""
         now = datetime.now(timezone.utc)
         symbol = symbol.upper()
@@ -272,7 +279,13 @@ class DeepInsightService:
 
         # --- AI Signal via v2 evaluator ---
         try:
-            signal, execution = await ai_evaluator.evaluate(symbol)
+            signal, execution = await ai_evaluator.evaluate(
+                symbol,
+                provider=provider,
+                model=model,
+                openrouter_api_key=openrouter_api_key,
+                gemini_api_key=gemini_api_key,
+            )
         except Exception as e:
             logger.warning("deep_insight_ai_evaluate_failed", symbol=symbol, error=str(e))
             signal = None
