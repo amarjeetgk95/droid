@@ -130,6 +130,25 @@ class HistoricalIntelligenceService:
                 query_snapshot_id=query_snapshot.snapshot_id,
                 status=HIEStatus.NO_MATCH,
             )
+            try:
+                import asyncio
+                from app.historical_intelligence.hie_persistence import persist_hie_query_audit
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(
+                        persist_hie_query_audit(
+                            instrument=instrument.upper(),
+                            timeframe=timeframe,
+                            query_mode=mode,
+                            sample_count=0,
+                            effective_sample_size=0.0,
+                            bullish_prob=0.33,
+                            confidence=0.0,
+                            latency_ms=(time.perf_counter() - start_time) * 1000.0,
+                        )
+                    )
+            except Exception:
+                pass
             return res
 
         # 5. Outcome Retrieval & Aggregation (§15, §16, §20)
