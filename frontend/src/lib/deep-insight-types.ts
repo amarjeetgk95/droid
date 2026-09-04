@@ -3,7 +3,7 @@
 export type DeepInsightRegime = 'TREND' | 'RANGE' | 'BREAKOUT' | 'REVERSAL' | 'HIGH_VOLATILITY' | 'LOW_VOLATILITY' | 'UNKNOWN';
 export type DeepInsightDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 export type DeepInsightVolatility = 'LOW' | 'NORMAL' | 'HIGH';
-export type DeepInsightSetupType = 'BREAKOUT' | 'CONTINUATION' | 'REVERSAL' | 'MEAN_REVERSION' | 'SCALPING' | 'MOMENTUM' | 'PULLBACK' | 'GAP_FILL' | 'VOLATILITY_CONTRACTION';
+export type DeepInsightSetupType = 'BREAKOUT' | 'CONTINUATION' | 'REVERSAL' | 'MEAN_REVERSION' | 'SCALPING' | 'MOMENTUM' | 'PULLBACK' | 'GAP_FILL' | 'VOLATILITY_CONTRACTION' | 'NO_SETUP';
 export type DeepInsightDecision = 'LONG' | 'SHORT' | 'NO_TRADE';
 export type DeepInsightSignalStateType = 'ANALYZING' | 'ACTIVE' | 'VALIDATING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'SUPERSEDED' | 'AI_UNAVAILABLE';
 export type DeepInsightSignalStatus = DeepInsightSignalStateType;

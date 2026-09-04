@@ -26,6 +26,8 @@ from app.ai.schemas import (
     VolatilityLevel,
     SampleQuality,
     ValidationStatus,
+    Decision,
+    SetupType,
 )
 from app.ai.regime_detector import RegimeDetector
 from app.services.regime_service import RegimeService
@@ -286,19 +288,31 @@ class DeepInsightService:
                 ttl=signal.ttl_seconds,
                 ttl_remaining=ttl_remaining,
             )
-            setup = DeepInsightSetup(
-                setup_type=signal.setup_type,
-                entry_zone=f"{signal.entry:.0f}",
-                stop_loss=signal.stop_loss,
-                target=f"{signal.target:.0f}",
-                risk_reward=round((abs(signal.target - signal.entry) / max(abs(signal.entry - signal.stop_loss), 0.01)), 1),
-            )
+            if signal.decision == Decision.NO_TRADE or signal.entry <= 0:
+                setup = DeepInsightSetup(
+                    setup_type=SetupType.NO_SETUP,
+                    entry_zone="—",
+                    stop_loss=0.0,
+                    target="—",
+                    risk_reward=0.0,
+                )
+                ai_summary = signal.rejection_detail or "No active trade setup. Waiting for clear confirmation."
+            else:
+                setup = DeepInsightSetup(
+                    setup_type=signal.setup_type,
+                    entry_zone=f"{signal.entry:.0f}" if signal.entry > 0 else "—",
+                    stop_loss=signal.stop_loss,
+                    target=f"{signal.target:.0f}" if signal.target > 0 else "—",
+                    risk_reward=round((abs(signal.target - signal.entry) / max(abs(signal.entry - signal.stop_loss), 0.01)), 1) if signal.entry > 0 and signal.stop_loss > 0 else 0.0,
+                )
+                ai_summary = f"{signal.setup_type.value} setup on {signal.timeframe} timeframe."
+
             ai_view = {
                 "bias": signal.decision.value,
                 "confidence": signal.raw_confidence,
                 "calibrated_confidence": signal.calibrated_confidence,
-                "setup_type": signal.setup_type.value,
-                "summary": f"{signal.setup_type.value} setup on {signal.timeframe} timeframe.",
+                "setup_type": setup.setup_type.value,
+                "summary": ai_summary,
             }
             technical_evidence = {
                 "positive": signal.reasons[:4],

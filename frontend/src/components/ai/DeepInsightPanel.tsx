@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import type { DeepInsightDirection, DeepInsightRegime, DeepInsightSignalState } from '@/lib/deep-insight-types';
 
 function fmt(n: number | undefined | null, digits = 2): string {
-  if (n === undefined || n === null) return '—';
+  if (n === undefined || n === null || isNaN(n)) return '—';
   return n.toFixed(digits);
 }
 
@@ -31,6 +31,7 @@ function regimeVariant(r: DeepInsightRegime | string): 'default' | 'success' | '
 }
 
 function ConfidenceBar({ value }: { value: number }) {
+  if (value <= 0) return null;
   const color = value >= 70 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-red-500';
   return (
     <div className="flex items-center gap-2">
@@ -128,27 +129,27 @@ function MainDecisionTable() {
     ['3M', tfMap['3M'] ? <Badge variant={directionVariant(tfMap['3M'])}>{tfMap['3M']}</Badge> : '—', tfStruct['3M'] || '—'],
     ['5M', tfMap['5M'] ? <Badge variant={directionVariant(tfMap['5M'])}>{tfMap['5M']}</Badge> : '—', tfStruct['5M'] || '—'],
     ['15M', tfMap['15M'] ? <Badge variant={directionVariant(tfMap['15M'])}>{tfMap['15M']}</Badge> : '—', tfStruct['15M'] || '—'],
-    ['VWAP', market ? (
+    ['VWAP', market?.levels ? (
       <span className={`font-medium ${market.levels.vwap_relation === 'Above' ? 'text-emerald-600' : market.levels.vwap_relation === 'Below' ? 'text-red-600' : 'text-muted-foreground'}`}>
         {market.levels.vwap_relation}
       </span>
-    ) : '—', market ? `${fmt(market.levels.vwap)}` : '—'],
-    ['Momentum', market ? (
+    ) : '—', market?.levels?.vwap ? `${fmt(market.levels.vwap)}` : '—'],
+    ['Momentum', market?.momentum ? (
       <span className={market.momentum.status === 'Positive' ? 'text-emerald-600' : market.momentum.status === 'Negative' ? 'text-red-600' : 'text-muted-foreground'}>
         {market.momentum.status}
       </span>
-    ) : '—', market ? `${fmt(market.momentum.value)}` : '—'],
-    ['Volume', market ? (
+    ) : '—', market?.momentum?.value !== undefined ? `${fmt(market.momentum.value)}` : '—'],
+    ['Volume', market?.volume ? (
       <Badge variant={market.volume.status === 'High' ? 'success' : market.volume.status === 'Low' ? 'destructive' : 'secondary'}>{market.volume.status}</Badge>
-    ) : '—', market ? `${fmt(market.volume.relative_value)}× avg` : '—'],
-    ['Support', market ? <span className="font-medium">{fmt(market.levels.support)}</span> : '—', 'Key level'],
-    ['Resistance', market ? <span className="font-medium">{fmt(market.levels.resistance)}</span> : '—', 'Decision level'],
-    ['Setup', setup ? <Badge>{setup.setup_type}</Badge> : '—', setup ? `R:R 1:${fmt(setup.risk_reward)}` : '—'],
-    ['Entry Zone', setup ? <span className="font-medium">{setup.entry_zone}</span> : '—', setup ? `SL ${fmt(setup.stop_loss)}` : '—'],
-    ['Target', setup ? <span className="font-medium">{setup.target}</span> : '—', 'Proposed'],
-    ['Stop Loss', setup ? <span className="text-red-500 font-medium">{fmt(setup.stop_loss)}</span> : '—', 'Invalidation'],
+    ) : '—', market?.volume?.relative_value !== undefined ? `${fmt(market.volume.relative_value)}× avg` : '—'],
+    ['Support', market?.levels?.support ? <span className="font-medium">{fmt(market.levels.support)}</span> : '—', 'Key level'],
+    ['Resistance', market?.levels?.resistance ? <span className="font-medium">{fmt(market.levels.resistance)}</span> : '—', 'Decision level'],
+    ['Setup', setup?.setup_type && setup.setup_type !== 'NO_SETUP' ? <Badge>{setup.setup_type}</Badge> : <span className="text-xs text-muted-foreground">No active setup</span>, setup && setup.risk_reward > 0 ? `R:R 1:${fmt(setup.risk_reward)}` : '—'],
+    ['Entry Zone', setup && setup.entry_zone && setup.entry_zone !== '0' && setup.entry_zone !== '—' ? <span className="font-medium">{setup.entry_zone}</span> : '—', setup && setup.stop_loss > 0 ? `SL ${fmt(setup.stop_loss)}` : '—'],
+    ['Target', setup && setup.target && setup.target !== '0' && setup.target !== '—' ? <span className="font-medium">{setup.target}</span> : '—', setup && setup.target && setup.target !== '0' && setup.target !== '—' ? 'Proposed' : '—'],
+    ['Stop Loss', setup && setup.stop_loss > 0 ? <span className="text-red-500 font-medium">{fmt(setup.stop_loss)}</span> : '—', setup && setup.stop_loss > 0 ? 'Invalidation' : '—'],
     ['Backend Validation', validation ? (
-      <Badge variant={validation.status === 'ACCEPT' ? 'success' : 'destructive'}>{validation.status}</Badge>
+      <Badge variant={validation.status === 'ACCEPT' || validation.status === 'PASS' ? 'success' : 'destructive'}>{validation.status}</Badge>
     ) : '—', validation?.rejection_reason || '—'],
     /* eslint-disable-next-line react/jsx-key */ // rendered via map; key assigned at map site
     ['Signal Status', <SignalBadge state={signalState} />, signalState ? `${signalState.age}s old · ${signalState.ttl_remaining}s left` : '—'],
@@ -342,7 +343,7 @@ function AiViewSection() {
         <div className="flex items-center gap-2">
           <Badge variant={aiView.bias === 'LONG' ? 'success' : aiView.bias === 'SHORT' ? 'destructive' : 'default'}>{aiView.bias}</Badge>
           <span className="text-xs text-muted-foreground">Confidence {aiView.confidence}/100</span>
-          {aiView.calibrated_confidence && aiView.calibrated_confidence !== aiView.confidence && (
+          {Boolean(aiView.calibrated_confidence && aiView.calibrated_confidence !== aiView.confidence) && (
             <span className="text-xs text-muted-foreground">· Calibrated {aiView.calibrated_confidence}/100</span>
           )}
         </div>
@@ -390,13 +391,14 @@ function SetupTable() {
     return <div className="text-sm text-muted-foreground py-2">— Unavailable</div>;
   }
 
+  const isNoSetup = !setup.setup_type || setup.setup_type === 'NO_SETUP';
   type SRow = [string, string | number, 'text' | 'badge' | 'stop'];
   const rows: SRow[] = [
-    ['Setup Type', setup.setup_type, 'badge'],
-    ['Entry Zone', setup.entry_zone, 'text'],
-    ['Stop Loss', fmt(setup.stop_loss), 'stop'],
-    ['Target', setup.target, 'text'],
-    ['Risk:Reward', `1:${fmt(setup.risk_reward)}`, 'text'],
+    ['Setup Type', isNoSetup ? 'No active setup' : setup.setup_type, 'badge'],
+    ['Entry Zone', !isNoSetup && setup.entry_zone && setup.entry_zone !== '0' && setup.entry_zone !== '—' ? setup.entry_zone : '—', 'text'],
+    ['Stop Loss', !isNoSetup && setup.stop_loss > 0 ? fmt(setup.stop_loss) : '—', 'stop'],
+    ['Target', !isNoSetup && setup.target && setup.target !== '0' && setup.target !== '—' ? setup.target : '—', 'text'],
+    ['Risk:Reward', !isNoSetup && setup.risk_reward > 0 ? `1:${fmt(setup.risk_reward)}` : '—', 'text'],
     ['Signal Age', signalState ? `${signalState.age}s` : '—', 'text'],
     ['Remaining TTL', signalState ? `${signalState.ttl_remaining}s` : '—', 'text'],
   ];
@@ -409,7 +411,7 @@ function SetupTable() {
             <td className="py-1.5 pr-4 text-muted-foreground">{label}</td>
             <td className="py-1.5 font-medium text-right">
               {style === 'badge' ? (
-                <Badge>{value}</Badge>
+                <Badge variant={value === 'No active setup' ? 'secondary' : 'default'}>{value}</Badge>
               ) : style === 'stop' ? (
                 <span className="text-red-500 font-medium">{value}</span>
               ) : (
@@ -435,7 +437,7 @@ function ValidationSection() {
       {validation && (
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground font-semibold">VALIDATION:</span>
-          <Badge variant={validation.status === 'ACCEPT' ? 'success' : 'destructive'}>{validation.status}</Badge>
+          <Badge variant={validation.status === 'ACCEPT' || validation.status === 'PASS' ? 'success' : 'destructive'}>{validation.status}</Badge>
           {validation.rejection_reason && (
             <span className="text-xs text-muted-foreground">{validation.rejection_reason}</span>
           )}
@@ -461,7 +463,13 @@ function ValidationSection() {
       )}
       {payload?.timestamp && (
         <div className="text-xs text-muted-foreground">
-          Updated: {new Date(payload.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}
+          Updated: {(() => {
+            try {
+              return new Date(payload.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+            } catch {
+              return String(payload.timestamp);
+            }
+          })()}
         </div>
       )}
     </div>

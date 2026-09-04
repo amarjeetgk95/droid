@@ -29,6 +29,7 @@ class SetupType(str, Enum):
     GAP_FILL = "GAP_FILL"
     VOLATILITY_CONTRACTION = "VOLATILITY_CONTRACTION"
     SCALPING = "SCALPING"
+    NO_SETUP = "NO_SETUP"
 
 
 class Regime(str, Enum):
@@ -413,7 +414,7 @@ class DeepInsightHistoricalEvidence(BaseModel):
 
 
 class DeepInsightSetup(BaseModel):
-    setup_type: SetupType = SetupType.CONTINUATION
+    setup_type: SetupType = SetupType.NO_SETUP
     entry_zone: str = ""
     stop_loss: float = 0.0
     target: str = ""
