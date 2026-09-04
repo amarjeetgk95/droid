@@ -350,19 +350,22 @@ async def get_signals_audit(
     signal_audit_ledger.sync_with_fsm()
     signal_audit_ledger.sync_with_paper_service()
 
-    # Fetch live quotes to compute real-time MTM
-    market_svc = MarketService()
-    quotes: dict[str, float] = {}
-    for u in APPROVED_UNDERLYINGS:
-        try:
-            q = await market_svc.get_quote(u)
-            if q and getattr(q, "ltp", None) is not None:
-                quotes[u] = float(q.ltp)
-        except Exception:
-            pass
+    # Fetch live quotes to compute real-time MTM only during active market sessions with valid live ticks
+    from app.services.calendar_service import calendar_service
+    from app.models.market import DataStatus
+    if calendar_service.can_trade_now().allowed:
+        market_svc = MarketService()
+        quotes: dict[str, float] = {}
+        for u in APPROVED_UNDERLYINGS:
+            try:
+                q = await market_svc.get_quote(u)
+                if q and getattr(q, "ltp", None) is not None and getattr(q, "status", None) == DataStatus.LIVE and float(q.ltp) > 0:
+                    quotes[u] = float(q.ltp)
+            except Exception:
+                pass
 
-    if quotes:
-        signal_audit_ledger.update_live_quotes_batch(quotes)
+        if quotes:
+            signal_audit_ledger.update_live_quotes_batch(quotes)
 
     trades = signal_audit_ledger.list_trades(underlying=underlying, strategy=strategy, status=status, limit=limit)
     summary = signal_audit_ledger.get_summary_metrics()

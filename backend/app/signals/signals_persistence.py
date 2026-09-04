@@ -168,6 +168,17 @@ def sanitize_persisted_signals() -> int:
                 sanitized_count += 1
                 logger.warning("sanitized_corrupt_audit_trade", audit_id=aid)
 
+        # 3. Permanently purge synthetic/demo seeded trades
+        demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
+        for did in demo_ids:
+            if did in signal_audit_ledger._trades:
+                signal_audit_ledger._trades.pop(did, None)
+                sanitized_count += 1
+                logger.info("purged_demo_audit_trade", audit_id=did)
+            if did in signal_fsm._signals:
+                signal_fsm._signals.pop(did, None)
+                sanitized_count += 1
+
         if sanitized_count > 0:
             save_signals_state_local()
     except Exception as e:

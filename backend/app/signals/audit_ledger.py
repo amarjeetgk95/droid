@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from decimal import Decimal
 from typing import Any, Optional, Literal
 from pydantic import BaseModel, Field
 import structlog
@@ -528,140 +527,12 @@ class SignalAuditLedger:
                     break
 
     def seed_initial_audited_records_if_empty(self) -> None:
-        """
-        Seeds representative active and completed trades across indices
-        when ledger is initialised, ensuring users have live real-time MTM visibility.
-        """
-        if len(self._trades) > 0:
-            return
-
-        now_ms = int(time.time() * 1000)
-
-        # 1. Active Open Trade on NIFTY (EXECUTED, in profit)
-        sig1_id = "SIG-NIFTY-BKO-01"
-        self.record_signal_created(
-            signal_id=sig1_id,
-            underlying="NIFTY",
-            strategy="BREAKOUT",
-            direction="LONG_CALL",
-            timeframe="5M",
-            spot_price=24820.0,
-            trigger=24850.0,
-            stop_loss=24780.0,
-            target_1=24955.0,
-            target_2=25060.0,
-            confidence=88.0,
-            option_contract={"broker_symbol": "NSE:NIFTY24DEC24850CE", "strike": 24850, "option_type": "CE", "lot_size": 75},
-            lots=2,
-            status="CONFIRMED",
-        )
-        self.record_paper_executed(
-            signal_id=sig1_id,
-            paper_order_id="ORD-PAP-92410",
-            fill_price=24852.5,
-            quantity=150,
-            lots=2,
-            side="BUY",
-            margin_used=24852.5 * 150 * 0.15,
-        )
-        self.update_live_quote("NIFTY", 24886.0)
-
-        # 2. Active Open Trade on BANKNIFTY (EXECUTED, in profit)
-        sig2_id = "SIG-BNF-TRP-02"
-        self.record_signal_created(
-            signal_id=sig2_id,
-            underlying="BANKNIFTY",
-            strategy="TREND_PULLBACK",
-            direction="LONG_CALL",
-            timeframe="5M",
-            spot_price=52150.0,
-            trigger=52200.0,
-            stop_loss=52050.0,
-            target_1=52425.0,
-            target_2=52650.0,
-            confidence=82.0,
-            option_contract={"broker_symbol": "NSE:BANKNIFTY24DEC52200CE", "strike": 52200, "option_type": "CE", "lot_size": 30},
-            lots=2,
-            status="CONFIRMED",
-        )
-        self.record_paper_executed(
-            signal_id=sig2_id,
-            paper_order_id="ORD-PAP-92411",
-            fill_price=52205.0,
-            quantity=60,
-            lots=2,
-            side="BUY",
-            margin_used=52205.0 * 60 * 0.15,
-        )
-        self.update_live_quote("BANKNIFTY", 52248.5)
-
-        # 3. Closed Trade on SENSEX (WON, Target 1 Hit)
-        sig3_id = "SIG-SNX-MRV-03"
-        self.record_signal_created(
-            signal_id=sig3_id,
-            underlying="SENSEX",
-            strategy="MEAN_REVERSION",
-            direction="LONG_PUT",
-            timeframe="15M",
-            spot_price=81500.0,
-            trigger=81450.0,
-            stop_loss=81650.0,
-            target_1=81150.0,
-            target_2=80850.0,
-            confidence=85.0,
-            option_contract={"broker_symbol": "BSE:SENSEX24DEC81400PE", "strike": 81400, "option_type": "PE", "lot_size": 10},
-            lots=2,
-            status="CONFIRMED",
-        )
-        self.record_paper_executed(
-            signal_id=sig3_id,
-            paper_order_id="ORD-PAP-92408",
-            fill_price=81445.0,
-            quantity=20,
-            lots=2,
-            side="BUY",
-            margin_used=81445.0 * 20 * 0.15,
-        )
-        self.record_square_off(
-            signal_id=sig3_id,
-            exit_price=81150.0,
-            exit_reason="TARGET_1_HIT",
-            exit_time_ms=now_ms - 1800000,
-        )
-
-        # 4. Closed Trade on NIFTY (LOST, SL Hit)
-        sig4_id = "SIG-NIFTY-ORB-04"
-        self.record_signal_created(
-            signal_id=sig4_id,
-            underlying="NIFTY",
-            strategy="ORB",
-            direction="LONG_CALL",
-            timeframe="15M",
-            spot_price=24790.0,
-            trigger=24810.0,
-            stop_loss=24770.0,
-            target_1=24870.0,
-            target_2=24930.0,
-            confidence=76.0,
-            option_contract={"broker_symbol": "NSE:NIFTY24DEC24800CE", "strike": 24800, "option_type": "CE", "lot_size": 75},
-            lots=1,
-            status="CONFIRMED",
-        )
-        self.record_paper_executed(
-            signal_id=sig4_id,
-            paper_order_id="ORD-PAP-92405",
-            fill_price=24812.0,
-            quantity=75,
-            lots=1,
-            side="BUY",
-            margin_used=24812.0 * 75 * 0.15,
-        )
-        self.record_square_off(
-            signal_id=sig4_id,
-            exit_price=24768.0,
-            exit_reason="STOP_LOSS_HIT",
-            exit_time_ms=now_ms - 3600000,
-        )
+        """Disabled: Never seed fake or synthetic trades into the authoritative audit ledger."""
+        # Clean up any leftover demo trades
+        demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
+        for did in demo_ids:
+            self._trades.pop(did, None)
+        return
 
     def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
         return self._trades.get(signal_id)
@@ -691,10 +562,6 @@ class SignalAuditLedger:
         status: Optional[str] = None,
         limit: int = 100,
     ) -> list[AuditTradeRecord]:
-        # Auto seed if empty
-        if len(self._trades) == 0:
-            self.seed_initial_audited_records_if_empty()
-
         trades = list(self._trades.values())
         if underlying and underlying != "ALL":
             trades = [t for t in trades if t.underlying == underlying.upper()]
@@ -708,9 +575,6 @@ class SignalAuditLedger:
 
     def get_summary_metrics(self) -> dict[str, Any]:
         """Compute aggregated portfolio PnL and accuracy statistics including live unrealized MTM."""
-        if len(self._trades) == 0:
-            self.seed_initial_audited_records_if_empty()
-
         all_t = list(self._trades.values())
         closed_t = [t for t in all_t if t.status in ("WON", "LOST", "CLOSED")]
         open_t = [t for t in all_t if t.status in ("ARMED", "CONFIRMED", "EXECUTED")]
