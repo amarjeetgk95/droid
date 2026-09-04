@@ -26,9 +26,9 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                1. Key Levels & S/R Pivots
+                1. Where can the price go?
               </h3>
-              <p className="text-[10.5px] text-muted-foreground">Volume profile & pivot boundaries</p>
+              <p className="text-[10.5px] text-muted-foreground">Important high and low levels nearby</p>
             </div>
           </div>
 
@@ -38,7 +38,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
         </div>
 
         <div className="pt-2 border-t border-border/40 text-[11px] font-medium text-blue-500 flex items-center justify-between">
-          <span>Boundary Analysis</span>
+          <span>Price boundaries</span>
           <ChevronRight className="w-3.5 h-3.5" />
         </div>
       </div>
@@ -52,9 +52,9 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                2. Option Walls & Max Pain
+                2. What are option traders doing?
               </h3>
-              <p className="text-[10.5px] text-muted-foreground">Call & Put writer concentrations</p>
+              <p className="text-[10.5px] text-muted-foreground">Where big traders placed their bets</p>
             </div>
           </div>
 
@@ -64,7 +64,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
         </div>
 
         <div className="pt-2 border-t border-border/40 text-[11px] font-medium text-purple-500 flex items-center justify-between">
-          <span>Derivatives Structure</span>
+          <span>Big trader positions</span>
           <ChevronRight className="w-3.5 h-3.5" />
         </div>
       </div>
@@ -78,9 +78,9 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
             </div>
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                3. Institutional (FII/DII) Flow
+                3. Are big investors buying or selling?
               </h3>
-              <p className="text-[10.5px] text-muted-foreground">Futures buildup & cash market flow</p>
+              <p className="text-[10.5px] text-muted-foreground">Foreign & local institution money flow</p>
             </div>
           </div>
 
@@ -90,7 +90,7 @@ export function AIQuantPillars({ insight }: AIQuantPillarsProps) {
         </div>
 
         <div className="pt-2 border-t border-border/40 text-[11px] font-medium text-emerald-500 flex items-center justify-between">
-          <span>Smart Money Positioning</span>
+          <span>Smart money moves</span>
           <ChevronRight className="w-3.5 h-3.5" />
         </div>
       </div>

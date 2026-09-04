@@ -75,7 +75,7 @@ class OpenRouterProvider(BaseLLMProvider):
         base_payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. No markdown, no extra text." + ("" if use_structured else prompted_suffix)},
+                {"role": "system", "content": system_prompt + "\n\nRESPONSE RULE: Output ONLY valid JSON object with keys: market_bias, confidence, executive_summary, simple_takeaway, options_interpretation, futures_flow_analysis, regime_and_levels, recommended_strategy_framework, risk_management_notes, disclaimer. simple_takeaway is REQUIRED: 2-3 very simple sentences for a beginner. No markdown, no extra text." + ("" if use_structured else prompted_suffix)},
                 {"role": "user", "content": user_prompt + ("" if use_structured else prompted_suffix)},
             ],
             "temperature": 0.2,
@@ -154,6 +154,7 @@ class OpenRouterProvider(BaseLLMProvider):
                     market_bias=parsed.get("market_bias", "NEUTRAL"),
                     confidence=conf_val,
                     executive_summary=parsed.get("executive_summary", ""),
+                    simple_takeaway=parsed.get("simple_takeaway", ""),
                     options_interpretation=parsed.get("options_interpretation", ""),
                     futures_flow_analysis=parsed.get("futures_flow_analysis", ""),
                     regime_and_levels=parsed.get("regime_and_levels", ""),

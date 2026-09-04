@@ -13,6 +13,9 @@ class AIInsightResponse(BaseModel):
     market_bias: MarketBias
     confidence: float = Field(description="Confidence percentage (0-100%)")
     executive_summary: str
+    # Plain-language 2-3 sentence takeaway for non-expert readers. Empty when
+    # the model predates this field — frontend falls back to executive_summary.
+    simple_takeaway: str = ""
     options_interpretation: str
     futures_flow_analysis: str
     regime_and_levels: str

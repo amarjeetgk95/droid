@@ -324,6 +324,7 @@ export interface AIInsightResponse {
   market_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'VOLATILE';
   confidence: number;
   executive_summary: string;
+  simple_takeaway?: string;
   options_interpretation: string;
   futures_flow_analysis: string;
   regime_and_levels: string;

@@ -96,6 +96,7 @@ class NovitaProvider(AIProvider):
                 market_bias=parsed.get("market_bias", "NEUTRAL"),
                 confidence=float(parsed.get("confidence", 75.0)),
                 executive_summary=parsed.get("executive_summary", ""),
+                simple_takeaway=parsed.get("simple_takeaway", ""),
                 options_interpretation=parsed.get("options_interpretation", ""),
                 futures_flow_analysis=parsed.get("futures_flow_analysis", ""),
                 regime_and_levels=parsed.get("regime_and_levels", ""),

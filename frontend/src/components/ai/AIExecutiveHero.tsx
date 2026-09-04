@@ -26,8 +26,8 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
     switch (b) {
       case 'BULLISH':
         return {
-          title: 'BULLISH BIAS',
-          subtitle: 'Quant engines detect upward momentum & call-buying support',
+          title: 'LOOKS UP ↑',
+          subtitle: 'Buyers are stronger right now — price may rise',
           icon: <TrendingUp className="w-6 h-6 text-emerald-500" />,
           badgeBg: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
           barColor: 'bg-emerald-500',
@@ -35,8 +35,8 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
         };
       case 'BEARISH':
         return {
-          title: 'BEARISH BIAS',
-          subtitle: 'Quant engines detect downward pressure & put-buying / call-writing',
+          title: 'LOOKS DOWN ↓',
+          subtitle: 'Sellers are stronger right now — price may fall',
           icon: <TrendingDown className="w-6 h-6 text-rose-500" />,
           badgeBg: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
           barColor: 'bg-rose-500',
@@ -44,8 +44,8 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
         };
       case 'VOLATILE':
         return {
-          title: 'HIGH VOLATILITY / EXPANSION',
-          subtitle: 'Expanding range expected; avoid unhedged directional bets',
+          title: 'RISKY / CHOPPY ⚡',
+          subtitle: 'Big swings expected — risky time to bet on direction',
           icon: <Zap className="w-6 h-6 text-purple-500" />,
           badgeBg: 'bg-purple-500/10 text-purple-600 border-purple-500/30',
           barColor: 'bg-purple-500',
@@ -53,8 +53,8 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
         };
       default:
         return {
-          title: 'NEUTRAL / RANGE-BOUND',
-          subtitle: 'Market is oscillating between key support and resistance boundaries',
+          title: 'MOVING SIDEWAYS →',
+          subtitle: 'No clear direction — price is stuck in a range',
           icon: <Activity className="w-6 h-6 text-blue-500" />,
           badgeBg: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
           barColor: 'bg-blue-500',
@@ -91,7 +91,7 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
         {/* Conviction Meter */}
         <div className="bg-secondary/40 border border-border rounded-xl p-3 sm:px-4 sm:py-3 min-w-[220px]">
           <div className="flex items-center justify-between text-xs mb-1.5">
-            <span className="font-semibold text-muted-foreground">Quant Conviction</span>
+            <span className="font-semibold text-muted-foreground">How sure is the AI?</span>
             <span className={`font-mono font-bold text-sm ${cfg.textColor}`}>
               {confidence}%
             </span>
@@ -103,18 +103,29 @@ export function AIExecutiveHero({ insight, symbol }: AIExecutiveHeroProps) {
             />
           </div>
           <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>Low</span>
-            <span>Moderate</span>
-            <span>Strong</span>
+            <span>Not sure</span>
+            <span>Okay</span>
+            <span>Very sure</span>
           </div>
         </div>
       </div>
 
-      {/* 1-Minute Executive Summary */}
+      {/* In Simple Words — plain-language takeaway first */}
+      <div className="bg-emerald-500/5 rounded-xl p-4 border border-emerald-500/20 space-y-2">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+          In simple words
+        </h4>
+        <p className="text-sm text-foreground/90 leading-relaxed font-medium">
+          {insight.simple_takeaway || insight.executive_summary}
+        </p>
+      </div>
+
+      {/* Full Detail */}
       <div className="bg-secondary/20 rounded-xl p-4 border border-border/70 space-y-2">
         <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-primary" />
-          The Core Market Thesis (Plain English)
+          <Target className="w-3.5 h-3.5 text-primary" />
+          Full detail
         </h4>
         <p className="text-xs text-foreground/90 leading-relaxed font-sans font-medium">
           {insight.executive_summary}

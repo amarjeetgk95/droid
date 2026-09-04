@@ -6,6 +6,7 @@ import { AIInsightResponse, AIHistoryItem } from '@/lib/types';
 import { AIExecutiveHero } from '@/components/ai/AIExecutiveHero';
 import { AIQuantPillars } from '@/components/ai/AIQuantPillars';
 import { AITradePlaybook } from '@/components/ai/AITradePlaybook';
+import { JargonBuster } from '@/components/ai/JargonBuster';
 import { AIOptionsArchitect } from '@/components/ai/AIOptionsArchitect';
 import { AITradeValidator } from '@/components/ai/AITradeValidator';
 import { OpenRouterModelSelector } from '@/components/settings/OpenRouterModelSelector';
@@ -165,11 +166,11 @@ export default function AIAnalysisPage() {
             }}
             className="bg-secondary/80 text-xs px-3 py-2 rounded-xl border border-border text-foreground font-semibold focus:outline-hidden cursor-pointer"
           >
-            <option value="openrouter">OpenRouter — DeepSeek / Llama</option>
-            <option value="gemini">Google Gemini 2.0 Flash</option>
-            <option value="openai">OpenAI GPT-4o</option>
-            <option value="ollama">Local Ollama</option>
-            <option value="mock_ai">DROID Quant Engine (Offline)</option>
+            <option value="openrouter">Auto AI (recommended)</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">On-device (Ollama)</option>
+            <option value="mock_ai">Offline mode</option>
           </select>
 
           <button
@@ -204,26 +205,35 @@ export default function AIAnalysisPage() {
       {/* Error state */}
       {error ? (
         <div className="p-6 text-center bg-card border border-destructive/20 rounded-2xl text-destructive space-y-2 shadow-xs">
-          <p className="font-semibold text-sm">Failed to generate market intelligence</p>
+          <p className="font-semibold text-sm">Could not read the market right now</p>
           <p className="text-xs opacity-80">{error}</p>
+          <button
+            onClick={fetchAnalysis}
+            className="mt-1 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold cursor-pointer"
+          >
+            Try again
+          </button>
         </div>
       ) : loading && !insight ? (
         <div className="bg-card border border-border rounded-2xl p-14 text-center text-muted-foreground animate-pulse space-y-3">
           <Brain className="w-10 h-10 text-primary mx-auto animate-bounce" />
-          <p className="font-bold text-sm text-foreground">Synthesizing quantitative market dossier...</p>
+          <p className="font-bold text-sm text-foreground">Reading the market for {selectedSymbol}…</p>
           <p className="text-xs text-muted-foreground">
-            Evaluating {selectedSymbol} price action, option open interest walls, and institutional flow.
+            Checking price movement, big trader positions, and market mood. Takes about 10–20 seconds.
           </p>
         </div>
       ) : insight ? (
         <div className="space-y-5 animate-in fade-in duration-300">
-          {/* 1. Executive Market Bias & Conviction Hero */}
+          {/* 1. Market direction + simple explanation */}
           <AIExecutiveHero insight={insight} symbol={selectedSymbol} />
 
-          {/* 2. Three At-A-Glance Quantitative Decision Pillars */}
+          {/* 2. Confused by a word? Plain-language glossary */}
+          <JargonBuster />
+
+          {/* 3. Three simple questions answered */}
           <AIQuantPillars insight={insight} />
 
-          {/* 3. Actionable Trade Setup & Playbook */}
+          {/* 4. What to do + when to exit */}
           <AITradePlaybook insight={insight} />
 
           {/* 4. Specialized Utility Tools (Collapsible for zero clutter) */}
@@ -236,8 +246,8 @@ export default function AIAnalysisPage() {
                     <Layers className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-foreground">Options Strategy Architect</h3>
-                    <p className="text-[11px] text-muted-foreground">Structure multi-leg defined-risk spreads</p>
+                    <h3 className="text-xs font-bold text-foreground">Options Strategy Helper</h3>
+                    <p className="text-[11px] text-muted-foreground">Build a safe, limited-loss option plan</p>
                   </div>
                 </div>
                 <button
@@ -264,8 +274,8 @@ export default function AIAnalysisPage() {
                     <ShieldCheck className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-foreground">Trade Thesis Auditor</h3>
-                    <p className="text-[11px] text-muted-foreground">Pre-flight risk score & trap detection</p>
+                    <h3 className="text-xs font-bold text-foreground">Check My Trade Idea</h3>
+                    <p className="text-[11px] text-muted-foreground">Let AI double-check your plan for hidden risks</p>
                   </div>
                 </div>
                 <button
@@ -285,13 +295,13 @@ export default function AIAnalysisPage() {
             </div>
           </div>
 
-          {/* 5. Recent Intelligence Reports */}
+          {/* 6. Past reports */}
           {history.length > 1 && (
             <div className="bg-card border border-border rounded-2xl p-4 space-y-3 shadow-xs">
               <div className="flex items-center gap-2">
                 <History className="w-4 h-4 text-primary" />
                 <h3 className="font-bold text-xs text-foreground uppercase tracking-wider">
-                  Past Intelligence Snapshots ({history.length})
+                  What AI said earlier ({history.length})
                 </h3>
               </div>
               <div className="space-y-2">
@@ -307,7 +317,7 @@ export default function AIAnalysisPage() {
                       <p className="text-foreground text-xs line-clamp-1">{h.executive_summary}</p>
                     </div>
                     <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold bg-secondary text-primary border border-border">
-                      {h.market_bias} ({h.confidence}%)
+                      {h.market_bias === 'BULLISH' ? 'Up ↑' : h.market_bias === 'BEARISH' ? 'Down ↓' : h.market_bias === 'VOLATILE' ? 'Risky ⚡' : 'Sideways →'} ({h.confidence}%)
                     </span>
                   </div>
                 ))}
