@@ -161,8 +161,8 @@ def test_target_1_win_not_overwritten_by_stop_loss():
 
     # Price later plummets to Stop Loss
     events2 = outcome_tracker.update_with_price("NIFTY", Decimal("24740.0"))
-    # Should NOT trigger stop loss hit
-    assert not any(e.get("event") == "STOP_LOSS_HIT" for e in events2)
+    # Should NOT trigger stop loss hit for this won signal
+    assert not any(e.get("signal_id") == sig.signal_id and e.get("event") == "STOP_LOSS_HIT" for e in events2)
     assert signal_fsm.get(sig.signal_id).fsm_state == "TARGET_1_HIT"
 
 

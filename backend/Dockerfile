@@ -7,7 +7,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
-    APP_ENV=production
+    APP_ENV=production \
+    DATABASE_URL="postgresql+asyncpg://postgres.rvwidboufaprjgvwbrjn:amarjeet123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
