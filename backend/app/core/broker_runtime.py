@@ -66,20 +66,20 @@ def _env_config() -> BrokerConfig:
     creds: Dict[str, Any] = {}
     if provider == "fyers":
         if cfg.fyers_app_id:
-            creds["app_id"] = cfg.fyers_app_id
+            creds["app_id"] = cfg.fyers_app_id.strip().strip("\"'")
         if cfg.fyers_secret_key:
-            creds["secret_key"] = cfg.fyers_secret_key
+            creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
         if cfg.fyers_access_token:
-            creds["access_token"] = cfg.fyers_access_token
+            creds["access_token"] = cfg.fyers_access_token.strip().strip("\"'")
     elif provider == "flattrade":
         if cfg.flattrade_user_id:
-            creds["user_id"] = cfg.flattrade_user_id
+            creds["user_id"] = cfg.flattrade_user_id.strip().strip("\"'")
         if cfg.flattrade_api_key:
-            creds["api_key"] = cfg.flattrade_api_key
+            creds["api_key"] = cfg.flattrade_api_key.strip().strip("\"'")
         if cfg.flattrade_api_secret:
-            creds["api_secret"] = cfg.flattrade_api_secret
+            creds["api_secret"] = cfg.flattrade_api_secret.strip().strip("\"'")
         if cfg.flattrade_token:
-            creds["token"] = cfg.flattrade_token
+            creds["token"] = cfg.flattrade_token.strip().strip("\"'")
 
     return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
 
@@ -106,7 +106,7 @@ def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
         if val in (None, "") and ctor_arg == "access_token":
             val = raw.get("accessToken") or raw.get("access_token") or raw.get("token")
         if val not in (None, ""):
-            creds[ctor_arg] = val
+            creds[ctor_arg] = val.strip().strip("\"'") if isinstance(val, str) else val
     return creds
 
 

@@ -28,3 +28,57 @@ def test_flattrade_login_redirect(client, monkeypatch):
     assert resp.status_code == 307 or resp.status_code == 302
     assert "auth.flattrade.in/?app_key=FT_KEY_999" in resp.headers["location"]
 
+
+def test_fyers_callback_no_code(client):
+    resp = client.get("/api/v1/tokens/fyers/callback")
+    assert resp.status_code == 200
+    assert "FYERS OAuth Callback Ready" in resp.text
+
+
+def test_fyers_callback_missing_creds(client, monkeypatch):
+    from app.core.broker_runtime import reset
+    reset()
+    monkeypatch.setattr(settings, "fyers_app_id", "")
+    monkeypatch.setattr(settings, "fyers_secret_key", "")
+    resp = client.get("/api/v1/tokens/fyers/callback?auth_code=sample_code")
+    assert resp.status_code == 400
+    assert "Fyers App ID or Secret Missing" in resp.text
+
+
+def test_fyers_callback_exchange_internal_server_error(client, monkeypatch):
+    from app.core.broker_runtime import apply_app_settings
+    apply_app_settings({
+        "broker": {
+            "provider": "fyers",
+            "fyers": {
+                "appId": "HVMUH3H2LQ-100",
+                "secret": "wrong_secret",
+            }
+        }
+    })
+    
+    class MockResponse:
+        status_code = 400
+        def json(self):
+            return {"s": "error", "code": -1, "message": "internal server error"}
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def post(self, url, **kwargs):
+            return MockResponse()
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    resp = client.get("/api/v1/tokens/fyers/callback?auth_code=dummy_code")
+    assert resp.status_code == 400
+    assert "Fyers Token Exchange Failed" in resp.text
+    assert "internal server error" in resp.text
+    assert "Common Causes &amp; Fixes" in resp.text or "Common Causes & Fixes" in resp.text
+
+
