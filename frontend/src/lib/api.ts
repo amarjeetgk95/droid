@@ -659,6 +659,13 @@ class ApiClient {
     });
   }
 
+  async previewPaperMargin(payload: { symbol: string; underlying: string; side: 'BUY' | 'SELL'; quantity: number; price: number }) {
+    return this.request<{ data: { required_margin: number; premium: number; available_margin: number; affordable: boolean }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/paper/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // ML Prediction Engine
   async getMLPrediction(symbol: string = 'NIFTY') {
     return this.request<{ data: import('./types').MLPredictionResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}`);

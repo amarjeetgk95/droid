@@ -57,6 +57,9 @@ export default function PaperTradingPage() {
   const [offlineMode, setOfflineMode] = useState<boolean>(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [prefillOrder, setPrefillOrder] = useState<OrderPayload | null>(null);
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [pnlHistory, setPnlHistory] = useState<number[]>([]);
   const toastId = useRef(0);
 
   const dismissToast = useCallback((id: number) => {
@@ -76,6 +79,10 @@ export default function PaperTradingPage() {
       setSummary(s);
       setPositions(p);
       setOrders(o);
+      setPnlHistory((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1] === s.total_portfolio_pnl) return prev;
+        return [...prev.slice(-29), s.total_portfolio_pnl];
+      });
     },
     [],
   );
@@ -87,39 +94,40 @@ export default function PaperTradingPage() {
       api.getPaperOrders(),
     ]);
     applySnapshot(sumRes.data, posRes.data, ordRes.data);
+    setLastUpdatedMs(Date.now());
   }, [applySnapshot]);
 
   const refreshFromLocal = useCallback(() => {
     applySnapshot(getLocalPortfolio(), getLocalPositions(), getLocalOrders());
+    setLastUpdatedMs(Date.now());
   }, [applySnapshot]);
 
-  // Polling data - resilient: falls back to localStorage when backend unreachable (deployed site without Cloud Run)
+  // Polling: fast lane (portfolio+positions ~5s for live MTM) + slow lane (orders 15s).
+  // Falls back to localStorage when backend unreachable. Pauses when tab hidden.
   useEffect(() => {
     let isMounted = true;
 
-    const loadData = async () => {
+    const loadFast = async () => {
       try {
-        const [sumRes, posRes, ordRes] = await Promise.all([
+        const [sumRes, posRes] = await Promise.all([
           api.getPaperPortfolio(),
           api.getPaperPositions(),
-          api.getPaperOrders(),
         ]);
         if (isMounted) {
           setSummary(sumRes.data);
           setPositions(posRes.data);
-          setOrders(ordRes.data);
           setOfflineMode(false);
           setError(null);
+          setLastUpdatedMs(Date.now());
         }
       } catch (err) {
         if (isBackendUnreachableError(err)) {
-          // Backend not reachable (e.g. Render cold start) -> use browser-local paper trading
           if (isMounted) {
             setSummary(getLocalPortfolio());
             setPositions(getLocalPositions());
-            setOrders(getLocalOrders());
             setOfflineMode(true);
             setError(null);
+            setLastUpdatedMs(Date.now());
           }
         } else if (isMounted) {
           setError(err instanceof Error ? err.message : 'Failed to load paper trading data');
@@ -129,24 +137,70 @@ export default function PaperTradingPage() {
       }
     };
 
-    loadData();
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
-      timeout = setTimeout(async () => {
-        if (!document.hidden) await loadData();
-        schedule();
+    const loadSlow = async () => {
+      try {
+        const ordRes = await api.getPaperOrders();
+        if (isMounted) setOrders(ordRes.data);
+      } catch (err) {
+        if (isBackendUnreachableError(err)) {
+          if (isMounted) {
+            setOrders(getLocalOrders());
+            setOfflineMode(true);
+          }
+        }
+      }
+    };
+
+    const loadAll = async () => {
+      await loadFast();
+      await loadSlow();
+    };
+
+    loadAll();
+    let fastTimer: ReturnType<typeof setTimeout> | null = null;
+    let slowTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleFast = () => {
+      const jittered = 5000 * (0.8 + Math.random() * 0.4);
+      fastTimer = setTimeout(async () => {
+        if (!document.hidden) await loadFast();
+        scheduleFast();
       }, jittered);
     };
-    schedule();
-    const onVis = () => { if (!document.hidden) void loadData(); };
+    const scheduleSlow = () => {
+      const jittered = 15000 * (0.8 + Math.random() * 0.4);
+      slowTimer = setTimeout(async () => {
+        if (!document.hidden) await loadSlow();
+        scheduleSlow();
+      }, jittered);
+    };
+    scheduleFast();
+    scheduleSlow();
+    // Tick every 5s so "Updated Xs ago" stays honest without refetching.
+    const clockTimer = setInterval(() => setNowMs(Date.now()), 5000);
+    const onVis = () => { if (!document.hidden) void loadFast(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
-      if (timeout) clearTimeout(timeout);
+      if (fastTimer) clearTimeout(fastTimer);
+      if (slowTimer) clearTimeout(slowTimer);
+      clearInterval(clockTimer);
       document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
+
+  const retryBackend = async () => {
+    try {
+      await refreshFromBackend();
+      setOfflineMode(false);
+      setLastUpdatedMs(Date.now());
+      pushToast('success', 'Backend reachable — live paper data restored.');
+    } catch {
+      pushToast('error', 'Backend still unreachable — staying in offline mode.');
+    }
+  };
+
+  const updatedAgoSecs = lastUpdatedMs ? Math.max(0, Math.round((nowMs - lastUpdatedMs) / 1000)) : null;
+  const feedStale = offlineMode || updatedAgoSecs === null || updatedAgoSecs > 30;
 
   const handlePlaceOrder = async (orderPayload: OrderPayload) => {
     setPlacing(true);
@@ -333,8 +387,80 @@ export default function PaperTradingPage() {
     }
   };
 
-  const handleRetryOrder = (order: VirtualOrder) => {
-    setPrefillOrder({
+  const handlePartialExit = async (position: VirtualPosition, qty: number) => {
+    const exitSide = position.side === 'BUY' ? 'SELL' : 'BUY';
+    const payload: OrderPayload = {
+      symbol: position.symbol,
+      underlying: position.underlying,
+      side: exitSide,
+      order_type: 'MARKET',
+      product: position.product,
+      quantity: qty,
+      price: 0,
+    };
+    setSquareOffId(position.position_id);
+    try {
+      if (offlineMode) {
+        placeLocalOrder(payload);
+        refreshFromLocal();
+        pushToast('success', `Exited ${qty}/${position.quantity} ${position.symbol}.`);
+      } else {
+        try {
+          await api.placePaperOrder(payload);
+        } catch (e) {
+          if (isBackendUnreachableError(e)) {
+            setOfflineMode(true);
+            placeLocalOrder(payload);
+            refreshFromLocal();
+            pushToast('success', `Exited ${qty}/${position.quantity} ${position.symbol} (offline).`);
+            return;
+          }
+          throw e;
+        }
+        await refreshFromBackend();
+        pushToast('success', `Exited ${qty}/${position.quantity} ${position.symbol}.`);
+      }
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : 'Partial exit failed');
+    } finally {
+      setSquareOffId(null);
+    }
+  };
+
+  const downloadCsv = (filename: string, rows: (string | number | null | undefined)[][]) => {
+    const esc = (v: string | number | null | undefined) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = rows.map((r) => r.map(esc).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPositions = () => {
+    downloadCsv(`paper-positions-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ['position_id', 'symbol', 'underlying', 'side', 'product', 'quantity', 'avg', 'ltp', 'unrealized', 'realized', 'margin', 'is_open'],
+      ...positions.map((p) => [p.position_id, p.symbol, p.underlying, p.side, p.product, p.quantity, p.average_price, p.ltp, p.unrealized_pnl, p.realized_pnl, p.used_margin, p.is_open ? 'OPEN' : 'CLOSED']),
+    ]);
+    pushToast('success', 'Positions exported to CSV.');
+  };
+
+  const handleExportOrders = () => {
+    downloadCsv(`paper-orders-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ['order_id', 'timestamp', 'symbol', 'underlying', 'side', 'product', 'qty', 'price', 'fill_price', 'status', 'rejection_reason'],
+      ...orders.map((o) => [o.order_id, o.timestamp, o.symbol, o.underlying, o.side, o.product, o.quantity, o.price, o.fill_price ?? '', o.status, o.rejection_reason ?? '']),
+    ]);
+    pushToast('success', 'Order book exported to CSV.');
+  };
+
+  const handleRetryOrder = (order: VirtualOrder) => {    setPrefillOrder({
       symbol: order.symbol,
       underlying: order.underlying,
       side: order.side,
@@ -350,9 +476,18 @@ export default function PaperTradingPage() {
   return (
     <div className="space-y-4">
       {offlineMode && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-700 text-xs font-medium">
-          <WifiOff className="w-4 h-4" />
-          <span>Offline demo mode — backend unreachable, paper trading runs in browser storage (localStorage). Orders persist locally until you clear site data.</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-700 text-xs font-medium">
+          <span className="flex items-center gap-2">
+            <WifiOff className="w-4 h-4" />
+            <span>Offline demo mode — backend unreachable, paper trading runs in browser storage (localStorage). Orders persist locally until you clear site data.</span>
+          </span>
+          <button
+            type="button"
+            onClick={retryBackend}
+            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-[11px] font-bold transition-all cursor-pointer"
+          >
+            Retry Backend
+          </button>
         </div>
       )}
       {/* Portfolio Summary Banner */}
@@ -362,45 +497,57 @@ export default function PaperTradingPage() {
         onReset={handleReset}
         loading={initialLoading}
         busyAction={busyAction}
+        pnlSpark={pnlHistory}
+        onExportOrders={handleExportOrders}
+        onExportPositions={handleExportPositions}
       />
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-2 border-b border-border pb-2">
-        <button
-          onClick={() => setActiveTab('POSITIONS')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeTab === 'POSITIONS'
-              ? 'bg-primary text-primary-foreground shadow-xs'
-              : 'bg-secondary text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" />
-          <span>Positions ({positions.filter((p) => p.is_open).length})</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('POSITIONS')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'POSITIONS'
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Positions ({positions.filter((p) => p.is_open).length})</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('ORDERS')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeTab === 'ORDERS'
-              ? 'bg-primary text-primary-foreground shadow-xs'
-              : 'bg-secondary text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <ListOrdered className="w-3.5 h-3.5" />
-          <span>Order Book ({orders.length})</span>
-        </button>
+          <button
+            onClick={() => setActiveTab('ORDERS')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'ORDERS'
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+            <span>Order Book ({orders.length})</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('TRADE')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            activeTab === 'TRADE'
-              ? 'bg-primary text-primary-foreground shadow-xs'
-              : 'bg-secondary text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Send className="w-3.5 h-3.5" />
-          <span>Place Order / Baskets</span>
-        </button>
+          <button
+            onClick={() => setActiveTab('TRADE')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'TRADE'
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>Place Order / Baskets</span>
+          </button>
+        </div>
+
+        {/* Freshness indicator — MTM is only trustworthy when fresh */}
+        <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground" title="Portfolio+positions refresh every ~5s, orders every ~15s">
+          <span className={`h-1.5 w-1.5 rounded-full ${feedStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
+          {offlineMode ? 'OFFLINE • local' : feedStale ? 'STALE' : 'LIVE'}
+          {updatedAgoSecs !== null && <span>• {updatedAgoSecs}s ago</span>}
+        </span>
       </div>
 
       {/* Main Tab Content */}
@@ -410,13 +557,21 @@ export default function PaperTradingPage() {
         </div>
       )}
 
-      {activeTab === 'POSITIONS' && (
+      {initialLoading && activeTab === 'POSITIONS' ? (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-2 shadow-xs" aria-label="Loading positions">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-10 rounded-lg bg-secondary/60 animate-pulse" />
+          ))}
+        </div>
+      ) : activeTab === 'POSITIONS' ? (
         <PositionsTable
           positions={positions}
           onSquareOff={handleSquareOffPosition}
+          onPartialExit={handlePartialExit}
+          onTrade={() => setActiveTab('TRADE')}
           squareOffId={squareOffId}
         />
-      )}
+      ) : null}
 
       {activeTab === 'ORDERS' && (
         <OrderBookTable orders={orders} onRetry={handleRetryOrder} />
@@ -428,6 +583,7 @@ export default function PaperTradingPage() {
           onPlaceBasket={handlePlaceBasket}
           loading={placing}
           prefill={prefillOrder}
+          availableMargin={summary.available_margin}
         />
       )}
 

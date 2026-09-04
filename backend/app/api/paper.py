@@ -165,6 +165,54 @@ class SetCapitalPayload(BaseModel):
     capital: float
 
 
+class MarginPreviewPayload(BaseModel):
+    symbol: str
+    underlying: str
+    side: str = "BUY"
+    quantity: int = 1
+    price: float = 0.0
+
+
+@router.post("/preview")
+async def preview_margin(
+    payload: MarginPreviewPayload,
+    user: Optional[AuthUser] = Depends(get_current_user),
+    session: Optional[AsyncSession] = Depends(get_db_session),
+):
+    """Estimate margin + premium for a hypothetical order without executing it."""
+    try:
+        from app.quant.margin import calculate_required_margin
+
+        sym = (payload.symbol or "").upper()
+        is_opt = "CE" in sym or "PE" in sym
+        if is_opt:
+            inst_type = "OPTION_BUY" if payload.side.upper() == "BUY" else "OPTION_SELL"
+        else:
+            inst_type = "FUTURES"
+        req_margin = calculate_required_margin(
+            instrument_type=inst_type,  # type: ignore[arg-type]
+            underlying=payload.underlying,
+            price=payload.price,
+            quantity=payload.quantity,
+            is_hedged=False,
+        )
+        user_uuid = _parse_user_uuid(user)
+        portfolio = await paper_service.get_portfolio_summary(session, user_uuid)
+        premium = round(payload.price * payload.quantity, 2) if is_opt and payload.side.upper() == "BUY" else 0.0
+        return {
+            "data": {
+                "required_margin": req_margin,
+                "premium": premium,
+                "available_margin": portfolio.available_margin,
+                "affordable": req_margin <= portfolio.available_margin,
+            },
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/wallet")
 async def set_paper_wallet_capital(
     payload: SetCapitalPayload,

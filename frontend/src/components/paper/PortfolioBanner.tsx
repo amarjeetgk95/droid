@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { PortfolioSummary } from '@/lib/types';
-import { Wallet, TrendingUp, TrendingDown, ShieldAlert, RotateCcw, AlertOctagon, X } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ShieldAlert, RotateCcw, AlertOctagon, X, Download } from 'lucide-react';
 
 type BusyAction = 'square-off-all' | 'reset' | null;
 
@@ -12,12 +12,18 @@ export function PortfolioBanner({
   onReset,
   loading,
   busyAction,
+  pnlSpark,
+  onExportOrders,
+  onExportPositions,
 }: {
   summary: PortfolioSummary;
   onSquareOffAll: () => void;
   onReset: () => void;
   loading: boolean;
   busyAction?: BusyAction;
+  pnlSpark?: number[];
+  onExportOrders?: () => void;
+  onExportPositions?: () => void;
 }) {
   const [confirmTarget, setConfirmTarget] = useState<Exclude<BusyAction, null> | null>(null);
   const isPos = summary.total_portfolio_pnl >= 0;
@@ -43,6 +49,24 @@ export function PortfolioBanner({
     setConfirmTarget(null);
   };
 
+  const marginBar = summary.margin_utilization_pct > 90 ? 'bg-rose-500' : summary.margin_utilization_pct > 70 ? 'bg-amber-500' : 'bg-primary';
+
+  const sparkPath = useMemo(() => {
+    const data = (pnlSpark ?? []).slice(-30);
+    if (data.length < 2) return null;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min || 1;
+    const w = 120;
+    const h = 28;
+    const pts = data.map((v, i) => {
+      const x = (i / (data.length - 1)) * w;
+      const y = h - 3 - ((v - min) / range) * (h - 6);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    return { d: `M${pts.join(' L')}`, up: data[data.length - 1] >= data[0] };
+  }, [pnlSpark]);
+
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -52,7 +76,31 @@ export function PortfolioBanner({
         </div>
 
         {/* Quick Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {(onExportOrders || onExportPositions) && (
+            <span className="flex items-center gap-1">
+              {onExportPositions && (
+                <button
+                  type="button"
+                  onClick={onExportPositions}
+                  title="Export positions CSV"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground rounded-lg text-[11px] font-bold transition-all cursor-pointer border border-border"
+                >
+                  <Download className="w-3 h-3" /> Positions
+                </button>
+              )}
+              {onExportOrders && (
+                <button
+                  type="button"
+                  onClick={onExportOrders}
+                  title="Export orders CSV"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground rounded-lg text-[11px] font-bold transition-all cursor-pointer border border-border"
+                >
+                  <Download className="w-3 h-3" /> Orders
+                </button>
+              )}
+            </span>
+          )}
           <button
             onClick={() => setConfirmTarget('square-off-all')}
             disabled={squareOffBusy || summary.open_positions_count === 0}
@@ -106,8 +154,15 @@ export function PortfolioBanner({
             Net Total P&L
             {isPos ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> : <TrendingDown className="w-3.5 h-3.5 text-rose-400" />}
           </span>
-          <div className={`text-base font-mono font-black ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {isPos ? '+' : ''}₹{summary.total_portfolio_pnl.toLocaleString('en-IN')}
+          <div className="flex items-end justify-between gap-2">
+            <div className={`text-base font-mono font-black ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {isPos ? '+' : ''}₹{summary.total_portfolio_pnl.toLocaleString('en-IN')}
+            </div>
+            {sparkPath && (
+              <svg width="120" height="28" viewBox="0 0 120 28" className="shrink-0 opacity-90" aria-hidden="true">
+                <path d={sparkPath.d} fill="none" stroke={sparkPath.up ? '#34d399' : '#fb7185'} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+              </svg>
+            )}
           </div>
           <span className="text-[10px] text-muted-foreground font-mono">
             Realized: <strong className={summary.total_realized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{summary.total_realized_pnl >= 0 ? '+' : ''}₹{summary.total_realized_pnl.toLocaleString('en-IN')}</strong>
@@ -127,9 +182,7 @@ export function PortfolioBanner({
           <div className="space-y-1 pt-0.5">
             <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
               <div
-                className={`h-full transition-all ${
-                  summary.margin_utilization_pct > 80 ? 'bg-rose-500' : 'bg-primary'
-                }`}
+                className={`h-full transition-all ${marginBar}`}
                 style={{ width: `${Math.min(100, summary.margin_utilization_pct)}%` }}
               ></div>
             </div>
