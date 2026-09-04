@@ -36,7 +36,9 @@ if NvidiaProvider:
     _providers["nvidia"] = NvidiaProvider()
 # custom_openai requires base_url, so not pre-registered singleton
 
-def get_llm_provider(name: str = "gemini") -> BaseLLMProvider:
+def get_llm_provider(name: str = "gemini", **kwargs) -> BaseLLMProvider:
+    if kwargs:
+        return create_provider_for_test(name, **kwargs)
     key = (name or "gemini").lower()
     # compat: mock_ai -> openrouter
     if key == "mock_ai":
