@@ -9,10 +9,12 @@ export function OrderEntryTicket({
   onPlaceOrder,
   onPlaceBasket,
   loading,
+  prefill,
 }: {
   onPlaceOrder: (order: OrderPayload) => void;
   onPlaceBasket: (basket: BasketOrderPayload) => void;
   loading: boolean;
+  prefill?: OrderPayload | null;
 }) {
   const [activeTab, setActiveTab] = useState<'SINGLE' | 'BASKET'>('SINGLE');
   const [executionMode, setExecutionMode] = useState<'PAPER' | 'LIVE'>('PAPER');
@@ -35,6 +37,21 @@ export function OrderEntryTicket({
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
   const [quantity, setQuantity] = useState(75);
   const [price, setPrice] = useState(150.0);
+
+  // Retry from Order Book: prefill ticket with the rejected order (halve qty as a starting suggestion).
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.symbol) setSymbol(prefill.symbol);
+    if (prefill.underlying) setUnderlying(prefill.underlying);
+    if (prefill.side === 'BUY' || prefill.side === 'SELL') setSide(prefill.side);
+    if (prefill.product === 'INTRADAY' || prefill.product === 'CARRYFORWARD') setProduct(prefill.product);
+    if (typeof prefill.quantity === 'number' && prefill.quantity > 0) {
+      setQuantity(Math.max(1, Math.floor(prefill.quantity / 2)));
+    }
+    if (prefill.order_type === 'MARKET' || prefill.order_type === 'LIMIT') setOrderType(prefill.order_type);
+    if (typeof prefill.price === 'number' && prefill.price > 0) setPrice(prefill.price);
+    setActiveTab('SINGLE');
+  }, [prefill]);
 
   const handleSingleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

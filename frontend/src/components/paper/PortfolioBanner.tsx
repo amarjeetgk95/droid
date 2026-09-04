@@ -1,21 +1,47 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { PortfolioSummary } from '@/lib/types';
-import { Wallet, TrendingUp, TrendingDown, ShieldAlert, RotateCcw, AlertOctagon } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ShieldAlert, RotateCcw, AlertOctagon, X } from 'lucide-react';
+
+type BusyAction = 'square-off-all' | 'reset' | null;
 
 export function PortfolioBanner({
   summary,
   onSquareOffAll,
   onReset,
   loading,
+  busyAction,
 }: {
   summary: PortfolioSummary;
   onSquareOffAll: () => void;
   onReset: () => void;
   loading: boolean;
+  busyAction?: BusyAction;
 }) {
+  const [confirmTarget, setConfirmTarget] = useState<Exclude<BusyAction, null> | null>(null);
   const isPos = summary.total_portfolio_pnl >= 0;
   const isMtmPos = summary.total_unrealized_pnl >= 0;
+  // Prefer per-action busy state when provided, fall back to legacy global loading.
+  const squareOffBusy = busyAction !== undefined ? busyAction === 'square-off-all' : loading;
+  const resetBusy = busyAction !== undefined ? busyAction === 'reset' : loading;
+  const anyBusy = squareOffBusy || resetBusy;
+
+  // Escape closes the confirm dialog.
+  useEffect(() => {
+    if (!confirmTarget) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmTarget(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmTarget]);
+
+  const handleConfirm = () => {
+    if (confirmTarget === 'square-off-all') onSquareOffAll();
+    else if (confirmTarget === 'reset') onReset();
+    setConfirmTarget(null);
+  };
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
@@ -28,21 +54,21 @@ export function PortfolioBanner({
         {/* Quick Action Controls */}
         <div className="flex items-center gap-2">
           <button
-            onClick={onSquareOffAll}
-            disabled={loading || summary.open_positions_count === 0}
+            onClick={() => setConfirmTarget('square-off-all')}
+            disabled={squareOffBusy || summary.open_positions_count === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs disabled:opacity-40"
           >
             <AlertOctagon className="w-3.5 h-3.5" />
-            <span>Square Off All ({summary.open_positions_count})</span>
+            <span>{squareOffBusy ? 'Squaring off…' : `Square Off All (${summary.open_positions_count})`}</span>
           </button>
 
           <button
-            onClick={onReset}
-            disabled={loading}
+            onClick={() => setConfirmTarget('reset')}
+            disabled={resetBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-bold transition-all cursor-pointer border border-border"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Account</span>
+            <span>{resetBusy ? 'Resetting…' : 'Reset Account'}</span>
           </button>
         </div>
       </div>
@@ -113,6 +139,68 @@ export function PortfolioBanner({
           </div>
         </div>
       </div>
+
+      {/* Confirm destructive action — avoids accidental wipe of the virtual account */}
+      {confirmTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !anyBusy && setConfirmTarget(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={confirmTarget === 'square-off-all' ? 'Confirm square off all' : 'Confirm reset account'}
+            className="w-full max-w-sm rounded-xl border border-border bg-card p-5 space-y-3 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="text-sm font-bold text-foreground">
+                {confirmTarget === 'square-off-all' ? 'Square off all positions?' : 'Reset virtual account?'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setConfirmTarget(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                aria-label="Close confirmation"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {confirmTarget === 'square-off-all' ? (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                You will close <strong className="text-foreground">{summary.open_positions_count} open position(s)</strong> and
+                realize approx <strong className={isMtmPos ? 'text-emerald-400' : 'text-rose-400'}>
+                  {isMtmPos ? '+' : ''}₹{summary.total_unrealized_pnl.toLocaleString('en-IN')}
+                </strong> of open MTM. Booked P&L so far:{' '}
+                <strong className="text-foreground">₹{summary.total_realized_pnl.toLocaleString('en-IN')}</strong>.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                This clears all positions and order history and resets P&L to zero (base ₹
+                {summary.virtual_capital.toLocaleString('en-IN')}). This cannot be undone.
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setConfirmTarget(null)}
+                className="px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                disabled={anyBusy}
+                className="px-3 py-1.5 rounded-lg bg-destructive hover:bg-destructive/90 text-destructive-foreground text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                {confirmTarget === 'square-off-all' ? 'Confirm Square-Off' : 'Confirm Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -34,6 +34,19 @@ def test_cross_underlying_quote_isolation():
     # Ensure banknifty trade in ledger
     trades = signal_audit_ledger.list_trades()
     bnf_trade = next((t for t in trades if "BANK" in t.underlying), None)
+    if bnf_trade is None:
+        bnf_trade = signal_audit_ledger.record_signal_created(
+            signal_id="sig-bnf-test-isolation",
+            underlying="BANKNIFTY",
+            strategy="MOMENTUM",
+            direction="LONG_CALL",
+            timeframe="5M",
+            spot_price=51000.0,
+            trigger=51100.0,
+            stop_loss=50900.0,
+            target_1=51300.0,
+            target_2=51500.0,
+        )
     assert bnf_trade is not None
     orig_pnl = bnf_trade.actual_pnl_inr
     orig_price = bnf_trade.current_price

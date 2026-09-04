@@ -23,18 +23,26 @@ async def persist_hie_snapshot(snapshot: HistoricalStateSnapshot) -> bool:
         return False
 
     try:
-        raw_feat = snapshot.canonical_features.to_flat_dict() if hasattr(snapshot, "canonical_features") else {}
-        norm_feat = snapshot.normalized_features.normalized_dict if hasattr(snapshot, "normalized_features") else {}
+        fv = getattr(snapshot, "feature_vector", getattr(snapshot, "canonical_features", None))
+        raw_feat = fv.to_flat_dict() if hasattr(fv, "to_flat_dict") else (fv if isinstance(fv, dict) else {})
+        nv = getattr(snapshot, "normalized_vector", getattr(snapshot, "normalized_features", None))
+        norm_feat = nv.normalized_dict if hasattr(nv, "normalized_dict") else (nv if isinstance(nv, dict) else {})
         embedding = snapshot.embedding if hasattr(snapshot, "embedding") and snapshot.embedding else [0.0] * 32
 
-        # Ensure trading_date is date format (YYYY-MM-DD)
+        # Ensure trading_date is python date object for PostgreSQL DATE column
+        from datetime import date as dt_date
         td = snapshot.trading_date
         if isinstance(td, datetime):
-            td_str = td.strftime("%Y-%m-%d")
+            td_date = td.date()
+        elif isinstance(td, dt_date):
+            td_date = td
         elif isinstance(td, str) and len(td) >= 10:
-            td_str = td[:10]
+            try:
+                td_date = dt_date.fromisoformat(td[:10])
+            except Exception:
+                td_date = datetime.now(timezone.utc).date()
         else:
-            td_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            td_date = datetime.now(timezone.utc).date()
 
         query = text("""
             INSERT INTO hie_state_snapshots (
@@ -43,7 +51,7 @@ async def persist_hie_snapshot(snapshot: HistoricalStateSnapshot) -> bool:
                 data_quality_score, feature_version, embedding_version,
                 raw_features_json, normalized_features_json, embedding_vector, created_at
             ) VALUES (
-                :snapshot_id, :instrument, :timeframe, :timestamp, CAST(:trading_date AS DATE), :session,
+                :snapshot_id, :instrument, :timeframe, :timestamp, :trading_date, :session,
                 :minute_of_session, :market_regime, :volatility_regime, :vix_bucket,
                 :data_quality_score, :feature_version, :embedding_version,
                 CAST(:raw_features_json AS JSONB), CAST(:normalized_features_json AS JSONB), :embedding_vector, now()
@@ -59,7 +67,7 @@ async def persist_hie_snapshot(snapshot: HistoricalStateSnapshot) -> bool:
             "instrument": snapshot.instrument,
             "timeframe": snapshot.timeframe,
             "timestamp": snapshot.timestamp,
-            "trading_date": td_str,
+            "trading_date": td_date,
             "session": snapshot.session.value if hasattr(snapshot.session, "value") else str(snapshot.session),
             "minute_of_session": getattr(snapshot, "minute_of_session", 0),
             "market_regime": snapshot.market_regime.value if hasattr(snapshot.market_regime, "value") else str(snapshot.market_regime),

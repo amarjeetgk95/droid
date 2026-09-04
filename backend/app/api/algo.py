@@ -719,10 +719,18 @@ async def create_signal(
     # Persist
     if session is not None and not isinstance(acct, dict):
         try:
+            d_norm = signal.direction
+            if "CALL" in d_norm or "BUY" in d_norm:
+                d_norm = "LONG"
+            elif "PUT" in d_norm or "SELL" in d_norm:
+                d_norm = "SHORT"
+            elif d_norm not in ("LONG", "SHORT"):
+                d_norm = "NO_TRADE"
+
             db_sig = AlgoSignalDB(
                 signal_id=signal.signal_id, account_id=aid, strategy_id=signal.strategy_id,
                 instrument_id=str(signal.instrument_id) if signal.instrument_id else None,
-                symbol=signal.symbol, direction=signal.direction,
+                symbol=signal.symbol, direction=d_norm,
                 market_snapshot_id=signal.market_snapshot_id, technical_state=signal.technical_state,
                 mtf_state=signal.mtf_state, fo_state=signal.fo_state,
                 regime=signal.regime if isinstance(signal.regime, str) else (signal.regime.get("regime") if isinstance(signal.regime, dict) else (str(signal.regime) if signal.regime else None)),

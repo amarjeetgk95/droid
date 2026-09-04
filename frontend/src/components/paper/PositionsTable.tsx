@@ -6,9 +6,11 @@ import { Layers, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
 export function PositionsTable({
   positions,
   onSquareOff,
+  squareOffId,
 }: {
   positions: VirtualPosition[];
   onSquareOff: (positionId: string) => void;
+  squareOffId?: string | null;
 }) {
   const openPositions = positions.filter((p) => p.is_open);
   const closedPositions = positions.filter((p) => !p.is_open);
@@ -85,10 +87,11 @@ export function PositionsTable({
                     <td className="py-2.5 px-2 text-center">
                       <button
                         onClick={() => onSquareOff(pos.position_id)}
-                        className="px-2 py-1 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground border border-destructive/30 rounded text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 mx-auto"
+                        disabled={squareOffId === pos.position_id}
+                        className="px-2 py-1 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground border border-destructive/30 rounded text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 mx-auto disabled:opacity-50"
                       >
                         <XCircle className="w-3 h-3" />
-                        <span>Exit</span>
+                        <span>{squareOffId === pos.position_id ? 'Exiting…' : 'Exit'}</span>
                       </button>
                     </td>
                   </tr>

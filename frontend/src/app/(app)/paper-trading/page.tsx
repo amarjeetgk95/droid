@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
 import {
   PortfolioSummary,
@@ -24,7 +24,14 @@ import { PortfolioBanner } from '@/components/paper/PortfolioBanner';
 import { PositionsTable } from '@/components/paper/PositionsTable';
 import { OrderBookTable } from '@/components/paper/OrderBookTable';
 import { OrderEntryTicket } from '@/components/paper/OrderEntryTicket';
-import { Layers, ListOrdered, Send, WifiOff } from 'lucide-react';
+import { Layers, ListOrdered, Send, WifiOff, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+
+type Toast = {
+  id: number;
+  kind: 'success' | 'error';
+  msg: string;
+  action?: 'view-positions' | 'view-orders';
+};
 
 export default function PaperTradingPage() {
   const [activeTab, setActiveTab] = useState<'POSITIONS' | 'ORDERS' | 'TRADE'>('POSITIONS');
@@ -41,9 +48,50 @@ export default function PaperTradingPage() {
 
   const [positions, setPositions] = useState<VirtualPosition[]>([]);
   const [orders, setOrders] = useState<VirtualOrder[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  // Per-action loading: initial fetch vs order placement vs per-row square-off vs banner actions.
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [placing, setPlacing] = useState<boolean>(false);
+  const [squareOffId, setSquareOffId] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<'square-off-all' | 'reset' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offlineMode, setOfflineMode] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [prefillOrder, setPrefillOrder] = useState<OrderPayload | null>(null);
+  const toastId = useRef(0);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const pushToast = useCallback((kind: Toast['kind'], msg: string, action?: Toast['action']) => {
+    const id = ++toastId.current;
+    setToasts((prev) => [...prev.slice(-3), { id, kind, msg, action }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 5000);
+  }, []);
+
+  const applySnapshot = useCallback(
+    (s: PortfolioSummary, p: VirtualPosition[], o: VirtualOrder[]) => {
+      setSummary(s);
+      setPositions(p);
+      setOrders(o);
+    },
+    [],
+  );
+
+  const refreshFromBackend = useCallback(async () => {
+    const [sumRes, posRes, ordRes] = await Promise.all([
+      api.getPaperPortfolio(),
+      api.getPaperPositions(),
+      api.getPaperOrders(),
+    ]);
+    applySnapshot(sumRes.data, posRes.data, ordRes.data);
+  }, [applySnapshot]);
+
+  const refreshFromLocal = useCallback(() => {
+    applySnapshot(getLocalPortfolio(), getLocalPositions(), getLocalOrders());
+  }, [applySnapshot]);
 
   // Polling data - resilient: falls back to localStorage when backend unreachable (deployed site without Cloud Run)
   useEffect(() => {
@@ -77,7 +125,7 @@ export default function PaperTradingPage() {
           setError(err instanceof Error ? err.message : 'Failed to load paper trading data');
         }
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) setInitialLoading(false);
       }
     };
 
@@ -101,95 +149,103 @@ export default function PaperTradingPage() {
   }, []);
 
   const handlePlaceOrder = async (orderPayload: OrderPayload) => {
-    setLoading(true);
+    setPlacing(true);
     try {
       if (offlineMode) {
-        placeLocalOrder(orderPayload);
-        setSummary(getLocalPortfolio());
-        setPositions(getLocalPositions());
-        setOrders(getLocalOrders());
-        setActiveTab('POSITIONS');
-      } else {
-        try {
-          await api.placePaperOrder(orderPayload);
-        } catch (e) {
-          if (isBackendUnreachableError(e)) {
-            setOfflineMode(true);
-            placeLocalOrder(orderPayload);
-            setSummary(getLocalPortfolio());
-            setPositions(getLocalPositions());
-            setOrders(getLocalOrders());
-            setActiveTab('POSITIONS');
-            return;
-          }
-          throw e;
+        const placed = placeLocalOrder(orderPayload);
+        refreshFromLocal();
+        if (placed.status === 'REJECTED') {
+          pushToast('error', placed.rejection_reason || 'Order rejected.', 'view-orders');
+          setActiveTab('ORDERS');
+        } else {
+          pushToast('success', `Virtual ${placed.side} ${placed.quantity} ${placed.symbol} @ ₹${placed.fill_price}`, 'view-positions');
         }
-        const [sumRes, posRes, ordRes] = await Promise.all([
-          api.getPaperPortfolio(),
-          api.getPaperPositions(),
-          api.getPaperOrders(),
-        ]);
-        setSummary(sumRes.data);
-        setPositions(posRes.data);
-        setOrders(ordRes.data);
-        setActiveTab('POSITIONS');
+        return;
+      }
+      try {
+        const res = await api.placePaperOrder(orderPayload);
+        await refreshFromBackend();
+        const placed = res.data;
+        if (placed?.status === 'REJECTED') {
+          pushToast('error', placed.rejection_reason || 'Order rejected.', 'view-orders');
+          setActiveTab('ORDERS');
+        } else if (placed) {
+          pushToast('success', `Virtual ${placed.side} ${placed.quantity} ${placed.symbol} @ ₹${placed.fill_price}`, 'view-positions');
+        } else {
+          pushToast('success', 'Virtual order placed.', 'view-positions');
+        }
+      } catch (e) {
+        if (isBackendUnreachableError(e)) {
+          setOfflineMode(true);
+          const placed = placeLocalOrder(orderPayload);
+          refreshFromLocal();
+          if (placed.status === 'REJECTED') {
+            pushToast('error', placed.rejection_reason || 'Order rejected.', 'view-orders');
+            setActiveTab('ORDERS');
+          } else {
+            pushToast('success', `Virtual ${placed.side} ${placed.quantity} ${placed.symbol} @ ₹${placed.fill_price} (offline)`, 'view-positions');
+          }
+          return;
+        }
+        throw e;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Order placement failed');
+      pushToast('error', err instanceof Error ? err.message : 'Order placement failed');
     } finally {
-      setLoading(false);
+      setPlacing(false);
     }
   };
 
   const handlePlaceBasket = async (basketPayload: BasketOrderPayload) => {
-    setLoading(true);
+    setPlacing(true);
     try {
       if (offlineMode) {
-        placeLocalBasket(basketPayload);
-        setSummary(getLocalPortfolio());
-        setPositions(getLocalPositions());
-        setOrders(getLocalOrders());
-        setActiveTab('POSITIONS');
-      } else {
-        try {
-          await api.placePaperBasket(basketPayload);
-        } catch (e) {
-          if (isBackendUnreachableError(e)) {
-            setOfflineMode(true);
-            placeLocalBasket(basketPayload);
-            setSummary(getLocalPortfolio());
-            setPositions(getLocalPositions());
-            setOrders(getLocalOrders());
-            setActiveTab('POSITIONS');
-            return;
-          }
-          throw e;
+        const placed = placeLocalBasket(basketPayload);
+        refreshFromLocal();
+        const rejected = placed.filter((o) => o.status === 'REJECTED').length;
+        if (rejected > 0) {
+          pushToast('error', `${placed.length - rejected}/${placed.length} legs filled, ${rejected} rejected.`, 'view-orders');
+          setActiveTab('ORDERS');
+        } else {
+          pushToast('success', `${placed.length}-leg basket executed.`, 'view-positions');
         }
-        const [sumRes, posRes, ordRes] = await Promise.all([
-          api.getPaperPortfolio(),
-          api.getPaperPositions(),
-          api.getPaperOrders(),
-        ]);
-        setSummary(sumRes.data);
-        setPositions(posRes.data);
-        setOrders(ordRes.data);
-        setActiveTab('POSITIONS');
+        return;
+      }
+      try {
+        const res = await api.placePaperBasket(basketPayload);
+        await refreshFromBackend();
+        const placed: VirtualOrder[] = res.data || [];
+        const rejected = placed.filter((o) => o.status === 'REJECTED').length;
+        if (rejected > 0) {
+          pushToast('error', `${placed.length - rejected}/${placed.length} legs filled, ${rejected} rejected.`, 'view-orders');
+          setActiveTab('ORDERS');
+        } else {
+          pushToast('success', `${placed.length}-leg basket executed.`, 'view-positions');
+        }
+      } catch (e) {
+        if (isBackendUnreachableError(e)) {
+          setOfflineMode(true);
+          const placed = placeLocalBasket(basketPayload);
+          refreshFromLocal();
+          pushToast('success', `${placed.length}-leg basket executed (offline).`, 'view-positions');
+          return;
+        }
+        throw e;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Basket order failed');
+      pushToast('error', err instanceof Error ? err.message : 'Basket order failed');
     } finally {
-      setLoading(false);
+      setPlacing(false);
     }
   };
 
   const handleSquareOffPosition = async (positionId: string) => {
-    setLoading(true);
+    setSquareOffId(positionId);
     try {
       if (offlineMode) {
         squareOffLocal(positionId);
-        setSummary(getLocalPortfolio());
-        setPositions(getLocalPositions());
-        setOrders(getLocalOrders());
+        refreshFromLocal();
+        pushToast('success', 'Position squared off.');
       } else {
         try {
           await api.squareOffPosition(positionId);
@@ -197,37 +253,29 @@ export default function PaperTradingPage() {
           if (isBackendUnreachableError(e)) {
             setOfflineMode(true);
             squareOffLocal(positionId);
-            setSummary(getLocalPortfolio());
-            setPositions(getLocalPositions());
-            setOrders(getLocalOrders());
+            refreshFromLocal();
+            pushToast('success', 'Position squared off (offline).');
             return;
           }
           throw e;
         }
-        const [sumRes, posRes, ordRes] = await Promise.all([
-          api.getPaperPortfolio(),
-          api.getPaperPositions(),
-          api.getPaperOrders(),
-        ]);
-        setSummary(sumRes.data);
-        setPositions(posRes.data);
-        setOrders(ordRes.data);
+        await refreshFromBackend();
+        pushToast('success', 'Position squared off.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Square off failed');
+      pushToast('error', err instanceof Error ? err.message : 'Square off failed');
     } finally {
-      setLoading(false);
+      setSquareOffId(null);
     }
   };
 
   const handleSquareOffAll = async () => {
-    setLoading(true);
+    setBusyAction('square-off-all');
     try {
       if (offlineMode) {
         squareOffAllLocal();
-        setSummary(getLocalPortfolio());
-        setPositions(getLocalPositions());
-        setOrders(getLocalOrders());
+        refreshFromLocal();
+        pushToast('success', 'All positions squared off.');
       } else {
         try {
           await api.squareOffAllPositions();
@@ -235,58 +283,68 @@ export default function PaperTradingPage() {
           if (isBackendUnreachableError(e)) {
             setOfflineMode(true);
             squareOffAllLocal();
-            setSummary(getLocalPortfolio());
-            setPositions(getLocalPositions());
-            setOrders(getLocalOrders());
+            refreshFromLocal();
+            pushToast('success', 'All positions squared off (offline).');
             return;
           }
           throw e;
         }
-        const [sumRes, posRes, ordRes] = await Promise.all([
-          api.getPaperPortfolio(),
-          api.getPaperPositions(),
-          api.getPaperOrders(),
-        ]);
-        setSummary(sumRes.data);
-        setPositions(posRes.data);
-        setOrders(ordRes.data);
+        await refreshFromBackend();
+        pushToast('success', 'All positions squared off.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Square off all failed');
+      pushToast('error', err instanceof Error ? err.message : 'Square off all failed');
     } finally {
-      setLoading(false);
+      setBusyAction(null);
     }
   };
 
   const handleReset = async () => {
-    setLoading(true);
+    setBusyAction('reset');
     try {
       if (offlineMode) {
         setSummary(resetLocal());
         setPositions([]);
         setOrders([]);
+        pushToast('success', 'Virtual account reset.');
       } else {
         try {
           const resetRes = await api.resetPaperAccount();
           setSummary(resetRes.data);
           setPositions([]);
           setOrders([]);
+          pushToast('success', 'Virtual account reset.');
         } catch (e) {
           if (isBackendUnreachableError(e)) {
             setOfflineMode(true);
             setSummary(resetLocal());
             setPositions([]);
             setOrders([]);
+            pushToast('success', 'Virtual account reset (offline).');
             return;
           }
           throw e;
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reset failed');
+      pushToast('error', err instanceof Error ? err.message : 'Reset failed');
     } finally {
-      setLoading(false);
+      setBusyAction(null);
     }
+  };
+
+  const handleRetryOrder = (order: VirtualOrder) => {
+    setPrefillOrder({
+      symbol: order.symbol,
+      underlying: order.underlying,
+      side: order.side,
+      product: order.product,
+      order_type: order.order_type === 'LIMIT' ? 'LIMIT' : 'MARKET',
+      quantity: order.quantity,
+      price: order.price > 0 ? order.price : 0,
+      trigger_price: order.trigger_price ?? null,
+    });
+    setActiveTab('TRADE');
   };
 
   return (
@@ -302,7 +360,8 @@ export default function PaperTradingPage() {
         summary={summary}
         onSquareOffAll={handleSquareOffAll}
         onReset={handleReset}
-        loading={loading}
+        loading={initialLoading}
+        busyAction={busyAction}
       />
 
       {/* Navigation Sub-Tabs */}
@@ -355,20 +414,69 @@ export default function PaperTradingPage() {
         <PositionsTable
           positions={positions}
           onSquareOff={handleSquareOffPosition}
+          squareOffId={squareOffId}
         />
       )}
 
       {activeTab === 'ORDERS' && (
-        <OrderBookTable orders={orders} />
+        <OrderBookTable orders={orders} onRetry={handleRetryOrder} />
       )}
 
       {activeTab === 'TRADE' && (
         <OrderEntryTicket
           onPlaceOrder={handlePlaceOrder}
           onPlaceBasket={handlePlaceBasket}
-          loading={loading}
+          loading={placing}
+          prefill={prefillOrder}
         />
       )}
+
+      {/* Toasts — success/error feedback without blocking the page */}
+      <div aria-live="polite" className="fixed bottom-4 right-4 z-50 w-[320px] max-w-[calc(100vw-2rem)] space-y-2">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`flex items-start gap-2 rounded-lg border bg-card p-3 shadow-lg text-xs ${
+              t.kind === 'success' ? 'border-emerald-500/30' : 'border-destructive/30'
+            }`}
+          >
+            {t.kind === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0 text-destructive" />
+            )}
+            <div className="flex-1 space-y-1">
+              <p className="font-semibold text-foreground leading-snug">{t.msg}</p>
+              {t.action === 'view-positions' && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('POSITIONS'); dismissToast(t.id); }}
+                  className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                >
+                  View Positions
+                </button>
+              )}
+              {t.action === 'view-orders' && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('ORDERS'); dismissToast(t.id); }}
+                  className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                >
+                  View Order Book
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => dismissToast(t.id)}
+              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              aria-label="Dismiss notification"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
