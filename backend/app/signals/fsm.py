@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 import uuid
 from decimal import Decimal
-from typing import Literal, Optional, Any
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 import structlog
 
@@ -223,13 +223,23 @@ class SignalFSMManager:
         now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         expired = 0
         runner_stopped = 0
-        # 1. Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
+        # 1. Market-close expiry & Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
+        from app.services.calendar_service import calendar_service
+        is_market_closed = not calendar_service.can_trade_now().allowed
+
         for sig in list(self._signals.values()):
             try:
-                if sig.is_expired(now_ms) and sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
-                    ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
-                    if ok:
-                        expired += 1
+                if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
+                    if is_market_closed:
+                        ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED")
+                        if ok:
+                            expired += 1
+                        continue
+                    elif sig.is_expired(now_ms):
+                        ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
+                        if ok:
+                            expired += 1
+                        continue
                 # 2. Runner TTL expiry — TARGET_1_HIT runners must not block dedup forever
                 elif sig.fsm_state == "TARGET_1_HIT" and sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc:
                     ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
@@ -471,6 +481,10 @@ def evaluate_tick(
     ts = tick_timestamp_ms or int(time.time() * 1000)
     direction = sig.direction
     curr_sl = sig.current_stop_loss or sig.stop_loss
+
+    # Reject non-positive or corrupted prices immediately
+    if tick_price <= Decimal("0"):
+        return None, "INVALID_PRICE"
 
     # 1. Stop Loss Check (Highest Priority)
     if direction == "LONG_CALL" and tick_price <= curr_sl:

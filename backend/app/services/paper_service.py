@@ -7,10 +7,9 @@ from app.models.paper import (
     OrderPayload, BasketOrderPayload, VirtualOrder,
     VirtualPosition, PortfolioSummary
 )
-from app.models.database import PaperOrderDB, PaperPositionDB, PaperPortfolioDB
+from app.models.database import PaperOrderDB, PaperPositionDB
 from app.quant.margin import calculate_required_margin
 from app.repositories.paper_repository import PaperTradingRepository
-from app.core.database import get_async_session_factory
 from app.services.market_service import MarketService
 import structlog
 
@@ -68,10 +67,63 @@ class PaperTradingService:
         payload: OrderPayload,
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
+        allow_closed_market: bool = False,
     ) -> VirtualOrder:
-        """Place and execute a single virtual order."""
+        """Place and execute a single virtual order (Final Hard Safety Boundary)."""
         now_str = datetime.now(timezone.utc).isoformat()
         order_id = f"ORD-{uuid.uuid4().hex[:6].upper()}"
+
+        # ── Final Safety Invariant: Check Market Session for Indian Instruments ──
+        is_indian = payload.underlying in ("NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY") or any(
+            x in payload.symbol for x in ("CE", "PE", "FUT", "NIFTY", "BANKNIFTY", "SENSEX")
+        )
+        if is_indian and not allow_closed_market:
+            from app.services.calendar_service import calendar_service
+            perm = calendar_service.can_trade_now()
+            if not perm.allowed:
+                logger.warning("paper_order_rejected_market_closed", symbol=payload.symbol, reason=perm.reason)
+                rejected = VirtualOrder(
+                    order_id=order_id,
+                    timestamp=now_str,
+                    symbol=payload.symbol,
+                    underlying=payload.underlying,
+                    side=payload.side,
+                    order_type=payload.order_type,
+                    product=payload.product,
+                    quantity=payload.quantity,
+                    price=payload.price,
+                    trigger_price=payload.trigger_price,
+                    status="REJECTED",
+                    fill_price=None,
+                    rejection_reason=f"MARKET_CLOSED: {perm.reason} (NSE/BSE trading hours: 09:15 - 15:30 IST)",
+                )
+                self._orders.insert(0, rejected)
+                if session and user_id:
+                    try:
+                        await PaperTradingRepository.save_order(session, user_id, rejected)
+                    except Exception as e:
+                        logger.warning("failed_to_save_rejected_order_db", error=str(e))
+                return rejected
+
+        # Guard non-positive quantity
+        if payload.quantity <= 0:
+            rejected = VirtualOrder(
+                order_id=order_id,
+                timestamp=now_str,
+                symbol=payload.symbol,
+                underlying=payload.underlying,
+                side=payload.side,
+                order_type=payload.order_type,
+                product=payload.product,
+                quantity=payload.quantity,
+                price=payload.price,
+                trigger_price=payload.trigger_price,
+                status="REJECTED",
+                fill_price=None,
+                rejection_reason="INVALID_QUANTITY: Order quantity must be greater than zero",
+            )
+            self._orders.insert(0, rejected)
+            return rejected
 
         # Determine fill price
         fill_price = payload.price
@@ -81,6 +133,25 @@ class PaperTradingService:
                 fill_price = round(quote.ltp * 0.015, 2) if "CE" in payload.symbol or "PE" in payload.symbol else quote.ltp
             except Exception:
                 fill_price = 150.0
+
+        if fill_price <= 0:
+            rejected = VirtualOrder(
+                order_id=order_id,
+                timestamp=now_str,
+                symbol=payload.symbol,
+                underlying=payload.underlying,
+                side=payload.side,
+                order_type=payload.order_type,
+                product=payload.product,
+                quantity=payload.quantity,
+                price=payload.price,
+                trigger_price=payload.trigger_price,
+                status="REJECTED",
+                fill_price=None,
+                rejection_reason="INVALID_PRICE: Fill price must be greater than zero",
+            )
+            self._orders.insert(0, rejected)
+            return rejected
 
         # Calculate required margin
         inst_type = "OPTION_BUY" if payload.side == "BUY" and ("CE" in payload.symbol or "PE" in payload.symbol) else "OPTION_SELL" if payload.side == "SELL" and ("CE" in payload.symbol or "PE" in payload.symbol) else "FUTURES"

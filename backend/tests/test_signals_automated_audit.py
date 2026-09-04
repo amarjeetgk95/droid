@@ -23,6 +23,23 @@ def reset_all():
     paper_service.reset_portfolio()
     signal_fsm._signals.clear()
     signal_audit_ledger._trades.clear()
+    from app.services.calendar_service import calendar_service, MarketSessionPermission
+    from unittest.mock import patch
+    import zoneinfo
+    from datetime import datetime
+    ist = zoneinfo.ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist).replace(hour=11, minute=0, second=0)
+    mock_perm = MarketSessionPermission(
+        allowed=True,
+        reason="MARKET_OPEN",
+        exchange="NSE",
+        session="REGULAR",
+        timestamp_ist=now_ist,
+        market_open=now_ist.replace(hour=9, minute=15),
+        market_close=now_ist.replace(hour=15, minute=30),
+    )
+    with patch.object(calendar_service, "can_trade_now", return_value=mock_perm):
+        yield
 
 
 @pytest.mark.asyncio

@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Literal, Any
-from enum import Enum
 import structlog
 
 from app.algo.money import D
@@ -298,7 +297,12 @@ class ExecutionSafety:
         price, spread_pct, slippage, has_circuit, capital_available, margin_available,
         position_state, portfolio_risk, kill_switch
         """
+        from app.services.calendar_service import calendar_service
+        is_market_open = calendar_service.can_trade_now().allowed if not current_snapshot.get("allow_closed_market") else True
+
         checks: list[tuple[str, bool, str]] = [
+            ("market_hours", is_market_open, "MARKET_CLOSED"),
+            ("price_positive", (intent.price is None or intent.price > D(0)), "INVALID_PRICE_NON_POSITIVE"),
             ("data_health", current_snapshot.get("data_health") != "STALE", "DATA_HEALTH_STALE"),
             ("broker_health", current_snapshot.get("broker_health") not in ("CRITICAL","DISCONNECTED"), "BROKER_UNHEALTHY"),
             ("instrument", current_snapshot.get("instrument_tradable", True), "INSTRUMENT_NOT_TRADABLE"),

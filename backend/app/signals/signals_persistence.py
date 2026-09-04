@@ -82,7 +82,7 @@ def restore_signals_state_local() -> int:
 
     try:
         from app.signals.fsm import signal_fsm, SignalInstance
-        from app.signals.audit_ledger import signal_audit_ledger, AuditTradeRecord, AuditStateEvent
+        from app.signals.audit_ledger import signal_audit_ledger, AuditTradeRecord
         from app.signals.fill_reconciler import option_fill_reconciler, FillReconciliationRecord
 
         with open(SIGNALS_STATE_FILE, "r", encoding="utf-8") as f:
@@ -122,10 +122,57 @@ def restore_signals_state_local() -> int:
                     pass
 
         logger.info("signals_restored_from_local_cache", count=count)
+        sanitize_persisted_signals()
         return count
     except Exception as e:
         logger.warning("restore_signals_state_local_failed", error=str(e)[:250])
         return 0
+
+
+def sanitize_persisted_signals() -> int:
+    """
+    Sanitizes FSM signals and audit records in memory:
+    1. If market is closed, sweeps any pre-trigger/untriggered signals (DETECTED, VALIDATED, ARMED, TRIGGERED)
+       to EXPIRED with reason MARKET_CLOSED.
+    2. Identifies and repairs corrupted records (e.g. non-positive exit_price <= 0, spot_price <= 0)
+       to ensure P&L and win rate metrics are never poisoned by false offline ticks.
+    """
+    sanitized_count = 0
+    try:
+        from app.signals.fsm import signal_fsm
+        from app.signals.audit_ledger import signal_audit_ledger
+        from app.services.calendar_service import calendar_service
+
+        market_perm = calendar_service.can_trade_now()
+        market_open = market_perm.allowed
+
+        # 1. Sweep pre-trigger signals if market is closed
+        if not market_open:
+            for sid, inst in list(signal_fsm._signals.items()):
+                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED"):
+                    prior = inst.fsm_state
+                    inst.fsm_state = "EXPIRED"
+                    sanitized_count += 1
+                    logger.info("sanitized_closed_market_signal", signal_id=sid, prior_state=prior)
+
+        # 2. Check for invalid prices (<= 0) in audit ledger
+        for aid, rec in list(signal_audit_ledger._trades.items()):
+            corrupted = False
+            if rec.exit_price is not None and rec.exit_price <= 0.0:
+                rec.exit_price = None
+                rec.actual_pnl_inr = None
+                rec.actual_pnl_points = None
+                rec.is_winner = None
+                corrupted = True
+            if corrupted:
+                sanitized_count += 1
+                logger.warning("sanitized_corrupt_audit_trade", audit_id=aid)
+
+        if sanitized_count > 0:
+            save_signals_state_local()
+    except Exception as e:
+        logger.warning("sanitize_persisted_signals_error", error=str(e)[:250])
+    return sanitized_count
 
 
 async def ensure_signals_tables() -> bool:

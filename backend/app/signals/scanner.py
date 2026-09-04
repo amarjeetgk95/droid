@@ -11,7 +11,7 @@ from typing import Optional, Any
 import structlog
 from pydantic import BaseModel, Field
 
-from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying, resolve_option_contract
+from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying
 from app.signals.strategies.base import StrategyContext, SignalCandidate
 from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY_STRATEGIES
 from app.signals.confluence import confluence_engine
@@ -74,6 +74,17 @@ class SignalScanner:
         started = time.time()
         u = validate_underlying(underlying)
         diag = ScanDiagnostics(underlying=u)
+
+        # ── Centralized Market Session Check ──
+        from app.services.calendar_service import calendar_service
+        perm = calendar_service.can_trade_now()
+        if not perm.allowed:
+            diag.data_quality = "CLOSED"
+            diag.reasons.append(f"Market is closed ({perm.reason}: NSE trading hours 09:15 - 15:30 IST). Quantitative scanning paused.")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+            return []
+
         from app.services.market_service import MarketService
         from app.technical_analysis.analyzer import analyze_timeframe
         from app.multi_timeframe.alignment import compute_alignment
@@ -97,17 +108,17 @@ class SignalScanner:
             diag.duration_ms = int((time.time() - started) * 1000)
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
-        if not quote or getattr(quote, "ltp", None) is None:
+        if not quote or getattr(quote, "ltp", None) is None or float(getattr(quote, "ltp", 0.0) or 0.0) <= 0:
             diag.data_quality = "OFFLINE"
-            diag.error = "no_quote"
-            diag.reasons.append("No quote available from provider")
+            diag.error = "no_quote_or_non_positive_ltp"
+            diag.reasons.append(f"Quote unavailable or LTP ({getattr(quote, 'ltp', None)}) <= 0")
             diag.duration_ms = int((time.time() - started) * 1000)
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
 
-            raw_status = getattr(quote, "status", "UNKNOWN")
-            diag.quote_status = str(getattr(raw_status, "value", raw_status))
-            diag.provider = str(getattr(quote, "provider", "UNKNOWN"))
+        raw_status = getattr(quote, "status", "UNKNOWN")
+        diag.quote_status = str(getattr(raw_status, "value", raw_status))
+        diag.provider = str(getattr(quote, "provider", "UNKNOWN"))
         try:
             diag.spot_price = float(quote.ltp)
         except Exception:
@@ -293,6 +304,12 @@ class SignalScanner:
         Returns (registered, rejected_reasons). Rejections (no-edge triggers etc.)
         are surfaced in scan diagnostics instead of silently vanishing.
         """
+        from app.services.calendar_service import calendar_service
+        perm = calendar_service.can_trade_now()
+        if not perm.allowed:
+            logger.info("process_candidates_rejected_market_closed", reason=perm.reason)
+            return [], [f"MARKET_CLOSED_{perm.reason}"]
+
         from app.signals.trigger_gate import check_trigger_integrity
 
         registered_signals: list[SignalInstance] = []

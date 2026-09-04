@@ -9,7 +9,7 @@ Tracks live price vs active signals:
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Optional, Any
+from typing import Optional
 import structlog
 from pydantic import BaseModel, Field
 
@@ -56,8 +56,25 @@ class SignalOutcomeTracker:
       - Fill Reconciler & Statutory cost deductions
     """
 
-    def update_with_price(self, underlying: str, current_price: Decimal | float, now_ms: Optional[int] = None) -> list[dict]:
-        d_price = Decimal(str(current_price))
+    def update_with_price(
+        self,
+        underlying: str,
+        current_price: Decimal | float,
+        now_ms: Optional[int] = None,
+        allow_closed_market: bool = False,
+    ) -> list[dict]:
+        from app.services.calendar_service import calendar_service
+        if not allow_closed_market and not calendar_service.can_trade_now().allowed:
+            return []
+
+        try:
+            d_price = Decimal(str(current_price))
+        except Exception:
+            return []
+
+        if d_price <= Decimal("0"):
+            return []
+
         ts_now = now_ms or int(__import__("time").time() * 1000)
         active = signal_fsm.list_active(underlying=underlying)
         events = []
@@ -105,6 +122,7 @@ class SignalOutcomeTracker:
         underlying: str,
         current_price: Decimal | float,
         now_ms: Optional[int] = None,
+        allow_closed_market: bool = False,
     ) -> list[dict]:
         """
         Asynchronous processing pipeline:
@@ -114,13 +132,24 @@ class SignalOutcomeTracker:
           4. Final exit (T2, SL, Time-Stop, Runner Time-Stop) with exact actual option P&L
           5. Dispatches Telegram notifications and SSE broadcasts
         """
+        from app.services.calendar_service import calendar_service
+        if not allow_closed_market and not calendar_service.can_trade_now().allowed:
+            return []
+
+        try:
+            d_price = Decimal(str(current_price))
+        except Exception:
+            return []
+
+        if d_price <= Decimal("0"):
+            return []
+
         from app.signals.paper_engine import signal_paper_engine
         from app.signals.audit_ledger import signal_audit_ledger
         from app.signals.sse import signal_sse_hub
         from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
         from app.signals.fill_reconciler import option_fill_reconciler
 
-        d_price = Decimal(str(current_price))
         ts_now = now_ms or int(__import__("time").time() * 1000)
         active = signal_fsm.list_active(underlying=underlying)
         processed_events: list[dict] = []
@@ -149,11 +178,15 @@ class SignalOutcomeTracker:
                     paper_res = None
                     lots_to_trade = (sig.option_contract or {}).get("lots") or getattr(sig, "lots", None) or 1
                     try:
-                        paper_res = await signal_paper_engine.execute_signal(sig.signal_id, lots_override=lots_to_trade)
+                        paper_res = await signal_paper_engine.execute_signal(
+                            sig.signal_id,
+                            lots_override=lots_to_trade,
+                            allow_closed_market=allow_closed_market,
+                        )
                     except Exception as pe:
                         logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
 
-                    # Reconcile entry fill
+                    # Reconcile entry fill and dispatch alerts ONLY if paper execution succeeded
                     if paper_res and paper_res.success:
                         opt_rec = option_fill_reconciler.reconcile_entry(
                             sig=sig,
@@ -161,49 +194,47 @@ class SignalOutcomeTracker:
                             quantity=paper_res.quantity,
                             lot_size=int((sig.option_contract or {}).get("lot_size", 75)),
                         )
+
+                        # Dispatch Telegram notification for Confirmed Signal
+                        try:
+                            conf_ev = SignalEvent(
+                                event_type="SIGNAL_CONFIRMED",
+                                signal_id=sig.signal_id,
+                                instrument=sig.underlying,
+                                candle_timeframe=sig.timeframe,
+                                setup_type=sig.strategy,
+                                direction="BULLISH" if "CALL" in sig.direction else "BEARISH",
+                                status="CONFIRMED",
+                                trigger_level=float(sig.trigger),
+                                current_price=float(d_price),
+                                stop_loss=float(sig.stop_loss),
+                                target_low=float(sig.target_1),
+                                target_high=float(sig.target_2),
+                                confidence=float(sig.confidence),
+                                paper_order_id=paper_res.order_id,
+                                paper_fill_price=paper_res.fill_price,
+                                paper_filled_qty=paper_res.quantity,
+                                paper_status="FILLED",
+                                paper_side="BUY" if "CALL" in sig.direction else "SELL",
+                            )
+                            await telegram_notification_queue.publish_signal_event(conf_ev)
+                        except Exception as te:
+                            logger.warning("telegram_auto_confirmed_failed", signal_id=sig.signal_id, error=str(te))
+
+                        # Broadcast SSE
+                        await signal_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
+                        processed_events.append({
+                            "signal_id": sig.signal_id,
+                            "event": "CONFIRMED",
+                            "price": float(d_price),
+                            "paper_order": paper_res.model_dump(),
+                        })
                     else:
-                        # Fallback synthetic entry fill at estimated premium
-                        opt = sig.option_contract or {}
-                        strike = float(opt.get("strike", float(sig.trigger)))
-                        opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
-                        est_fill = option_fill_reconciler.estimate_option_premium(float(d_price), strike, opt_type)
-                        lot_sz = int(opt.get("lot_size", 75))
-                        opt_rec = option_fill_reconciler.reconcile_entry(sig, est_fill, lot_sz * lots_to_trade, lot_sz)
-
-                    # Dispatch Telegram notification for Confirmed Signal
-                    try:
-                        conf_ev = SignalEvent(
-                            event_type="SIGNAL_CONFIRMED",
+                        logger.warning(
+                            "signal_paper_execution_blocked",
                             signal_id=sig.signal_id,
-                            instrument=sig.underlying,
-                            candle_timeframe=sig.timeframe,
-                            setup_type=sig.strategy,
-                            direction="BULLISH" if "CALL" in sig.direction else "BEARISH",
-                            status="CONFIRMED",
-                            trigger_level=float(sig.trigger),
-                            current_price=float(d_price),
-                            stop_loss=float(sig.stop_loss),
-                            target_low=float(sig.target_1),
-                            target_high=float(sig.target_2),
-                            confidence=float(sig.confidence),
-                            paper_order_id=paper_res.order_id if paper_res else None,
-                            paper_fill_price=paper_res.fill_price if paper_res else float(sig.entry_price or 0.0),
-                            paper_filled_qty=paper_res.quantity if paper_res else int(sig.intended_qty),
-                            paper_status="FILLED" if paper_res else None,
-                            paper_side="BUY" if "CALL" in sig.direction else "SELL",
+                            reason=paper_res.message if paper_res else "execution_failed",
                         )
-                        await telegram_notification_queue.publish_signal_event(conf_ev)
-                    except Exception as te:
-                        logger.warning("telegram_auto_confirmed_failed", signal_id=sig.signal_id, error=str(te))
-
-                    # Broadcast SSE
-                    await signal_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
-                    processed_events.append({
-                        "signal_id": sig.signal_id,
-                        "event": "CONFIRMED",
-                        "price": float(d_price),
-                        "paper_order": paper_res.model_dump() if paper_res else None,
-                    })
 
             # ── 2. ORDERED TICK EVALUATION (CONFIRMED & TARGET_1_HIT RUNNERS) ──
             elif st in ("CONFIRMED", "TARGET_1_HIT"):

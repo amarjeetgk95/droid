@@ -15,6 +15,16 @@ class TradingSessionInfo(NamedTuple):
     market_close: datetime | None
 
 
+class MarketSessionPermission(NamedTuple):
+    allowed: bool
+    reason: str  # "MARKET_OPEN", "MARKET_CLOSED", "WEEKEND", "HOLIDAY", "PRE_OPEN", "POST_MARKET", "SPECIAL_SESSION_CLOSED"
+    exchange: str  # "NSE"
+    session: str   # "REGULAR", "SPECIAL", "CLOSED"
+    timestamp_ist: datetime
+    market_open: datetime | None
+    market_close: datetime | None
+
+
 class ExchangeCalendarService:
     """Official NSE Exchange Calendar Service.
     
@@ -185,16 +195,92 @@ class ExchangeCalendarService:
             curr -= timedelta(days=1)
         return curr
 
+    def can_trade_now(self, target_time: datetime | None = None) -> MarketSessionPermission:
+        """Evaluate centralized market trading permission with structured session details.
+        
+        Evaluates official exchange holidays, weekend rules, special trading sessions,
+        and regular NSE trading hours (09:15 to 15:30 IST).
+        """
+        if target_time is None:
+            now_ist = datetime.now(IST)
+        elif target_time.tzinfo is None:
+            now_ist = target_time.replace(tzinfo=IST)
+        else:
+            now_ist = target_time.astimezone(IST)
+
+        today = now_ist.date()
+
+        if self.is_weekend(today) and today not in self.SPECIAL_SESSIONS:
+            return MarketSessionPermission(
+                allowed=False,
+                reason="WEEKEND",
+                exchange="NSE",
+                session="CLOSED",
+                timestamp_ist=now_ist,
+                market_open=None,
+                market_close=None,
+            )
+
+        if self.is_holiday(today):
+            hol_name = self.get_holiday_name(today) or "HOLIDAY"
+            return MarketSessionPermission(
+                allowed=False,
+                reason=f"HOLIDAY: {hol_name}",
+                exchange="NSE",
+                session="CLOSED",
+                timestamp_ist=now_ist,
+                market_open=None,
+                market_close=None,
+            )
+
+        info = self.get_session_info(today)
+        if not info.is_trading_day or not info.market_open or not info.market_close:
+            return MarketSessionPermission(
+                allowed=False,
+                reason=info.holiday_name or "MARKET_CLOSED",
+                exchange="NSE",
+                session="CLOSED",
+                timestamp_ist=now_ist,
+                market_open=None,
+                market_close=None,
+            )
+
+        if now_ist < info.market_open:
+            return MarketSessionPermission(
+                allowed=False,
+                reason="PRE_OPEN",
+                exchange="NSE",
+                session="CLOSED",
+                timestamp_ist=now_ist,
+                market_open=info.market_open,
+                market_close=info.market_close,
+            )
+
+        if now_ist >= info.market_close:
+            return MarketSessionPermission(
+                allowed=False,
+                reason="MARKET_CLOSED",
+                exchange="NSE",
+                session="CLOSED",
+                timestamp_ist=now_ist,
+                market_open=info.market_open,
+                market_close=info.market_close,
+            )
+
+        session_type = "SPECIAL" if info.is_special_session else "REGULAR"
+        return MarketSessionPermission(
+            allowed=True,
+            reason="MARKET_OPEN",
+            exchange="NSE",
+            session=session_type,
+            timestamp_ist=now_ist,
+            market_open=info.market_open,
+            market_close=info.market_close,
+        )
+
     def is_market_open_now(self) -> bool:
         """Check if NSE is currently in trading hours (IST 9:15-15:30 on trading day)."""
-        now_ist = datetime.now(IST)
-        today = now_ist.date()
-        if not self.is_trading_day(today):
-            return False
-        info = self.get_session_info(today)
-        if not info.market_open or not info.market_close:
-            return False
-        return info.market_open <= now_ist <= info.market_close
+        return self.can_trade_now().allowed
 
 
 calendar_service = ExchangeCalendarService()

@@ -12,8 +12,8 @@ from typing import Optional, Any
 import structlog
 from pydantic import BaseModel
 
-from app.signals.contract_resolver import calculate_position_sizing, normalize_price, validate_underlying
-from app.signals.fsm import signal_fsm, SignalInstance
+from app.signals.contract_resolver import calculate_position_sizing, validate_underlying
+from app.signals.fsm import signal_fsm
 from app.services.paper_service import paper_service
 from app.models.paper import OrderPayload
 
@@ -49,6 +49,7 @@ class SignalPaperEngine:
         risk_percent: float = 2.0,
         lots_override: Optional[int] = None,
         quantity_override: Optional[int] = None,
+        allow_closed_market: bool = False,
     ) -> SignalPaperExecutionResult:
         sig = signal_fsm.get(signal_id)
         if not sig:
@@ -62,6 +63,28 @@ class SignalPaperEngine:
         # Determine side
         side = "BUY"
         direction_label = "CE" if "CALL" in sig.direction else "PE"
+
+        # ── Centralized Market Session Check ──
+        from app.services.calendar_service import calendar_service
+        perm = calendar_service.can_trade_now()
+        if not allow_closed_market and not perm.allowed:
+            logger.warning("paper_execution_blocked_market_closed", signal_id=signal_id, reason=perm.reason)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=0,
+                lots=0,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message=f"MARKET_CLOSED: {perm.reason} (NSE trading hours: 09:15 - 15:30 IST)",
+            )
 
         # Position Sizing
         avail_cap = capital_override or getattr(paper_service, "_initial_capital", 1000000.0)
@@ -85,10 +108,46 @@ class SignalPaperEngine:
 
         # Estimate Fill Price with simulated spread (0.05%) and slippage
         raw_price = float(sig.spot_price)
+        if raw_price <= 0:
+            logger.warning("paper_execution_blocked_invalid_spot_price", signal_id=signal_id, spot=raw_price)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=0,
+                lots=0,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message="INVALID_PRICE: Spot price is non-positive",
+            )
+
         spread_impact = raw_price * 0.0005
         fill_price = round(raw_price + spread_impact, 2) if side == "BUY" else round(raw_price - spread_impact, 2)
+        if fill_price <= 0:
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=0,
+                lots=0,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message="INVALID_PRICE: Fill price is non-positive",
+            )
 
-        # Place order into Paper Trading Service
+        # Place order into Paper Trading Service (final hard safety boundary)
         order_payload = OrderPayload(
             symbol=broker_sym,
             underlying=u,
@@ -98,7 +157,26 @@ class SignalPaperEngine:
             quantity=final_qty,
             price=fill_price,
         )
-        paper_order = await paper_service.place_order(order_payload)
+        paper_order = await paper_service.place_order(order_payload, allow_closed_market=allow_closed_market)
+
+        if paper_order.status == "REJECTED":
+            logger.warning("paper_order_rejected_by_service", signal_id=signal_id, reason=paper_order.rejection_reason)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id=paper_order.order_id,
+                status="REJECTED",
+                message=paper_order.rejection_reason or "Order rejected by paper service",
+            )
 
         # Update FSM with order details
         sig.paper_order = paper_order.model_dump()

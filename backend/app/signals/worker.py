@@ -14,15 +14,21 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 import structlog
 
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS
 from app.signals.scanner import scanner_engine
 from app.signals.outcome_tracker import outcome_tracker
+from app.signals.fsm import signal_fsm
 from app.services.market_service import MarketService
+from app.services.calendar_service import calendar_service
+from app.models.market import DataStatus
 
 logger = structlog.get_logger()
+
+MAX_QUOTE_AGE_SECONDS: float = 15.0
 
 
 class AutomatedSignalWorker:
@@ -49,6 +55,9 @@ class AutomatedSignalWorker:
         self._risk_task: asyncio.Task | None = None
         self._scanner_task: asyncio.Task | None = None
         self._market_svc = MarketService()
+        self._last_market_open: bool | None = None
+        self._last_risk_closed_log_ts: float = 0.0
+        self._last_scanner_closed_log_ts: float = 0.0
 
     async def start(self) -> None:
         if self._running:
@@ -79,34 +88,75 @@ class AutomatedSignalWorker:
     async def _run_position_risk_loop(self) -> None:
         """
         Dedicated 3-second open-position risk management loop (§14).
-        Must complete within 2500ms budget.
+        Enforces Market Session Permission & Quote Freshness Invariants.
         """
         while self._running:
             cycle_start = time.perf_counter()
             try:
+                # ── Centralized Market Session Check ──
+                perm = calendar_service.can_trade_now()
+                if not perm.allowed:
+                    # Session transition check: trigger idempotent market-close sweep
+                    if self._last_market_open is not False:
+                        self._last_market_open = False
+                        sweep_res = signal_fsm.sweep_expired()
+                        logger.info("market_closed_idempotent_sweep_executed", reason=perm.reason, sweep=sweep_res)
+
+                    now_wall = time.time()
+                    if now_wall - self._last_risk_closed_log_ts >= 60.0:
+                        self._last_risk_closed_log_ts = now_wall
+                        logger.info("worker_risk_loop_paused_market_closed", reason=perm.reason, session=perm.session)
+
+                    await asyncio.sleep(max(1.0, self._risk_interval))
+                    continue
+
+                self._last_market_open = True
+
                 # Iterate approved instruments and manage open risk
                 for u in list(APPROVED_UNDERLYINGS):
                     try:
                         quote = await self._market_svc.get_quote(u)
-                        if quote and getattr(quote, "ltp", None) is not None:
-                            curr_p = Decimal(str(quote.ltp))
-                            # Process price updates (triggers, ratchets, staged exits, time stops)
-                            await outcome_tracker.process_price_update_async(u, curr_p)
+                        if not quote or getattr(quote, "ltp", None) is None:
+                            continue
 
-                            # Update live MTM in Signal Audit Ledger
-                            from app.signals.audit_ledger import signal_audit_ledger
-                            from app.signals.sse import signal_sse_hub
-                            updated_recs = signal_audit_ledger.update_live_quote(u, float(curr_p))
-                            if updated_recs:
-                                await signal_sse_hub.broadcast(
-                                    "audit_pnl_update",
-                                    {
-                                        "underlying": u,
-                                        "ltp": float(curr_p),
-                                        "summary": signal_audit_ledger.get_summary_metrics(),
-                                    },
-                                    priority="P1",
-                                )
+                        ltp = float(quote.ltp)
+                        if ltp <= 0:
+                            logger.debug("worker_risk_tick_rejected_non_positive", underlying=u, ltp=ltp)
+                            continue
+
+                        status = getattr(quote, "status", None)
+                        if status != DataStatus.LIVE and str(status).upper() != "LIVE":
+                            logger.debug("worker_risk_tick_rejected_not_live", underlying=u, status=str(status))
+                            continue
+
+                        # Quote freshness validation (15s ceiling)
+                        if getattr(quote, "timestamp", None):
+                            q_ts = quote.timestamp
+                            if q_ts.tzinfo is None:
+                                q_ts = q_ts.replace(tzinfo=timezone.utc)
+                            age_sec = (datetime.now(timezone.utc) - q_ts).total_seconds()
+                            if age_sec > MAX_QUOTE_AGE_SECONDS:
+                                logger.debug("worker_risk_tick_rejected_stale", underlying=u, age_sec=round(age_sec, 2))
+                                continue
+
+                        curr_p = Decimal(str(ltp))
+                        # Process price updates (triggers, ratchets, staged exits, time stops)
+                        await outcome_tracker.process_price_update_async(u, curr_p)
+
+                        # Update live MTM in Signal Audit Ledger
+                        from app.signals.audit_ledger import signal_audit_ledger
+                        from app.signals.sse import signal_sse_hub
+                        updated_recs = signal_audit_ledger.update_live_quote(u, float(curr_p))
+                        if updated_recs:
+                            await signal_sse_hub.broadcast(
+                                "audit_pnl_update",
+                                {
+                                    "underlying": u,
+                                    "ltp": float(curr_p),
+                                    "summary": signal_audit_ledger.get_summary_metrics(),
+                                },
+                                priority="P1",
+                            )
                     except Exception as pe:
                         logger.debug("worker_risk_tick_err", underlying=u, error=str(pe))
 
@@ -135,12 +185,24 @@ class AutomatedSignalWorker:
         Dual-cadence candidate scanning loop:
           - Scalp Desk: every 10 seconds
           - Intraday Desk: every 30 seconds
+        Enforces Market Session Permission: never scans stale/post-market candles.
         """
         last_scalp_ts = 0.0
         last_intraday_ts = 0.0
 
         while self._running:
             try:
+                # ── Centralized Market Session Check ──
+                perm = calendar_service.can_trade_now()
+                if not perm.allowed:
+                    now_wall = time.time()
+                    if now_wall - self._last_scanner_closed_log_ts >= 60.0:
+                        self._last_scanner_closed_log_ts = now_wall
+                        logger.info("worker_scanner_loop_paused_market_closed", reason=perm.reason, session=perm.session)
+
+                    await asyncio.sleep(5.0)
+                    continue
+
                 now = time.time()
 
                 # 1. Fast Scalp Scanning (1M)

@@ -8,7 +8,7 @@ import time
 import uuid
 import asyncio
 from decimal import Decimal
-from typing import Literal, Any, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
@@ -27,8 +27,6 @@ from app.signals.contract_resolver import (
     normalize_price,
 )
 from app.signals.strategies import STRATEGY_REGISTRY
-from app.signals.strategies.base import StrategyContext, SignalCandidate
-from app.signals.confluence import confluence_engine
 from app.signals.fsm import signal_fsm, SignalInstance
 from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.scanner import scanner_engine
@@ -188,13 +186,16 @@ async def list_active_signals(
         data_quality = "LIVE"
         quote = quotes.get(s.underlying)
         try:
-            if quote is not None and getattr(quote, "ltp", None) is not None:
+            if quote is not None and getattr(quote, "ltp", None) is not None and float(quote.ltp) > 0:
                 curr_p = Decimal(str(quote.ltp))
-                # Check outcome progression (best-effort, never breaks listing)
-                try:
-                    outcome_tracker.update_with_price(s.underlying, curr_p)
-                except Exception:
-                    pass
+                # Check outcome progression ONLY when market is open and quote is live
+                from app.services.calendar_service import calendar_service
+                from app.models.market import DataStatus
+                if calendar_service.can_trade_now().allowed and getattr(quote, "status", None) == DataStatus.LIVE:
+                    try:
+                        outcome_tracker.update_with_price(s.underlying, curr_p)
+                    except Exception:
+                        pass
 
                 trig = s.trigger if s.trigger and s.trigger > 0 else None
                 if trig:
@@ -551,7 +552,16 @@ async def delete_signal_by_id(signal_id: str):
 async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest] = None):
     """
     1-Click manual execution of any active signal into the Paper Trading Engine.
+    Fails closed if the exchange session is closed.
     """
+    from app.services.calendar_service import calendar_service
+    perm = calendar_service.can_trade_now()
+    if not perm.allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Market is closed ({perm.reason}: NSE trading hours 09:15 - 15:30 IST). Manual paper execution is disabled.",
+        )
+
     try:
         lots = req.lots if req else None
         qty = req.quantity if req else None
@@ -562,6 +572,9 @@ async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest
             quantity_override=qty,
             risk_percent=risk_pct,
         )
+        if not result.success or result.status == "REJECTED":
+            raise HTTPException(status_code=400, detail=result.message)
+
         sig = signal_fsm.get(signal_id)
         is_bearish = "BEARISH" in (sig.direction if sig else "") or "PUT" in (sig.direction if sig else "")
         side_val = "SELL" if is_bearish else "BUY"
@@ -820,18 +833,25 @@ async def generate_signal(req: GenerateSignalRequest):
 
     paper_result = None
     if req.execute_paper:
-        try:
-            paper_result = await signal_paper_engine.execute_signal(instance.signal_id, lots_override=req.lots or 1)
-        except Exception as pe:
-            logger.warning("generate_signal_paper_auto_failed", error=str(pe))
+        from app.services.calendar_service import calendar_service
+        perm = calendar_service.can_trade_now()
+        if not perm.allowed:
+            logger.warning("generate_signal_paper_auto_blocked_market_closed", reason=perm.reason)
+        else:
+            try:
+                paper_result = await signal_paper_engine.execute_signal(instance.signal_id, lots_override=req.lots or 1)
+            except Exception as pe:
+                logger.warning("generate_signal_paper_auto_failed", error=str(pe))
 
     # Optional Telegram Notification
     telegram_res = {"enqueued": 0}
     if req.notify_telegram:
+        is_real_fill = paper_result and paper_result.success and paper_result.status != "REJECTED"
+        ev_type = "SIGNAL_CONFIRMED" if is_real_fill else "POSSIBLE_SETUP"
         try:
             from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
             ev = SignalEvent(
-                event_type="SIGNAL_CONFIRMED",
+                event_type=ev_type,
                 signal_id=instance.signal_id,
                 instrument=u,
                 candle_timeframe=tf,
@@ -842,10 +862,10 @@ async def generate_signal(req: GenerateSignalRequest):
                 current_price=float(instance.spot_price),
                 stop_loss=float(instance.stop_loss),
                 confidence=float(instance.confidence),
-                paper_order_id=paper_result.order_id if paper_result else None,
-                paper_fill_price=paper_result.fill_price if paper_result else None,
-                paper_filled_qty=paper_result.quantity if paper_result else None,
-                paper_status="FILLED" if paper_result else None,
+                paper_order_id=paper_result.order_id if is_real_fill else None,
+                paper_fill_price=paper_result.fill_price if is_real_fill else None,
+                paper_filled_qty=paper_result.quantity if is_real_fill else None,
+                paper_status=paper_result.status if is_real_fill else None,
                 paper_side="BUY" if "CALL" in dir_val else "SELL",
             )
             ids = await telegram_notification_queue.publish_signal_event(ev)
