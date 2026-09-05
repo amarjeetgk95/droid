@@ -26,7 +26,7 @@ def _open_market(mock_market_open):
 @pytest.mark.asyncio
 async def test_signals_persistence_resilience():
     import uuid
-    test_id = f"SIG-TEST-PERSIST-{uuid.uuid4().hex[:8]}"
+    test_id = f"SIG-LIVE-PERSIST-{uuid.uuid4().hex[:8]}"
     sig = SignalInstance(
         signal_id=test_id,
         underlying="NIFTY",

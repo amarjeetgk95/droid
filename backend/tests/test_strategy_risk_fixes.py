@@ -12,6 +12,11 @@ from app.signals.risk_engine import central_risk_engine, StrategySetup, resolve_
 from app.signals.contract_resolver import resolve_nearest_expiry, IST
 
 
+@pytest.fixture(autouse=True)
+def open_market_fixture(mock_market_open):
+    yield
+
+
 class TestTrendPullbackGeometry:
     def test_bullish_pullback_trigger_gap_and_risk(self):
         strat = TrendPullbackStrategy()
