@@ -1,10 +1,12 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { NavItem } from '../nav-config';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { navigationController } from '@/lib/navigationController';
 
 interface SidebarNavItemProps {
   item: NavItem;
@@ -21,13 +23,29 @@ export const SidebarNavItem = memo(function SidebarNavItem({
   onNavigate,
   badgeData,
 }: SidebarNavItemProps) {
+  const router = useRouter();
   const Icon = item.icon;
+
+  const handleClick = useCallback(() => {
+    if (!active) {
+      navigationController.start();
+    }
+    onNavigate?.();
+  }, [active, onNavigate]);
+
+  const handleMouseEnter = useCallback(() => {
+    if (!active) {
+      router.prefetch(item.href);
+    }
+  }, [active, item.href, router]);
 
   const content = (
     <Link
       href={item.href}
       aria-current={active ? 'page' : undefined}
-      onClick={onNavigate}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onFocus={handleMouseEnter}
       className={cn(
         'group relative flex items-center gap-2.5 rounded-md text-xs font-medium transition-all duration-150 ease-out',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0',

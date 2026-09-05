@@ -8,6 +8,7 @@ import { playAlertChime } from './SignalAudio';
 import type { SignalDTO } from './SignalCard';
 import type { AuditTradeRecord, AuditSummary } from './SignalAuditTable';
 import type { CryptoSignal } from '@/lib/types';
+import { deskCache } from '@/lib/useDeskCache';
 
 export type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
 export type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
@@ -96,6 +97,15 @@ export function useSignalEngine() {
   const fetchActive = useCallback(
     async (showLoading = true) => {
       if (activeInFlight.current) return;
+      const cacheKey = `signals:active:${filterInstr}:${filterStrat}:${filterDesk}`;
+      const cached = deskCache.get<SignalDTO[]>(cacheKey);
+      if (cached) {
+        setActive(cached.data);
+        if (!cached.isStale) {
+          showLoading = false;
+        }
+      }
+
       activeInFlight.current = true;
       if (showLoading) setLoading(true);
       setActiveError(null);
@@ -121,6 +131,7 @@ export function useSignalEngine() {
           if (s?.signal_id) knownSignalIds.current.add(s.signal_id);
         });
         setActive(list);
+        deskCache.set(cacheKey, list);
       } catch (e: any) {
         setActiveError(e.message || 'Failed to load quantitative signals');
       } finally {
@@ -133,6 +144,15 @@ export function useSignalEngine() {
 
   const fetchScanner = useCallback(async (showLoading = true) => {
     if (scannerInFlight.current) return;
+    const cacheKey = 'signals:scanner';
+    const cached = deskCache.get<SignalDTO[]>(cacheKey);
+    if (cached) {
+      setScannerData(cached.data);
+      if (!cached.isStale) {
+        showLoading = false;
+      }
+    }
+
     scannerInFlight.current = true;
     if (showLoading) setScannerLoading(true);
     setScannerError(null);
@@ -142,6 +162,7 @@ export function useSignalEngine() {
       setScannerData(list);
       setScanDiagnostics(res.diagnostics || res.scalp_desk?.diagnostics || []);
       setScanQuality(res.data_quality || 'LIVE');
+      deskCache.set(cacheKey, list);
       if (res.errors && Object.keys(res.errors).length > 0) {
         setScannerError(
           Object.entries(res.errors)

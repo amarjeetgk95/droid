@@ -10,6 +10,8 @@ import { PayoffChart } from '@/components/options/PayoffChart';
 import { IVSmileChart } from '@/components/options/IVSmileChart';
 import { PageTabs } from '@/components/ui/PageTabs';
 import { ErrorCard } from '@/components/ui/ErrorCard';
+import { deskCache } from '@/lib/useDeskCache';
+import { OptionChainSkeleton } from '@/components/options/OptionChainSkeleton';
 import { Layers, Target, Activity, ShieldAlert } from 'lucide-react';
 
 // Tab-conditional flow tracker loads only when its tab is selected.
@@ -61,7 +63,18 @@ export default function OptionsPage() {
 
   useEffect(() => {
     let isMounted = true;
-    setLoading(true);
+    const cacheKey = `options:${selectedSymbol}:${selectedExpiry || 'default'}`;
+    const cached = deskCache.get<{ chainData: any; maxPainData: any }>(cacheKey);
+
+    if (cached) {
+      setChainData(cached.data.chainData);
+      setMaxPainData(cached.data.maxPainData);
+      setLoading(false);
+      // If cached data is still fresh (<30s), render immediately without refetch
+      if (!cached.isStale) return;
+    } else {
+      setLoading(true);
+    }
 
     const run = async () => {
       try {
@@ -70,14 +83,17 @@ export default function OptionsPage() {
           if (!isMounted) return;
           setChainData(chainRes.data);
 
+          let mpData: any = null;
           if (chainRes.data.expiry) {
             setSelectedExpiry(chainRes.data.expiry);
           } else {
             const mpRes = await api.getMaxPain(selectedSymbol, undefined);
             if (!isMounted) return;
-            setMaxPainData(mpRes.data);
+            mpData = mpRes.data;
+            setMaxPainData(mpData);
           }
 
+          deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpData });
           setError(null);
           return;
         }
@@ -89,6 +105,7 @@ export default function OptionsPage() {
         if (!isMounted) return;
         setChainData(chainRes.data);
         setMaxPainData(mpRes.data);
+        deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpRes.data });
         setError(null);
       } catch (err) {
         if (!isMounted) return;
@@ -185,9 +202,7 @@ export default function OptionsPage() {
           isRetrying={loading}
         />
       ) : loading && !chainData ? (
-        <div className="bg-card border border-border rounded-xl p-12 text-center text-muted-foreground animate-pulse">
-          Computing Greeks and assembling option chain matrix...
-        </div>
+        <OptionChainSkeleton rows={12} />
       ) : (
         <PageTabs tabs={tabs} defaultTab="chain" syncWithUrl />
       )}

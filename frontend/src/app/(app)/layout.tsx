@@ -7,6 +7,7 @@ import { MarketTicker } from '@/components/layout/MarketTicker';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { MarketDataProvider, useMarketDataContext } from '@/context/MarketDataContext';
 import { LiveMarketProvider, useLiveMarketContext } from '@/context/LiveMarketContext';
+import { RouteProgress } from '@/components/layout/RouteProgress';
 
 const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
 
@@ -44,6 +45,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
+      <RouteProgress />
       <Sidebar collapsed={collapsed} onCollapsedChange={handleCollapsedChange} mobileOpen={mobileOpen} onMobileOpenChange={setMobileOpen} />
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <TopHeader

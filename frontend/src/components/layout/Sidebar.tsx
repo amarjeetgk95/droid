@@ -14,6 +14,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { SidebarHeader, SidebarNavItem, SidebarFlyout, SidebarStatusDock } from './Sidebar/index';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
+import { navigationController } from '@/lib/navigationController';
 
 // ---------------------------------------------------------------------------
 // Storage key & helpers
@@ -148,6 +149,7 @@ export function Sidebar({
           const targetItem = ALL_NAV_ITEMS.find((item) => item.shortcut === `⌘${num}`);
           if (targetItem) {
             e.preventDefault();
+            navigationController.start();
             router.push(targetItem.href);
           }
         }
