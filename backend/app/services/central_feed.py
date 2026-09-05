@@ -84,6 +84,25 @@ class CentralMarketDataFeed:
             self._drop_counts.pop(id(websocket), None)
             logger.info("ws_client_disconnected", total_clients=len(self._subscribers))
 
+    async def broadcast_message(self, message: dict | str) -> int:
+        """Broadcast an arbitrary control/data message (e.g. BROKER_AUTHENTICATED) to all connected clients."""
+        raw_message = json.dumps(message) if isinstance(message, dict) else message
+        async with self._lock:
+            subscribers = list(self._subscribers.items())
+        sent = 0
+        for ws, q in subscribers:
+            try:
+                if q.full():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                q.put_nowait(raw_message)
+                sent += 1
+            except Exception:
+                pass
+        return sent
+
     async def get_snapshot(self) -> dict[str, Any]:
         """Latest cached market snapshot for catch-up on connect/reconnect.
 

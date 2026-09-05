@@ -99,6 +99,14 @@ export function useMarketStream() {
           lastMessageAtRef.current = Date.now();
           try {
             const payload = JSON.parse(event.data);
+            if (payload.type === 'BROKER_AUTHENTICATED') {
+              window.dispatchEvent(
+                new CustomEvent('broker:authenticated', {
+                  detail: payload,
+                }),
+              );
+            }
+
             if (payload.type === 'MARKET_TICKS' && Array.isArray(payload.ticks)) {
               if (payload.ticks.length > 0) {
                 if (staleTimerRef.current) clearTimeout(staleTimerRef.current);

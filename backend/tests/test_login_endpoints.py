@@ -100,4 +100,47 @@ def test_fyers_callback_error_redirect(client):
     assert "Invalid Client ID" in resp.text
 
 
+def test_fyers_callback_exchange_success(client, monkeypatch):
+    from app.core.broker_runtime import apply_app_settings
+    apply_app_settings({
+        "broker": {
+            "provider": "fyers",
+            "fyers": {
+                "appId": "HVMUH3H2LQ-100",
+                "secret": "valid_secret",
+            }
+        }
+    })
+
+    class MockSuccessResponse:
+        status_code = 200
+        def json(self):
+            return {"s": "ok", "code": 200, "access_token": "valid_fyers_jwt_token_123"}
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def post(self, url, **kwargs):
+            return MockSuccessResponse()
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    # Encode state with return_url
+    import json, base64
+    state_payload = {"a": "HVMUH3H2LQ-100", "s": "valid_secret", "r": "https://test.fo-droid.web.app"}
+    state_b64 = "c_" + base64.urlsafe_b64encode(json.dumps(state_payload).encode("utf-8")).decode("utf-8")
+
+    resp = client.get(f"/api/v1/tokens/fyers/callback?auth_code=valid_code&state={state_b64}")
+    assert resp.status_code == 200
+    assert "FYERS Connected Successfully!" in resp.text
+    assert "DROID_AUTH_SUCCESS" in resp.text
+    assert "https://test.fo-droid.web.app" in resp.text
+    assert "droid_auth_channel" in resp.text
+
+
 

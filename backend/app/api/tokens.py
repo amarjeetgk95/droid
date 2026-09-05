@@ -163,6 +163,7 @@ async def fyers_oauth_login(
     request: Request,
     app_id: str | None = Query(default=None),
     secret_key: str | None = Query(default=None),
+    redirect_to: str | None = Query(default=None),
 ):
     """Redirect user to Fyers OAuth authorization using Render server credentials or custom query overrides."""
     broker_config = get_config()
@@ -185,9 +186,23 @@ async def fyers_oauth_login(
             status_code=400,
         )
 
-    # If custom app_id or secret_key provided via query, pack them in state so callback has access
+    target_origin = (redirect_to or "").strip()
+    if not target_origin and request.headers.get("referer"):
+        ref = request.headers.get("referer", "")
+        if "://" in ref:
+            parts = ref.split("/")
+            if len(parts) >= 3:
+                target_origin = f"{parts[0]}//{parts[2]}"
+
+    # Pack custom app_id, secret_key, and redirect_to into state so callback has access
+    state_payload = {}
     if app_id or secret_key:
-        state_payload = {"a": clean_app_id, "s": clean_secret}
+        state_payload["a"] = clean_app_id
+        state_payload["s"] = clean_secret
+    if target_origin:
+        state_payload["r"] = target_origin
+
+    if state_payload:
         state_val = "c_" + base64.urlsafe_b64encode(json.dumps(state_payload).encode("utf-8")).decode("utf-8")
     else:
         state_val = "droid_fyers"
@@ -218,6 +233,120 @@ async def flattrade_oauth_login(request: Request):
     
     url = f"https://auth.flattrade.in/?app_key={api_key}"
     return RedirectResponse(url=url)
+
+
+async def _handle_post_oauth_sync(provider_name: str, provider: Any) -> None:
+    """Synchronize system caches, warmup quote pipeline, and broadcast live status upon successful OAuth."""
+    # 1. Warm up quotes so token_manager immediately transitions to CONNECTED and resets failure counter
+    try:
+        from app.core.token_manager import ConnectionState
+        token_mgr = provider.get_token_manager() if hasattr(provider, "get_token_manager") else None
+        symbols = list(provider.symbol_map.keys()) if hasattr(provider, "symbol_map") else []
+        if symbols:
+            if hasattr(provider, "_fetch_fyers_quotes"):
+                quotes = await provider._fetch_fyers_quotes(symbols)
+                if quotes and token_mgr:
+                    token_mgr.set_state(ConnectionState.CONNECTED)
+                    token_mgr.record_message()
+                    setattr(provider, "_consecutive_failures", 0)
+            elif hasattr(provider, "_fetch_flattrade_quotes"):
+                quotes = await provider._fetch_flattrade_quotes(symbols)
+                if quotes and token_mgr:
+                    token_mgr.set_state(ConnectionState.CONNECTED)
+                    token_mgr.record_message()
+                    setattr(provider, "_consecutive_failures", 0)
+    except Exception as e:
+        logger.warning("post_oauth_warmup_failed", provider=provider_name, error=str(e)[:150])
+
+    # 2. Invalidate / clear coordinator cache and dashboard summary cache
+    try:
+        from app.services.market_data_coordinator import market_data_coordinator
+        from app.api.dashboard import _summary_cache
+        await market_data_coordinator.clear()
+        _summary_cache.clear()
+    except Exception as e:
+        logger.warning("post_oauth_cache_clear_failed", error=str(e)[:150])
+
+    # 3. Broadcast real-time event to all connected WebSocket clients
+    try:
+        from app.services.central_feed import central_feed
+        await central_feed.broadcast_message({
+            "type": "BROKER_AUTHENTICATED",
+            "provider": provider_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        snapshot = await central_feed.get_snapshot()
+        initial_ticks = snapshot.get("ticks", [])
+        if initial_ticks:
+            await central_feed.broadcast_message({
+                "type": "MARKET_TICKS",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ticks": initial_ticks,
+                "snapshot": True,
+            })
+    except Exception as e:
+        logger.warning("post_oauth_ws_broadcast_failed", error=str(e)[:150])
+
+
+def _generate_oauth_success_html(broker_name: str, return_url: str) -> str:
+    escaped_return_url = (return_url or cfg.frontend_url or "https://fo-droid.web.app").strip()
+    display_broker = broker_name.upper()
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{display_broker} Authentication Successful</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1rem;">
+    <div style="background:#1e293b;padding:2.5rem;border-radius:14px;border:1px solid #10b981;max-width:500px;width:100%;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+        <div style="font-size:48px;margin-bottom:12px;">✅</div>
+        <h2 style="color:#10b981;margin-top:0;">{display_broker} Connected Successfully!</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.5;">Your daily trading access token has been generated and activated in Droid.</p>
+        <p id="countdown" style="color:#64748b;font-size:12px;margin-top:20px;">Synchronizing dashboard and returning in 2 seconds...</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;">
+            <button id="closeBtn" onclick="tryClose()" style="padding:8px 16px;background:#10b981;color:#0f172a;border:none;font-weight:700;border-radius:6px;font-size:13px;cursor:pointer;">Return to App</button>
+            <a id="returnLink" href="{escaped_return_url}" style="padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:700;border-radius:6px;font-size:13px;">Open Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        const returnUrl = {json.dumps(escaped_return_url)};
+        const payload = {{ type: 'DROID_AUTH_SUCCESS', provider: {json.dumps(broker_name.lower())}, timestamp: Date.now() }};
+
+        // 1. Notify opener tab if opened as popup
+        if (window.opener && !window.opener.closed) {{
+            try {{
+                window.opener.postMessage(payload, '*');
+            }} catch (e) {{
+                console.warn('Failed to postMessage to opener:', e);
+            }}
+        }}
+
+        // 2. BroadcastChannel for cross-tab sync
+        try {{
+            const bc = new BroadcastChannel('droid_auth_channel');
+            bc.postMessage(payload);
+            bc.close();
+        }} catch (e) {{}}
+
+        // 3. Fallback: localStorage marker
+        try {{
+            localStorage.setItem('droid_last_auth_provider', {json.dumps(broker_name.lower())});
+            localStorage.setItem('droid_last_auth_time', String(Date.now()));
+        }} catch (e) {{}}
+
+        function tryClose() {{
+            if (window.opener && !window.opener.closed) {{
+                window.close();
+            }} else {{
+                window.location.href = returnUrl;
+            }}
+        }}
+
+        setTimeout(tryClose, 1800);
+    </script>
+</body>
+</html>"""
 
 
 @router.get("/fyers/callback")
@@ -276,17 +405,22 @@ async def fyers_oauth_callback(
             status_code=200,
         )
 
-    # 3. Decode custom credentials if packed into state
+    # 3. Decode custom credentials and return_url if packed into state
     custom_app_id = ""
     custom_secret = ""
+    return_url = ""
     if state and state.startswith("c_"):
         try:
             raw_json = base64.urlsafe_b64decode(state[2:].encode("utf-8")).decode("utf-8")
             parsed = json.loads(raw_json)
             custom_app_id = (parsed.get("a") or "").strip().strip("\"'")
             custom_secret = (parsed.get("s") or "").strip().strip("\"'")
+            return_url = (parsed.get("r") or "").strip()
         except Exception as ex:
             logger.warning("failed_to_decode_custom_state", error=str(ex))
+
+    if not return_url:
+        return_url = cfg.frontend_url or "https://fo-droid.web.app"
 
     # 4. Resolve credentials with fallback hierarchy
     broker_config = get_config()
@@ -355,25 +489,11 @@ async def fyers_oauth_callback(
                 ))
                 await provider.start_stream()
 
+                # Synchronize caches, warmup quotes, and broadcast to all connected clients
+                await _handle_post_oauth_sync("fyers", provider)
+
                 logger.info("fyers_oauth_exchange_success", app_id=app_id)
-                success_html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>FYERS Authentication Successful</title>
-                    <meta http-equiv="refresh" content="3;url=/" />
-                </head>
-                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                    <div style="background:#1e293b;padding:2.5rem;border-radius:12px;border:1px solid #10b981;max-width:500px;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
-                        <div style="font-size:48px;margin-bottom:12px;">✅</div>
-                        <h2 style="color:#10b981;margin-top:0;">FYERS Connected Successfully!</h2>
-                        <p style="color:#94a3b8;font-size:14px;line-height:1.5;">Your daily trading access token has been generated and activated in Droid.</p>
-                        <p style="color:#64748b;font-size:12px;margin-top:20px;">Redirecting back to Droid in 3 seconds...</p>
-                        <a href="/" style="display:inline-block;margin-top:12px;padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:600;border-radius:6px;font-size:13px;">Return to Dashboard</a>
-                    </div>
-                </body>
-                </html>
-                """
+                success_html = _generate_oauth_success_html("fyers", return_url)
                 return HTMLResponse(content=success_html, status_code=200)
             else:
                 err_text = data.get("message") or str(data)
@@ -568,25 +688,12 @@ async def flattrade_oauth_callback(
                 ))
                 await provider.start_stream()
 
+                # Synchronize caches, warmup quotes, and broadcast to all connected clients
+                await _handle_post_oauth_sync("flattrade", provider)
+
                 logger.info("flattrade_oauth_exchange_success", user_id=user_id)
-                success_html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Flattrade Authentication Successful</title>
-                    <meta http-equiv="refresh" content="3;url=/" />
-                </head>
-                <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                    <div style="background:#1e293b;padding:2.5rem;border-radius:12px;border:1px solid #10b981;max-width:500px;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
-                        <div style="font-size:48px;margin-bottom:12px;">✅</div>
-                        <h2 style="color:#10b981;margin-top:0;">Flattrade Connected Successfully!</h2>
-                        <p style="color:#94a3b8;font-size:14px;line-height:1.5;">Your trading session token has been generated and activated in Droid.</p>
-                        <p style="color:#64748b;font-size:12px;margin-top:20px;">Redirecting back to Droid in 3 seconds...</p>
-                        <a href="/" style="display:inline-block;margin-top:12px;padding:8px 16px;background:#38bdf8;color:#0f172a;text-decoration:none;font-weight:600;border-radius:6px;font-size:13px;">Return to Dashboard</a>
-                    </div>
-                </body>
-                </html>
-                """
+                return_url = cfg.frontend_url or "https://fo-droid.web.app"
+                success_html = _generate_oauth_success_html("flattrade", return_url)
                 return HTMLResponse(content=success_html, status_code=200)
             else:
                 err_text = data.get("emsg") or data.get("message") or str(data)

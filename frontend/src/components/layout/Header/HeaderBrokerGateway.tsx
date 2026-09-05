@@ -12,10 +12,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Activity, ArrowRight, ChevronDown, ExternalLink, Globe, Zap } from 'lucide-react';
+import { Activity, ArrowRight, ChevronDown, ExternalLink, Globe, Zap, Loader2 } from 'lucide-react';
 import { getStoredSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { openBrokerAuth } from '@/lib/brokerAuth';
 
 export type StatusTone = 'live' | 'demo' | 'closed' | 'offline' | 'degraded';
 
@@ -193,6 +194,35 @@ export function HeaderBrokerGateway({
     };
   }, []);
 
+  const [isAuthorizing, setIsAuthorizing] = useState(false);
+
+  // Reset authorizing state when broker:authenticated event fires
+  useEffect(() => {
+    const handleAuth = () => {
+      setIsAuthorizing(false);
+    };
+    window.addEventListener('broker:authenticated', handleAuth);
+    return () => window.removeEventListener('broker:authenticated', handleAuth);
+  }, []);
+
+  const handleAuthorize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsAuthorizing(true);
+    openBrokerAuth({
+      provider: activeBroker,
+      loginUrl: authLoginUrl,
+      onSuccess: () => {
+        setIsAuthorizing(false);
+      },
+      onClose: () => {
+        setIsAuthorizing(false);
+      },
+      onError: () => {
+        setIsAuthorizing(false);
+      },
+    });
+  };
+
   const status = resolveSystemStatus(health, marketStatus, streamState, activeBroker, isIndian);
   const isHealthy = (health?.status === 'HEALTHY' || health?.mode === 'LIVE') && streamState === 'CONNECTED';
   const authLoginUrl = `${api.getBaseUrl()}/api/v1/tokens/${activeBroker}/login`;
@@ -209,9 +239,9 @@ export function HeaderBrokerGateway({
           title={`Broker: ${activeBroker.toUpperCase()} • Session: ${marketStatus?.session ?? '—'} • Stream: ${streamState}`}
           aria-label={`Broker Gateway: ${status.label}`}
         >
-          <span className={cn('w-2 h-2 rounded-full shrink-0', status.dot, status.animate && 'animate-live')} />
-          <span className="hidden sm:inline font-semibold">{status.label}</span>
-          <span className="sm:hidden font-semibold">{status.mobileLabel}</span>
+          <span className={cn('w-2 h-2 rounded-full shrink-0', status.dot, (status.animate || isAuthorizing) && 'animate-live')} />
+          <span className="hidden sm:inline font-semibold">{isAuthorizing ? `SYNCING…` : status.label}</span>
+          <span className="sm:hidden font-semibold">{isAuthorizing ? `SYNC` : status.mobileLabel}</span>
 
           {health?.latency_ms != null && (
             <span className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-black/5 text-foreground/80 tabular-nums">
@@ -232,15 +262,19 @@ export function HeaderBrokerGateway({
                 'text-[10px] font-bold px-2 py-0.5 rounded-full border',
                 isHealthy
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : isAuthorizing
+                  ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse'
                   : 'bg-amber-50 text-amber-800 border-amber-200',
               )}
             >
-              {isHealthy ? 'CONNECTED' : 'ACTION REQUIRED'}
+              {isHealthy ? 'CONNECTED' : isAuthorizing ? 'AUTHORIZING' : 'ACTION REQUIRED'}
             </span>
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
             {isHealthy
               ? `Connected to ${activeBroker.toUpperCase()} real-time tick engine.${marketStatus?.session === 'CLOSED' ? ' Exchange is currently closed.' : ''}`
+              : isAuthorizing
+              ? `Awaiting OAuth verification with ${activeBroker.toUpperCase()}…`
               : `${activeBroker.toUpperCase()} session requires active token authentication.`}
           </p>
         </DropdownMenuLabel>
@@ -248,23 +282,35 @@ export function HeaderBrokerGateway({
         {/* 1-Click Action for Indian Broker Auth */}
         {isIndian && (
           <div className="p-1">
-            <a
-              href={authLoginUrl}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={handleAuthorize}
+              disabled={isAuthorizing}
               className={cn(
                 'flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-semibold transition-all shadow-2xs cursor-pointer',
-                !isHealthy
+                isAuthorizing
+                  ? 'bg-amber-400 text-slate-950 font-bold animate-pulse cursor-wait'
+                  : !isHealthy
                   ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold'
                   : 'bg-secondary hover:bg-secondary/80 text-foreground border border-border',
               )}
             >
               <div className="flex items-center gap-1.5">
-                <Zap className={cn('w-3.5 h-3.5', !isHealthy ? 'fill-current' : 'text-primary')} />
-                <span>{!isHealthy ? `Authorize ${activeBroker.toUpperCase()}` : 'Re-authorize Token'}</span>
+                {isAuthorizing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Zap className={cn('w-3.5 h-3.5', !isHealthy ? 'fill-current' : 'text-primary')} />
+                )}
+                <span>
+                  {isAuthorizing
+                    ? `Authorizing ${activeBroker.toUpperCase()}…`
+                    : !isHealthy
+                    ? `Authorize ${activeBroker.toUpperCase()}`
+                    : 'Re-authorize Token'}
+                </span>
               </div>
               <ExternalLink className="w-3 h-3 opacity-70" />
-            </a>
+            </button>
           </div>
         )}
 

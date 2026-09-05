@@ -232,10 +232,48 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
+
+    let lastFocusFetch = 0;
+    const onFocus = () => {
+      const now = Date.now();
+      // Throttle focus refetch to once every 2 seconds
+      if (now - lastFocusFetch > 2000) {
+        lastFocusFetch = now;
+        void fetchData();
+        if (timeout) clearTimeout(timeout);
+        schedule();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+
+    const onBrokerAuth = () => {
+      void fetchData();
+      if (timeout) clearTimeout(timeout);
+      schedule();
+    };
+    window.addEventListener('broker:authenticated', onBrokerAuth);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('droid_auth_channel');
+      bc.onmessage = (ev) => {
+        if (ev.data && (ev.data.type === 'DROID_AUTH_SUCCESS' || ev.data.type === 'BROKER_AUTHENTICATED')) {
+          onBrokerAuth();
+        }
+      };
+    } catch {}
+
     return () => {
       mountedRef.current = false;
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('broker:authenticated', onBrokerAuth);
+      if (bc) {
+        try {
+          bc.close();
+        } catch {}
+      }
     };
   }, [activeInterval, fetchData, streamState, ticksFresh]);
 

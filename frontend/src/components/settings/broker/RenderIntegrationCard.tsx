@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Server, Copy, Check, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Server, Copy, Check, ExternalLink, Loader2 } from 'lucide-react';
 import type { BrokerSettings } from '@/lib/settings';
 import { REDIRECT_BASE, FYERS_LOGIN_URL, FLATTRADE_LOGIN_URL } from './constants';
 import { SettingSection, SettingRow } from '../ui/SettingPrimitives';
+import { openBrokerAuth } from '@/lib/brokerAuth';
+import { cn } from '@/lib/utils';
 
 interface Props {
   settings: BrokerSettings;
@@ -12,6 +14,18 @@ interface Props {
 
 export function RenderIntegrationCard({ settings }: Props) {
   const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [isAuthorizing, setIsAuthorizing] = useState(false);
+  const [authSuccess, setAuthSuccess] = useState(false);
+
+  useEffect(() => {
+    const handleAuth = () => {
+      setIsAuthorizing(false);
+      setAuthSuccess(true);
+      setTimeout(() => setAuthSuccess(false), 4000);
+    };
+    window.addEventListener('broker:authenticated', handleAuth);
+    return () => window.removeEventListener('broker:authenticated', handleAuth);
+  }, []);
 
   const handleCopyRedirect = (provider: 'fyers' | 'flattrade') => {
     const uri = `${REDIRECT_BASE}/${provider}/callback`;
@@ -30,6 +44,28 @@ export function RenderIntegrationCard({ settings }: Props) {
       ? 'https://myapi.fyers.in/dashboard'
       : 'https://wallconnect.flattrade.in/';
   const portalName = settings.provider === 'fyers' ? 'Fyers Portal' : 'WallConnect Portal';
+
+  const handleAuthorize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsAuthorizing(true);
+    setAuthSuccess(false);
+    const loginUrl = settings.provider === 'fyers' ? fyersServerLoginUrl : flattradeServerLoginUrl;
+    openBrokerAuth({
+      provider: settings.provider,
+      loginUrl,
+      onSuccess: () => {
+        setIsAuthorizing(false);
+        setAuthSuccess(true);
+        setTimeout(() => setAuthSuccess(false), 4000);
+      },
+      onClose: () => {
+        setIsAuthorizing(false);
+      },
+      onError: () => {
+        setIsAuthorizing(false);
+      },
+    });
+  };
 
   return (
     <SettingSection
@@ -80,15 +116,36 @@ export function RenderIntegrationCard({ settings }: Props) {
         label="Session Authorization"
         description="SEBI-compliant daily 2FA login. Activates 24-hour WebSocket feed and execution token."
       >
-        <a
-          href={settings.provider === 'fyers' ? fyersServerLoginUrl : flattradeServerLoginUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-medium rounded-md transition-colors shadow-2xs whitespace-nowrap"
+        <button
+          type="button"
+          onClick={handleAuthorize}
+          disabled={isAuthorizing}
+          className={cn(
+            'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors shadow-2xs whitespace-nowrap cursor-pointer',
+            authSuccess
+              ? 'bg-emerald-600 text-white'
+              : isAuthorizing
+              ? 'bg-amber-500 text-slate-950 font-bold animate-pulse cursor-wait'
+              : 'bg-primary hover:bg-primary/90 text-primary-foreground',
+          )}
         >
-          <span>Authorize with {settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'}</span>
-          <ExternalLink className="w-3 h-3" />
-        </a>
+          {authSuccess ? (
+            <>
+              <Check className="w-3.5 h-3.5" />
+              <span>{settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'} Connected!</span>
+            </>
+          ) : isAuthorizing ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Authorizing {settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'}…</span>
+            </>
+          ) : (
+            <>
+              <span>Authorize with {settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'}</span>
+              <ExternalLink className="w-3 h-3" />
+            </>
+          )}
+        </button>
       </SettingRow>
     </SettingSection>
   );
