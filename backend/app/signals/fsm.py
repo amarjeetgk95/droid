@@ -10,7 +10,7 @@ import time
 import uuid
 from decimal import Decimal
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 import structlog
 
 logger = structlog.get_logger()
@@ -90,6 +90,7 @@ class SignalInstance(BaseModel):
     # Breakeven Ratchet (+0.8R)
     breakeven_activated: bool = False
     breakeven_trigger_price: Optional[Decimal] = None
+    breakeven_activation_price: Optional[Decimal] = None
 
     # Two-Clock Lifecycles (§6, §20)
     time_stop_seconds: Optional[int] = None
@@ -123,6 +124,17 @@ class SignalInstance(BaseModel):
     expires_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000) + 300000)
     ttl_seconds: int = 300
     last_updated_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
+
+    @computed_field
+    @property
+    def created_at_str(self) -> str:
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            dt = datetime.fromtimestamp(self.created_at_utc / 1000.0, tz=ZoneInfo("Asia/Kolkata"))
+            return dt.strftime("%d %b %Y, %H:%M:%S IST")
+        except Exception:
+            return ""
 
     # Realized Execution & Outcomes
     triggered_at_utc: Optional[int] = None
@@ -169,15 +181,23 @@ class SignalFSMManager:
         if signal.t2_price is None:
             signal.t2_price = signal.target_2
 
-        # Compute initial Risk R
-        risk_r = abs(signal.spot_price - signal.stop_loss)
+        # Compute initial Risk R based on entry trigger, NOT spot at signal creation
+        entry_ref = signal.trigger if signal.trigger and signal.trigger > 0 else signal.spot_price
+        risk_r = abs(entry_ref - signal.stop_loss)
         signal.risk_r = risk_r
 
-        # Pre-compute breakeven trigger (+0.8R)
+        # Pre-compute breakeven trigger (+0.8R) anchored to ENTRY
         if signal.direction == "LONG_CALL":
-            signal.breakeven_trigger_price = signal.spot_price + (risk_r * Decimal("0.8"))
+            be_price = entry_ref + (risk_r * Decimal("0.8"))
+            if be_price <= entry_ref:
+                be_price = entry_ref + (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
         else:
-            signal.breakeven_trigger_price = signal.spot_price - (risk_r * Decimal("0.8"))
+            be_price = entry_ref - (risk_r * Decimal("0.8"))
+            if be_price >= entry_ref:
+                be_price = entry_ref - (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
+
+        signal.breakeven_trigger_price = be_price
+        signal.breakeven_activation_price = be_price
 
         # Pre-entry trigger expiry based on signal.ttl_seconds
         if signal.ttl_seconds and signal.ttl_seconds > 0:
@@ -427,15 +447,20 @@ class SignalFSMManager:
         if sig.fsm_state not in ("CONFIRMED", "TARGET_1_HIT"):
             return False
 
-        cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
-        cost_buffer = Decimal("0.10")  # exchange tick safety buffer
+        cost_ref = sig.actual_fill_price or sig.entry_price or sig.trigger or sig.entry_min or sig.spot_price
         if sig.direction == "LONG_CALL":
-            new_sl = cost_ref + cost_buffer
+            new_sl = cost_ref
+            # Ensure stop loss does not move beyond current market price
+            if market_price is not None and new_sl >= market_price:
+                new_sl = market_price - Decimal("0.05")
             if sig.current_stop_loss is not None and new_sl <= sig.current_stop_loss:
                 return False  # stop cannot move backward
             sig.current_stop_loss = new_sl
         else:
-            new_sl = cost_ref - cost_buffer
+            new_sl = cost_ref
+            # Ensure stop loss does not move beyond current market price
+            if market_price is not None and new_sl <= market_price:
+                new_sl = market_price + Decimal("0.05")
             if sig.current_stop_loss is not None and new_sl >= sig.current_stop_loss:
                 return False  # stop cannot move backward
             sig.current_stop_loss = new_sl
@@ -516,9 +541,10 @@ def evaluate_tick(
             return "RUNNER_TIME_STOP_HIT", "RUNNER_TIME_STOP_EXCEEDED"
 
         # Breakeven trigger in runner
-        if not sig.breakeven_activated and sig.breakeven_trigger_price:
-            if (direction == "LONG_CALL" and tick_price >= sig.breakeven_trigger_price) or \
-               (direction == "LONG_PUT" and tick_price <= sig.breakeven_trigger_price):
+        be_trig = sig.breakeven_trigger_price or sig.breakeven_activation_price
+        if not sig.breakeven_activated and be_trig:
+            if (direction == "LONG_CALL" and tick_price >= be_trig) or \
+               (direction == "LONG_PUT" and tick_price <= be_trig):
                 return None, "BE_ACTIVATED"
 
         return None, "HOLD_RUNNER"
@@ -537,9 +563,10 @@ def evaluate_tick(
             return "TIME_STOP_HIT", "TIME_STOP_EXCEEDED"
 
         # Check +0.8R Breakeven Trigger
-        if not sig.breakeven_activated and sig.breakeven_trigger_price:
-            if (direction == "LONG_CALL" and tick_price >= sig.breakeven_trigger_price) or \
-               (direction == "LONG_PUT" and tick_price <= sig.breakeven_trigger_price):
+        be_trig = sig.breakeven_trigger_price or sig.breakeven_activation_price
+        if not sig.breakeven_activated and be_trig:
+            if (direction == "LONG_CALL" and tick_price >= be_trig) or \
+               (direction == "LONG_PUT" and tick_price <= be_trig):
                 return None, "BE_ACTIVATED"
 
         return None, "HOLD_ACTIVE"

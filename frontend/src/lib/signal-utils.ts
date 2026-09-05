@@ -62,3 +62,50 @@ export function ttlLabel(signal: { fsm_state?: unknown; ttl_remaining_seconds?: 
 export function withJitter(baseMs: number, ratio = 0.2): number {
   return baseMs * (1 - ratio + Math.random() * ratio * 2);
 }
+
+/**
+ * Null-safe date and time formatting (e.g. "05 Sep 2026, 14:35:22").
+ * Guarantees timestamps consist of both date and time across the Signal module in IST.
+ */
+export function formatDateTime(v: unknown, fallback = '—', includeSeconds = true): string {
+  if (v === null || v === undefined || v === '') return fallback;
+  const d = typeof v === 'number' || typeof v === 'string' ? new Date(v) : (v as Date);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+    hour12: false,
+  });
+}
+
+export const safeDateTime = formatDateTime;
+
+export function formatDate(v: unknown, fallback = '—'): string {
+  if (v === null || v === undefined || v === '') return fallback;
+  const d = typeof v === 'number' || typeof v === 'string' ? new Date(v) : (v as Date);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+export function formatTime(v: unknown, fallback = '—', includeSeconds = true): string {
+  if (v === null || v === undefined || v === '') return fallback;
+  const d = typeof v === 'number' || typeof v === 'string' ? new Date(v) : (v as Date);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+    hour12: false,
+  });
+}

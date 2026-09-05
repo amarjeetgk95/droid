@@ -15,7 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { SignalDTO } from './SignalCard';
-import { safeNum, safeState } from '@/lib/signal-utils';
+import { safeNum, safeState, formatDateTime } from '@/lib/signal-utils';
 
 const STRATEGY_FILTERS = ['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB', 'VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'];
 
@@ -128,6 +128,11 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
                           {s.timeframe || '5M'}
                         </span>
                       </div>
+                      {s.created_at_utc ? (
+                        <div className="text-[10px] text-muted-foreground font-mono font-normal mt-0.5" title="Generated Date & Time (IST)">
+                          {formatDateTime(s.created_at_utc)}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="p-3">
                       <Badge variant="outline" className="text-[10px] font-mono">

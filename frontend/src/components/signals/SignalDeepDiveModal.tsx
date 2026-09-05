@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
+import { formatDateTime } from '@/lib/signal-utils';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import {
   Activity,
@@ -122,6 +123,9 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Signal ID: <span className="font-mono">{sig?.signal_id}</span> • Spot: ₹{Number(sig?.spot_price || 0).toLocaleString('en-IN')}
+                {sig?.created_at_utc ? (
+                  <> • Generated: <span className="font-mono font-medium text-foreground" title="Generated Date & Time (IST)">{formatDateTime(sig.created_at_utc)}</span></>
+                ) : null}
               </p>
             </div>
           </div>
@@ -197,7 +201,7 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                       <span className="text-emerald-600 dark:text-emerald-400 text-[11px]">✓ Verified Live</span>
                     </div>
                     <p className="text-muted-foreground text-[11px] pl-7">
-                      Tick received from FYERS data stream. Market session validated (NSE Hours 09:15 - 15:30 IST). Synthetic and fallback quotes strictly gated.
+                      Tick received from FYERS data stream{sig?.created_at_utc ? ` on ${formatDateTime(sig.created_at_utc)}` : ''}. Market session validated (NSE Hours 09:15 - 15:30 IST). Synthetic and fallback quotes strictly gated.
                     </p>
                   </div>
 

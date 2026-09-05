@@ -171,10 +171,10 @@ class SignalOutcomeTracker:
                     triggered = True
 
                 if triggered:
+                    # First transition to TRIGGERED
                     signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
-                    signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
 
-                    # Automated paper trade execution upon confirmation
+                    # Attempt paper execution
                     paper_res = None
                     lots_to_trade = (sig.option_contract or {}).get("lots") or getattr(sig, "lots", None) or 1
                     try:
@@ -186,8 +186,9 @@ class SignalOutcomeTracker:
                     except Exception as pe:
                         logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
 
-                    # Reconcile entry fill and dispatch alerts ONLY if paper execution succeeded
-                    if paper_res and paper_res.success:
+                    # Transition to CONFIRMED only on successful, non-rejected paper execution
+                    if paper_res and paper_res.success and paper_res.status != "REJECTED":
+                        signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
                         opt_rec = option_fill_reconciler.reconcile_entry(
                             sig=sig,
                             fill_price=paper_res.fill_price,
@@ -222,7 +223,11 @@ class SignalOutcomeTracker:
                             logger.warning("telegram_auto_confirmed_failed", signal_id=sig.signal_id, error=str(te))
 
                         # Broadcast SSE
-                        await signal_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
+                        try:
+                            await signal_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
+                        except Exception as se:
+                            logger.warning("sse_confirmed_broadcast_failed", signal_id=sig.signal_id, error=str(se))
+
                         processed_events.append({
                             "signal_id": sig.signal_id,
                             "event": "CONFIRMED",
@@ -230,11 +235,25 @@ class SignalOutcomeTracker:
                             "paper_order": paper_res.model_dump(),
                         })
                     else:
+                        # Do NOT leave the signal stranded in CONFIRMED. Transition to INVALIDATED.
+                        fail_msg = paper_res.message if paper_res and paper_res.message else "unknown"
+                        signal_fsm.transition(
+                            sig.signal_id,
+                            "INVALIDATED",
+                            market_price=d_price,
+                            reason=f"EXECUTION_FAILED: {fail_msg}",
+                        )
                         logger.warning(
                             "signal_paper_execution_blocked",
                             signal_id=sig.signal_id,
-                            reason=paper_res.message if paper_res else "execution_failed",
+                            reason=fail_msg,
                         )
+                        processed_events.append({
+                            "signal_id": sig.signal_id,
+                            "event": "INVALIDATED",
+                            "price": float(d_price),
+                            "reason": f"EXECUTION_FAILED: {fail_msg}",
+                        })
 
             # ── 2. ORDERED TICK EVALUATION (CONFIRMED & TARGET_1_HIT RUNNERS) ──
             elif st in ("CONFIRMED", "TARGET_1_HIT"):

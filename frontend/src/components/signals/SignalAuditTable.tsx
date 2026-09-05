@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { api } from '@/lib/api';
+import { formatDateTime } from '@/lib/signal-utils';
 import {
   Activity,
   ArrowDownRight,
@@ -75,6 +76,8 @@ export interface AuditTradeRecord {
   outcome_label?: string;
   is_winner?: boolean;
   created_at_utc: number;
+  created_at_str?: string;
+  executed_at_str?: string;
 }
 
 export interface AuditSummary {
@@ -550,7 +553,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                     title="Select all in current view"
                   />
                 </th>
-                <th className="py-2.5 px-3">Time & Signal</th>
+                <th className="py-2.5 px-3">Date, Time & Signal</th>
                 <th className="py-2.5 px-3">Instrument & Strategy</th>
                 <th className="py-2.5 px-3">Option Contract</th>
                 <th className="py-2.5 px-3">Trigger / Fill / LTP</th>
@@ -591,16 +594,16 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                           title="Select for bulk delete"
                         />
                       </td>
-                      {/* Time & Signal (Creation & Execution Time) */}
+                      {/* Date, Time & Signal (Creation & Execution Timestamp) */}
                       <td className="py-2.5 px-3 font-mono">
                         <div className="font-semibold text-foreground flex items-center gap-1">
                           {isOpen && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />}
-                          <span title="Signal Creation Time (IST)">{new Date(t.created_at_utc).toLocaleTimeString('en-IN', { hour12: false })}</span>
+                          <span title="Signal Creation Date & Time (IST)">{formatDateTime(t.created_at_utc)}</span>
                         </div>
                         <div className="text-[10px] font-mono mt-0.5">
                           {t.executed_at_utc ? (
-                            <span className="text-primary font-semibold flex items-center gap-0.5" title="Execution Time (IST)">
-                              <Zap className="w-2.5 h-2.5 text-amber-500 shrink-0" /> Exec: {new Date(t.executed_at_utc).toLocaleTimeString('en-IN', { hour12: false })}
+                            <span className="text-primary font-semibold flex items-center gap-0.5" title="Execution Date & Time (IST)">
+                              <Zap className="w-2.5 h-2.5 text-amber-500 shrink-0" /> Exec: {formatDateTime(t.executed_at_utc)}
                             </span>
                           ) : (
                             <span className="text-muted-foreground/60">Exec: Pending</span>

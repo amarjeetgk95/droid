@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
-import { safeNum, safeState, ttlLabel } from '@/lib/signal-utils';
+import { safeNum, safeState, ttlLabel, formatDateTime } from '@/lib/signal-utils';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import {
   ArrowDownRight,
@@ -64,6 +64,7 @@ export type SignalDTO = {
   };
   fsm_state: string;
   created_at_utc: number;
+  created_at_str?: string;
   expires_at_utc: number;
   ttl_seconds?: number;
   distance_to_trigger_pts?: number | null;
@@ -211,9 +212,15 @@ export function SignalCard({
 
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={fsm} isMarketClosed={isMarketClosed} />
-          <span className="text-[10px] font-mono text-muted-foreground">
-            TTL: {ttlLabel(signal, nowMs)}
-          </span>
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+            {signal.created_at_utc ? (
+              <span title="Generated Date & Time (IST)">
+                {formatDateTime(signal.created_at_utc)}
+              </span>
+            ) : null}
+            {signal.created_at_utc ? <span>•</span> : null}
+            <span>TTL: {ttlLabel(signal, nowMs)}</span>
+          </div>
         </div>
       </div>
 

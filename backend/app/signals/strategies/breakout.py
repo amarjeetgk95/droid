@@ -36,14 +36,34 @@ class BreakoutStrategy(Strategy):
         if resistances:
             key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
             if (spot >= key_res or breakout_pressure >= 72) and mtf_bias != "BEARISH":
-                entry_min = normalize_price(key_res, tick)
-                entry_max = normalize_price(key_res + (atr * Decimal("0.3")), tick)
-                trigger = normalize_price(key_res + tick, tick)
-                stop_loss = normalize_price(key_res - (atr * Decimal("1.2")), tick)
-                risk_pts = entry_min - stop_loss
+                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
+                if spot < key_res:
+                    # Pre-breakout setup: trigger above resistance
+                    trigger = normalize_price(key_res + min_gap, tick)
+                    if trigger <= spot or abs(trigger - spot) < min_gap:
+                        trigger = normalize_price(max(trigger, spot) + tick, tick)
+                    entry_min = normalize_price(key_res, tick)
+                    entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
+                    stop_loss = normalize_price(key_res - (atr * Decimal("0.75")), tick)
+                else:
+                    # Breakout continuation: spot >= key_res
+                    chase = spot - key_res
+                    raw_atr_val = Decimal(str(ind.get("atr") or ind.get("volatility", {}).get("atr") or 0))
+                    chase_limit = max(atr * Decimal("0.5"), raw_atr_val * Decimal("0.5"))
+                    if chase > chase_limit:
+                        return None  # Chase exceeded
+                    raw_trigger = spot + min_gap
+                    trigger = normalize_price(raw_trigger, tick)
+                    if trigger <= spot or abs(trigger - spot) < min_gap:
+                        trigger = normalize_price(max(trigger, spot) + tick, tick)
+                    entry_min = normalize_price(spot, tick)
+                    entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
+                    stop_loss = normalize_price(key_res - (atr * Decimal("0.5")), tick)
+
+                risk_pts = trigger - stop_loss
                 if risk_pts > Decimal("0"):
-                    t1 = normalize_price(entry_min + (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(entry_min + (risk_pts * Decimal("3.0")), tick)
+                    t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
+                    t2 = normalize_price(trigger + (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
                     
                     tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))
@@ -85,14 +105,34 @@ class BreakoutStrategy(Strategy):
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
             if (spot <= key_sup or breakout_pressure >= 72) and mtf_bias != "BULLISH":
-                entry_min = normalize_price(key_sup - (atr * Decimal("0.3")), tick)
-                entry_max = normalize_price(key_sup, tick)
-                trigger = normalize_price(key_sup - tick, tick)
-                stop_loss = normalize_price(key_sup + (atr * Decimal("1.2")), tick)
-                risk_pts = stop_loss - entry_max
+                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
+                if spot > key_sup:
+                    # Pre-breakdown setup: trigger below support
+                    trigger = normalize_price(key_sup - min_gap, tick)
+                    if trigger >= spot or abs(spot - trigger) < min_gap:
+                        trigger = normalize_price(min(trigger, spot) - tick, tick)
+                    entry_max = normalize_price(key_sup, tick)
+                    entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
+                    stop_loss = normalize_price(key_sup + (atr * Decimal("0.75")), tick)
+                else:
+                    # Breakdown continuation: spot <= key_sup
+                    chase = key_sup - spot
+                    raw_atr_val = Decimal(str(ind.get("atr") or ind.get("volatility", {}).get("atr") or 0))
+                    chase_limit = max(atr * Decimal("0.5"), raw_atr_val * Decimal("0.5"))
+                    if chase > chase_limit:
+                        return None  # Chase exceeded
+                    raw_trigger = spot - min_gap
+                    trigger = normalize_price(raw_trigger, tick)
+                    if trigger >= spot or abs(spot - trigger) < min_gap:
+                        trigger = normalize_price(min(trigger, spot) - tick, tick)
+                    entry_max = normalize_price(spot, tick)
+                    entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
+                    stop_loss = normalize_price(key_sup + (atr * Decimal("0.5")), tick)
+
+                risk_pts = stop_loss - trigger
                 if risk_pts > Decimal("0"):
-                    t1 = normalize_price(entry_max - (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(entry_max - (risk_pts * Decimal("3.0")), tick)
+                    t1 = normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)
+                    t2 = normalize_price(trigger - (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
                     tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))

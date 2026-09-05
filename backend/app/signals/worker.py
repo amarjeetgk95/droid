@@ -143,20 +143,26 @@ class AutomatedSignalWorker:
                         # Process price updates (triggers, ratchets, staged exits, time stops)
                         await outcome_tracker.process_price_update_async(u, curr_p)
 
-                        # Update live MTM in Signal Audit Ledger
-                        from app.signals.audit_ledger import signal_audit_ledger
-                        from app.signals.sse import signal_sse_hub
-                        updated_recs = signal_audit_ledger.update_live_quote(u, float(curr_p))
-                        if updated_recs:
-                            await signal_sse_hub.broadcast(
-                                "audit_pnl_update",
-                                {
-                                    "underlying": u,
-                                    "ltp": float(curr_p),
-                                    "summary": signal_audit_ledger.get_summary_metrics(),
-                                },
-                                priority="P1",
-                            )
+                        # Non-critical telemetry & audit MTM update: offload to background task to protect 2500ms cycle budget
+                        async def _bg_audit_and_sse(sym: str, price_val: Decimal):
+                            try:
+                                from app.signals.audit_ledger import signal_audit_ledger
+                                from app.signals.sse import signal_sse_hub
+                                updated_recs = signal_audit_ledger.update_live_quote(sym, float(price_val))
+                                if updated_recs:
+                                    await signal_sse_hub.broadcast(
+                                        "audit_pnl_update",
+                                        {
+                                            "underlying": sym,
+                                            "ltp": float(price_val),
+                                            "summary": signal_audit_ledger.get_summary_metrics(),
+                                        },
+                                        priority="P1",
+                                    )
+                            except Exception as te_err:
+                                logger.debug("worker_bg_audit_telemetry_error", underlying=sym, error=str(te_err))
+
+                        asyncio.create_task(_bg_audit_and_sse(u, curr_p))
                     except Exception as pe:
                         logger.debug("worker_risk_tick_err", underlying=u, error=str(pe))
 

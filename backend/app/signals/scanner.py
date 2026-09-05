@@ -149,11 +149,24 @@ class SignalScanner:
         # Fetch real candles for indicators (bounded timeout, never fatal)
         candles_dict = {}
         try:
-            from app.services.candles_service import candles_service
-            candles_dict = await asyncio.wait_for(
-                candles_service.get_multi_timeframe_candles(u, timeframes=["1m", "5m", "15m", "1h"]),
+            target_tfs = ["1m", "5m", "15m", "1h"]
+
+            async def _fetch_tf(tf_str: str):
+                try:
+                    c_list = await market_svc.get_candles(u, timeframe=tf_str)
+                    return tf_str, [
+                        c.model_dump() if hasattr(c, "model_dump") else dict(c)
+                        for c in c_list
+                    ]
+                except Exception as ce:
+                    logger.debug("candle_tf_fetch_error", underlying=u, timeframe=tf_str, error=str(ce))
+                    return tf_str, []
+
+            tf_results = await asyncio.wait_for(
+                asyncio.gather(*[_fetch_tf(tf_str) for tf_str in target_tfs]),
                 timeout=8.0,
-            ) or {}
+            )
+            candles_dict = {tf_k: c_arr for tf_k, c_arr in tf_results if c_arr}
         except asyncio.TimeoutError:
             diag.reasons.append("Candle fetch timed out — indicators degraded")
         except Exception as e:

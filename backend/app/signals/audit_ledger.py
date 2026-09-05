@@ -11,10 +11,23 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Any, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 import structlog
 
 logger = structlog.get_logger()
+
+
+def format_timestamp_ist(epoch_ms: Optional[int]) -> Optional[str]:
+    """Format epoch millisecond timestamp into full IST date and time string."""
+    if not epoch_ms:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        dt = datetime.fromtimestamp(epoch_ms / 1000.0, tz=ZoneInfo("Asia/Kolkata"))
+        return dt.strftime("%d %b %Y, %H:%M:%S IST")
+    except Exception:
+        return None
 
 
 class AuditStateEvent(BaseModel):
@@ -97,6 +110,16 @@ class AuditTradeRecord(BaseModel):
     state_history: list[AuditStateEvent] = Field(default_factory=list)
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
     updated_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
+
+    @computed_field
+    @property
+    def created_at_str(self) -> str:
+        return format_timestamp_ist(self.created_at_utc) or ""
+
+    @computed_field
+    @property
+    def executed_at_str(self) -> Optional[str]:
+        return format_timestamp_ist(self.executed_at_utc)
 
     def compute_live_duration(self, now_ms: Optional[int] = None) -> tuple[int, str]:
         now = now_ms or int(time.time() * 1000)
@@ -247,7 +270,14 @@ class SignalAuditLedger:
             return None
 
         from_state = rec.status
-        rec.status = to_state
+        # Guard: do not overwrite settled states or downgrade EXECUTED back to CONFIRMED
+        if rec.status in ("WON", "LOST", "CLOSED") and to_state not in ("WON", "LOST", "CLOSED"):
+            pass
+        elif rec.status == "EXECUTED" and to_state == "CONFIRMED":
+            pass
+        else:
+            rec.status = to_state
+
         rec.updated_at_utc = now_ms
         if market_price is not None:
             rec.current_price = market_price

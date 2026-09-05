@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Radio, ArrowUpRight, ArrowDownRight, ShieldAlert, Target, Sparkles, Check, Layers, Clock, TrendingUp } from 'lucide-react';
 import { CryptoSignal } from '@/lib/types';
+import { formatDateTime } from '@/lib/signal-utils';
 
 interface Props {
   signals: CryptoSignal[];
@@ -21,7 +22,7 @@ export function CryptoSignalsCard({ signals, loading, selectedAsset, onSelectAss
   });
 
   const handleCopy = (sig: CryptoSignal) => {
-    const text = `[DROID QUANT SIGNAL] ${sig.direction} ${sig.symbol}\nStrategy: ${sig.strategy_name}\nEntry: $${sig.entry_price}\nTarget 1: $${sig.target_1}\nTarget 2: $${sig.target_2}\nStop Loss: $${sig.stop_loss}\nR:R: ${sig.risk_reward_ratio}\nConfidence: ${sig.confidence}%\nTimeframe: ${sig.timeframe}`;
+    const text = `[DROID QUANT SIGNAL] ${sig.direction} ${sig.symbol}\nDate & Time: ${formatDateTime(sig.timestamp)}\nStrategy: ${sig.strategy_name}\nEntry: $${sig.entry_price}\nTarget 1: $${sig.target_1}\nTarget 2: $${sig.target_2}\nStop Loss: $${sig.stop_loss}\nR:R: ${sig.risk_reward_ratio}\nConfidence: ${sig.confidence}%\nTimeframe: ${sig.timeframe}`;
     navigator.clipboard?.writeText(text);
     setCopiedId(sig.id);
     setTimeout(() => setCopiedId(null), 2500);
@@ -175,8 +176,8 @@ export function CryptoSignalsCard({ signals, loading, selectedAsset, onSelectAss
                   </div>
 
                   <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[11px]">
-                    <span className="text-[10px] font-mono text-muted-foreground">
-                      {new Date(sig.timestamp).toLocaleTimeString()}
+                    <span className="text-[10px] font-mono text-muted-foreground" title="Signal Date & Time (IST)">
+                      {formatDateTime(sig.timestamp)}
                     </span>
 
                     <button

@@ -35,14 +35,19 @@ class TrendPullbackStrategy(Strategy):
             # Check if spot is near EMA20 (within 0.4%)
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.5") or spot >= ema20:
-                entry_min = normalize_price(ema20, tick)
-                entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
-                trigger = normalize_price(spot + tick, tick)
-                stop_loss = normalize_price(entry_min - (atr * Decimal("1.0")), tick)
-                risk_pts = entry_min - stop_loss
+                min_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+                raw_trigger = spot + min_gap
+                trigger = normalize_price(raw_trigger, tick)
+                if abs(trigger - spot) < min_gap:
+                    trigger = normalize_price(trigger + tick, tick)
+
+                entry_min = normalize_price(spot, tick)
+                entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
+                stop_loss = normalize_price(trigger - (atr * Decimal("1.0")), tick)
+                risk_pts = trigger - stop_loss
                 if risk_pts > Decimal("0"):
-                    t1 = normalize_price(entry_min + (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(entry_min + (risk_pts * Decimal("3.0")), tick)
+                    t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
+                    t2 = normalize_price(trigger + (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
                     tech_score = min(94.0, 60.0 + (adx * 0.8) + 10.0)
@@ -84,14 +89,19 @@ class TrendPullbackStrategy(Strategy):
         if spot > Decimal("0") and (ema20 <= ema50 <= ema200 or trend_data.get("trend") == "BEARISH") and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 20.0:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.5") or spot <= ema20:
-                entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
-                entry_max = normalize_price(ema20, tick)
-                trigger = normalize_price(spot - tick, tick)
-                stop_loss = normalize_price(entry_max + (atr * Decimal("1.0")), tick)
-                risk_pts = stop_loss - entry_max
+                min_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+                raw_trigger = spot - min_gap
+                trigger = normalize_price(raw_trigger, tick)
+                if abs(spot - trigger) < min_gap:
+                    trigger = normalize_price(trigger - tick, tick)
+
+                entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
+                entry_max = normalize_price(spot, tick)
+                stop_loss = normalize_price(trigger + (atr * Decimal("1.0")), tick)
+                risk_pts = stop_loss - trigger
                 if risk_pts > Decimal("0"):
-                    t1 = normalize_price(entry_max - (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(entry_max - (risk_pts * Decimal("3.0")), tick)
+                    t1 = normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)
+                    t2 = normalize_price(trigger - (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
                     tech_score = min(94.0, 60.0 + (adx * 0.8) + 10.0)

@@ -15,6 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, Optional
 from pydantic import BaseModel
 
+IST = timezone(timedelta(hours=5, minutes=30))
 APPROVED_UNDERLYINGS = {"NIFTY", "BANKNIFTY", "SENSEX"}
 
 # Dynamic Contract specifications baseline (versioned)
@@ -106,13 +107,23 @@ def normalize_price(price: Decimal | float | int, tick_size: Decimal = Decimal("
 def resolve_nearest_expiry(underlying: str, ref_date: Optional[date] = None) -> tuple[date, Literal["WEEKLY", "MONTHLY", "EXPIRING_TODAY"]]:
     """Calculate the nearest valid option expiry for an approved underlying."""
     u = validate_underlying(underlying)
-    today = ref_date or datetime.now(timezone.utc).date()
+    now_ist = datetime.now(IST)
+    today = ref_date or now_ist.date()
     cfg = INDEX_CONTRACT_CONFIGS[u]
     target_weekday = cfg["weekly_expiry_day"]
     
     days_ahead = target_weekday - today.weekday()
     if days_ahead < 0:
         days_ahead += 7
+
+    # If today is the target expiry day (days_ahead == 0), check current time.
+    # If current IST time is >= 15:30 (market closed, session complete), the contract for today has expired.
+    # Advance days_ahead = 7 so that signals generated post-market resolve to the NEXT upcoming expiry instead of EXPIRING_TODAY.
+    if days_ahead == 0:
+        is_post_market = (now_ist.hour > 15) or (now_ist.hour == 15 and now_ist.minute >= 30)
+        if (ref_date is None or ref_date == now_ist.date()) and is_post_market:
+            days_ahead = 7
+
     expiry = today + timedelta(days=days_ahead)
     
     if expiry == today:

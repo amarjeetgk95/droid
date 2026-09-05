@@ -19,6 +19,13 @@ class OpeningRangeBreakoutStrategy(Strategy):
     name = "ORB"
 
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
+        # ── Session Time Window Enforcement (§15: Active 09:30 - 11:30 IST) ──
+        ts_ms = ctx.timestamp_ms if (ctx.timestamp_ms and ctx.timestamp_ms > 0) else int(__import__("time").time() * 1000)
+        utc_minutes = (ts_ms // 60000) % 1440
+        ist_minutes = (utc_minutes + 330) % 1440
+        if ist_minutes < 570 or ist_minutes > 690:
+            return None
+
         ind = ctx.indicators
         spot = ctx.spot_price
         tick = Decimal("0.05")
@@ -34,19 +41,28 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
         vol_ratio = float(ind.get("volume_ratio", 1.3))
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
+        min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
 
         # ── BULLISH ORB (LONG_CALL) ──
         if spot >= orb_high and mtf_bias != "BEARISH":
-            entry_min = normalize_price(orb_high, tick)
-            entry_max = normalize_price(orb_high + (atr * Decimal("0.2")), tick)
-            trigger = normalize_price(orb_high + tick, tick)
-            stop_loss = normalize_price(mid_point, tick)
-            risk_pts = entry_min - stop_loss
+            chase = spot - orb_high
+            if chase > (atr * Decimal("0.5")):
+                return None  # Chase exceeded
+
+            raw_trigger = spot + min_gap
+            trigger = normalize_price(raw_trigger, tick)
+            if trigger <= spot or abs(trigger - spot) < min_gap:
+                trigger = normalize_price(max(trigger, spot) + tick, tick)
+
+            entry_min = normalize_price(spot, tick)
+            entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
+            stop_loss = normalize_price(max(mid_point, orb_high - (atr * Decimal("0.5"))), tick)
+            risk_pts = trigger - stop_loss
             if risk_pts > Decimal("0"):
-                t1 = normalize_price(entry_min + range_height, tick)
-                t2 = normalize_price(entry_min + (range_height * Decimal("2.0")), tick)
-                rr_t1 = float((t1 - entry_min) / risk_pts) if risk_pts > 0 else 1.5
-                rr_t2 = float((t2 - entry_min) / risk_pts) if risk_pts > 0 else 3.0
+                t1 = normalize_price(trigger + max(range_height, risk_pts * Decimal("1.2")), tick)
+                t2 = normalize_price(trigger + max(range_height * Decimal("2.0"), risk_pts * Decimal("2.4")), tick)
+                rr_t1 = float((t1 - trigger) / risk_pts) if risk_pts > 0 else 1.5
+                rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
                 tech_score = min(93.0, 65.0 + (vol_ratio * 15.0))
@@ -86,16 +102,24 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
         # ── BEARISH ORB (LONG_PUT) ──
         if spot <= orb_low and mtf_bias != "BULLISH":
-            entry_min = normalize_price(orb_low - (atr * Decimal("0.2")), tick)
-            entry_max = normalize_price(orb_low, tick)
-            trigger = normalize_price(orb_low - tick, tick)
-            stop_loss = normalize_price(mid_point, tick)
-            risk_pts = stop_loss - entry_max
+            chase = orb_low - spot
+            if chase > (atr * Decimal("0.5")):
+                return None  # Chase exceeded
+
+            raw_trigger = spot - min_gap
+            trigger = normalize_price(raw_trigger, tick)
+            if trigger >= spot or abs(spot - trigger) < min_gap:
+                trigger = normalize_price(min(trigger, spot) - tick, tick)
+
+            entry_max = normalize_price(spot, tick)
+            entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
+            stop_loss = normalize_price(min(mid_point, orb_low + (atr * Decimal("0.5"))), tick)
+            risk_pts = stop_loss - trigger
             if risk_pts > Decimal("0"):
-                t1 = normalize_price(entry_max - range_height, tick)
-                t2 = normalize_price(entry_max - (range_height * Decimal("2.0")), tick)
-                rr_t1 = float((entry_max - t1) / risk_pts) if risk_pts > 0 else 1.5
-                rr_t2 = float((entry_max - t2) / risk_pts) if risk_pts > 0 else 3.0
+                t1 = normalize_price(trigger - max(range_height, risk_pts * Decimal("1.2")), tick)
+                t2 = normalize_price(trigger - max(range_height * Decimal("2.0"), risk_pts * Decimal("2.4")), tick)
+                rr_t1 = float((trigger - t1) / risk_pts) if risk_pts > 0 else 1.5
+                rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
                 tech_score = min(93.0, 65.0 + (vol_ratio * 15.0))
