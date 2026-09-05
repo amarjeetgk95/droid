@@ -311,10 +311,11 @@ class FyersProvider(MarketDataProvider):
             last = self._last_known_quotes[symbol]
             if last.ltp > 0:
                 is_open = calendar_service.is_market_open_now()
+                original_ts = getattr(last, "timestamp", None) or now
                 return NormalizedQuote(
                     symbol=symbol,
                     display_name=symbol,
-                    timestamp=now,
+                    timestamp=original_ts,
                     ltp=last.ltp,
                     open=last.open,
                     high=last.high,
@@ -324,7 +325,7 @@ class FyersProvider(MarketDataProvider):
                     change_percent=last.change_percent,
                     volume=last.volume,
                     open_interest=last.open_interest,
-                    status=DataStatus.CLOSED if not is_open else DataStatus.LIVE,
+                    status=DataStatus.CLOSED if not is_open else DataStatus.STALE,
                     provider=self.provider_name,
                 )
 
@@ -570,23 +571,8 @@ class FyersProvider(MarketDataProvider):
                             delay_s=delay,
                         )
                     if not calendar_service.is_market_open_now():
-                        for sym in symbols:
-                            last = self._last_known_quotes.get(sym)
-                            if last and last.ltp > 0:
-                                tick = TickEvent(
-                                    timestamp=now,
-                                    symbol=sym,
-                                    instrument_token=self.symbol_map.get(sym, sym),
-                                    ltp=last.ltp,
-                                    open=last.open,
-                                    high=last.high,
-                                    low=last.low,
-                                    close=last.previous_close or last.ltp,
-                                    volume=last.volume,
-                                    provider=self.PROVIDER_ID,
-                                    priority=EventPriority.NORMAL,
-                                )
-                                await _cf.ingest_tick(tick)
+                        # Market closed — do not spoof fresh timestamps into central feed
+                        pass
             except asyncio.CancelledError:
                 break
             except Exception as e:

@@ -244,6 +244,10 @@ class TriggerEngine:
         config = config or TriggerConfig()
         key = f"{signal.strategy_id}:{signal.symbol}"
 
+        from app.services.calendar_service import calendar_service
+        if not calendar_service.can_trade_now().allowed:
+            return False, "MARKET_CLOSED"
+
         # Dedup: same signal_id already triggered
         if str(signal.signal_id) in self._recent_triggers:
             return False, "DUPLICATE_SIGNAL_ID"

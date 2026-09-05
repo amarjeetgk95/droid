@@ -105,7 +105,9 @@ def normalize_price(price: Decimal | float | int, tick_size: Decimal = Decimal("
 
 
 def resolve_nearest_expiry(underlying: str, ref_date: Optional[date] = None) -> tuple[date, Literal["WEEKLY", "MONTHLY", "EXPIRING_TODAY"]]:
-    """Calculate the nearest valid option expiry for an approved underlying."""
+    """Calculate the nearest valid option expiry for an approved underlying, adjusting for exchange holidays."""
+    from app.services.calendar_service import calendar_service
+
     u = validate_underlying(underlying)
     now_ist = datetime.now(IST)
     today = ref_date or now_ist.date()
@@ -118,13 +120,20 @@ def resolve_nearest_expiry(underlying: str, ref_date: Optional[date] = None) -> 
 
     # If today is the target expiry day (days_ahead == 0), check current time.
     # If current IST time is >= 15:30 (market closed, session complete), the contract for today has expired.
-    # Advance days_ahead = 7 so that signals generated post-market resolve to the NEXT upcoming expiry instead of EXPIRING_TODAY.
     if days_ahead == 0:
         is_post_market = (now_ist.hour > 15) or (now_ist.hour == 15 and now_ist.minute >= 30)
         if (ref_date is None or ref_date == now_ist.date()) and is_post_market:
             days_ahead = 7
 
-    expiry = today + timedelta(days=days_ahead)
+    tentative_expiry = today + timedelta(days=days_ahead)
+    # Adjust for holidays: if scheduled expiry is a holiday/weekend, NSE rules move it backwards
+    expiry = calendar_service.adjust_expiry_if_holiday(tentative_expiry)
+
+    # If the adjusted holiday expiry has already passed relative to today, advance to next week
+    is_today_post_market = ((now_ist.hour > 15) or (now_ist.hour == 15 and now_ist.minute >= 30)) and (ref_date is None or ref_date == now_ist.date())
+    if expiry < today or (expiry == today and is_today_post_market):
+        tentative_expiry = tentative_expiry + timedelta(days=7)
+        expiry = calendar_service.adjust_expiry_if_holiday(tentative_expiry)
     
     if expiry == today:
         exp_type: Literal["WEEKLY", "MONTHLY", "EXPIRING_TODAY"] = "EXPIRING_TODAY"

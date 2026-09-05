@@ -121,7 +121,12 @@ class CentralRiskEngine:
         available_capital: float = 100000.0,
         risk_per_trade_pct: float = 1.0,
         is_expiry_day: bool = False,
+        allow_closed_market: bool = False,
     ) -> ValidatedRiskDecision:
+        from app.services.calendar_service import calendar_service
+        if not allow_closed_market and not calendar_service.can_trade_now().allowed:
+            return self._reject("MARKET_CLOSED", "Market is closed. Quantitative evaluation rejected.", setup)
+
         desk_key = "1m_scalp" if setup.is_scalp or setup.timeframe in ("1M", "3M") else "5m_intraday"
         underlying_rules = self._config.get("envelopes", {}).get(setup.underlying, {}).get(desk_key)
 

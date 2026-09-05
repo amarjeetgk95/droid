@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     signal_ttl_ms: int = 5000
     institutional_live_mode: bool = False  # §77 NO_MOCK — fail-closed if true and dependency missing
 
+    # Quote Freshness & Staleness Thresholds
+    max_quote_age_seconds: float = 15.0          # Maximum acceptable quote age in risk/execution
+    scanner_quote_age_seconds: float = 10.0      # Stricter quote age threshold for signal scanner
+    stale_data_age_seconds: float = 5.0          # Threshold to mark a quote as STALE
+
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog

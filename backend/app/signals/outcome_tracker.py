@@ -56,6 +56,18 @@ class SignalOutcomeTracker:
       - Fill Reconciler & Statutory cost deductions
     """
 
+    def __init__(self):
+        import asyncio
+        self._signal_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_signal_lock(self, signal_id: str):
+        import asyncio
+        if signal_id not in self._signal_locks:
+            if len(self._signal_locks) > 500:
+                self._signal_locks.clear()
+            self._signal_locks[signal_id] = asyncio.Lock()
+        return self._signal_locks[signal_id]
+
     def update_with_price(
         self,
         underlying: str,
@@ -287,7 +299,7 @@ class SignalOutcomeTracker:
                     try:
                         await signal_paper_engine.close_signal_position(
                             sig.signal_id,
-                            float(d_price),
+                            float(est_opt_price),
                             reason="TARGET_1_HIT",
                             quantity_to_close=recon.t1_qty,
                         )
@@ -345,7 +357,7 @@ class SignalOutcomeTracker:
                     try:
                         await signal_paper_engine.close_signal_position(
                             sig.signal_id,
-                            float(d_price),
+                            float(est_opt_price),
                             reason=eval_action,
                         )
                     except Exception as pe:

@@ -127,8 +127,23 @@ class SignalPaperEngine:
                 message="INVALID_PRICE: Spot price is non-positive",
             )
 
-        spread_impact = raw_price * 0.0005
-        fill_price = round(raw_price + spread_impact, 2) if side == "BUY" else round(raw_price - spread_impact, 2)
+        # If signal represents an option contract, estimate option premium instead of spot price
+        from app.signals.fill_reconciler import option_fill_reconciler
+        if sig.option_contract:
+            strike = float(sig.option_contract.get("strike", raw_price))
+            opt_type = str(sig.option_contract.get("option_type", "CE"))
+            dte = float(sig.option_contract.get("dte", 3.0))
+            base_price = option_fill_reconciler.estimate_option_premium(
+                spot=raw_price,
+                strike=strike,
+                option_type=opt_type,
+                dte_days=dte,
+            )
+        else:
+            base_price = raw_price
+
+        spread_impact = base_price * 0.0005
+        fill_price = round(base_price + spread_impact, 2) if side == "BUY" else round(base_price - spread_impact, 2)
         if fill_price <= 0:
             return SignalPaperExecutionResult(
                 success=False,
@@ -241,6 +256,7 @@ class SignalPaperEngine:
         exit_price: float,
         reason: str = "TARGET_HIT",
         quantity_to_close: Optional[int] = None,
+        allow_closed_market: bool = False,
     ) -> Optional[Any]:
         """
         Closes full or partial open paper position for a signal and records the actual profit and loss audit.
@@ -256,6 +272,11 @@ class SignalPaperEngine:
         if not broker_sym or not qty:
             return None
 
+        # Allow closed market execution for square-off / cleanup reasons
+        permit_closed = allow_closed_market or reason in (
+            "MARKET_CLOSED", "EOD_SQUAREOFF", "DELETED_BY_USER", "TIME_STOP_EXCEEDED", "RUNNER_TTL_EXCEEDED"
+        )
+
         pos_id = f"{broker_sym}_INTRADAY"
         if pos_id in paper_service._positions and paper_service._positions[pos_id].is_open:
             pos = paper_service._positions[pos_id]
@@ -270,7 +291,7 @@ class SignalPaperEngine:
                 quantity=final_close_qty,
                 price=exit_price,
             )
-            await paper_service.place_order(exit_payload)
+            await paper_service.place_order(exit_payload, allow_closed_market=permit_closed)
             logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, qty=final_close_qty, reason=reason)
 
         rec = signal_audit_ledger.record_square_off(

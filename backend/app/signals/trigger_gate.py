@@ -91,9 +91,9 @@ def check_trigger_integrity(
         )
 
     risk = _dec(risk_points)
+    sl = _dec(stop_loss)
     if risk is None or risk <= 0:
         # Derive from SL distance when risk_points is absent/zero.
-        sl = _dec(stop_loss)
         emn, emx = _dec(entry_min), _dec(entry_max)
         if sl is not None and emn is not None and emx is not None:
             ref = emx if is_put else emn
@@ -121,15 +121,65 @@ def check_trigger_integrity(
             {"risk_pts": float(risk)},
         )
 
-    # 4. Reward bar.
-    try:
-        rr2 = float(risk_reward_t2)
-    except Exception:
-        rr2 = 0.0
+    t1 = _dec(target_1)
+    t2 = _dec(target_2)
+
+    # 4. Stop-Loss orientation relative to trigger
+    if sl is not None:
+        if not is_put and sl >= trig:
+            return TriggerCheckResult(
+                False, "SL_WRONG_SIDE",
+                f"CALL stop loss ₹{sl} must be below trigger ₹{trig}.",
+                {"stop_loss": float(sl), "trigger": float(trig)},
+            )
+        if is_put and sl <= trig:
+            return TriggerCheckResult(
+                False, "SL_WRONG_SIDE",
+                f"PUT stop loss ₹{sl} must be above trigger ₹{trig}.",
+                {"stop_loss": float(sl), "trigger": float(trig)},
+            )
+
+    # 5. Target geometry and ordering
+    if t1 is not None and t2 is not None:
+        if not is_put:
+            if t1 <= trig:
+                return TriggerCheckResult(
+                    False, "TARGET_WRONG_SIDE",
+                    f"CALL Target 1 ₹{t1} must be above trigger ₹{trig}.",
+                    {"target_1": float(t1), "trigger": float(trig)},
+                )
+            if t2 <= t1:
+                return TriggerCheckResult(
+                    False, "TARGETS_MISORDERED",
+                    f"CALL Target 2 ₹{t2} must be above Target 1 ₹{t1}.",
+                    {"target_1": float(t1), "target_2": float(t2)},
+                )
+        else:
+            if t1 >= trig:
+                return TriggerCheckResult(
+                    False, "TARGET_WRONG_SIDE",
+                    f"PUT Target 1 ₹{t1} must be below trigger ₹{trig}.",
+                    {"target_1": float(t1), "trigger": float(trig)},
+                )
+            if t2 >= t1:
+                return TriggerCheckResult(
+                    False, "TARGETS_MISORDERED",
+                    f"PUT Target 2 ₹{t2} must be below Target 1 ₹{t1}.",
+                    {"target_1": float(t1), "target_2": float(t2)},
+                )
+
+    # 4. Reward bar (independently verified from actual target levels if present).
+    if t2 is not None and risk > 0:
+        rr2 = float(abs(t2 - trig) / risk)
+    else:
+        try:
+            rr2 = float(risk_reward_t2)
+        except Exception:
+            rr2 = 0.0
     if not (rr2 >= MIN_RR_T2):
         return TriggerCheckResult(
             False, "RR_TOO_LOW",
-            f"Risk:reward 1:{rr2} below minimum 1:{MIN_RR_T2}.",
+            f"Risk:reward 1:{rr2:.1f} below minimum 1:{MIN_RR_T2}.",
             {"rr_t2": rr2},
         )
 

@@ -132,7 +132,7 @@ class AuditTradeRecord(BaseModel):
 
     def format_holding_time(self) -> str:
         if not self.holding_time_seconds:
-            if self.status in ("ARMED", "CONFIRMED", "EXECUTED"):
+            if self.status in ("ARMED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT"):
                 _, d_str = self.compute_live_duration()
                 return f"{d_str} (Live)"
             return "—"
@@ -151,13 +151,17 @@ class SignalAuditLedger:
     def __init__(self, max_records: int = 5000):
         self._trades: dict[str, AuditTradeRecord] = {}  # signal_id -> AuditTradeRecord
         self._max_records = max_records
+        import threading
+        self._lock = threading.RLock()
 
     def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
-        return self._trades.get(signal_id)
+        with self._lock:
+            return self._trades.get(signal_id)
 
     def delete_trade(self, signal_id: str) -> bool:
-        if signal_id in self._trades:
-            del self._trades[signal_id]
+        with self._lock:
+            if signal_id in self._trades:
+                del self._trades[signal_id]
             try:
                 from app.signals.signals_persistence import save_signals_state_local
                 save_signals_state_local()
@@ -455,7 +459,7 @@ class SignalAuditLedger:
             if rec_u != target_u:
                 continue
 
-            if rec.status in ("ARMED", "CONFIRMED", "EXECUTED"):
+            if rec.status in ("ARMED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT"):
                 curr_p = round(float(current_price), 2)
                 rec.current_price = curr_p
 

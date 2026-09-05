@@ -142,6 +142,10 @@ class SignalCreateRequest(BaseModel):
 
 @router.post("/signals")
 def create_signal_endpoint(req: SignalCreateRequest):
+    from app.institutional.clocks import get_session_clock
+    clock = get_session_clock(req.instrument_id)
+    if clock.current_state() == "CLOSED":
+        raise HTTPException(status_code=400, detail=f"Signal creation blocked: market is closed for {req.instrument_id}")
     sig = create_signal(instrument_id=req.instrument_id, strategy=req.strategy, direction=req.direction, short_horizon=req.short_horizon, continuation=req.continuation, ai=req.ai, ttl_ms=req.ttl_ms)
     signal_fsm.register(sig)
     return sig.to_dict()

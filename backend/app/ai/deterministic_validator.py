@@ -234,12 +234,21 @@ class DeterministicTradeValidator:
         )
 
     def _validate_market_hours(self, market_state: dict) -> Optional[str]:
-        if not market_state.get("is_market_open", True):
+        is_open = market_state.get("is_market_open")
+        if is_open is None:
+            from app.services.calendar_service import calendar_service
+            is_open = calendar_service.can_trade_now().allowed
+        if not is_open:
             return "Market is closed"
         return None
 
     def _validate_trading_day(self, market_state: dict) -> Optional[str]:
-        if not market_state.get("is_trading_day", True):
+        is_trading = market_state.get("is_trading_day")
+        if is_trading is None:
+            from datetime import date
+            from app.services.calendar_service import calendar_service
+            is_trading = calendar_service.is_trading_day(date.today())
+        if not is_trading:
             return "Not a trading day"
         return None
 

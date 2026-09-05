@@ -99,10 +99,9 @@ class SignalCenterService:
 
         session_clock = get_session_clock(iid)
         session_state = session_clock.current_state(now_ms=now_ms)
-        # Don't generate Indian setups when market CLOSED unless synthetic demo allowed? For breakout we require OPEN
-        # But for demo we still allow generation to populate tab even when closed? Check spec: session-aware
-        # We'll allow generation but mark session state in signal; if CLOSED, status will be WATCH not CONFIRMED due to feed? Keep logic but allow.
-        # For now allow generation regardless, signal will reflect session.
+        if session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY":
+            logger.debug("signal_center_generation_blocked_market_closed", instrument_id=iid, session=session_state)
+            return None
 
         snap_health = synchronized_buffer.health().get(iid, {})
         age_ms = snap_health.get("age_ms")

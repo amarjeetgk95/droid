@@ -45,10 +45,12 @@ class MeanReversionStrategy(Strategy):
             stop_loss = normalize_price(spot - (atr * Decimal("1.0")), tick)
             risk_pts = entry_min - stop_loss
             if risk_pts > Decimal("0"):
-                t1 = normalize_price(bb_middle, tick)
-                t2 = normalize_price(bb_upper, tick)
-                rr_t1 = float((t1 - entry_min) / risk_pts) if risk_pts > 0 else 1.5
-                rr_t2 = float((t2 - entry_min) / risk_pts) if risk_pts > 0 else 3.0
+                t1_cand = normalize_price(bb_middle, tick)
+                t1 = t1_cand if t1_cand > trigger else normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
+                t2_cand = normalize_price(bb_upper, tick)
+                t2 = t2_cand if t2_cand > t1 else normalize_price(t1 + (risk_pts * Decimal("1.5")), tick)
+                rr_t1 = float((t1 - trigger) / risk_pts) if risk_pts > 0 else 1.5
+                rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
                 tech_score = min(92.0, 50.0 + ((30.0 - rsi) * 2.0) + 15.0)
@@ -95,10 +97,12 @@ class MeanReversionStrategy(Strategy):
             stop_loss = normalize_price(spot + (atr * Decimal("1.0")), tick)
             risk_pts = stop_loss - entry_max
             if risk_pts > Decimal("0"):
-                t1 = normalize_price(bb_middle, tick)
-                t2 = normalize_price(bb_lower, tick)
-                rr_t1 = float((entry_max - t1) / risk_pts) if risk_pts > 0 else 1.5
-                rr_t2 = float((entry_max - t2) / risk_pts) if risk_pts > 0 else 3.0
+                t1_cand = normalize_price(bb_middle, tick)
+                t1 = t1_cand if t1_cand < trigger else normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)
+                t2_cand = normalize_price(bb_lower, tick)
+                t2 = t2_cand if t2_cand < t1 else normalize_price(t1 - (risk_pts * Decimal("1.5")), tick)
+                rr_t1 = float((trigger - t1) / risk_pts) if risk_pts > 0 else 1.5
+                rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
                 tech_score = min(92.0, 50.0 + ((rsi - 70.0) * 2.0) + 15.0)

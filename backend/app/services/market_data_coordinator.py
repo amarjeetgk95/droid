@@ -325,9 +325,14 @@ class MarketDataCoordinator:
             age_sec = now_mono - cached_mono
             if age_sec < ttl:
                 self.stats["hits"] += 1
-                cached_val.age_ms = int(age_sec * 1000)
-                cached_val.status = "FRESH"
-                return cached_val
+                return CachedValue(
+                    data=cached_val.data,
+                    updated_at=cached_val.updated_at,
+                    source=cached_val.source,
+                    status="FRESH",
+                    age_ms=int(age_sec * 1000),
+                    derived_from=cached_val.derived_from,
+                )
 
         # 2. Check if an existing refresh is already in-flight (Single-Flight coalescing)
         in_flight_future: asyncio.Future | None = None
@@ -413,11 +418,17 @@ class MarketDataCoordinator:
                 # Graceful degraded fallback: if we have any prior cached value, return it as STALE/DEGRADED
                 if cached_entry is not None:
                     _, last_val = cached_entry
-                    last_val.status = "DEGRADED"
-                    last_val.age_ms = int((time.monotonic() - cached_entry[0]) * 1000)
+                    degraded_val = CachedValue(
+                        data=last_val.data,
+                        updated_at=last_val.updated_at,
+                        source=last_val.source,
+                        status="DEGRADED",
+                        age_ms=int((time.monotonic() - cached_entry[0]) * 1000),
+                        derived_from=last_val.derived_from,
+                    )
                     if not current_future.done():
-                        current_future.set_result(last_val)
-                    return last_val
+                        current_future.set_result(degraded_val)
+                    return degraded_val
 
                 # If no prior cache, return UNAVAILABLE
                 unavailable_val = CachedValue(

@@ -156,6 +156,7 @@ class AIV2EvaluateRequest(BaseModel):
     symbol: str = "NIFTY"
     regime_hint: str | None = None
     context_overrides: dict | None = None
+    allow_closed_market: bool = False
 
 
 @router.post("/v2/evaluate/{symbol}")
@@ -169,10 +170,13 @@ async def evaluate_v2(
     and deterministic validation to produce execution-ready signals.
     """
     try:
+        from app.signals.market_guard import ensure_market_open_or_raise_http
+        req = payload or AIV2EvaluateRequest(symbol=symbol)
+        ensure_market_open_or_raise_http(allow_closed=req.allow_closed_market, detail_prefix="AI evaluation blocked")
+
         from app.ai.ai_evaluator import ai_evaluator
         from app.ai.schemas import Regime
 
-        req = payload or AIV2EvaluateRequest(symbol=symbol)
         regime_hint = None
         if req.regime_hint:
             try:

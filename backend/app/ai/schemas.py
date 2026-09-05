@@ -178,9 +178,11 @@ class MarketContext(BaseModel):
         return "MEDIUM"
 
     def to_market_state(self) -> dict:
+        from datetime import date
+        from app.services.calendar_service import calendar_service
         return {
             "is_market_open": self.market_status == "OPEN",
-            "is_trading_day": True,
+            "is_trading_day": calendar_service.is_trading_day(date.today()),
             "data_fresh": True,
             "current_price": self.current_price,
             "spread_pct": 0.05,

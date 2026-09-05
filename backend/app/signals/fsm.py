@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import threading
 from decimal import Decimal
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, computed_field
@@ -169,80 +170,84 @@ class SignalFSMManager:
     def __init__(self):
         self._signals: dict[str, SignalInstance] = {}
         self._audit_log: list[FSMTransitionAudit] = []
+        self._lock = threading.RLock()
 
     def register(self, signal: SignalInstance) -> SignalInstance:
-        # Initialize default risk levels if not already set (§18)
-        if signal.initial_stop_loss is None:
-            signal.initial_stop_loss = signal.stop_loss
-        if signal.current_stop_loss is None:
-            signal.current_stop_loss = signal.stop_loss
-        if signal.t1_price is None:
-            signal.t1_price = signal.target_1
-        if signal.t2_price is None:
-            signal.t2_price = signal.target_2
+        with self._lock:
+            # Initialize default risk levels if not already set (§18)
+            if signal.initial_stop_loss is None:
+                signal.initial_stop_loss = signal.stop_loss
+            if signal.current_stop_loss is None:
+                signal.current_stop_loss = signal.stop_loss
+            if signal.t1_price is None:
+                signal.t1_price = signal.target_1
+            if signal.t2_price is None:
+                signal.t2_price = signal.target_2
 
-        # Compute initial Risk R based on entry trigger, NOT spot at signal creation
-        entry_ref = signal.trigger if signal.trigger and signal.trigger > 0 else signal.spot_price
-        risk_r = abs(entry_ref - signal.stop_loss)
-        signal.risk_r = risk_r
+            # Compute initial Risk R based on entry trigger, NOT spot at signal creation
+            entry_ref = signal.trigger if signal.trigger and signal.trigger > 0 else signal.spot_price
+            risk_r = abs(entry_ref - signal.stop_loss)
+            signal.risk_r = risk_r
 
-        # Pre-compute breakeven trigger (+0.8R) anchored to ENTRY
-        if signal.direction == "LONG_CALL":
-            be_price = entry_ref + (risk_r * Decimal("0.8"))
-            if be_price <= entry_ref:
-                be_price = entry_ref + (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
-        else:
-            be_price = entry_ref - (risk_r * Decimal("0.8"))
-            if be_price >= entry_ref:
-                be_price = entry_ref - (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
+            # Pre-compute breakeven trigger (+0.8R) anchored to ENTRY
+            if signal.direction == "LONG_CALL":
+                be_price = entry_ref + (risk_r * Decimal("0.8"))
+                if be_price <= entry_ref:
+                    be_price = entry_ref + (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
+            else:
+                be_price = entry_ref - (risk_r * Decimal("0.8"))
+                if be_price >= entry_ref:
+                    be_price = entry_ref - (Decimal("1.0") if risk_r == 0 else abs(risk_r * Decimal("0.8")))
 
-        signal.breakeven_trigger_price = be_price
-        signal.breakeven_activation_price = be_price
+            signal.breakeven_trigger_price = be_price
+            signal.breakeven_activation_price = be_price
 
-        # Pre-entry trigger expiry based on signal.ttl_seconds
-        if signal.ttl_seconds and signal.ttl_seconds > 0:
-            signal.expires_at_utc = signal.created_at_utc + (signal.ttl_seconds * 1000)
+            # Pre-entry trigger expiry based on signal.ttl_seconds
+            if signal.ttl_seconds and signal.ttl_seconds > 0:
+                signal.expires_at_utc = signal.created_at_utc + (signal.ttl_seconds * 1000)
 
-        self._signals[signal.signal_id] = signal
-        audit = FSMTransitionAudit(
-            signal_id=signal.signal_id,
-            from_state="DETECTED",
-            to_state=signal.fsm_state,
-            market_price=signal.spot_price,
-            reason_code="SIGNAL_REGISTERED",
-        )
-        signal.state_history.append(audit)
-        self._audit_log.append(audit)
+            self._signals[signal.signal_id] = signal
+            audit = FSMTransitionAudit(
+                signal_id=signal.signal_id,
+                from_state="DETECTED",
+                to_state=signal.fsm_state,
+                market_price=signal.spot_price,
+                reason_code="SIGNAL_REGISTERED",
+            )
+            signal.state_history.append(audit)
+            self._audit_log.append(audit)
 
-        # Persist newly registered signal locally and to PostgreSQL
-        try:
-            import asyncio
-            from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
-            save_signals_state_local()
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.create_task(persist_executed_signal(signal))
-        except (RuntimeError, Exception):
-            pass
+            # Persist newly registered signal locally and to PostgreSQL
+            try:
+                import asyncio
+                from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+                save_signals_state_local()
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(persist_executed_signal(signal))
+            except (RuntimeError, Exception):
+                pass
 
-        return signal
+            return signal
 
     def get(self, signal_id: str) -> Optional[SignalInstance]:
-        return self._signals.get(signal_id)
+        with self._lock:
+            return self._signals.get(signal_id)
 
     def delete(self, signal_id: str) -> bool:
         """Remove a signal and its transitions from in-memory state."""
-        if signal_id in self._signals:
-            del self._signals[signal_id]
-            self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
-            try:
-                from app.signals.signals_persistence import save_signals_state_local
-                save_signals_state_local()
-            except Exception:
-                pass
-            logger.info("fsm_signal_deleted", signal_id=signal_id)
-            return True
-        return False
+        with self._lock:
+            if signal_id in self._signals:
+                del self._signals[signal_id]
+                self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
+                try:
+                    from app.signals.signals_persistence import save_signals_state_local
+                    save_signals_state_local()
+                except Exception:
+                    pass
+                logger.info("fsm_signal_deleted", signal_id=signal_id)
+                return True
+            return False
 
     def sweep_expired(self, now_ms: Optional[int] = None) -> dict[str, int]:
         """Expire stale pre-trigger signals and stale runners; prune terminal overflow.
@@ -250,81 +255,86 @@ class SignalFSMManager:
         Returns counts {expired, runner_stopped, pruned} so callers can log/broadcast.
         Safe to call on every read path (active list, scanner, outcome tick).
         """
-        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
-        expired = 0
-        runner_stopped = 0
-        # 1. Market-close expiry & Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
-        from app.services.calendar_service import calendar_service
-        is_market_closed = not calendar_service.can_trade_now().allowed
+        with self._lock:
+            now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+            expired = 0
+            runner_stopped = 0
+            # 1. Market-close expiry & Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
+            from app.services.calendar_service import calendar_service
+            is_market_closed = not calendar_service.can_trade_now().allowed
 
-        for sig in list(self._signals.values()):
+            for sig in list(self._signals.values()):
+                try:
+                    if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED") or (sig.fsm_state == "CONFIRMED" and not sig.actual_fill_price and not sig.paper_order):
+                        if is_market_closed:
+                            ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED")
+                            if ok:
+                                expired += 1
+                            continue
+                        elif sig.is_expired(now_ms):
+                            ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
+                            if ok:
+                                expired += 1
+                            continue
+                    # 2. Runner TTL expiry — TARGET_1_HIT runners must not block dedup forever
+                    elif sig.fsm_state == "TARGET_1_HIT" and sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc:
+                        ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
+                        if ok:
+                            runner_stopped += 1
+                    # 3. Active trade time-stop auto-fire (prevents zombie active trades)
+                    elif sig.fsm_state == "CONFIRMED" and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
+                        ok, _ = self.transition(sig.signal_id, "TIME_STOP_HIT", reason="TIME_STOP_EXCEEDED")
+                        if ok:
+                            runner_stopped += 1
+                except Exception:
+                    continue
+            # 4. Bound memory: prune oldest terminal signals beyond cap
+            pruned = 0
             try:
-                if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED") or (sig.fsm_state == "CONFIRMED" and not sig.actual_fill_price and not sig.paper_order):
-                    if is_market_closed:
-                        ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED")
-                        if ok:
-                            expired += 1
-                        continue
-                    elif sig.is_expired(now_ms):
-                        ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="TTL_EXCEEDED")
-                        if ok:
-                            expired += 1
-                        continue
-                # 2. Runner TTL expiry — TARGET_1_HIT runners must not block dedup forever
-                elif sig.fsm_state == "TARGET_1_HIT" and sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc:
-                    ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
-                    if ok:
-                        runner_stopped += 1
-                # 3. Active trade time-stop auto-fire (prevents zombie active trades)
-                elif sig.fsm_state == "CONFIRMED" and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
-                    ok, _ = self.transition(sig.signal_id, "TIME_STOP_HIT", reason="TIME_STOP_EXCEEDED")
-                    if ok:
-                        runner_stopped += 1
+                if len(self._signals) > 200:
+                    terminal = [s for s in self._signals.values() if s.fsm_state in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")]
+                    terminal.sort(key=lambda s: s.last_updated_utc)
+                    overflow = len(self._signals) - 200
+                    for s in terminal[:overflow]:
+                        self._signals.pop(s.signal_id, None)
+                        pruned += 1
+                # Also bound in-memory audit log
+                if len(self._audit_log) > 1000:
+                    self._audit_log = self._audit_log[-1000:]
             except Exception:
-                continue
-        # 4. Bound memory: prune oldest terminal signals beyond cap
-        pruned = 0
-        try:
-            if len(self._signals) > 200:
-                terminal = [s for s in self._signals.values() if s.fsm_state in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")]
-                terminal.sort(key=lambda s: s.last_updated_utc)
-                overflow = len(self._signals) - 200
-                for s in terminal[:overflow]:
-                    self._signals.pop(s.signal_id, None)
-                    pruned += 1
-        except Exception:
-            pass
-        if expired or runner_stopped or pruned:
-            logger.info("fsm_sweep", expired=expired, runner_stopped=runner_stopped, pruned=pruned)
-        return {"expired": expired, "runner_stopped": runner_stopped, "pruned": pruned}
+                pass
+            if expired or runner_stopped or pruned:
+                logger.info("fsm_sweep", expired=expired, runner_stopped=runner_stopped, pruned=pruned)
+            return {"expired": expired, "runner_stopped": runner_stopped, "pruned": pruned}
 
     def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None) -> list[SignalInstance]:
-        self.sweep_expired()
-        res = []
-        for s in self._signals.values():
-            if underlying and s.underlying != underlying.upper():
-                continue
-            if strategy and s.strategy != strategy.upper():
-                continue
-            res.append(s)
-        # Sort so ACTIVE & CONFIRMED appear at top, newest first
-        state_order = {
-            "CONFIRMED": 0,
-            "TARGET_1_HIT": 1,
-            "TRIGGERED": 2,
-            "ARMED": 3,
-            "VALIDATED": 4,
-            "DETECTED": 5,
-            "TARGET_2_HIT": 6,
-            "STOP_LOSS_HIT": 7,
-            "TIME_STOP_HIT": 8,
-            "RUNNER_TIME_STOP_HIT": 9,
-            "EXPIRED": 10,
-            "INVALIDATED": 11,
-            "CLOSED": 12,
-        }
-        res.sort(key=lambda x: (state_order.get(x.fsm_state, 99), -x.created_at_utc))
-        return res
+        with self._lock:
+            self.sweep_expired()
+            res = []
+            for s in self._signals.values():
+                if underlying and s.underlying != underlying.upper():
+                    continue
+                if strategy and s.strategy != strategy.upper():
+                    continue
+                res.append(s)
+            # Sort so ACTIVE & CONFIRMED appear at top, newest first
+            state_order = {
+                "CONFIRMED": 0,
+                "TARGET_1_HIT": 1,
+                "TRIGGERED": 2,
+                "ARMED": 3,
+                "VALIDATED": 4,
+                "DETECTED": 5,
+                "TARGET_2_HIT": 6,
+                "STOP_LOSS_HIT": 7,
+                "TIME_STOP_HIT": 8,
+                "RUNNER_TIME_STOP_HIT": 9,
+                "EXPIRED": 10,
+                "INVALIDATED": 11,
+                "CLOSED": 12,
+            }
+            res.sort(key=lambda x: (state_order.get(x.fsm_state, 99), -x.created_at_utc))
+            return res
 
     def transition(
         self,
@@ -334,110 +344,111 @@ class SignalFSMManager:
         reason: str = "STATE_UPDATE",
         guard_snapshot: Optional[dict] = None,
     ) -> tuple[bool, Optional[str]]:
-        sig = self._signals.get(signal_id)
-        if not sig:
-            return False, "Signal not found"
+        with self._lock:
+            sig = self._signals.get(signal_id)
+            if not sig:
+                return False, "Signal not found"
 
-        if sig.fsm_state == to_state:
-            return True, None
+            if sig.fsm_state == to_state:
+                return True, None
 
-        allowed = ALLOWED_TRANSITIONS.get(sig.fsm_state, set())
-        if to_state not in allowed:
-            err = f"Illegal transition {sig.fsm_state} -> {to_state}"
-            logger.warning("fsm_illegal_transition", signal_id=signal_id, error=err)
-            return False, err
+            allowed = ALLOWED_TRANSITIONS.get(sig.fsm_state, set())
+            if to_state not in allowed:
+                err = f"Illegal transition {sig.fsm_state} -> {to_state}"
+                logger.warning("fsm_illegal_transition", signal_id=signal_id, error=err)
+                return False, err
 
-        from_st = sig.fsm_state
-        sig.fsm_state = to_state
-        sig.last_updated_utc = int(time.time() * 1000)
+            from_st = sig.fsm_state
+            sig.fsm_state = to_state
+            sig.last_updated_utc = int(time.time() * 1000)
 
-        # Update specific timestamps & Two-Clock Lifecycle transitions (§6, §20)
-        if to_state == "TRIGGERED":
-            sig.triggered_at_utc = sig.last_updated_utc
-        elif to_state == "CONFIRMED":
-            sig.confirmed_at_utc = sig.last_updated_utc
-            # Anchor Active Trade Holding Time-Stop (§18, §20)
-            if sig.time_stop_at_utc is None:
-                duration_sec = sig.time_stop_seconds or (900 if sig.is_scalp else 4500)
-                sig.time_stop_at_utc = sig.last_updated_utc + (duration_sec * 1000)
-        elif to_state == "TARGET_1_HIT":
-            sig.t1_hit = True
-            sig.t1_fill_timestamp = sig.last_updated_utc
-            sig.exit_price = market_price
-            sig.outcome_status = "WIN_T1"
-            sig.realized_rr = sig.risk_reward_t1
+            # Update specific timestamps & Two-Clock Lifecycle transitions (§6, §20)
+            if to_state == "TRIGGERED":
+                sig.triggered_at_utc = sig.last_updated_utc
+            elif to_state == "CONFIRMED":
+                sig.confirmed_at_utc = sig.last_updated_utc
+                # Anchor Active Trade Holding Time-Stop (§18, §20)
+                if sig.time_stop_at_utc is None:
+                    duration_sec = sig.time_stop_seconds or (900 if sig.is_scalp else 4500)
+                    sig.time_stop_at_utc = sig.last_updated_utc + (duration_sec * 1000)
+            elif to_state == "TARGET_1_HIT":
+                sig.t1_hit = True
+                sig.t1_fill_timestamp = sig.last_updated_utc
+                sig.exit_price = market_price
+                sig.outcome_status = "WIN_T1"
+                sig.realized_rr = sig.risk_reward_t1
 
-            # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
-            runner_ttl_sec = sig.runner_ttl_seconds or 300
-            sig.runner_time_stop_at_utc = sig.last_updated_utc + (runner_ttl_sec * 1000)
+                # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
+                runner_ttl_sec = sig.runner_ttl_seconds or 300
+                sig.runner_time_stop_at_utc = sig.last_updated_utc + (runner_ttl_sec * 1000)
 
-            # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19)
-            if not sig.breakeven_activated:
-                sig.breakeven_activated = True
-                cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
-                if sig.direction == "LONG_CALL":
-                    sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
-                else:
-                    sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
+                # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19)
+                if not sig.breakeven_activated:
+                    sig.breakeven_activated = True
+                    cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
+                    if sig.direction == "LONG_CALL":
+                        sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
+                    else:
+                        sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
 
-        elif to_state == "TARGET_2_HIT":
-            sig.t2_hit = True
-            sig.exit_price = market_price
-            sig.outcome_status = "WIN_T2"
-            sig.realized_rr = sig.risk_reward_t2
-        elif to_state == "STOP_LOSS_HIT":
-            sig.exit_price = market_price
-            sig.outcome_status = "LOSS_SL"
-            sig.realized_rr = -1.0 if not sig.breakeven_activated else 0.0
-        elif to_state == "TIME_STOP_HIT":
-            sig.exit_price = market_price
-            sig.outcome_status = "TIME_STOP"
-            sig.realized_rr = 0.0
-        elif to_state == "RUNNER_TIME_STOP_HIT":
-            sig.exit_price = market_price
-            sig.outcome_status = "RUNNER_TIME_STOP"
-            sig.realized_rr = sig.risk_reward_t1
-        elif to_state == "EXPIRED":
-            sig.outcome_status = "EXPIRED"
-        elif to_state == "INVALIDATED":
-            sig.outcome_status = "INVALIDATED"
+            elif to_state == "TARGET_2_HIT":
+                sig.t2_hit = True
+                sig.exit_price = market_price
+                sig.outcome_status = "WIN_T2"
+                sig.realized_rr = sig.risk_reward_t2
+            elif to_state == "STOP_LOSS_HIT":
+                sig.exit_price = market_price
+                sig.outcome_status = "LOSS_SL"
+                sig.realized_rr = -1.0 if not sig.breakeven_activated else 0.0
+            elif to_state == "TIME_STOP_HIT":
+                sig.exit_price = market_price
+                sig.outcome_status = "TIME_STOP"
+                sig.realized_rr = 0.0
+            elif to_state == "RUNNER_TIME_STOP_HIT":
+                sig.exit_price = market_price
+                sig.outcome_status = "RUNNER_TIME_STOP"
+                sig.realized_rr = sig.risk_reward_t1
+            elif to_state == "EXPIRED":
+                sig.outcome_status = "EXPIRED"
+            elif to_state == "INVALIDATED":
+                sig.outcome_status = "INVALIDATED"
 
-        audit = FSMTransitionAudit(
-            signal_id=signal_id,
-            from_state=from_st,
-            to_state=to_state,
-            market_price=market_price,
-            reason_code=reason,
-            guard_snapshot=guard_snapshot or {},
-        )
-        sig.state_history.append(audit)
-        self._audit_log.append(audit)
-        logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason)
-
-        # Sync transition to audit ledger & Supabase
-        try:
-            from app.signals.audit_ledger import signal_audit_ledger
-            signal_audit_ledger.record_state_transition(
+            audit = FSMTransitionAudit(
                 signal_id=signal_id,
+                from_state=from_st,
                 to_state=to_state,
-                market_price=float(market_price) if market_price is not None else None,
-                reason=reason,
+                market_price=market_price,
+                reason_code=reason,
+                guard_snapshot=guard_snapshot or {},
             )
-        except Exception as te:
-            logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
+            sig.state_history.append(audit)
+            self._audit_log.append(audit)
+            logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason)
 
-        # Persist updated SignalInstance locally and to PostgreSQL
-        try:
-            import asyncio
-            from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
-            save_signals_state_local()
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.create_task(persist_executed_signal(sig))
-        except (RuntimeError, Exception):
-            pass
+            # Sync transition to audit ledger & Supabase
+            try:
+                from app.signals.audit_ledger import signal_audit_ledger
+                signal_audit_ledger.record_state_transition(
+                    signal_id=signal_id,
+                    to_state=to_state,
+                    market_price=float(market_price) if market_price is not None else None,
+                    reason=reason,
+                )
+            except Exception as te:
+                logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
 
-        return True, None
+            # Persist updated SignalInstance locally and to PostgreSQL
+            try:
+                import asyncio
+                from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+                save_signals_state_local()
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(persist_executed_signal(sig))
+            except (RuntimeError, Exception):
+                pass
+
+            return True, None
 
     def ratchet_breakeven(self, signal_id: str, market_price: Decimal) -> bool:
         """Activate +0.8R Breakeven Ratchet (§19). Moves stop loss to cost/entry."""
@@ -558,8 +569,8 @@ def evaluate_tick(
         elif direction == "LONG_PUT" and tick_price <= t1:
             return "TARGET_1_HIT", "TARGET_1_ACHIEVED"
 
-        # Check Active Time-Stop (Scalp only)
-        if sig.is_scalp and sig.time_stop_at_utc and ts > sig.time_stop_at_utc:
+        # Check Active Time-Stop
+        if sig.time_stop_at_utc and ts > sig.time_stop_at_utc:
             return "TIME_STOP_HIT", "TIME_STOP_EXCEEDED"
 
         # Check +0.8R Breakeven Trigger

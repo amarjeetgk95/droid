@@ -67,6 +67,33 @@ class AIEvaluator:
         Returns:
             Tuple of (AISignal, ExecutionDecision)
         """
+        # Pre-flight market check to avoid expensive LLM spend when market is closed
+        from app.services.calendar_service import calendar_service
+        allow_closed = False
+        if context_overrides and context_overrides.get("allow_closed_market"):
+            allow_closed = True
+
+        if not allow_closed and not calendar_service.can_trade_now().allowed:
+            import uuid
+            from app.ai.schemas import RejectionReason
+            no_trade_sig = AISignal(
+                signal_id=str(uuid.uuid4()),
+                symbol=symbol,
+                timestamp=datetime.now(timezone.utc),
+                timeframe="5M",
+                decision=Decision.NO_TRADE,
+                validation_result=ValidationStatus.REJECT,
+                rejection_reason_code=RejectionReason.MARKET_CLOSED.value,
+                rejection_detail="Market is closed. Pre-flight check blocked AI evaluation.",
+            )
+            exec_decision = ExecutionDecision(
+                decision="REJECT",
+                reason_code=RejectionReason.MARKET_CLOSED,
+                reason_detail="Market is closed. NSE trading hours: 09:15 - 15:30 IST.",
+                signal_id=no_trade_sig.signal_id,
+            )
+            return no_trade_sig, exec_decision
+
         market_context = await self._build_market_context(symbol, context_overrides)
         regime = regime_hint or self._detect_regime(market_context)
 

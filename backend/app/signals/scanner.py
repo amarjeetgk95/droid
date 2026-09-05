@@ -48,6 +48,13 @@ class SignalScanner:
         self._last_diagnostics: dict[str, ScanDiagnostics] = {}
         self._scan_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._scan_cache_ttl_s = scan_cache_ttl_s
+        self._market_svc: Any = None
+
+    def _get_market_svc(self) -> Any:
+        if self._market_svc is None:
+            from app.services.market_service import MarketService
+            self._market_svc = MarketService()
+        return self._market_svc
 
     def get_last_diagnostics(self) -> dict[str, Any]:
         return {k: v.model_dump() for k, v in self._last_diagnostics.items()}
@@ -57,7 +64,7 @@ class SignalScanner:
         try:
             status = str(getattr(quote, "status", "") or "").upper()
             provider = str(getattr(quote, "provider", "") or "").lower()
-            if "OFFLINE" in status or "DEGRADED" in status:
+            if any(s in status for s in ("OFFLINE", "DEGRADED", "STALE", "CLOSED", "INVALID")):
                 return True
             if provider in ("fallback", "synthetic", "mock"):
                 return True
@@ -85,11 +92,10 @@ class SignalScanner:
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
 
-        from app.services.market_service import MarketService
         from app.technical_analysis.analyzer import analyze_timeframe
         from app.multi_timeframe.alignment import compute_alignment
 
-        market_svc = MarketService()
+        market_svc = self._get_market_svc()
         try:
             quote = await asyncio.wait_for(market_svc.get_quote(u), timeout=8.0)
         except asyncio.TimeoutError:
@@ -135,6 +141,26 @@ class SignalScanner:
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             logger.info("scanner_fallback_quote_rejected", underlying=u, provider=diag.provider)
             return []
+
+        # ── Staleness gate: reject quotes older than scanner threshold ──
+        if getattr(quote, "timestamp", None):
+            try:
+                from datetime import datetime, timezone
+                from app.core.config import settings
+                q_ts = quote.timestamp
+                if q_ts.tzinfo is None:
+                    q_ts = q_ts.replace(tzinfo=timezone.utc)
+                age_sec = (datetime.now(timezone.utc) - q_ts).total_seconds()
+                if age_sec > settings.scanner_quote_age_seconds:
+                    diag.data_quality = "DEGRADED"
+                    diag.error = f"stale_quote_{round(age_sec, 1)}s"
+                    diag.reasons.append(f"Quote age ({round(age_sec, 1)}s) exceeds max allowed ({settings.scanner_quote_age_seconds}s)")
+                    diag.duration_ms = int((time.time() - started) * 1000)
+                    self._last_diagnostics[f"{u}:{timeframe}"] = diag
+                    logger.info("scanner_stale_quote_rejected", underlying=u, age_sec=round(age_sec, 1))
+                    return []
+            except Exception:
+                pass
 
         try:
             spot = Decimal(str(quote.ltp))

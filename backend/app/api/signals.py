@@ -33,6 +33,7 @@ from app.signals.scanner import scanner_engine
 from app.signals.outcome_tracker import outcome_tracker
 from app.signals.paper_engine import signal_paper_engine
 from app.signals.sse import signal_sse_hub
+from app.signals.market_guard import ensure_market_open_or_raise_http
 from app.services.market_service import MarketService
 
 logger = structlog.get_logger()
@@ -67,6 +68,8 @@ class GenerateSignalRequest(BaseModel):
     lots: Optional[int] = Field(default=None, description="Optional custom lots")
     notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification")
     rationale: Optional[list[str]] = None
+    allow_closed_market: bool = Field(default=False, description="Allow generating signal when market is closed (for testing/demo)")
+
 
 
 class AutoDetectRequest(BaseModel):
@@ -188,15 +191,6 @@ async def list_active_signals(
         try:
             if quote is not None and getattr(quote, "ltp", None) is not None and float(quote.ltp) > 0:
                 curr_p = Decimal(str(quote.ltp))
-                # Check outcome progression ONLY when market is open and quote is live
-                from app.services.calendar_service import calendar_service
-                from app.models.market import DataStatus
-                if calendar_service.can_trade_now().allowed and getattr(quote, "status", None) == DataStatus.LIVE:
-                    try:
-                        outcome_tracker.update_with_price(s.underlying, curr_p)
-                    except Exception:
-                        pass
-
                 trig = s.trigger if s.trigger and s.trigger > 0 else None
                 if trig:
                     diff = abs(curr_p - trig)
@@ -609,6 +603,7 @@ async def auto_detect_setup(req: AutoDetectRequest):
     Evaluates live candles and indicators to automatically pre-fill realistic Entry, SL, and Target levels.
     Returns detected=False with baseline levels when no setup triggers (never 500s on empty).
     """
+    ensure_market_open_or_raise_http(detail_prefix="Auto-detect setup blocked")
     try:
         u = validate_underlying(req.underlying)
     except ValueError as ve:
@@ -669,6 +664,7 @@ async def generate_signal(req: GenerateSignalRequest):
     Manual authoritative signal generation with FSM registration, optional paper execution, and Telegram dispatch.
     Rejects unknown underlyings (422) and incoherent levels (400); never fabricates fills off fallback quotes.
     """
+    ensure_market_open_or_raise_http(allow_closed=req.allow_closed_market, detail_prefix="Manual signal generation blocked")
     raw_u = req.underlying or req.instrument_id or "NIFTY"
     try:
         u = validate_underlying(raw_u)

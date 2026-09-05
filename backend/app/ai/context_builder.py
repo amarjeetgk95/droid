@@ -162,5 +162,13 @@ class MarketContextBuilder:
         self._cache_timestamps.pop(symbol, None)
         self._lock_marker.pop(symbol, None)
 
+    def apply_overrides(self, context: MarketContext, overrides: dict) -> MarketContext:
+        """Apply field overrides to market context returning a new updated instance."""
+        data = context.model_dump()
+        for k, v in overrides.items():
+            if k in data and v is not None:
+                data[k] = v
+        return MarketContext.model_validate(data)
+
 
 market_context_builder = MarketContextBuilder()
