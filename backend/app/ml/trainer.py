@@ -31,63 +31,28 @@ LABEL_MAP = {"BEARISH": 0, "NEUTRAL": 1, "BULLISH": 2}
 INV_LABEL = {v: k for k, v in LABEL_MAP.items()}
 
 
-def _generate_synthetic_dataset(n_samples: int = 1000):
-    """Generate synthetic training data from heuristic rules for cold-start.
-    Uses the same logic as predictor.py: bullish if weighted score > 0.15 else bearish/neutral.
-    This bootstraps the models before real historical labels are available.
-    """
-    import numpy as np
+async def train_ensemble(
+    features: list[list[float]] | None = None,
+    labels: list[int] | None = None,
+) -> dict:
+    """Train XGBoost + LightGBM ensemble on real historical feature vectors and save artifacts."""
+    if not features or not labels or len(features) < 100 or len(features) != len(labels):
+        raise ValueError(
+            "Training requires a verified historical dataset of at least 100 samples with corresponding labels. Synthetic training generation is disallowed."
+        )
 
-    rng = np.random.default_rng(42)
-    X = []
-    y = []
-    for _ in range(n_samples):
-        f = {
-            "rsi_norm": float(rng.uniform(-1, 1)),
-            "adx_strength": float(rng.uniform(0, 1)),
-            "supertrend_signal": float(rng.choice([-1, 1])),
-            "bollinger_pct_b": float(rng.uniform(-0.5, 1.5)),
-            "pcr_oi_deviation": float(rng.uniform(-1, 1)),
-            "max_pain_distance_pct": float(rng.uniform(-0.05, 0.05)),
-            "futures_basis_pct": float(rng.uniform(-0.01, 0.01)),
-            "price_above_ema20": float(rng.uniform(-0.02, 0.02)),
-            "price_above_sma200": float(rng.uniform(-0.05, 0.05)),
-            "pivot_position": float(rng.uniform(-1, 1)),
-        }
-        # Heuristic label generation (same as predictor weights)
-        w_st = 0.25 * f["supertrend_signal"]
-        w_rsi = 0.20 * f["rsi_norm"]
-        w_pcr = 0.15 * f["pcr_oi_deviation"]
-        w_basis = 0.15 * (1.0 if f["futures_basis_pct"] > 0 else -1.0) * min(1.0, abs(f["futures_basis_pct"]) * 200)
-        w_ema = 0.15 * min(1.0, max(-1.0, f["price_above_ema20"] * 100))
-        w_pivot = 0.10 * f["pivot_position"]
-        score = w_st + w_rsi + w_pcr + w_basis + w_ema + w_pivot
-        adx = f["adx_strength"]
-        if score > 0.15 and adx > 0.4:
-            label = "BULLISH"
-        elif score < -0.15 and adx > 0.4:
-            label = "BEARISH"
-        else:
-            label = "NEUTRAL"
-        X.append([f[k] for k in FEATURE_NAMES])
-        y.append(LABEL_MAP[label])
-    import numpy as np
-
-    return np.array(X, dtype=float), np.array(y, dtype=int)
-
-
-async def train_ensemble(n_samples: int = 2000) -> dict:
-    """Train XGBoost + LightGBM ensemble on synthetic (or historical) data and save artifacts."""
     try:
         import xgboost as xgb
         import lightgbm as lgb
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import accuracy_score, log_loss
+        import numpy as np
     except ImportError as e:
         logger.error("ml_train_import_error", error=str(e))
         raise RuntimeError(f"ML deps not installed: {e}. Run pip install -e .")
 
-    X, y = _generate_synthetic_dataset(n_samples)
+    X = np.array(features, dtype=float)
+    y = np.array(labels, dtype=int)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
@@ -130,7 +95,7 @@ async def train_ensemble(n_samples: int = 2000) -> dict:
     lgb_model.booster_.save_model(str(LGB_PATH))
     meta = {
         "trained_at": datetime.now(timezone.utc).isoformat(),
-        "n_samples": n_samples,
+        "n_samples": len(features),
         "feature_names": FEATURE_NAMES,
         "model_version": "XGBoost-LightGBM-Ensemble-v2.0",
         "metrics": {

@@ -6,7 +6,6 @@ import {
   Activity,
   ArrowRight,
   BarChart2,
-  Layers,
   Radio,
   Search,
   Settings,
@@ -14,7 +13,7 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import { ALL_NAV_ITEMS } from '../nav-config';
+import { ALL_NAV_ITEMS, NAV_GROUPS, STANDALONE_ITEMS, BOTTOM_ITEMS } from '../nav-config';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { safeNum, safeInt, cn } from '@/lib/utils';
 
@@ -86,19 +85,27 @@ export function CommandPalette({
     const match = (hay: string) => !q || hay.toLowerCase().includes(q);
     const out: PaletteItem[] = [];
 
+    const groupOf = (href: string): string => {
+      if (STANDALONE_ITEMS.some((i) => i.href === href)) return 'Overview';
+      for (const g of NAV_GROUPS) if (g.items.some((i) => i.href === href)) return g.label;
+      if (BOTTOM_ITEMS.some((i) => i.href === href)) return 'System';
+      return 'Terminal Pages';
+    };
+
     // 1. Pages / Screens
     for (const nav of ALL_NAV_ITEMS) {
-      const hay = `${nav.label} ${nav.description ?? ''} ${(nav.keywords ?? []).join(' ')} ${nav.href}`;
+      const hay = `${nav.label} ${nav.description ?? ''} ${(nav.keywords ?? []).join(' ')} ${nav.href} ${groupOf(nav.href)}`;
       if (match(hay)) {
+        const NavIcon = nav.icon;
         out.push({
           key: `page:${nav.href}`,
           category: 'pages',
-          section: 'Terminal Pages',
+          section: groupOf(nav.href),
           label: nav.label,
-          sub: nav.description ?? nav.href,
+          sub: `${nav.description ?? nav.href}${nav.shortcut ? ` • ${nav.shortcut}` : ''}`,
           href: nav.href,
-          badge: nav.badge,
-          icon: <Layers className="w-3.5 h-3.5 text-primary" />,
+          badge: nav.shortcut ?? nav.badge,
+          icon: <NavIcon className="w-3.5 h-3.5 text-primary" />,
         });
       }
     }

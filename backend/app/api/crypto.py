@@ -9,11 +9,11 @@ from app.models.market import ApiMeta, DataStatus
 router = APIRouter(prefix="/api/v1/crypto", tags=["crypto"])
 
 
-def _make_meta(provider: str = "binance") -> ApiMeta:
+def _make_meta(provider: str = "binance", status: DataStatus = DataStatus.LIVE) -> ApiMeta:
     return ApiMeta(
         provider=provider,
         timestamp=datetime.now(timezone.utc),
-        status=DataStatus.LIVE,
+        status=status,
     )
 
 
@@ -32,10 +32,11 @@ async def get_crypto_tickers():
     """Retrieve 24h ticker statistics strictly for Bitcoin (BTC) and Ethereum (ETH) pairs."""
     try:
         tickers = await binance_service.get_top_tickers()
+        st = tickers[0].status if tickers else DataStatus.OFFLINE
         return {
             "data": [t.model_dump(mode="json") for t in tickers],
             "error": None,
-            "meta": _make_meta("binance_spot").model_dump(),
+            "meta": _make_meta("binance_spot", status=st).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -49,7 +50,7 @@ async def get_crypto_comparison():
         return {
             "data": comparison.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("binance_analytics").model_dump(),
+            "meta": _make_meta("binance_analytics", status=comparison.status).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -63,7 +64,7 @@ async def get_crypto_market_overview():
         return {
             "data": overview.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("binance_market").model_dump(),
+            "meta": _make_meta("binance_market", status=overview.status).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -74,10 +75,11 @@ async def get_crypto_health():
     """Retrieve operational health, latency, and status of BTC & ETH subsystems."""
     try:
         health = market_health_tracker.get_health()
+        st = DataStatus.LIVE if health.overall_status == "ONLINE" else DataStatus.DEGRADED
         return {
             "data": health.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("system").model_dump(),
+            "meta": _make_meta("system", status=st).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -115,10 +117,11 @@ async def get_all_crypto_signals():
             all_signals.extend(sigs)
 
         resp = crypto_signal_engine.build_signals_response(all_signals)
+        st = tickers[0].status if tickers else DataStatus.OFFLINE
         return {
             "data": resp.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("crypto_quant_engine").model_dump(),
+            "meta": _make_meta("crypto_quant_engine", status=st).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -133,7 +136,7 @@ async def get_crypto_quote(symbol: str):
         return {
             "data": ticker.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("binance_spot").model_dump(),
+            "meta": _make_meta("binance_spot", status=ticker.status).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -149,10 +152,11 @@ async def get_crypto_candles(
     clean_sym = _check_symbol(symbol)
     try:
         candles = await binance_service.get_candles(clean_sym, timeframe, limit)
+        st = DataStatus.LIVE if candles else DataStatus.OFFLINE
         return {
             "data": [c.model_dump(mode="json") for c in candles],
             "error": None,
-            "meta": _make_meta("binance_spot").model_dump(),
+            "meta": _make_meta("binance_spot", status=st).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,7 +178,7 @@ async def get_crypto_order_book(
         return {
             "data": orderbook.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta(f"binance_depth_{market_clean}").model_dump(),
+            "meta": _make_meta(f"binance_depth_{market_clean}", status=orderbook.status).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -189,7 +193,7 @@ async def get_crypto_derivatives(symbol: str):
         return {
             "data": derivs.model_dump(mode="json"),
             "error": None,
-            "meta": _make_meta("binance_futures").model_dump(),
+            "meta": _make_meta("binance_futures", status=derivs.status).model_dump(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

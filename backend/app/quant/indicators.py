@@ -57,8 +57,8 @@ def calculate_atr(
     period: int = 14,
 ) -> float:
     """Calculate 14-period Average True Range."""
-    if len(closes) < 2:
-        return 50.0
+    if len(closes) < 2 or not highs or not lows:
+        return 0.0
 
     trs = []
     for i in range(1, len(closes)):
@@ -68,8 +68,11 @@ def calculate_atr(
         tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
         trs.append(tr)
 
+    if not trs:
+        return 0.0
+
     if len(trs) < period:
-        return round(sum(trs) / len(trs), 2) if trs else 50.0
+        return round(sum(trs) / len(trs), 2)
 
     atr = sum(trs[:period]) / period
     for i in range(period, len(trs)):
@@ -85,8 +88,8 @@ def calculate_adx(
     period: int = 14,
 ) -> tuple[float, float, float]:
     """Calculate Average Directional Index (+DI, -DI, ADX)."""
-    if len(closes) < period * 2:
-        return 22.5, 18.0, 24.0  # Synthetic default
+    if len(closes) < 2 or not highs or not lows:
+        return 0.0, 0.0, 0.0
 
     tr_list = []
     plus_dm = []
@@ -115,32 +118,39 @@ def calculate_adx(
         else:
             minus_dm.append(0.0)
 
-    smoothed_tr = sum(tr_list[:period])
-    smoothed_plus_dm = sum(plus_dm[:period])
-    smoothed_minus_dm = sum(minus_dm[:period])
+    if not tr_list:
+        return 0.0, 0.0, 0.0
+
+    calc_period = min(period, len(tr_list))
+    smoothed_tr = sum(tr_list[:calc_period])
+    smoothed_plus_dm = sum(plus_dm[:calc_period])
+    smoothed_minus_dm = sum(minus_dm[:calc_period])
 
     dx_list = []
-    for i in range(period, len(tr_list)):
+    for i in range(calc_period, len(tr_list)):
         smoothed_tr = smoothed_tr - (smoothed_tr / period) + tr_list[i]
         smoothed_plus_dm = smoothed_plus_dm - (smoothed_plus_dm / period) + plus_dm[i]
         smoothed_minus_dm = smoothed_minus_dm - (smoothed_minus_dm / period) + minus_dm[i]
 
-        plus_di = 100.0 * (smoothed_plus_dm / smoothed_tr) if smoothed_tr > 0 else 0
-        minus_di = 100.0 * (smoothed_minus_dm / smoothed_tr) if smoothed_tr > 0 else 0
+        plus_di = 100.0 * (smoothed_plus_dm / smoothed_tr) if smoothed_tr > 0 else 0.0
+        minus_di = 100.0 * (smoothed_minus_dm / smoothed_tr) if smoothed_tr > 0 else 0.0
 
         di_sum = plus_di + minus_di
-        dx = 100.0 * (abs(plus_di - minus_di) / di_sum) if di_sum > 0 else 0
+        dx = 100.0 * (abs(plus_di - minus_di) / di_sum) if di_sum > 0 else 0.0
         dx_list.append(dx)
 
+    final_plus_di = 100.0 * (smoothed_plus_dm / smoothed_tr) if smoothed_tr > 0 else 0.0
+    final_minus_di = 100.0 * (smoothed_minus_dm / smoothed_tr) if smoothed_tr > 0 else 0.0
+
     if not dx_list:
-        return 22.0, 18.0, 24.0
+        di_sum = final_plus_di + final_minus_di
+        instant_dx = 100.0 * (abs(final_plus_di - final_minus_di) / di_sum) if di_sum > 0 else 0.0
+        return round(final_plus_di, 2), round(final_minus_di, 2), round(instant_dx, 2)
 
-    adx = sum(dx_list[:period]) / len(dx_list[:period])
-    for i in range(period, len(dx_list)):
+    adx_period = min(period, len(dx_list))
+    adx = sum(dx_list[:adx_period]) / adx_period
+    for i in range(adx_period, len(dx_list)):
         adx = (adx * (period - 1) + dx_list[i]) / period
-
-    final_plus_di = 100.0 * (smoothed_plus_dm / smoothed_tr) if smoothed_tr > 0 else 0
-    final_minus_di = 100.0 * (smoothed_minus_dm / smoothed_tr) if smoothed_tr > 0 else 0
 
     return round(final_plus_di, 2), round(final_minus_di, 2), round(adx, 2)
 
@@ -151,13 +161,13 @@ def calculate_bollinger_bands(
     num_std: float = 2.0,
 ) -> tuple[float, float, float, float, float]:
     """Calculate Bollinger Bands (Upper, Middle, Lower, Bandwidth %, %B)."""
-    if len(prices) < period:
-        p = prices[-1] if prices else 25000.0
-        return round(p * 1.01, 2), p, round(p * 0.99, 2), 2.0, 0.5
+    if not prices:
+        return 0.0, 0.0, 0.0, 0.0, 0.5
 
-    subset = prices[-period:]
-    middle = sum(subset) / period
-    variance = sum((x - middle) ** 2 for x in subset) / period
+    calc_len = min(len(prices), period)
+    subset = prices[-calc_len:]
+    middle = sum(subset) / calc_len
+    variance = sum((x - middle) ** 2 for x in subset) / calc_len if calc_len > 1 else 0.0
     std_dev = math.sqrt(variance)
 
     upper = middle + num_std * std_dev
@@ -178,8 +188,11 @@ def calculate_supertrend(
     multiplier: float = 3.0,
 ) -> tuple[float, Literal["BULLISH", "BEARISH"]]:
     """Calculate Supertrend indicator value and direction."""
-    if len(closes) < period + 1:
-        return closes[-1] if closes else 25000.0, "BULLISH"
+    if not closes:
+        return 0.0, "BULLISH"
+
+    if len(closes) < 2 or not highs or not lows:
+        return closes[-1], "BULLISH"
 
     atr = calculate_atr(highs, lows, closes, period)
     curr_c = closes[-1]

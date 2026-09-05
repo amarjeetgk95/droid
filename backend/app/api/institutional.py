@@ -616,7 +616,14 @@ async def get_full_mi(instrument_id: str):
     ctx = market_intelligence_engine.evaluate(instrument_id=iid, spot_price=spot)
     sig = breakout_engine.evaluate(ctx)
 
-    atr = D("50") if prof.asset_class != "CRYPTO" else D("600")
+    atr = None
+    try:
+        from app.services.regime_service import regime_service
+        ind = await regime_service.get_technical_indicators(iid)
+        if ind and ind.atr_14 > 0:
+            atr = D(str(ind.atr_14))
+    except Exception:
+        pass
     # Short/continuation require live price — if no live, return WATCH (no synthetic)
     if spot is not None:
         try:

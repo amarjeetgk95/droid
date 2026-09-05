@@ -25,14 +25,24 @@ def _make_meta() -> ApiMeta:
     )
 
 
+from pydantic import BaseModel, Field
+
+
+class TrainRequest(BaseModel):
+    features: list[list[float]] = Field(..., description="Historical feature vectors, minimum 100 samples")
+    labels: list[int] = Field(..., description="Labels: 0=BEARISH, 1=NEUTRAL, 2=BULLISH")
+
+
 @router.post("/train")
-async def train_ml_ensemble(n_samples: int = 2000):
-    """Train XGBoost + LightGBM ensemble on synthetic (or historical) data."""
+async def train_ml_ensemble(request: TrainRequest):
+    """Train XGBoost + LightGBM ensemble on verified historical feature vectors."""
     from app.ml.trainer import train_ensemble
 
     try:
-        meta = await train_ensemble(n_samples=n_samples)
+        meta = await train_ensemble(features=request.features, labels=request.labels)
         return {"data": meta, "error": None, "meta": _make_meta().model_dump()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

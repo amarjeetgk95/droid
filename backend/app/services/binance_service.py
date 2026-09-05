@@ -26,11 +26,6 @@ PAIR_DISPLAY_NAMES: dict[str, tuple[str, str, str]] = {
     "ETHBTC": ("Ethereum / Bitcoin", "ETH", "BTC"),
 }
 
-FALLBACK_PRICES: dict[str, float] = {
-    "BTCUSDT": 88000.0,
-    "ETHUSDT": 2700.0,
-    "ETHBTC": 0.03068,
-}
 
 
 class BinanceService:
@@ -150,7 +145,7 @@ class BinanceService:
         except Exception as e:
             logger.warning("binance_tickers_fetch_failed", error=str(e))
 
-        return self._generate_fallback_tickers()
+        return []
 
     async def get_ticker(self, symbol: str) -> CryptoTicker:
         """Fetch single 24hr quote for a symbol in the whitelist."""
@@ -208,9 +203,9 @@ class BinanceService:
                 )
         except Exception as e:
             logger.warning("binance_single_ticker_fetch_failed", symbol=sym, error=str(e))
+            raise RuntimeError(f"Live ticker unavailable for {sym}: {e}")
 
-        fallbacks = self._generate_fallback_tickers()
-        return next((t for t in fallbacks if t.symbol == sym), fallbacks[0])
+        raise RuntimeError(f"Live ticker unavailable for {sym}")
 
     async def get_candles(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[NormalizedCandle]:
         """Fetch historical candlestick bars from Binance Spot."""
@@ -249,7 +244,7 @@ class BinanceService:
         except Exception as e:
             logger.warning("binance_candles_fetch_failed", symbol=sym, error=str(e))
 
-        return self._generate_fallback_candles(sym, limit)
+        return []
 
     async def get_order_book(self, symbol: str, limit: int = 20, market_type: str = "spot") -> CryptoOrderBook:
         """Fetch live L2 depth snapshot and synchronize with OrderBookEngine."""
@@ -278,7 +273,7 @@ class BinanceService:
 
         book_state = orderbook_engine.get_or_create(sym, market_type)
         if not book_state.is_initialized:
-            self._seed_fallback_orderbook(book_state, sym, limit)
+            book_state.data_status = DataStatus.OFFLINE
         return book_state.to_model(limit=limit)
 
     async def get_derivatives_data(self, symbol: str) -> CryptoDerivatives:
@@ -288,52 +283,46 @@ class BinanceService:
             # Derivatives are USD-M settled; fallback to ETHUSDT
             sym = "ETHUSDT"
 
-        mark_price = FALLBACK_PRICES.get(sym, 88000.0)
-        index_price = mark_price
-        funding_rate = 0.0001
-        next_funding_ms = int((time.time() + 14400) * 1000)
-        oi_coins = 45000.0 if "BTC" in sym else 450000.0
-        long_short_ratio = 1.35
-        long_pct = 57.45
-        short_pct = 42.55
-        top_trader_ratio = 1.52
-        spot_price: Optional[float] = None
-
         try:
             # 1. Fetch spot price for Basis
             spot_ticker = await self._fetch_spot_json(f"/api/v3/ticker/price?symbol={sym}")
-            if spot_ticker and isinstance(spot_ticker, dict):
-                spot_price = float(spot_ticker.get("price", mark_price))
+            spot_price = float(spot_ticker.get("price", 0.0)) if spot_ticker and isinstance(spot_ticker, dict) else None
 
             # 2. Premium Index & Funding Rate
             prem_data = await self._fetch_futures_json(f"/fapi/v1/premiumIndex?symbol={sym}")
-            if prem_data and isinstance(prem_data, dict):
-                mark_price = float(prem_data.get("markPrice", mark_price))
-                index_price = float(prem_data.get("indexPrice", index_price))
-                funding_rate = float(prem_data.get("lastFundingRate", funding_rate))
-                next_funding_ms = int(prem_data.get("nextFundingTime", next_funding_ms))
+            if not prem_data or not isinstance(prem_data, dict):
+                raise RuntimeError(f"Failed to fetch premiumIndex for {sym}")
+            mark_price = float(prem_data["markPrice"])
+            index_price = float(prem_data["indexPrice"])
+            funding_rate = float(prem_data["lastFundingRate"])
+            next_funding_ms = int(prem_data["nextFundingTime"])
 
             # 3. Open Interest
             oi_data = await self._fetch_futures_json(f"/fapi/v1/openInterest?symbol={sym}")
-            if oi_data and isinstance(oi_data, dict):
-                oi_coins = float(oi_data.get("openInterest", oi_coins))
+            if not oi_data or not isinstance(oi_data, dict):
+                raise RuntimeError(f"Failed to fetch openInterest for {sym}")
+            oi_coins = float(oi_data["openInterest"])
 
             # 4. Long/Short Account Ratio
+            long_short_ratio = 1.0
+            long_pct = 50.0
+            short_pct = 50.0
             ls_data = await self._fetch_futures_json(
                 f"/futures/data/globalLongShortAccountRatio?symbol={sym}&period=5m&limit=1"
             )
             if ls_data and isinstance(ls_data, list) and len(ls_data) > 0:
                 ls_item = ls_data[0]
-                long_short_ratio = float(ls_item.get("longShortRatio", long_short_ratio))
-                long_pct = float(ls_item.get("longAccount", 0.57)) * 100
-                short_pct = float(ls_item.get("shortAccount", 0.43)) * 100
+                long_short_ratio = float(ls_item.get("longShortRatio", 1.0))
+                long_pct = float(ls_item.get("longAccount", 0.5)) * 100
+                short_pct = float(ls_item.get("shortAccount", 0.5)) * 100
 
             # 5. Top Trader Ratio
+            top_trader_ratio = None
             top_data = await self._fetch_futures_json(
                 f"/futures/data/topLongShortAccountRatio?symbol={sym}&period=5m&limit=1"
             )
             if top_data and isinstance(top_data, list) and len(top_data) > 0:
-                top_trader_ratio = float(top_data[0].get("longShortRatio", top_trader_ratio))
+                top_trader_ratio = float(top_data[0].get("longShortRatio", 1.0))
 
             asset_key = "btc_derivatives" if "BTC" in sym else "eth_derivatives"
             market_health_tracker.record_event(asset_key)
@@ -354,21 +343,7 @@ class BinanceService:
             )
         except Exception as e:
             logger.warning("binance_derivatives_fetch_failed", symbol=sym, error=str(e))
-
-        return derivatives_engine.build_model(
-            symbol=sym,
-            mark_price=mark_price,
-            index_price=index_price,
-            spot_price=spot_price or mark_price,
-            funding_rate=funding_rate,
-            next_funding_time_ms=next_funding_ms,
-            open_interest_coins=oi_coins,
-            long_short_ratio=long_short_ratio,
-            long_pct=long_pct,
-            short_pct=short_pct,
-            top_trader_ratio=top_trader_ratio,
-            data_status=DataStatus.OFFLINE,
-        )
+            raise RuntimeError(f"Derivatives data unavailable for {sym}: {e}")
 
     async def get_pair_comparison(self) -> CryptoPairComparison:
         """Compute relative strength, ETH/BTC ratio, and performance spread."""
@@ -377,15 +352,28 @@ class BinanceService:
         eth = next((t for t in tickers if t.symbol == "ETHUSDT"), None)
         eth_btc = next((t for t in tickers if t.symbol == "ETHBTC"), None)
 
-        btc_p = btc.price if btc else FALLBACK_PRICES["BTCUSDT"]
-        btc_c = btc.change_percent_24h if btc else 2.1
-        btc_v = btc.volume_24h_quote if btc else 2_500_000_000.0
+        if not btc or not eth:
+            return comparison_engine.calculate_comparison(
+                btc_price=0.0,
+                btc_change_pct=0.0,
+                btc_volume_quote=0.0,
+                eth_price=0.0,
+                eth_change_pct=0.0,
+                eth_volume_quote=0.0,
+                eth_btc_direct_price=0.0,
+                eth_btc_direct_change_pct=0.0,
+                data_status=DataStatus.OFFLINE,
+            )
 
-        eth_p = eth.price if eth else FALLBACK_PRICES["ETHUSDT"]
-        eth_c = eth.change_percent_24h if eth else -0.8
-        eth_v = eth.volume_24h_quote if eth else 1_200_000_000.0
+        btc_p = btc.price
+        btc_c = btc.change_percent_24h
+        btc_v = btc.volume_24h_quote
 
-        eth_btc_p = eth_btc.price if eth_btc else (eth_p / btc_p)
+        eth_p = eth.price
+        eth_c = eth.change_percent_24h
+        eth_v = eth.volume_24h_quote
+
+        eth_btc_p = eth_btc.price if eth_btc else (eth_p / btc_p if btc_p > 0 else 0.0)
         eth_btc_c = eth_btc.change_percent_24h if eth_btc else (eth_c - btc_c)
 
         return comparison_engine.calculate_comparison(
@@ -397,7 +385,7 @@ class BinanceService:
             eth_volume_quote=eth_v,
             eth_btc_direct_price=eth_btc_p,
             eth_btc_direct_change_pct=eth_btc_c,
-            data_status=btc.status if btc else DataStatus.OFFLINE,
+            data_status=btc.status,
         )
 
     async def get_market_overview(self) -> CryptoMarketOverview:
@@ -407,10 +395,29 @@ class BinanceService:
         eth = next((t for t in tickers if t.symbol == "ETHUSDT"), None)
         eth_btc = next((t for t in tickers if t.symbol == "ETHBTC"), None)
 
-        total_vol = sum(t.volume_24h_quote for t in (btc, eth) if t is not None)
-        eth_btc_ratio = eth_btc.price if eth_btc else ((eth.price / btc.price) if (btc and eth and btc.price > 0) else 0.0306)
+        if not btc and not eth:
+            return CryptoMarketOverview(
+                fear_greed_score=50,
+                fear_greed_label="Neutral",
+                btc_dominance_pct=0.0,
+                eth_dominance_pct=0.0,
+                total_market_cap_usd=0.0,
+                combined_volume_24h_usd=0.0,
+                eth_btc_ratio=0.0,
+                tracked_pairs_count=0,
+                top_assets=[],
+                top_gainers=[],
+                top_losers=[],
+                status=DataStatus.OFFLINE,
+                timestamp=datetime.now(timezone.utc),
+                provider="binance",
+            )
 
-        avg_change = sum(t.change_percent_24h for t in (btc, eth) if t is not None) / 2.0 if (btc and eth) else 1.0
+        total_vol = sum(t.volume_24h_quote for t in (btc, eth) if t is not None)
+        eth_btc_ratio = eth_btc.price if eth_btc else ((eth.price / btc.price) if (btc and eth and btc.price > 0) else 0.0)
+
+        active_tickers = [t for t in (btc, eth) if t is not None]
+        avg_change = sum(t.change_percent_24h for t in active_tickers) / len(active_tickers) if active_tickers else 0.0
         score = int(min(95, max(10, 50 + (avg_change * 5))))
         if score >= 75:
             label = "Extreme Greed"
@@ -423,18 +430,22 @@ class BinanceService:
         else:
             label = "Extreme Fear"
 
+        tracked_volume = (btc.volume_24h_quote if btc else 0.0) + (eth.volume_24h_quote if eth else 0.0)
+        btc_vol_share = round((btc.volume_24h_quote / tracked_volume * 100), 1) if (btc and tracked_volume > 0) else 0.0
+        eth_vol_share = round((eth.volume_24h_quote / tracked_volume * 100), 1) if (eth and tracked_volume > 0) else 0.0
+
         return CryptoMarketOverview(
             fear_greed_score=score,
             fear_greed_label=label,
-            btc_dominance_pct=58.2,
-            eth_dominance_pct=16.8,
-            total_market_cap_usd=2_850_000_000_000.0,
+            btc_dominance_pct=btc_vol_share,
+            eth_dominance_pct=eth_vol_share,
+            total_market_cap_usd=0.0,
             combined_volume_24h_usd=round(total_vol, 2),
             eth_btc_ratio=round(eth_btc_ratio, 6),
-            tracked_pairs_count=2,
-            top_assets=[t for t in (btc, eth) if t is not None],
-            top_gainers=[t for t in (btc, eth) if t is not None and t.change_percent_24h >= 0],
-            top_losers=[t for t in (btc, eth) if t is not None and t.change_percent_24h < 0],
+            tracked_pairs_count=len(active_tickers),
+            top_assets=active_tickers,
+            top_gainers=[t for t in active_tickers if t.change_percent_24h >= 0],
+            top_losers=[t for t in active_tickers if t.change_percent_24h < 0],
             status=btc.status if btc else DataStatus.OFFLINE,
             timestamp=datetime.now(timezone.utc),
             provider="binance",
@@ -442,7 +453,7 @@ class BinanceService:
 
     def _generate_sparkline(self, low: float, high: float, current: float, change_pct: float) -> list[float]:
         points = []
-        base = current / (1.0 + (change_pct / 100.0))
+        base = current / (1.0 + (change_pct / 100.0)) if (1.0 + (change_pct / 100.0)) != 0 else current
         for i in range(10):
             ratio = i / 9.0
             interpolated = base + (current - base) * ratio
@@ -451,79 +462,6 @@ class BinanceService:
             points.append(round(val, 2))
         points[-1] = round(current, 2)
         return points
-
-    def _generate_fallback_tickers(self) -> list[CryptoTicker]:
-        tickers = []
-        for sym, (name, base, quote) in PAIR_DISPLAY_NAMES.items():
-            price = FALLBACK_PRICES.get(sym, 1000.0)
-            change_pct = 2.45 if sym == "BTCUSDT" else (-1.2 if sym == "ETHUSDT" else -3.5)
-            change = (price * change_pct) / 100.0
-            high = round(price * 1.025, 2 if quote == "USDT" else 6)
-            low = round(price * 0.975, 2 if quote == "USDT" else 6)
-            vol_base = 35000.0 if base == "BTC" else 280000.0
-            vol_quote = vol_base * price if quote == "USDT" else vol_base * price * FALLBACK_PRICES["BTCUSDT"]
-
-            tickers.append(
-                CryptoTicker(
-                    symbol=sym,
-                    asset=base,
-                    display_name=name,
-                    market_type="spot",
-                    price=price,
-                    bid_price=round(price * 0.9999, 2 if quote == "USDT" else 6),
-                    ask_price=round(price * 1.0001, 2 if quote == "USDT" else 6),
-                    change_24h=round(change, 4),
-                    change_percent_24h=change_pct,
-                    high_24h=high,
-                    low_24h=low,
-                    volume_24h_base=vol_base,
-                    volume_24h_quote=round(vol_quote, 2),
-                    vwap=price,
-                    trade_count=1850000,
-                    spread=round(price * 0.0002, 2 if quote == "USDT" else 6),
-                    spread_percent=0.02,
-                    high_low_spread_pct=round(((high - low) / low) * 100, 2),
-                    sparkline=[round(price * (0.98 + (i * 0.004)), 2 if quote == "USDT" else 6) for i in range(10)],
-                    status=DataStatus.OFFLINE,
-                    provider="binance_fallback",
-                    last_updated=datetime.now(timezone.utc),
-                )
-            )
-        return tickers
-
-    def _generate_fallback_candles(self, symbol: str, limit: int) -> list[NormalizedCandle]:
-        candles = []
-        base_price = FALLBACK_PRICES.get(symbol, 88000.0)
-        now_ts = int(time.time())
-        step_sec = 3600
-
-        for i in range(limit):
-            t = now_ts - ((limit - i) * step_sec)
-            ts_iso = datetime.fromtimestamp(t, tz=timezone.utc).isoformat()
-            o = base_price * (0.96 + (i / limit * 0.07))
-            h = o * 1.01
-            l = o * 0.99
-            c = o * 1.004
-            v = 1250.0
-            candles.append(
-                NormalizedCandle(
-                    timestamp=ts_iso,
-                    open=round(o, 2),
-                    high=round(h, 2),
-                    low=round(l, 2),
-                    close=round(c, 2),
-                    volume=round(v, 2),
-                    vwap=round((o + h + l + c) / 4.0, 2),
-                )
-            )
-        return candles
-
-    def _seed_fallback_orderbook(self, book_state, symbol: str, limit: int):
-        base_price = FALLBACK_PRICES.get(symbol, 88000.0)
-        bids_raw = [[str(round(base_price * (1.0 - i * 0.0002 - 0.0001), 2)), str(round(0.5 + i * 0.2, 4))] for i in range(limit)]
-        asks_raw = [[str(round(base_price * (1.0 + i * 0.0002 + 0.0001), 2)), str(round(0.4 + i * 0.2, 4))] for i in range(limit)]
-        book_state.set_snapshot(1000001, bids_raw, asks_raw)
-        book_state.data_status = DataStatus.OFFLINE
 
 
 binance_service = BinanceService()

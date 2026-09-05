@@ -23,7 +23,9 @@ class MLPredictor:
         underlying = symbol.upper().replace(" 50", "")
 
         quote = await self.market_service.get_quote(underlying)
-        spot_price = quote.ltp if quote.ltp > 0 else (75000.0 if "SENSEX" in underlying else 50000.0 if "BANK" in underlying else 24000.0)
+        if not quote or quote.ltp <= 0:
+            raise ValueError(f"Market quote unavailable for {underlying}")
+        spot_price = quote.ltp
 
         indicators = await regime_service.get_technical_indicators(underlying)
         key_levels = await regime_service.get_key_levels(underlying)

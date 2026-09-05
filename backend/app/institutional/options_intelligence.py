@@ -63,7 +63,23 @@ class VolatilitySurfaceEngine:
     def analyze(self, chain) -> dict[str, Any]:
         # chain: OptionChainResponse from options_service
         strikes = chain.strikes
-        atm_iv = chain.analytics.atm_iv or 14.5
+        atm_iv = chain.analytics.atm_iv
+        if not atm_iv:
+            return {
+                "atm_iv": None,
+                "otm_call_iv": None,
+                "otm_put_iv": None,
+                "skew": None,
+                "smile": "NEUTRAL",
+                "term_structure": "UNKNOWN",
+                "iv_percentile": 50,
+                "iv_rank": 50,
+                "iv_change": None,
+                "skew_change": None,
+                "regime": "NORMAL",
+                "note": "IV data not available",
+            }
+
         # Find OTM call/put IVs
         atm_idx = next((i for i, r in enumerate(strikes) if r.is_atm), len(strikes)//2)
         # Use 3 strikes OTM each side if available
@@ -73,7 +89,7 @@ class VolatilitySurfaceEngine:
             otm_call_iv = strikes[atm_idx + 3].call.greeks.iv
         if atm_idx - 3 >= 0 and strikes[atm_idx - 3].put and strikes[atm_idx - 3].put.greeks:
             otm_put_iv = strikes[atm_idx - 3].put.greeks.iv
-        skew = (otm_put_iv - otm_call_iv) if (otm_put_iv and otm_call_iv) else chain.analytics.iv_skew or 1.85
+        skew = (otm_put_iv - otm_call_iv) if (otm_put_iv and otm_call_iv) else chain.analytics.iv_skew
         # Smile approx
         smile = "SMILE" if skew and abs(skew) < 2 else "SKEW"
         # Regime detection (§14)
@@ -96,11 +112,11 @@ class VolatilitySurfaceEngine:
             "otm_put_iv": otm_put_iv,
             "skew": round(skew, 2) if isinstance(skew, (int, float)) else None,
             "smile": smile,
-            "term_structure": "CONTANGO" if atm_iv < 20 else "FLAT",  # placeholder
+            "term_structure": "CONTANGO" if atm_iv < 20 else "FLAT",
             "iv_percentile": iv_percentile,
             "iv_rank": int(iv_percentile * 0.9),
-            "iv_change": 0.8,  # synthetic
-            "skew_change": 0.1,
+            "iv_change": None,
+            "skew_change": None,
             "regime": regime,
             "note": "Do not interpret IV direction as price direction (§14)",
         }
@@ -190,9 +206,8 @@ async def get_calls_puts_full(underlying: str = "NIFTY", expiry: str | None = No
     for row in chain.strikes:
         # Call side
         if row.call:
-            # Use ltp vs theoretical as proxy for price change; synthetic prev = ltp * 0.98
-            prev_ltp = row.call.ltp * 0.985
-            prev_oi = row.call.open_interest - row.call.oi_change
+            prev_ltp = getattr(row.call, "prev_ltp", None)
+            prev_oi = (row.call.open_interest - row.call.oi_change) if (row.call.oi_change and row.call.oi_change != 0) else None
             base = _classify_positioning(row.call.ltp, prev_ltp, row.call.open_interest, prev_oi, row.call.volume)
             label = f"CALL_{base}" if base not in ("NEUTRAL", "INSUFFICIENT_DATA") else base
             positioning.append({"strike": row.strike, "side": "CALL", "label": label, "oi": row.call.open_interest, "delta_oi": row.call.oi_change, "volume": row.call.volume, "ltp": row.call.ltp, "is_atm": row.is_atm})
@@ -202,8 +217,8 @@ async def get_calls_puts_full(underlying: str = "NIFTY", expiry: str | None = No
             if abs(row.call.oi_change) > 5000:
                 major_delta_oi.append({"strike": row.strike, "side": "CALL", "delta_oi": row.call.oi_change})
         if row.put:
-            prev_ltp = row.put.ltp * 0.985
-            prev_oi = row.put.open_interest - row.put.oi_change
+            prev_ltp = getattr(row.put, "prev_ltp", None)
+            prev_oi = (row.put.open_interest - row.put.oi_change) if (row.put.oi_change and row.put.oi_change != 0) else None
             base = _classify_positioning(row.put.ltp, prev_ltp, row.put.open_interest, prev_oi, row.put.volume)
             label = f"PUT_{base}" if base not in ("NEUTRAL", "INSUFFICIENT_DATA") else base
             positioning.append({"strike": row.strike, "side": "PUT", "label": label, "oi": row.put.open_interest, "delta_oi": row.put.oi_change, "volume": row.put.volume, "ltp": row.put.ltp, "is_atm": row.is_atm})

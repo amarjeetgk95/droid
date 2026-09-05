@@ -36,19 +36,29 @@ class RegimeService:
         lows = [c.low for c in candles]
         volumes = [float(c.volume) for c in candles]
 
-        # Ensure minimum length for 14-period indicators
-        if len(closes) < 14:
-            quote = await self.market_service.get_quote(underlying)
-            spot = quote.ltp if quote.ltp > 0 else 24000.0
-            closes = [spot * (1.0 + 0.0005 * (i - 10)) for i in range(25)]
-            highs = [c * 1.002 for c in closes]
-            lows = [c * 0.998 for c in closes]
-            volumes = [10000.0 for _ in closes]
+        if not closes:
+            return TechnicalIndicators(
+                rsi_14=50.0,
+                adx_14=0.0,
+                plus_di=0.0,
+                minus_di=0.0,
+                atr_14=0.0,
+                supertrend_value=0.0,
+                supertrend_direction="BULLISH",
+                bollinger_upper=0.0,
+                bollinger_middle=0.0,
+                bollinger_lower=0.0,
+                bollinger_bandwidth=0.0,
+                bollinger_pct_b=0.5,
+                ema_20=None,
+                ema_50=None,
+                sma_200=None,
+            )
 
-        # Calculate indicators
+        # Calculate indicators directly from authentic historical candles
         rsi = calculate_rsi(closes, period=14)
         plus_di, minus_di, adx = calculate_adx(highs, lows, closes, period=14)
-        atr = calculate_atr(highs, lows, closes, period=14) or round(closes[-1] * 0.008, 2)
+        atr = calculate_atr(highs, lows, closes, period=14)
         upper, middle, lower, bandwidth, pct_b = calculate_bollinger_bands(closes, period=20)
         st_val, st_dir = calculate_supertrend(highs, lows, closes, period=10, multiplier=3.0)
 
@@ -78,13 +88,13 @@ class RegimeService:
         """Compute comprehensive multi-method key levels and value area."""
         underlying = symbol.upper().replace(" 50", "")
         quote = await self.market_service.get_quote(underlying)
-        spot_p = quote.ltp if quote.ltp > 0 else (75000.0 if "SENSEX" in underlying else 50000.0 if "BANK" in underlying else 24000.0)
+        spot_p = quote.ltp if quote and quote.ltp > 0 else 0.0
 
         # Reference prices
-        high_ref = quote.high if quote.high > spot_p else spot_p * 1.008
-        low_ref = quote.low if (quote.low > 0 and quote.low < spot_p) else spot_p * 0.992
-        close_ref = (quote.previous_close if quote.previous_close > 0 else None) or spot_p
-        open_ref = (quote.open if quote.open > 0 else None) or spot_p
+        high_ref = quote.high if (quote and quote.high > 0) else spot_p
+        low_ref = quote.low if (quote and quote.low > 0) else spot_p
+        close_ref = (quote.previous_close if (quote and quote.previous_close > 0) else None) or spot_p
+        open_ref = (quote.open if (quote and quote.open > 0) else None) or spot_p
 
         # Pivots calculations
         cp = calculate_classic_pivots(high_ref, low_ref, close_ref)
@@ -143,9 +153,14 @@ class RegimeService:
     async def get_vix_regime(self) -> VixRegimeInfo:
         """Evaluate India VIX Volatility classification and option strategy bias."""
         vix_quote = await self.market_service.get_quote("INDIA VIX")
-        vix_val = vix_quote.ltp if vix_quote.ltp > 0 else 11.2
+        vix_val = vix_quote.ltp if vix_quote and vix_quote.ltp > 0 else 0.0
 
-        if vix_val < 13.0:
+        if vix_val <= 0.0:
+            category: VixRegimeCategory = "NORMAL_VOLATILITY"
+            interp = "India VIX market data currently unavailable."
+            strategy = "N/A"
+            pct = 50.0
+        elif vix_val < 13.0:
             category: VixRegimeCategory = "LOW_VOLATILITY"
             interp = "Compressed volatility environment — option premiums are low. Favorable for defined credit spreads / iron condors."
             strategy = "Iron Condors, Short Strangles with wide wings, Calendar Spreads"
@@ -168,8 +183,8 @@ class RegimeService:
 
         return VixRegimeInfo(
             vix_value=vix_val,
-            change=vix_quote.change,
-            change_percent=vix_quote.change_percent,
+            change=vix_quote.change if vix_quote else 0.0,
+            change_percent=vix_quote.change_percent if vix_quote else 0.0,
             regime_category=category,
             interpretation=interp,
             recommended_option_strategy=strategy,
@@ -180,7 +195,7 @@ class RegimeService:
         """Classify underlying into one of 6 institutional market regimes."""
         underlying = symbol.upper().replace(" 50", "")
         quote = await self.market_service.get_quote(underlying)
-        spot_p = quote.ltp if quote.ltp > 0 else (75000.0 if "SENSEX" in underlying else 50000.0 if "BANK" in underlying else 24000.0)
+        spot_p = quote.ltp if quote and quote.ltp > 0 else 0.0
 
         indicators = await self.get_technical_indicators(underlying)
         key_levels = await self.get_key_levels(underlying)

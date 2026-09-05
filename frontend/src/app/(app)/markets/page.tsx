@@ -7,9 +7,7 @@ import { RegimeBanner } from '@/components/markets/RegimeBanner';
 import { KeyLevelsTable } from '@/components/markets/KeyLevelsTable';
 import { IndicatorsGrid } from '@/components/markets/IndicatorsGrid';
 import { VixRegimeCard } from '@/components/markets/VixRegimeCard';
-import { PageTabs } from '@/components/ui/PageTabs';
 import { ErrorCard } from '@/components/ui/ErrorCard';
-import { Compass, Layers, Gauge, Activity } from 'lucide-react';
 
 export default function MarketsPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
@@ -58,45 +56,6 @@ export default function MarketsPage() {
 
   const spotPrice = overview?.spot_price || 25000;
 
-  const tabs = [
-    {
-      id: 'all',
-      label: 'Comprehensive Intelligence',
-      icon: Compass,
-      content: (
-        <div className="space-y-4">
-          <KeyLevelsTable keyLevels={overview?.key_levels || null} spotPrice={spotPrice} />
-          <IndicatorsGrid indicators={overview?.indicators || null} spotPrice={spotPrice} />
-          <VixRegimeCard vixInfo={overview?.vix_regime || null} />
-        </div>
-      ),
-    },
-    {
-      id: 'levels',
-      label: 'Support & Resistance Ladder',
-      icon: Layers,
-      content: (
-        <KeyLevelsTable keyLevels={overview?.key_levels || null} spotPrice={spotPrice} />
-      ),
-    },
-    {
-      id: 'indicators',
-      label: 'Technical Indicator Suite',
-      icon: Gauge,
-      content: (
-        <IndicatorsGrid indicators={overview?.indicators || null} spotPrice={spotPrice} />
-      ),
-    },
-    {
-      id: 'vix',
-      label: 'India VIX Volatility Regime',
-      icon: Activity,
-      content: (
-        <VixRegimeCard vixInfo={overview?.vix_regime || null} />
-      ),
-    },
-  ];
-
   return (
     <div className="space-y-4">
       {/* Top Banner & Regime Diagnosis */}
@@ -106,7 +65,7 @@ export default function MarketsPage() {
         onSelectSymbol={(sym) => setSelectedSymbol(sym)}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area — stacked (was duplicate tabs: all == levels+indicators+vix) */}
       {error ? (
         <ErrorCard
           title="Error loading market regime intelligence"
@@ -123,7 +82,17 @@ export default function MarketsPage() {
           Diagnosing market regime and computing support/resistance pivots...
         </div>
       ) : (
-        <PageTabs tabs={tabs} defaultTab="all" syncWithUrl />
+        <div className="space-y-4">
+          <section aria-label="Support and resistance">
+            <KeyLevelsTable keyLevels={overview?.key_levels || null} spotPrice={spotPrice} />
+          </section>
+          <section aria-label="Technical indicators">
+            <IndicatorsGrid indicators={overview?.indicators || null} spotPrice={spotPrice} />
+          </section>
+          <section aria-label="Volatility regime">
+            <VixRegimeCard vixInfo={overview?.vix_regime || null} />
+          </section>
+        </div>
       )}
     </div>
   );

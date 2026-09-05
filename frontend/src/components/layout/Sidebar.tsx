@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { ChevronDown } from 'lucide-react';
 import { getStoredSettings } from '@/lib/settings';
 import { cn } from '@/lib/utils';
 import {
@@ -9,6 +10,7 @@ import {
   STANDALONE_ITEMS,
   ALL_NAV_ITEMS,
   isActivePath,
+  isGroupActive,
 } from './nav-config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SidebarHeader, SidebarNavItem, SidebarFlyout, SidebarStatusDock } from './Sidebar/index';
@@ -20,6 +22,7 @@ import { navigationController } from '@/lib/navigationController';
 // Storage key & helpers
 // ---------------------------------------------------------------------------
 const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
+const SIDEBAR_GROUPS_KEY = 'droid:sidebar:groups';
 
 function loadCollapsed(): boolean {
   if (typeof window === 'undefined') return false;
@@ -33,6 +36,31 @@ function loadCollapsed(): boolean {
 function saveCollapsed(v: boolean) {
   try {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? '1' : '0');
+  } catch {}
+}
+
+function defaultGroupOpen(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const g of NAV_GROUPS) out[g.id] = g.defaultOpen !== false;
+  return out;
+}
+
+function loadGroupOpen(): Record<string, boolean> {
+  const fallback = defaultGroupOpen();
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(SIDEBAR_GROUPS_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Record<string, boolean>;
+    return { ...fallback, ...parsed };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveGroupOpen(v: Record<string, boolean>) {
+  try {
+    localStorage.setItem(SIDEBAR_GROUPS_KEY, JSON.stringify(v));
   } catch {}
 }
 
@@ -93,15 +121,56 @@ export function Sidebar({
 
   const [apiType, setApiType] = useState<string>('indian');
   const [brokerProvider, setBrokerProvider] = useState<string>('fyers');
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => loadGroupOpen());
 
-  // Live Telemetry Badges
-  const telemetryBadges = useMemo(() => {
-    return {
-      signals: { label: '+3 LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
-      ai: { label: 'SYNC', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false },
-      broker: { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
-    };
+  const toggleGroup = useCallback((id: string) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      saveGroupOpen(next);
+      return next;
+    });
   }, []);
+
+  // Auto-expand the group that contains the current page (e.g. deep-link reload)
+  // Intentional external->state sync on route change.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    const active = NAV_GROUPS.find((g) => isGroupActive(pathname, g));
+    if (active) {
+      setOpenGroups((prev) => {
+        if (prev[active.id]) return prev;
+        const next = { ...prev, [active.id]: true };
+        saveGroupOpen(next);
+        return next;
+      });
+    }
+  }, [pathname]);
+
+  // Truthful telemetry badges — derived from real stream state, never fake.
+  // Signals/AI counts will be wired when a global engine context lands;
+  // until then show connection truth (LIVE / SYNC / OFF).
+  const telemetryBadges = useMemo(() => {
+    const live = streamState === 'CONNECTED';
+    const syncing = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
+    const dot = live
+      ? { label: 'LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true }
+      : syncing
+        ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
+        : { label: 'OFF', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false };
+    return {
+      signals: dot,
+      ai: live
+        ? { label: 'READY', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false }
+        : syncing
+          ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
+          : { label: 'OFF', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false },
+      broker: live
+        ? { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false }
+        : syncing
+          ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
+          : { label: 'OFFLINE', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false },
+    };
+  }, [streamState]);
 
   // Hydrate settings
   useEffect(() => {
@@ -131,10 +200,13 @@ export function Sidebar({
     return () => window.removeEventListener('storage', onStorage);
   }, [controlledCollapsed]);
 
-  // Keyboard Shortcuts: Cmd/Ctrl+B (toggle sidebar), Cmd/Ctrl+1..5 (quick jumps)
+  // Keyboard Shortcuts: Cmd/Ctrl+B (toggle sidebar), Cmd/Ctrl+1..0 + Cmd+, (quick jumps)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName);
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isInput =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable;
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault();
@@ -142,11 +214,13 @@ export function Sidebar({
         else setMobileOpen(!mobileOpen);
       }
 
-      // Quick jumps: Cmd+1 to Cmd+5 when not typing
+      // Quick jumps when not typing: Cmd+1..9, Cmd+0, Cmd+,
       if ((e.metaKey || e.ctrlKey) && !isInput) {
-        const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= 5) {
-          const targetItem = ALL_NAV_ITEMS.find((item) => item.shortcut === `⌘${num}`);
+        let shortcut: string | null = null;
+        if (e.key >= '0' && e.key <= '9') shortcut = `⌘${e.key}`;
+        else if (e.key === ',') shortcut = '⌘,';
+        if (shortcut) {
+          const targetItem = ALL_NAV_ITEMS.find((item) => item.shortcut === shortcut);
           if (targetItem) {
             e.preventDefault();
             navigationController.start();
@@ -181,10 +255,10 @@ export function Sidebar({
   const dashboardItem = STANDALONE_ITEMS[0];
 
   // -----------------------------------------------------------------------
-  // Shared Navigation Content (100% Confined & Non-Scrolling)
+  // Shared Navigation Content (scroll-safe, collapsible groups)
   // -----------------------------------------------------------------------
   const NavContent = ({ isCollapsed, isMobile }: { isCollapsed: boolean; isMobile?: boolean }) => (
-    <div className="flex h-full flex-col justify-between overflow-hidden select-none">
+    <div className="flex h-full min-h-0 flex-col select-none">
       {/* 1. Header (Brand + Pulse + Collapse toggle) */}
       <SidebarHeader
         collapsed={isCollapsed}
@@ -194,25 +268,29 @@ export function Sidebar({
         onCloseMobile={() => setMobileOpen(false)}
       />
 
-      {/* 2. Main Navigation Items (Confined without scrollbars) */}
+      {/* 2. Main Navigation Items (scrolls when short viewport) */}
       <nav
         aria-label="Primary"
         className={cn(
-          'flex-1 flex flex-col justify-start gap-1 py-2 px-2 overflow-hidden',
-          isCollapsed && !isMobile && 'items-center px-1.5 gap-1.5',
+          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-1 py-2 px-2 scrollbar-thin',
+          isCollapsed && !isMobile && 'items-center px-1.5 overflow-y-auto overflow-x-hidden',
         )}
       >
-        {/* Command Dashboard (Standalone direct item) */}
-        <SidebarNavItem
-          item={dashboardItem}
-          active={isActivePath(pathname, dashboardItem.href)}
-          collapsed={isCollapsed && !isMobile}
-          onNavigate={handleNavigate}
-        />
+        {/* Home */}
+        <ul className={cn('flex flex-col gap-0.5', isCollapsed && !isMobile && 'items-center')}>
+          <li>
+            <SidebarNavItem
+              item={dashboardItem}
+              active={isActivePath(pathname, dashboardItem.href)}
+              collapsed={isCollapsed && !isMobile}
+              onNavigate={handleNavigate}
+            />
+          </li>
+        </ul>
 
-        {/* Thematic Groups */}
+        {/* Workflow groups */}
         {NAV_GROUPS.map((group) => {
-          // Collapsed Rail Mode: Floating Flyout Popover
+          // Collapsed rail: floating flyout
           if (isCollapsed && !isMobile) {
             return (
               <SidebarFlyout
@@ -224,36 +302,61 @@ export function Sidebar({
             );
           }
 
-          // Expanded / Mobile Mode: Compact Group Header & Items
-          return (
-            <div key={group.id} className="flex flex-col mt-1">
-              {/* Group Section Label */}
-              <div className="px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase text-muted-foreground/75">
-                {group.label}
-              </div>
+          const isOpen = openGroups[group.id] !== false;
+          const groupActive = isGroupActive(pathname, group);
 
-              {/* Group Items */}
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => {
-                  const active = isActivePath(pathname, item.href);
-                  const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
-                  return (
-                    <SidebarNavItem
-                      key={item.href}
-                      item={item}
-                      active={active}
-                      onNavigate={handleNavigate}
-                      badgeData={badgeData}
-                    />
-                  );
-                })}
-              </div>
-            </div>
+          // Expanded / mobile: collapsible section
+          return (
+            <section key={group.id} aria-labelledby={`sidebar-group-${group.id}`} className="flex flex-col mt-2 first:mt-1">
+              <h2 id={`sidebar-group-${group.id}`} className="sr-only">
+                {group.label}
+              </h2>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.id)}
+                aria-expanded={isOpen}
+                aria-controls={`sidebar-section-${group.id}`}
+                className="group flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] font-semibold tracking-wider uppercase text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {groupActive && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" aria-hidden />
+                  )}
+                  <span className="truncate">{group.label}</span>
+                  <span className="text-[10px] font-mono font-normal opacity-60">{group.items.length}</span>
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'w-3.5 h-3.5 shrink-0 opacity-60 transition-transform duration-150 group-hover:opacity-100',
+                    !isOpen && '-rotate-90',
+                  )}
+                />
+              </button>
+
+              {isOpen && (
+                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-0.5">
+                  {group.items.map((item) => {
+                    const active = isActivePath(pathname, item.href);
+                    const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
+                    return (
+                      <li key={item.href}>
+                        <SidebarNavItem
+                          item={item}
+                          active={active}
+                          onNavigate={handleNavigate}
+                          badgeData={badgeData}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
           );
         })}
       </nav>
 
-      {/* 3. Bottom Operational Status Dock */}
+      {/* 3. Bottom status dock (always visible) */}
       <SidebarStatusDock
         collapsed={isCollapsed}
         isMobile={isMobile}

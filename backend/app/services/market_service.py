@@ -55,24 +55,7 @@ class MarketService:
             async def _raw_fetch():
                 return await self._provider.get_quote(resolved)
 
-            def _fallback():
-                return NormalizedQuote(
-                    symbol=resolved,
-                    display_name=resolved,
-                    timestamp=datetime.now(timezone.utc),
-                    ltp=25000.0,
-                    open=24950.0,
-                    high=25050.0,
-                    low=24900.0,
-                    previous_close=24900.0,
-                    change=100.0,
-                    change_percent=0.4,
-                    volume=100000,
-                    status=DataStatus.OFFLINE,
-                    provider="fallback",
-                )
-
-            return await self._circuit_breaker.call(_raw_fetch, fallback=_fallback)
+            return await self._circuit_breaker.call(_raw_fetch)
 
         val = await market_data_coordinator.get_or_compute(
             f"quote:{resolved}",
@@ -157,10 +140,10 @@ class MarketService:
         return await self._circuit_breaker.call(
             self._provider.get_market_breadth,
             fallback=lambda: MarketBreadthData(
-                advancing=250,
-                declining=250,
+                advancing=0,
+                declining=0,
                 unchanged=0,
-                advance_decline_ratio=1.0,
+                advance_decline_ratio=0.0,
                 sentiment="NEUTRAL",
                 sentiment_score=50.0,
                 status=DataStatus.OFFLINE,

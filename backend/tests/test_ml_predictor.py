@@ -4,27 +4,68 @@ from app.ml.feature_extractor import extract_ml_feature_vector
 from app.models.regime import TechnicalIndicators
 
 
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+from app.models.market import NormalizedQuote, DataStatus
+
+
 class TestMLPredictor:
     @pytest.mark.asyncio
     async def test_predict_probabilities_nifty(self):
-        pred = await ml_predictor.predict_probabilities("NIFTY")
-        assert pred.symbol == "NIFTY"
-        assert pred.spot_price > 0
-        # Probabilities must sum to ~100%
-        prob_sum = pred.bullish_pct + pred.neutral_pct + pred.bearish_pct
-        assert 99.0 <= prob_sum <= 101.0
-        assert 0.0 <= pred.trend_strength <= 100.0
-        assert 0.0 <= pred.confidence_score <= 100.0
-        assert pred.predicted_bias in ["BULLISH", "NEUTRAL", "BEARISH"]
-        assert len(pred.top_features) > 0
+        mock_quote = NormalizedQuote(
+            symbol="NSE:NIFTY50-INDEX",
+            display_name="NIFTY 50",
+            timestamp=datetime.now(timezone.utc),
+            ltp=25000.0,
+            open=24900.0,
+            high=25050.0,
+            low=24850.0,
+            previous_close=24900.0,
+            change=100.0,
+            change_percent=0.4,
+            volume=1000000,
+            status=DataStatus.LIVE,
+        )
+        with patch.object(ml_predictor.market_service, "get_quote", new=AsyncMock(return_value=mock_quote)):
+            pred = await ml_predictor.predict_probabilities("NIFTY")
+            assert pred.symbol == "NIFTY"
+            assert pred.spot_price > 0
+            # Probabilities must sum to ~100%
+            prob_sum = pred.bullish_pct + pred.neutral_pct + pred.bearish_pct
+            assert 99.0 <= prob_sum <= 101.0
+            assert 0.0 <= pred.trend_strength <= 100.0
+            assert 0.0 <= pred.confidence_score <= 100.0
+            assert pred.predicted_bias in ["BULLISH", "NEUTRAL", "BEARISH"]
+            assert len(pred.top_features) > 0
 
     @pytest.mark.asyncio
     async def test_predict_probabilities_sensex(self):
-        pred = await ml_predictor.predict_probabilities("SENSEX")
-        assert pred.symbol == "SENSEX"
-        assert pred.spot_price > 50000
-        prob_sum = pred.bullish_pct + pred.neutral_pct + pred.bearish_pct
-        assert 99.0 <= prob_sum <= 101.0
+        mock_quote = NormalizedQuote(
+            symbol="BSE:SENSEX-INDEX",
+            display_name="SENSEX",
+            timestamp=datetime.now(timezone.utc),
+            ltp=75000.0,
+            open=74800.0,
+            high=75200.0,
+            low=74700.0,
+            previous_close=74800.0,
+            change=200.0,
+            change_percent=0.27,
+            volume=500000,
+            status=DataStatus.LIVE,
+        )
+        with patch.object(ml_predictor.market_service, "get_quote", new=AsyncMock(return_value=mock_quote)):
+            pred = await ml_predictor.predict_probabilities("SENSEX")
+            assert pred.symbol == "SENSEX"
+            assert pred.spot_price > 50000
+            prob_sum = pred.bullish_pct + pred.neutral_pct + pred.bearish_pct
+            assert 99.0 <= prob_sum <= 101.0
+
+    @pytest.mark.asyncio
+    async def test_predict_probabilities_missing_quote(self):
+        with patch.object(ml_predictor.market_service, "get_quote", new=AsyncMock(return_value=None)):
+            with pytest.raises(ValueError, match="Market quote unavailable"):
+                await ml_predictor.predict_probabilities("NIFTY")
 
     def test_feature_extractor_bounds(self):
         ind = TechnicalIndicators(

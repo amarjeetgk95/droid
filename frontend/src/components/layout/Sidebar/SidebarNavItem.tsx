@@ -47,22 +47,22 @@ export const SidebarNavItem = memo(function SidebarNavItem({
       onMouseEnter={handleMouseEnter}
       onFocus={handleMouseEnter}
       className={cn(
-        'group relative flex items-center gap-2.5 rounded-md text-xs font-medium transition-all duration-150 ease-out',
+        'group relative flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ease-out',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0',
         collapsed
           ? 'justify-center w-9 h-9 mx-auto'
-          : 'w-full px-2.5 py-1.5 h-8',
+          : 'w-full px-2.5 py-2 min-h-9',
         active
           ? collapsed
             ? 'bg-primary text-primary-foreground shadow-xs ring-1 ring-primary/30'
-            : 'bg-primary/10 text-primary font-semibold'
+            : 'bg-primary/[0.12] text-primary font-semibold ring-1 ring-primary/20'
           : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
       )}
     >
       {/* Active left indicator pill when expanded */}
       {active && !collapsed && (
         <span
-          className="absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full bg-primary"
+          className="absolute left-1 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary"
           aria-hidden
         />
       )}

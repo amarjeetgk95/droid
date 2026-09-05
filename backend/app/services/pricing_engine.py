@@ -67,7 +67,9 @@ def calculate_deterministic_pricing(
 
     # VWAP fallback if not provided
     _vwap = vwap if vwap is not None and math.isfinite(vwap) and vwap > 0 else entry
-    _atr = atr if atr is not None and math.isfinite(atr) and atr > 0 else (entry * 0.005)  # ~0.5% fallback
+    if atr is None or not math.isfinite(atr) or atr <= 0:
+        return PricingResult(bias=bias, entry=entry, target=0, invalidation=0, potential_reward=0, potential_risk=0, risk_reward_ratio=0, k=k, vwap=vwap, atr=atr, p10=p10, p50=p50, p90=p90, valid=False, reason="ATR missing or non-positive")
+    _atr = atr
 
     if bias == "BUY":
         target = p90

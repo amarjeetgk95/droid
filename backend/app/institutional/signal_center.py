@@ -119,43 +119,94 @@ class SignalCenterService:
         mi_data_health = "LIVE" if data_health not in ("FEED_DEGRADED","STALE") else data_health
         mi_feed_health = "HEALTHY" if feed_state.health == "HEALTHY" else "FEED_DEGRADED"
 
-        vwap = spot * Decimal("0.998")
-        if iid == "BTCUSD":
-            ctx = market_intelligence_engine.evaluate(
-                instrument_id=iid, canonical_ts_ms=last_update_ms,
-                spot_price=spot, vwap=vwap,
-                volumes={"volume_change": 0.42},
-                funding={"rate": 0.00015},
-                liquidations={"liquidations_24h": 12500000},
-                support_resistance={"support": [str(spot*Decimal("0.985")), str(spot*Decimal("0.97"))], "resistance": [str(spot*Decimal("1.015")), str(spot*Decimal("1.03"))]},
-                multi_timeframe={"1m":"BULLISH","5m":"BULLISH","15m":"NEUTRAL_BULLISH","30m":"BULLISH"},
-                volatility={"volatility_change": 0.18},
-                liquidity={"state":"NORMAL"},
-                data_health=mi_data_health, feed_health=mi_feed_health, market_session=session_state,
-            )
-            breakout_level = spot * Decimal("1.008")
-        else:
-            ctx = market_intelligence_engine.evaluate(
-                instrument_id=iid, canonical_ts_ms=last_update_ms,
-                spot_price=spot, vwap=vwap,
-                futures_price=spot*Decimal("1.0015"),
-                volumes={"volume_change": 0.38},
-                oi_data={"oi_change_pct": 6.2},
-                options_data={"pcr": 1.18},
-                support_resistance={"support": [str(spot*Decimal("0.992")), str(spot*Decimal("0.985"))], "resistance": [str(spot*Decimal("1.006")), str(spot*Decimal("1.012"))]},
-                breadth={"breadth":"SUPPORTIVE"},
-                multi_timeframe={"1m":"BULLISH","5m":"BULLISH","15m":"BULLISH","1h":"NEUTRAL_BULLISH"},
-                volatility={"volatility_change": 0.12},
-                liquidity={"state":"NORMAL"},
-                data_health=mi_data_health, feed_health=mi_feed_health, market_session=session_state,
-            )
-            breakout_level = spot * Decimal("1.005")
+        vwap: Decimal | None = None
+        breakout_level: Decimal | None = None
+        atr: Decimal | None = None
+        options_data: dict[str, Any] | None = None
 
-        atr = spot * Decimal("0.008")
-        # Evaluate breakout
-        sig = breakout_engine.evaluate(ctx, breakout_level=breakout_level, current_price=spot, close_confirmed=False, volume_expansion=True)
-        short_out = short_horizon_strategy.evaluate(ctx, breakout_level=breakout_level, current_price=spot, atr=atr, momentum_accel=True, volume_expansion=True, close_confirmed=False)
-        cont_out = continuation_strategy.evaluate(ctx, breakout_level=breakout_level, current_price=spot, atr=atr, higher_high_higher_low=True, volume_persistence=True, momentum_persistence=True, close_confirmed=False, volume_expansion=True)
+        if iid == "BTCUSD":
+            deriv_funding = None
+            try:
+                from app.services.binance_service import binance_service
+                deriv = await binance_service.get_derivatives_data("BTCUSDT")
+                if deriv and deriv.funding_rate is not None:
+                    deriv_funding = {"rate": float(deriv.funding_rate)}
+            except Exception:
+                pass
+
+            ctx = market_intelligence_engine.evaluate(
+                instrument_id=iid,
+                canonical_ts_ms=last_update_ms,
+                spot_price=spot,
+                funding=deriv_funding,
+                data_health=mi_data_health,
+                feed_health=mi_feed_health,
+                market_session=session_state,
+            )
+        else:
+            supp_res = None
+            try:
+                from app.services.options_service import options_service
+                chain = await options_service.get_option_chain_matrix(iid)
+                if chain and chain.analytics and chain.analytics.pcr_oi is not None:
+                    options_data = {"pcr": float(chain.analytics.pcr_oi)}
+            except Exception:
+                pass
+
+            try:
+                from app.services.regime_service import regime_service
+                kl = await regime_service.get_key_levels(iid)
+                if kl and kl.r1 > 0 and kl.s1 > 0:
+                    supp_res = {
+                        "support": [str(kl.s1), str(kl.s2)],
+                        "resistance": [str(kl.r1), str(kl.r2)],
+                    }
+                    breakout_level = Decimal(str(kl.r1))
+                ind = await regime_service.get_technical_indicators(iid)
+                if ind and ind.atr_14 > 0:
+                    atr = Decimal(str(ind.atr_14))
+            except Exception:
+                pass
+
+            ctx = market_intelligence_engine.evaluate(
+                instrument_id=iid,
+                canonical_ts_ms=last_update_ms,
+                spot_price=spot,
+                options_data=options_data,
+                support_resistance=supp_res,
+                data_health=mi_data_health,
+                feed_health=mi_feed_health,
+                market_session=session_state,
+            )
+
+        # Evaluate breakout with real indicators
+        sig = breakout_engine.evaluate(
+            ctx,
+            breakout_level=breakout_level,
+            current_price=spot,
+            close_confirmed=False,
+            volume_expansion=False,
+        )
+        short_out = short_horizon_strategy.evaluate(
+            ctx,
+            breakout_level=breakout_level,
+            current_price=spot,
+            atr=atr,
+            momentum_accel=False,
+            volume_expansion=False,
+            close_confirmed=False,
+        )
+        cont_out = continuation_strategy.evaluate(
+            ctx,
+            breakout_level=breakout_level,
+            current_price=spot,
+            atr=atr,
+            higher_high_higher_low=False,
+            volume_persistence=False,
+            momentum_persistence=False,
+            close_confirmed=False,
+            volume_expansion=False,
+        )
 
         # Map breakout status to SignalCallStatus
         # NO_SETUP when breakout REJECTED and both horizons REJECTED
@@ -182,27 +233,21 @@ class SignalCenterService:
         if status == "POSSIBLE_BREAKOUT" and short_out.status in ("POSSIBLE","WATCH"):
             status = "TRIGGERED" if ctx.scores.get("breakout_pressure",0) > 70 else status
 
-        # For demo, ensure at least one instrument generates CONFIRMED so tab is not empty
-        # If no instrument would generate, force BTC to WATCH for demo
-        # But keep real logic; if all are NO_SETUP, we still want tab to show PREPARING
-        # We'll not force; tab will show NO_SETUP state.
-
         # Build signal for BREAKOUT SETUPS tab
         direction = sig.direction if sig.direction != "NEUTRAL" else ("BULLISH" if ctx.scores.get("bullish_score",50) >= 50 else "BEARISH")
         # Determine false risk and breakout pressure from ctx
         breakout_pressure = ctx.scores.get("breakout_pressure", 50)
         false_risk = sig.false_breakout_risk
-        # Options confirmation placeholder — fetch from options intelligence if available
+        # Options confirmation from genuine options intelligence if available
         options_confirm = "NEUTRAL"
         try:
-            if prof.has_options:
-                # Use PCR from ctx
-                pcr = 1.18
+            if prof.has_options and options_data and "pcr" in options_data:
+                pcr = options_data["pcr"]
                 if pcr > 1.2:
                     options_confirm = "BULLISH_CONFIRMING"
                 elif pcr < 0.85:
                     options_confirm = "BEARISH_CONFIRMING"
-        except:
+        except Exception:
             pass
         # Create authoritative Signal
         ttl_ms = 5000

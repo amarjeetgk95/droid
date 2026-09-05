@@ -27,8 +27,9 @@ export function SidebarStatusDock({
   onNavigate,
 }: SidebarStatusDockProps) {
   const pathname = usePathname();
-  const isSettingsActive = pathname === '/settings';
+  const isSettingsActive = pathname === '/settings' || pathname.startsWith('/settings/');
   const isStreamLive = streamState === 'CONNECTED';
+  const isSyncing = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
 
   const gatewayLabel =
     apiType === 'crypto'
@@ -45,7 +46,7 @@ export function SidebarStatusDock({
             <Link
               href="/settings"
               onClick={onNavigate}
-              aria-label="Settings & Gateways"
+              aria-label="Settings (⌘,)"
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors cursor-pointer',
                 isSettingsActive
@@ -57,7 +58,7 @@ export function SidebarStatusDock({
             </Link>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={10}>
-            <span className="font-semibold text-xs">Settings & Gateways</span>
+            <span className="font-semibold text-xs">Settings</span>
           </TooltipContent>
         </Tooltip>
 
@@ -81,59 +82,61 @@ export function SidebarStatusDock({
     );
   }
 
-  // Expanded Mode Dock
+  // Expanded Mode Dock — compact single-line status + Settings (header owns full health pill)
   return (
-    <div className="flex flex-col gap-1.5 p-2.5 border-t border-border/80 shrink-0 select-none bg-secondary/15">
-      {/* Live Gateway Telemetry Pill */}
-      <div className="flex items-center justify-between px-2 py-1 rounded-md bg-card border border-border/60 shadow-2xs">
+    <div className="flex flex-col gap-1 p-2 border-t border-border/80 shrink-0 select-none">
+      {/* Gateway status line */}
+      <div
+        className="flex items-center justify-between px-2 py-1.5 rounded-lg"
+        title={isStreamLive ? 'Market feed connected' : isSyncing ? 'Reconnecting…' : 'Feed offline'}
+      >
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="relative flex h-2 w-2 shrink-0">
+          <span className="relative flex h-2 w-2 shrink-0" aria-hidden>
             {isStreamLive && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            )}
+            {isSyncing && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
             )}
             <span
               className={cn(
                 'relative inline-flex rounded-full h-2 w-2',
-                isStreamLive ? 'bg-emerald-500' : 'bg-amber-500',
+                isStreamLive ? 'bg-emerald-500' : isSyncing ? 'bg-amber-500' : 'bg-rose-500',
               )}
             />
           </span>
-          <span className="text-[10px] font-bold tracking-wider uppercase text-foreground/85 truncate">
-            {gatewayLabel} GATEWAY
+          <span className="text-[11px] font-semibold tracking-wide text-muted-foreground truncate">
+            {gatewayLabel}
+          </span>
+          <span
+            className={cn(
+              'text-[10px] font-bold uppercase tracking-wider',
+              isStreamLive ? 'text-emerald-600' : isSyncing ? 'text-amber-600' : 'text-rose-600',
+            )}
+          >
+            {isStreamLive ? '• Live' : isSyncing ? '• Sync' : '• Off'}
           </span>
         </div>
 
-        <span
+        <Link
+          href="/settings"
+          onClick={onNavigate}
+          aria-label="Settings (⌘,)"
+          aria-current={isSettingsActive ? 'page' : undefined}
           className={cn(
-            'text-[9px] font-bold px-1.5 py-0.2 rounded border uppercase tracking-wider',
-            isStreamLive
-              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
-              : 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+            'group flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer shrink-0',
+            isSettingsActive
+              ? 'bg-primary/[0.12] text-primary font-semibold ring-1 ring-primary/20'
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
         >
-          {isStreamLive ? 'HEALTHY' : 'SYNC'}
-        </span>
-      </div>
-
-      {/* Settings Navigation Link */}
-      <Link
-        href="/settings"
-        onClick={onNavigate}
-        className={cn(
-          'group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer',
-          isSettingsActive
-            ? 'bg-primary/10 text-primary font-semibold'
-            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-        )}
-      >
-        <div className="flex items-center gap-2 min-w-0">
           <Settings className="w-3.5 h-3.5 shrink-0 opacity-75 group-hover:opacity-100 group-hover:rotate-45 transition-transform duration-200" />
-          <span className="truncate">Settings & Gateways</span>
-        </div>
-        <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-muted text-muted-foreground border border-border/40">
-          ⚙
-        </kbd>
-      </Link>
+          <span>Settings</span>
+          <kbd className="hidden xl:inline text-[10px] font-mono px-1 rounded bg-muted text-muted-foreground border border-border/40">
+            ⌘,
+          </kbd>
+        </Link>
+      </div>
     </div>
   );
 }

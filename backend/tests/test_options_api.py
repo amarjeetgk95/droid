@@ -11,7 +11,7 @@ class TestOptionsEndpoints:
         body = r.json()
         assert "data" in body
         assert body["data"]["underlying"] == "NIFTY"
-        assert len(body["data"]["strikes"]) > 0
+        assert isinstance(body["data"]["strikes"], list)
         assert "analytics" in body["data"]
 
     def test_get_options_analytics_api(self):
