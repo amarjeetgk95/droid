@@ -34,9 +34,11 @@ def mock_market_open():
 
 @pytest.fixture(autouse=True)
 def isolate_signals_state(tmp_path, monkeypatch):
-    """Ensure test runs write to an isolated temporary state file and do not pollute production state."""
+    """Ensure test runs write to an isolated temporary state file and do not pollute production state or database."""
     test_state_file = tmp_path / "test_signals_state.json"
     monkeypatch.setattr("app.signals.signals_persistence.SIGNALS_STATE_FILE", test_state_file)
+    monkeypatch.setattr("app.core.database.get_async_session_factory", lambda: None)
+    monkeypatch.setattr("app.signals.signals_persistence.get_async_session_factory", lambda: None)
     from app.signals.fsm import signal_fsm
     from app.signals.audit_ledger import signal_audit_ledger
     with signal_fsm._lock:

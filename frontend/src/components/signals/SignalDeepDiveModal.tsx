@@ -86,6 +86,8 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
   };
 
   const sig = data?.signal;
+  const fsmState = sig?.fsm_state || 'ARMED';
+  const isExpired = ['EXPIRED', 'CLOSED', 'INVALIDATED', 'TARGET_2_HIT', 'STOP_LOSS_HIT', 'TIME_STOP_HIT', 'RUNNER_TIME_STOP_HIT'].includes(fsmState);
   const isCall = sig?.direction?.includes('CALL');
   const dirColor = isCall ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/30' : 'text-red-600 bg-red-500/10 border-red-500/30';
 
@@ -198,10 +200,14 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                         <span className="h-5 w-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold">1</span>
                         Live Market Tick Ingestion & Trust Gate
                       </span>
-                      <span className="text-emerald-600 dark:text-emerald-400 text-[11px]">✓ Verified Live</span>
+                      <span className={isExpired ? "text-amber-500 font-bold text-[11px]" : "text-emerald-600 dark:text-emerald-400 text-[11px]"}>
+                        {isExpired ? `⚠ ${fsmState}` : "✓ Verified Live"}
+                      </span>
                     </div>
                     <p className="text-muted-foreground text-[11px] pl-7">
-                      Tick received from FYERS data stream{sig?.created_at_utc ? ` on ${formatDateTime(sig.created_at_utc)}` : ''}. Market session validated (NSE Hours 09:15 - 15:30 IST). Synthetic and fallback quotes strictly gated.
+                      {isExpired
+                        ? `Signal timestamp: ${formatDateTime(sig?.created_at_utc)}. Market session has concluded (FSM Status: ${fsmState}).`
+                        : `Tick received from live data stream${sig?.created_at_utc ? ` on ${formatDateTime(sig.created_at_utc)}` : ''}. Active market session validated (NSE Hours 09:15 - 15:30 IST).`}
                     </p>
                   </div>
 
@@ -294,10 +300,14 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                         <span className="h-5 w-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold">6</span>
                         Deterministic FSM Lifecycle
                       </span>
-                      <span className="text-emerald-600 dark:text-emerald-400 text-[11px]">State: {sig.fsm_state}</span>
+                      <span className={isExpired ? "text-muted-foreground text-[11px]" : "text-emerald-600 dark:text-emerald-400 text-[11px]"}>
+                        State: {fsmState}
+                      </span>
                     </div>
                     <p className="text-muted-foreground text-[11px] pl-7">
-                      Active state machine tracking with TTL ({sig.ttl_seconds || 300}s). T1 hit automatically triggers 50% profit booking and moves Stop Loss to cost (Breakeven).
+                      {isExpired
+                        ? `Signal has concluded its lifecycle and transitioned to ${fsmState}. No further automated or paper executions permitted.`
+                        : `Active state machine tracking with TTL (${sig?.ttl_seconds || 300}s). T1 hit automatically triggers 50% profit booking and moves Stop Loss to cost (Breakeven).`}
                     </p>
                   </div>
                 </div>
