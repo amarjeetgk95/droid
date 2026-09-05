@@ -25,7 +25,7 @@ export type NavItem = {
   description?: string;
   shortcut?: string;
   badge?: string;
-  badgeKey?: 'signals' | 'algo' | 'ai' | 'broker';
+  badgeKey?: 'signals' | 'ai' | 'broker';
   badgeVariant?: 'default' | 'success' | 'warning' | 'danger' | 'purple' | 'blue';
   keywords?: string[];
   isBeta?: boolean;
@@ -120,17 +120,8 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Paper Trading',
         icon: FileText,
         description: 'Simulated execution & virtual portfolio',
-        keywords: ['paper', 'sim', 'virtual', 'orders', 'positions', 'pnl'],
-      },
-      {
-        id: 'algo-engine',
-        href: '/algo-trading',
-        label: 'Algo Trading',
-        icon: Bot,
-        description: 'Automated strategy runners & risk guards',
-        badgeKey: 'algo',
         shortcut: '⌘4',
-        keywords: ['algo', 'automation', 'bot', 'strategies', 'runners', 'execution'],
+        keywords: ['paper', 'sim', 'virtual', 'orders', 'positions', 'pnl'],
       },
     ],
   },

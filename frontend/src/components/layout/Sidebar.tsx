@@ -97,7 +97,6 @@ export function Sidebar({
   const telemetryBadges = useMemo(() => {
     return {
       signals: { label: '+3 LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
-      algo: { label: '2 RUNNING', color: 'bg-blue-500/10 text-blue-600 border-blue-500/30', pulse: false },
       ai: { label: 'SYNC', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false },
       broker: { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false },
     };
