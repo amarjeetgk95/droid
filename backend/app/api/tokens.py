@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, Body, Request, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
+from typing import Any
 from app.providers.registry import get_provider
 from app.core.broker_runtime import apply_app_settings, get_config
 from app.core.token_manager import ConnectionState, TokenInfo
