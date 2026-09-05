@@ -196,7 +196,7 @@ def create_app() -> FastAPI:
     )
     
     # Root endpoint
-    @app.get("/", tags=["root"])
+    @app.api_route("/", methods=["GET", "HEAD"], tags=["root"])
     async def root():
         return {
             "app": settings.app_name,

@@ -89,7 +89,7 @@ class AuditTradeRecord(BaseModel):
     live_duration_str: Optional[str] = None
 
     # Status
-    status: Literal["DETECTED", "ARMED", "CONFIRMED", "EXECUTED", "WON", "LOST", "EXPIRED", "CLOSED"] = "ARMED"
+    status: str = "ARMED"
     outcome_label: Optional[str] = None
     is_winner: Optional[bool] = None
 

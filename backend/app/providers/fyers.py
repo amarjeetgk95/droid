@@ -559,13 +559,16 @@ class FyersProvider(MarketDataProvider):
                     # Back off exponentially (RECONNECTING state) and do NOT
                     # mask an outage by re-publishing stale ticks while the
                     # market is open — re-publish last-known only when closed.
-                    self._consecutive_failures += 1
-                    delay = self.token_manager.record_reconnect_attempt()
-                    logger.warning(
-                        "fyers_poller_no_quotes_backoff",
-                        consecutive_failures=self._consecutive_failures,
-                        delay_s=delay,
-                    )
+                    if self.token_manager.is_token_expired() or self.token_manager.state == ConnectionState.AUTH_EXPIRED:
+                        delay = 15.0
+                    else:
+                        self._consecutive_failures += 1
+                        delay = self.token_manager.record_reconnect_attempt()
+                        logger.warning(
+                            "fyers_poller_no_quotes_backoff",
+                            consecutive_failures=self._consecutive_failures,
+                            delay_s=delay,
+                        )
                     if not calendar_service.is_market_open_now():
                         for sym in symbols:
                             last = self._last_known_quotes.get(sym)
