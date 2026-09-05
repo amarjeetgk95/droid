@@ -145,17 +145,42 @@ def sanitize_persisted_signals() -> int:
 
         market_perm = calendar_service.can_trade_now()
         market_open = market_perm.allowed
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        ist_tz = ZoneInfo("Asia/Kolkata")
+        today_ist = datetime.now(ist_tz).date()
 
-        # 1. Sweep unexecuted signals if market is closed
-        if not market_open:
-            for sid, inst in list(signal_fsm._signals.items()):
-                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED") or (inst.fsm_state == "CONFIRMED" and not inst.actual_fill_price and not inst.paper_order):
-                    prior = inst.fsm_state
+        # 1. Sweep unexecuted signals and prior-day signals
+        for sid, inst in list(signal_fsm._signals.items()):
+            try:
+                sig_dt = datetime.fromtimestamp(inst.created_at_utc / 1000.0, tz=ist_tz)
+                is_prior_day = sig_dt.date() < today_ist
+            except Exception:
+                is_prior_day = False
+
+            if is_prior_day:
+                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED") and not inst.actual_fill_price and not inst.paper_order:
                     inst.fsm_state = "EXPIRED"
                     sanitized_count += 1
-                    logger.info("sanitized_closed_market_signal", signal_id=sid, prior_state=prior)
+                elif inst.fsm_state in ("CONFIRMED", "TARGET_1_HIT"):
+                    inst.fsm_state = "CLOSED"
+                    sanitized_count += 1
+            elif not market_open:
+                if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED") or (inst.fsm_state == "CONFIRMED" and not inst.actual_fill_price and not inst.paper_order):
+                    inst.fsm_state = "EXPIRED"
+                    sanitized_count += 1
+                elif inst.fsm_state == "TARGET_1_HIT":
+                    inst.fsm_state = "RUNNER_TIME_STOP_HIT"
+                    sanitized_count += 1
 
-            for aid, rec in list(signal_audit_ledger._trades.items()):
+        for aid, rec in list(signal_audit_ledger._trades.items()):
+            try:
+                rec_dt = datetime.fromtimestamp(rec.created_at_utc / 1000.0, tz=ist_tz)
+                is_prior_day = rec_dt.date() < today_ist
+            except Exception:
+                is_prior_day = False
+
+            if is_prior_day or not market_open:
                 if rec.status in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED") and not rec.actual_fill_price and not rec.executed_at_utc:
                     rec.status = "EXPIRED"
                     rec.unrealized_pnl_inr = 0.0
@@ -174,15 +199,31 @@ def sanitize_persisted_signals() -> int:
                 sanitized_count += 1
                 logger.warning("sanitized_corrupt_audit_trade", audit_id=aid)
 
-        # 3. Permanently purge synthetic/demo seeded trades
+        # 3. Permanently purge synthetic/demo seeded trades and implausible ghost prices
         demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
-        for did in demo_ids:
-            if did in signal_audit_ledger._trades:
-                signal_audit_ledger._trades.pop(did, None)
+        for aid, rec in list(signal_audit_ledger._trades.items()):
+            is_ghost = (
+                aid in demo_ids
+                or str(aid).startswith("SIG-TEST-")
+                or str(aid).startswith("test-")
+                or (rec.underlying == "BANKNIFTY" and (rec.spot_price_at_creation < 54000.0 or 52100.0 <= rec.spot_price_at_creation <= 52200.0))
+                or (rec.underlying == "NIFTY" and rec.spot_price_at_creation < 22000.0)
+            )
+            if is_ghost:
+                signal_audit_ledger._trades.pop(aid, None)
                 sanitized_count += 1
-                logger.info("purged_demo_audit_trade", audit_id=did)
-            if did in signal_fsm._signals:
-                signal_fsm._signals.pop(did, None)
+
+        for sid, inst in list(signal_fsm._signals.items()):
+            spot_flt = float(inst.spot_price or 0.0)
+            is_ghost = (
+                sid in demo_ids
+                or str(sid).startswith("SIG-TEST-")
+                or str(sid).startswith("test-")
+                or (inst.underlying == "BANKNIFTY" and (spot_flt < 54000.0 or 52100.0 <= spot_flt <= 52200.0))
+                or (inst.underlying == "NIFTY" and spot_flt < 22000.0)
+            )
+            if is_ghost:
+                signal_fsm._signals.pop(sid, None)
                 sanitized_count += 1
 
         if sanitized_count > 0:
@@ -478,12 +519,12 @@ async def restore_signals_from_db() -> int:
 
             async with factory() as session:
                 try:
-                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%'"))
+                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%' OR signal_id LIKE 'test-%' OR (underlying = 'BANKNIFTY' AND spot_price_at_creation < 54000) OR (underlying = 'NIFTY' AND spot_price_at_creation < 22000)"))
                     await session.commit()
                 except Exception:
                     pass
 
-                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' ORDER BY created_at_utc ASC"))
+                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' AND signal_id NOT LIKE 'test-%' AND NOT (underlying = 'BANKNIFTY' AND spot_price_at_creation < 54000) AND NOT (underlying = 'NIFTY' AND spot_price_at_creation < 22000) ORDER BY created_at_utc ASC"))
                 rows = res.mappings().all()
 
                 valid_fsm_states = {

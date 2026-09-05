@@ -166,10 +166,10 @@ class FlattradeProvider(MarketDataProvider):
 
         # Default fallback values for Indian indices
         defaults = {
-            "NIFTY 50": 24200.0,
-            "BANKNIFTY": 51500.0,
-            "FINNIFTY": 23400.0,
-            "SENSEX": 79800.0,
+            "NIFTY 50": 25000.0,
+            "BANKNIFTY": 57800.0,
+            "FINNIFTY": 26500.0,
+            "SENSEX": 82000.0,
             "INDIA VIX": 13.5,
         }
         base_ltp = defaults.get(sym_upper, 1000.0)

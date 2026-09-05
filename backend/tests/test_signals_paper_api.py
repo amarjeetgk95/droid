@@ -63,6 +63,7 @@ class TestSignalsPaperIntegration:
             "confidence": 88.0,
             "execute_paper": True,
             "notify_telegram": False,
+            "allow_closed_market": True,
         }
         res = client.post("/api/v1/signals/generate", json=payload)
         assert res.status_code == 200
@@ -88,10 +89,11 @@ class TestSignalsPaperIntegration:
             "candle_timeframe": "5M",
             "direction": "BEARISH",
             "status": "CONFIRMED",
-            "trigger_level": 52100.0,
-            "current_price": 52150.0,
+            "trigger_level": 57750.0,
+            "current_price": 57800.0,
             "execute_paper": False,
             "notify_telegram": False,
+            "allow_closed_market": True,
         })
         assert gen_res.status_code == 200
         sig_id = gen_res.json()["signal"]["signal_id"]

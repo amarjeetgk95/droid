@@ -259,15 +259,23 @@ class SignalFSMManager:
             now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
             expired = 0
             runner_stopped = 0
-            # 1. Market-close expiry & Pre-trigger TTL expiry (DETECTED/VALIDATED/ARMED)
             from app.services.calendar_service import calendar_service
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            ist_tz = ZoneInfo("Asia/Kolkata")
+            now_ist = datetime.fromtimestamp(now_ms / 1000.0, tz=ist_tz)
+            today_ist = now_ist.date()
             is_market_closed = not calendar_service.can_trade_now().allowed
 
             for sig in list(self._signals.values()):
                 try:
-                    if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED") or (sig.fsm_state == "CONFIRMED" and not sig.actual_fill_price and not sig.paper_order):
-                        if is_market_closed:
-                            ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED")
+                    sig_dt = datetime.fromtimestamp(sig.created_at_utc / 1000.0, tz=ist_tz)
+                    is_prior_day = sig_dt.date() < today_ist
+
+                    # 1. Market-close or Prior-day expiry for Pre-trigger (DETECTED/VALIDATED/ARMED/TRIGGERED)
+                    if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED") or (sig.fsm_state == "CONFIRMED" and not sig.actual_fill_price and not sig.paper_order):
+                        if is_prior_day or is_market_closed:
+                            ok, _ = self.transition(sig.signal_id, "EXPIRED", reason="MARKET_CLOSED" if is_market_closed else "PRIOR_DAY_EXPIRED")
                             if ok:
                                 expired += 1
                             continue
@@ -276,19 +284,36 @@ class SignalFSMManager:
                             if ok:
                                 expired += 1
                             continue
-                    # 2. Runner TTL expiry — TARGET_1_HIT runners must not block dedup forever
-                    elif sig.fsm_state == "TARGET_1_HIT" and sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc:
-                        ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
+
+                    # 2. Prior-day open positions (intraday MIS positions must never persist across days)
+                    elif is_prior_day and sig.fsm_state in ("CONFIRMED", "TARGET_1_HIT"):
+                        ok, _ = self.transition(sig.signal_id, "CLOSED", reason="EOD_SESSION_SQUARE_OFF")
                         if ok:
                             runner_stopped += 1
-                    # 3. Active trade time-stop auto-fire (prevents zombie active trades)
+                        continue
+
+                    # 3. Runner TTL expiry — TARGET_1_HIT runners
+                    elif sig.fsm_state == "TARGET_1_HIT":
+                        if is_market_closed:
+                            ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="MARKET_CLOSED_RUNNER_CLOSED")
+                            if ok:
+                                runner_stopped += 1
+                            continue
+                        # If runner time stop passed, or default 30m window passed
+                        is_runner_expired = (sig.runner_time_stop_at_utc and now_ms > sig.runner_time_stop_at_utc) or (sig.t1_fill_timestamp and (now_ms - sig.t1_fill_timestamp > 1800000))
+                        if is_runner_expired:
+                            ok, _ = self.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", reason="RUNNER_TTL_EXCEEDED")
+                            if ok:
+                                runner_stopped += 1
+
+                    # 4. Active trade time-stop auto-fire (prevents zombie active trades)
                     elif sig.fsm_state == "CONFIRMED" and sig.time_stop_at_utc and now_ms > sig.time_stop_at_utc:
                         ok, _ = self.transition(sig.signal_id, "TIME_STOP_HIT", reason="TIME_STOP_EXCEEDED")
                         if ok:
                             runner_stopped += 1
                 except Exception:
                     continue
-            # 4. Bound memory: prune oldest terminal signals beyond cap
+            # 5. Bound memory: prune oldest terminal signals beyond cap
             pruned = 0
             try:
                 if len(self._signals) > 200:
@@ -307,11 +332,14 @@ class SignalFSMManager:
                 logger.info("fsm_sweep", expired=expired, runner_stopped=runner_stopped, pruned=pruned)
             return {"expired": expired, "runner_stopped": runner_stopped, "pruned": pruned}
 
-    def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None) -> list[SignalInstance]:
+    def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None, include_terminal: bool = False) -> list[SignalInstance]:
         with self._lock:
             self.sweep_expired()
             res = []
+            terminal_states = {"CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT"}
             for s in self._signals.values():
+                if not include_terminal and s.fsm_state in terminal_states:
+                    continue
                 if underlying and s.underlying != underlying.upper():
                     continue
                 if strategy and s.strategy != strategy.upper():

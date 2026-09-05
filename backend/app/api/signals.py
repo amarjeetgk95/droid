@@ -142,7 +142,8 @@ async def list_active_signals(
     if desk and desk.upper() not in VALID_DESKS:
         raise HTTPException(status_code=422, detail=f"Unknown desk '{desk}'. Use SCALP, INTRADAY, or ALL.")
 
-    signals = signal_fsm.list_active(underlying=instrument, strategy=strategy)
+    include_terminal = (status == "ALL" or (status is not None and status in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")))
+    signals = signal_fsm.list_active(underlying=instrument, strategy=strategy, include_terminal=include_terminal)
 
     # Update outcomes with latest prices
     market_svc = MarketService()
@@ -471,7 +472,7 @@ async def bulk_delete_signals(req: BulkDeleteRequest):
         if st == "ALL":
             st = None
 
-        for s in signal_fsm.list_active():
+        for s in signal_fsm.list_active(include_terminal=True):
             if u and s.underlying != u:
                 continue
             if strat and s.strategy != strat:
@@ -700,6 +701,27 @@ async def generate_signal(req: GenerateSignalRequest):
             status_code=503,
             detail=f"Live price for {u} is unavailable (feed degraded) and no manual price was supplied. Retry when LIVE.",
         )
+    # ── Spot Plausibility & Sanity Guard ──
+    INDEX_PLAUSIBLE_RANGES = {
+        "NIFTY": (Decimal("22000.0"), Decimal("35000.0")),
+        "BANKNIFTY": (Decimal("54000.0"), Decimal("75000.0")),
+        "SENSEX": (Decimal("70000.0"), Decimal("120000.0")),
+    }
+    if u in INDEX_PLAUSIBLE_RANGES:
+        min_p, max_p = INDEX_PLAUSIBLE_RANGES[u]
+        if not (min_p <= spot <= max_p):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Spot price {spot} for {u} is invalid/implausible. Must be within realistic corridor [{min_p}, {max_p}].",
+            )
+    if quote_ok and float(quote.ltp) > 0:
+        quote_p = Decimal(str(quote.ltp))
+        drift_pct = abs(spot - quote_p) / quote_p
+        if drift_pct > Decimal("0.05"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Price {spot} deviates by {float(drift_pct*100):.1f}% from live market LTP {quote_p}. Max allowed drift is 5.0%.",
+            )
     tick = Decimal("0.05")
 
     is_put = "PUT" in dir_val or "BEARISH" in dir_val

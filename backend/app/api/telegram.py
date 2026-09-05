@@ -261,7 +261,7 @@ async def dev_quick_test(
     except Exception:
         pass
     if spot is None:
-        demo = {"NIFTY": 24885.0, "BANKNIFTY": 52100.0, "SENSEX": 81500.0, "BTCUSD": 65000.0}
+        demo = {"NIFTY": 25000.0, "BANKNIFTY": 57800.0, "SENSEX": 82000.0, "BTCUSD": 65000.0}
         spot = demo.get(instrument, 10000.0)
     trigger = spot * 1.005 if direction == "BULLISH" else spot * 0.995
     stop = spot * 0.992 if direction == "BULLISH" else spot * 1.008

@@ -256,7 +256,7 @@ class TestOptionFillReconciliation:
 
 class TestDeskAPIEndpoints:
 
-    def test_active_signals_desk_filter(self, client):
+    def test_active_signals_desk_filter(self, client, mock_market_open):
         # Register one intraday and one scalp
         s_intra = SignalInstance(
             underlying="NIFTY",
