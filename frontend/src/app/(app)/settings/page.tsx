@@ -161,9 +161,9 @@ function SettingsPageInner() {
 
       {/* 2. Validation Errors Alert (if any) */}
       {validationErrors.length > 0 && (
-        <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3.5 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-destructive">
-            <AlertCircle className="w-4 h-4" />
+        <div className="bg-card border border-border/60 rounded-lg p-3.5 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+            <AlertCircle className="w-4 h-4 text-destructive" />
             <span>{validationErrors.length} configuration error(s) need attention</span>
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
@@ -174,9 +174,11 @@ function SettingsPageInner() {
                   key={e.path}
                   type="button"
                   onClick={() => handleTabChange(section)}
-                  className="text-[11px] px-2.5 py-1 rounded bg-card border border-border/70 hover:border-destructive text-destructive font-mono flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="text-[11px] px-2.5 py-1 rounded-md bg-secondary/50 border border-border/60 hover:bg-secondary text-muted-foreground hover:text-foreground flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <span className="capitalize">{section}</span>: {e.message}
+                  <span className="capitalize">{section}</span>
+                  <span className="text-destructive">·</span>
+                  <span className="font-mono">{e.message}</span>
                 </button>
               );
             })}
@@ -245,14 +247,14 @@ function SettingsPageInner() {
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {isTabDirty && tab.id !== 'telegram' && (
+                    {isTabDirty && (
                       <span
                         className="w-1.5 h-1.5 bg-amber-500 rounded-full"
                         title="Unsaved changes"
                       />
                     )}
                     {tabErrorCount > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-destructive/15 text-destructive text-[10px] font-bold font-mono">
+                      <span className="px-1.5 py-0.5 rounded-md bg-secondary border border-border/60 text-muted-foreground text-[10px] font-mono">
                         {tabErrorCount}
                       </span>
                     )}
@@ -264,7 +266,7 @@ function SettingsPageInner() {
         </aside>
 
         {/* Right Content Canvas */}
-        <main className="flex-1 min-w-0 max-w-3xl w-full space-y-6">
+        <main className="flex-1 min-w-0 max-w-3xl w-full space-y-4">
           {/* Active section header info */}
           <div className="space-y-1">
             <h2 className="text-base font-semibold tracking-tight text-foreground">
@@ -320,12 +322,12 @@ function SettingsPageInner() {
         </main>
       </div>
 
-      {/* 4. Floating Unsaved Changes Dock (Linear / GitHub style) */}
+      {/* 4. Floating Unsaved Changes Dock */}
       {isDirty && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <div className="flex items-center gap-3.5 px-4 py-2.5 rounded-full bg-card/95 border border-border shadow-md backdrop-blur-xs text-xs">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+          <div className="flex items-center gap-3.5 px-4 py-2.5 rounded-full bg-card border border-border shadow-md text-xs">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
               <span className="font-medium text-foreground">Unsaved changes</span>
             </div>
 

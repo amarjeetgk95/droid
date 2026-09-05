@@ -275,9 +275,9 @@ class HistoricalAnalogMatch(BaseModel):
     breakdown: SimilarityBreakdown
     matched_regime: MarketRegime
     session_phase: SessionPhase
-    outcome_15m: ForwardOutcomeHorizon
-    outcome_30m: ForwardOutcomeHorizon
-    outcome_60m: ForwardOutcomeHorizon
+    outcome_15m: Optional[ForwardOutcomeHorizon] = None
+    outcome_30m: Optional[ForwardOutcomeHorizon] = None
+    outcome_60m: Optional[ForwardOutcomeHorizon] = None
     temporal_weight: float = 1.0
     is_fresh_window: bool = False
 

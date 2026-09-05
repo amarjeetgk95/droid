@@ -25,17 +25,17 @@ export function SettingSection({
 }: SettingSectionProps) {
   return (
     <section
-      className={`bg-card border border-border/60 rounded-xl overflow-hidden shadow-2xs transition-colors ${className}`}
+      className={`bg-card border border-border/60 rounded-lg overflow-hidden transition-colors ${className}`}
     >
-      <div className="px-5 py-4 border-b border-border/40 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div className="flex items-start sm:items-center gap-2.5">
+      <div className="px-5 py-3.5 border-b border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-start sm:items-center gap-2.5 min-w-0">
           {Icon && (
-            <div className="text-muted-foreground p-1 rounded-md bg-secondary/50">
+            <div className="text-muted-foreground p-1.5 rounded-md bg-secondary/60 shrink-0">
               <Icon className="w-4 h-4" />
             </div>
           )}
-          <div>
-            <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+          <div className="min-w-0">
+            <h2 className="text-[13px] font-semibold tracking-tight text-foreground">{title}</h2>
             {description && (
               <p className="text-xs text-muted-foreground mt-0.5 leading-normal">{description}</p>
             )}
@@ -45,6 +45,38 @@ export function SettingSection({
       </div>
       <div className="divide-y divide-border/40">{children}</div>
     </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 1b. StatTile — sober neutral metric tile shared by Quant / Paper / Telegram */
+/* -------------------------------------------------------------------------- */
+
+export interface StatTileProps {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  tone?: 'default' | 'positive' | 'negative';
+  className?: string;
+}
+
+export function StatTile({ label, value, sub, tone = 'default', className = '' }: StatTileProps) {
+  const valueColor =
+    tone === 'positive'
+      ? 'text-emerald-600'
+      : tone === 'negative'
+        ? 'text-destructive'
+        : 'text-foreground';
+  return (
+    <div className={`bg-secondary/30 border border-border/40 rounded-lg p-3 min-w-0 ${className}`}>
+      <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block truncate">
+        {label}
+      </span>
+      <span className={`font-mono font-semibold text-sm mt-1 block truncate ${valueColor}`}>
+        {value}
+      </span>
+      {sub && <span className="text-[10px] text-muted-foreground block truncate mt-0.5">{sub}</span>}
+    </div>
   );
 }
 

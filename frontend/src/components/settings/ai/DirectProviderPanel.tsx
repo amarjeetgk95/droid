@@ -4,6 +4,7 @@ import { Network, Shield, Eye, EyeOff } from 'lucide-react';
 import type { AISettings, DirectProviderId } from '@/lib/settings';
 import { SUPPORTED_GEMINI_MODELS } from '@/lib/settings';
 import { DIRECT_PROVIDER_OPTIONS } from './constants';
+import { SettingSection } from '../ui/SettingPrimitives';
 
 interface Props {
   settings: AISettings;
@@ -17,23 +18,28 @@ export function DirectProviderPanel({ settings, onChange }: Props) {
   const [isCustomModel, setIsCustomModel] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm">
-      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-        <Network className="w-4 h-4 text-primary" />
-        Direct Provider
-        <span className="text-[10px] px-2 py-0.5 rounded bg-secondary border font-mono">5 ADAPTERS</span>
-      </h3>
-      <div>
-        <label className="text-xs font-semibold text-foreground block mb-1">Provider</label>
+    <SettingSection
+      title="Direct Provider"
+      description="Direct API endpoints for OpenAI, Novita, NVIDIA, Gemini, or custom proxy."
+      icon={Network}
+      action={
+        <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary border border-border/60 font-mono text-muted-foreground">
+          5 adapters
+        </span>
+      }
+    >
+      <div className="p-5">
+        <label className="text-xs font-medium text-foreground block mb-2">Provider</label>
         <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {DIRECT_PROVIDER_OPTIONS.map((p) => (
-            <button key={p.id} type="button" onClick={() => onChange({ directProvider: p.id } as unknown as Partial<AISettings>)} className={`p-2.5 rounded-xl border text-left cursor-pointer ${directProvider === p.id ? 'border-primary bg-primary/10 ring-1 ring-primary/20' : 'border-border hover:bg-secondary/30'}`}>
-              <div className="text-xs font-semibold text-foreground">{p.name}</div>
-              <div className="text-[11px] text-muted-foreground">{p.desc}</div>
+            <button key={p.id} type="button" onClick={() => onChange({ directProvider: p.id } as unknown as Partial<AISettings>)} className={`p-2.5 rounded-lg border text-left cursor-pointer transition-colors ${directProvider === p.id ? 'border-foreground/30 bg-secondary/50' : 'border-border/60 bg-card hover:bg-secondary/30'}`}>
+              <div className="text-xs font-medium text-foreground">{p.name}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{p.desc}</div>
             </button>
           ))}
         </div>
       </div>
+      <div className="p-5 border-t border-border/40">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-3">
           {directProvider === 'OpenAI' && (
@@ -77,12 +83,13 @@ export function DirectProviderPanel({ settings, onChange }: Props) {
             </>
           )}
         </div>
-        <div className="bg-secondary/20 border border-border/60 rounded-xl p-3.5 space-y-2 text-xs">
-          <div className="flex items-center gap-2 font-semibold"><Shield className="w-3.5 h-3.5 text-primary" /> Provider-Specific Capabilities</div>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">Each adapter detects capabilities (tools, vision, structured outputs) and never sends unsupported params. For example, Ling 3.0 Flash Fin via OpenRouter will <span className="font-semibold">not</span> receive <code className="font-mono">response_format=json_object</code> — instead it gets prompted JSON and is locally validated via Pydantic.</p>
-          <div className="text-[11px] p-2 rounded bg-card border"><div>Selected: <span className="font-mono font-semibold">{directProvider}</span></div><div className="text-muted-foreground">No shared inference code in trading engine — all via <code className="font-mono">AIProvider</code>.</div></div>
+        <div className="bg-secondary/20 border border-border/40 rounded-lg p-3.5 space-y-2 text-xs">
+          <div className="flex items-center gap-2 font-medium text-foreground"><Shield className="w-3.5 h-3.5 text-muted-foreground" /> Provider capabilities</div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">Each adapter detects capabilities (tools, vision, structured outputs) and never sends unsupported params. For example, Ling 3.0 Flash Fin via OpenRouter will <span className="font-medium">not</span> receive <code className="font-mono">response_format=json_object</code> — instead it gets prompted JSON and is locally validated via Pydantic.</p>
+          <div className="text-[11px] p-2 rounded-md bg-card border border-border/40"><div>Selected: <span className="font-mono font-medium">{directProvider}</span></div><div className="text-muted-foreground">No shared inference code in trading engine — all via <code className="font-mono">AIProvider</code>.</div></div>
         </div>
       </div>
-    </div>
+      </div>
+    </SettingSection>
   );
 }

@@ -11,6 +11,7 @@ import {
   SettingInput,
   SettingSelect,
   SettingSwitch,
+  StatTile,
 } from './ui/SettingPrimitives';
 
 interface Props {
@@ -86,7 +87,7 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
   const realizedPnl = portfolio?.total_realized_pnl ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
@@ -113,8 +114,8 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
 
       {/* 1. Account Summary & Status */}
       <SettingSection
-        title="Virtual Portfolio & Capital"
-        description="Real-time simulated capital allocation, available intraday margin, and net cumulative P&L."
+        title="Virtual portfolio & capital"
+        description="Simulated capital allocation, available intraday margin, and cumulative P&L."
         icon={Wallet}
         action={
           <button
@@ -124,62 +125,36 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${resetting ? 'animate-spin' : ''}`} />
-            <span>Reset Account</span>
+            <span>Reset account</span>
           </button>
         }
       >
         <div className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Virtual Capital
-              </span>
-              <span className="font-mono font-bold text-base text-foreground mt-1 block">
-                ₹{virtualCapital.toLocaleString('en-IN')}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Available Margin
-              </span>
-              <span className="font-mono font-semibold text-base text-emerald-600 mt-1 block">
-                ₹{availableMargin.toLocaleString('en-IN')}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Margin Utilized
-              </span>
-              <span className="font-mono font-semibold text-base text-foreground mt-1 block">
-                ₹{usedMargin.toLocaleString('en-IN')}{' '}
-                <span className="text-xs font-normal text-muted-foreground">
-                  ({portfolio?.margin_utilization_pct ?? 0}%)
-                </span>
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Realized P&amp;L
-              </span>
-              <span
-                className={`font-mono font-bold text-base mt-1 block ${
-                  realizedPnl >= 0 ? 'text-emerald-600' : 'text-destructive'
-                }`}
-              >
-                {realizedPnl >= 0 ? '+' : ''}₹{realizedPnl.toLocaleString('en-IN')}
-              </span>
-            </div>
+            <StatTile label="Virtual capital" value={`₹${virtualCapital.toLocaleString('en-IN')}`} />
+            <StatTile
+              label="Available margin"
+              value={`₹${availableMargin.toLocaleString('en-IN')}`}
+              tone="positive"
+            />
+            <StatTile
+              label="Margin utilized"
+              value={`₹${usedMargin.toLocaleString('en-IN')}`}
+              sub={`${portfolio?.margin_utilization_pct ?? 0}%`}
+            />
+            <StatTile
+              label="Realized P&L"
+              value={`${realizedPnl >= 0 ? '+' : ''}₹${realizedPnl.toLocaleString('en-IN')}`}
+              tone={realizedPnl >= 0 ? 'positive' : 'negative'}
+            />
           </div>
         </div>
       </SettingSection>
 
       {/* 2. Risk Boundaries & Constraints */}
       <SettingSection
-        title="Execution Limits & Risk Guardrails"
-        description="Enforce exposure ceilings, automatic intraday square-off, and circuit breakers."
+        title="Execution limits & risk guardrails"
+        description="Exposure ceilings, automatic intraday square-off, and circuit breakers."
         icon={ShieldCheck}
       >
         <SettingRow

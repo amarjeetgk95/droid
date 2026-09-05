@@ -128,11 +128,21 @@ class PaperTradingService:
         # Determine fill price
         fill_price = payload.price
         if fill_price <= 0:
-            try:
-                quote = await self.market_service.get_quote(payload.underlying)
-                fill_price = round(quote.ltp * 0.015, 2) if "CE" in payload.symbol or "PE" in payload.symbol else quote.ltp
-            except Exception:
-                fill_price = 150.0
+            if "CE" in payload.symbol or "PE" in payload.symbol:
+                try:
+                    from app.services.options_service import options_service
+                    opt_quote = await options_service.get_option_quote(payload.symbol)
+                    if opt_quote and opt_quote.ltp > 0:
+                        fill_price = opt_quote.ltp
+                except Exception:
+                    pass
+            else:
+                try:
+                    quote = await self.market_service.get_quote(payload.underlying)
+                    if quote and quote.ltp > 0:
+                        fill_price = quote.ltp
+                except Exception:
+                    pass
 
         if fill_price <= 0:
             rejected = VirtualOrder(
@@ -148,7 +158,7 @@ class PaperTradingService:
                 trigger_price=payload.trigger_price,
                 status="REJECTED",
                 fill_price=None,
-                rejection_reason="INVALID_PRICE: Fill price must be greater than zero",
+                rejection_reason="MARKET_QUOTE_UNAVAILABLE: Live market quote unavailable to fill market order",
             )
             self._orders.insert(0, rejected)
             return rejected

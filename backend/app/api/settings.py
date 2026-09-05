@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 # In-memory fallback for dev mode (auth not required) when DB FK fails
 _dev_settings_store: dict[str, dict] = {}
 
-def _mock_settings(user_id: str) -> UserSettingsResponse:
+def _get_dev_settings(user_id: str) -> UserSettingsResponse:
     stored = _dev_settings_store.get(user_id, {})
     now = datetime.now(timezone.utc)
     try:
@@ -121,7 +121,7 @@ async def _get_settings_dev_fallback(user: AuthUser, session: AsyncSession | Non
             existing_app = existing.get("app_settings", {}) or {}
             patch["app_settings"] = _deep_merge(existing_app if isinstance(existing_app, dict) else {}, patch["app_settings"])
         _dev_settings_store[user.user_id] = _deep_merge(existing, patch)
-    return _mock_settings(user.user_id)
+    return _get_dev_settings(user.user_id)
 
 
 @router.get("/schema")

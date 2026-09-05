@@ -8,6 +8,7 @@ import {
   SettingRow,
   SettingInput,
   SettingSelect,
+  StatTile,
 } from './ui/SettingPrimitives';
 
 interface Props {
@@ -53,7 +54,7 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
   }, [settings.brokeragePerOrder]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 1. Quantitative Pricing Engine Parameters */}
       <SettingSection
         title="Option Pricing & Greeks Kernel"
@@ -165,70 +166,27 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
 
       {/* 3. Live Cost Breakdown Simulator */}
       <SettingSection
-        title="Live Round-Trip Cost Estimator"
+        title="Round-trip cost estimator"
         description="Simulated 1-lot NIFTY option trade (75 qty @ ₹120 buy, ₹160 sell, ₹3,000 gross P&L)."
         icon={Calculator}
         action={
-          <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/80 border border-border/60 font-mono text-muted-foreground">
-            Break-even: <strong className="text-foreground">+{simulatedCost.breakEvenPts.toFixed(2)} pts</strong>
+          <span className="text-xs px-2.5 py-1 rounded-md bg-secondary border border-border/60 font-mono text-muted-foreground">
+            Break-even: <span className="text-foreground font-medium">+{simulatedCost.breakEvenPts.toFixed(2)} pts</span>
           </span>
         }
       >
         <div className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Brokerage
-              </span>
-              <span className="font-mono font-semibold text-sm text-foreground mt-1 block">
-                ₹{simulatedCost.brokerage.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                STT (Sell)
-              </span>
-              <span className="font-mono font-semibold text-sm text-foreground mt-1 block">
-                ₹{simulatedCost.stt.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Exchange Turn.
-              </span>
-              <span className="font-mono font-semibold text-sm text-foreground mt-1 block">
-                ₹{simulatedCost.exchangeCharge.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                GST (18%)
-              </span>
-              <span className="font-mono font-semibold text-sm text-foreground mt-1 block">
-                ₹{simulatedCost.gst.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                SEBI &amp; Stamp
-              </span>
-              <span className="font-mono font-semibold text-sm text-foreground mt-1 block">
-                ₹{(simulatedCost.stampDuty + simulatedCost.sebiCharge).toFixed(2)}
-              </span>
-            </div>
-
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-              <span className="text-emerald-700 text-[10px] uppercase font-medium tracking-wide block">
-                Net Realized
-              </span>
-              <span className="font-mono font-bold text-sm text-emerald-600 mt-1 block">
-                ₹{simulatedCost.netPnl.toFixed(2)}
-              </span>
-            </div>
+            <StatTile label="Brokerage" value={`₹${simulatedCost.brokerage.toFixed(2)}`} />
+            <StatTile label="STT (Sell)" value={`₹${simulatedCost.stt.toFixed(2)}`} />
+            <StatTile label="Exchange" value={`₹${simulatedCost.exchangeCharge.toFixed(2)}`} />
+            <StatTile label="GST (18%)" value={`₹${simulatedCost.gst.toFixed(2)}`} />
+            <StatTile label="SEBI & Stamp" value={`₹${(simulatedCost.stampDuty + simulatedCost.sebiCharge).toFixed(2)}`} />
+            <StatTile
+              label="Net realized"
+              value={`₹${simulatedCost.netPnl.toFixed(2)}`}
+              tone={simulatedCost.netPnl >= 0 ? 'positive' : 'negative'}
+            />
           </div>
         </div>
       </SettingSection>

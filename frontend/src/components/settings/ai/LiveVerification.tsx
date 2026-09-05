@@ -110,16 +110,16 @@ export function LiveVerification({ settings }: Props) {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-sm overflow-hidden">
+    <div className="bg-card border border-border/60 rounded-lg p-5 space-y-3 overflow-hidden">
       <div className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-400" /> Live Provider Verification</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 font-mono whitespace-nowrap">NO MOCK FALLBACK</span>
+        <h3 className="text-[13px] font-semibold flex flex-wrap items-center gap-2 text-foreground">
+          <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-muted-foreground" /> Live provider verification</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary text-muted-foreground border border-border/60 font-mono whitespace-nowrap">No mock fallback</span>
         </h3>
-        <p className="text-xs text-muted-foreground leading-relaxed">Resolves <span className="font-mono">Auto</span> to current eligible free model, uses <strong>real live NIFTY context</strong>, measures latency, validates JSON schema. Fails honestly if key missing/invalid. <span className="font-semibold">FREE-only guard</span> hard-fails paid models with hint; catalog falls back to cached list and UI offers <span className="font-mono">Refresh Models</span> retry.</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">Resolves <span className="font-mono">auto</span> to current eligible free model, uses real live NIFTY context, measures latency, validates JSON schema. Fails honestly if key missing/invalid. Free-only guard hard-fails paid models with hint; catalog falls back to cached list.</p>
         {connectionMode === 'Local Ollama' && (
-          <div className="text-[11px] p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-700 space-y-1">
-            <p className="font-semibold">Ollama local-only behavior</p>
+          <div className="text-[11px] p-2.5 rounded-md bg-secondary/40 border border-border/60 text-muted-foreground space-y-1">
+            <p className="font-medium text-foreground">Ollama local-only behavior</p>
             <p className="leading-relaxed">
               Ollama runs on <span className="font-mono">http://localhost:11434</span> on your machine. The hosted backend on Render <strong>cannot</strong> reach <span className="font-mono">localhost</span>/<span className="font-mono">127.0.0.1</span>.
               This verification performs a <strong>direct browser fetch</strong> to <span className="font-mono">{settings.ollamaBaseUrl}/api/tags</span> <em>before</em> calling the backend — gating the backend call. If the browser check fails, ensure <span className="font-mono">ollama serve</span> is running, the model is pulled (<span className="font-mono">ollama pull {settings.ollamaModel}</span>), and CORS is allowed. Use a remote Ollama URL for hosted inference.

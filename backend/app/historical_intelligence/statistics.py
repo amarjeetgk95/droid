@@ -93,35 +93,55 @@ def compute_horizon_statistics(
 
     # Extract horizon slice
     if horizon_minutes == 15:
-        outcomes = [a.outcome_15m for a in analogs]
+        outcomes_with_weights = [(a, a.similarity_score * a.temporal_weight, a.outcome_15m) for a in analogs if a.outcome_15m is not None]
     elif horizon_minutes == 30:
-        outcomes = [a.outcome_30m for a in analogs]
+        outcomes_with_weights = [(a, a.similarity_score * a.temporal_weight, a.outcome_30m) for a in analogs if a.outcome_30m is not None]
     else:
-        outcomes = [a.outcome_60m for a in analogs]
+        outcomes_with_weights = [(a, a.similarity_score * a.temporal_weight, a.outcome_60m) for a in analogs if a.outcome_60m is not None]
 
-    # Weighted counts
-    weights = [a.similarity_score * a.temporal_weight for a in analogs]
-    total_w = sum(weights) or 1.0
+    if not outcomes_with_weights:
+        return HorizonStatistics(
+            horizon_minutes=horizon_minutes,
+            bullish_probability=0.33,
+            bearish_probability=0.33,
+            neutral_probability=0.34,
+            continuation_probability=0.0,
+            failure_probability=0.0,
+            reversal_probability=0.0,
+            median_return_pct=0.0,
+            mean_return_pct=0.0,
+            iqr_return_pct=0.0,
+            median_mfe_pct=0.0,
+            median_mae_pct=0.0,
+            target_hit_rate=0.0,
+            stop_hit_rate=0.0,
+            median_duration=None,
+            confidence_interval_bullish=ConfidenceInterval(lower=0.0, upper=1.0, point_estimate=0.33),
+        )
 
-    bull_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.direction == "BULLISH")
-    bear_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.direction == "BEARISH")
-    neut_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.direction == "NEUTRAL")
+    n_valid = len(outcomes_with_weights)
+    total_w = sum(w for _, w, _ in outcomes_with_weights) or 1.0
+
+    bull_w = sum(w for _, w, out in outcomes_with_weights if out.direction == "BULLISH")
+    bear_w = sum(w for _, w, out in outcomes_with_weights if out.direction == "BEARISH")
+    neut_w = sum(w for _, w, out in outcomes_with_weights if out.direction == "NEUTRAL")
 
     bull_prob = bull_w / total_w
     bear_prob = bear_w / total_w
     neut_prob = neut_w / total_w
 
-    cont_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.continuation)
-    fail_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.failure)
-    rev_w = sum(w for a, w, out in zip(analogs, weights, outcomes) if out.reversal)
+    cont_w = sum(w for _, w, out in outcomes_with_weights if out.continuation)
+    fail_w = sum(w for _, w, out in outcomes_with_weights if out.failure)
+    rev_w = sum(w for _, w, out in outcomes_with_weights if out.reversal)
 
+    outcomes = [out for _, _, out in outcomes_with_weights]
     # Excursions & Returns
     rets = sorted(out.return_pct for out in outcomes)
     mfes = sorted(out.mfe_pct for out in outcomes)
     maes = sorted(out.mae_pct for out in outcomes)
 
     med_ret = _median(rets)
-    mean_ret = sum(rets) / n
+    mean_ret = sum(rets) / n_valid
     med_mfe = _median(mfes)
     med_mae = _median(maes)
 
@@ -133,7 +153,7 @@ def compute_horizon_statistics(
 
     # Wilson CI for Bullish %
     raw_bull_count = sum(1 for out in outcomes if out.direction == "BULLISH")
-    wilson_ci = calculate_wilson_ci(raw_bull_count, n)
+    wilson_ci = calculate_wilson_ci(raw_bull_count, n_valid)
 
     return HorizonStatistics(
         horizon_minutes=horizon_minutes,

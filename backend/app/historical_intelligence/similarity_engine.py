@@ -85,14 +85,9 @@ class SimilarityEngine:
 
             # 5. Fetch associated forward outcomes
             outcome_rec: Optional[HistoricalOutcomeRecord] = get_outcome_fn(cand.snapshot_id)
-            if outcome_rec is not None:
-                out_15 = outcome_rec.outcome_15m
-                out_30 = outcome_rec.outcome_30m
-                out_60 = outcome_rec.outcome_60m
-            else:
-                out_15 = ForwardOutcomeHorizon(horizon_minutes=15, return_pct=0.0, direction="NEUTRAL", mfe_pct=0.0, mae_pct=0.0, high_price=0.0, low_price=0.0, target_hit=False, stop_hit=False)
-                out_30 = ForwardOutcomeHorizon(horizon_minutes=30, return_pct=0.0, direction="NEUTRAL", mfe_pct=0.0, mae_pct=0.0, high_price=0.0, low_price=0.0, target_hit=False, stop_hit=False)
-                out_60 = ForwardOutcomeHorizon(horizon_minutes=60, return_pct=0.0, direction="NEUTRAL", mfe_pct=0.0, mae_pct=0.0, high_price=0.0, low_price=0.0, target_hit=False, stop_hit=False)
+            out_15 = outcome_rec.outcome_15m if outcome_rec else None
+            out_30 = outcome_rec.outcome_30m if outcome_rec else None
+            out_60 = outcome_rec.outcome_60m if outcome_rec else None
 
             # 6. Recency weight
             temporal_w = compute_recency_weight(query_state.timestamp, cand.timestamp)

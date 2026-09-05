@@ -170,7 +170,6 @@ export default function AIAnalysisPage() {
             <option value="gemini">Google Gemini</option>
             <option value="openai">OpenAI</option>
             <option value="ollama">On-device (Ollama)</option>
-            <option value="mock_ai">Offline mode</option>
           </select>
 
           <button

@@ -127,28 +127,28 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
   const getCategoryIcon = (cat: string) => {
     switch (cat) {
       case 'Finance':
-        return <Star className="w-3 h-3 text-amber-500" />;
+        return <Star className="w-3 h-3 text-muted-foreground" />;
       case 'Reasoning':
-        return <Brain className="w-3 h-3 text-purple-500" />;
+        return <Brain className="w-3 h-3 text-muted-foreground" />;
       case 'Fast':
-        return <Zap className="w-3 h-3 text-yellow-500" />;
+        return <Zap className="w-3 h-3 text-muted-foreground" />;
       case 'Vision':
-        return <Eye className="w-3 h-3 text-blue-500" />;
+        return <Eye className="w-3 h-3 text-muted-foreground" />;
       case 'Coding':
-        return <Layers className="w-3 h-3 text-emerald-500" />;
+        return <Layers className="w-3 h-3 text-muted-foreground" />;
       default:
         return <Layers className="w-3 h-3 text-muted-foreground" />;
     }
   };
 
   return (
-    <div className="space-y-4 bg-card border border-border rounded-xl p-5 shadow-xs">
+    <div className="space-y-4 bg-card border border-border/60 rounded-lg p-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <DollarSign className="w-4 h-4 text-primary" />
-            OpenRouter Dynamic Model Catalog
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-mono">DYNAMIC</span>
+          <h3 className="text-[13px] font-semibold text-foreground flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-muted-foreground" />
+            OpenRouter model catalog
+            <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary text-muted-foreground border border-border/60 font-mono">Dynamic</span>
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
             Automatically retrieved from OpenRouter&apos;s Models API. Free detection via pricing (prompt=0 & completion=0). Never hard-coded.
@@ -169,8 +169,8 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* AI Provider */}
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-foreground">AI Provider</label>
-          <div className="w-full bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 text-xs font-mono text-foreground">
+          <label className="text-xs font-medium text-foreground">AI Provider</label>
+          <div className="w-full bg-secondary/40 border border-border/60 rounded-md px-3 py-2 text-xs font-mono text-foreground">
             OpenRouter
           </div>
           <span className="text-[11px] text-muted-foreground">Key from Settings (sent per-request, no hardcode). Optional env fallback.</span>
@@ -178,8 +178,9 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
 
         {/* Model Mode */}
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-foreground">Model Mode</label>
-          <div className={`w-full border rounded-lg px-3 py-2 text-xs font-semibold ${freeOnly ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700' : 'bg-amber-500/10 border-amber-500/20 text-amber-700'}`}>
+          <label className="text-xs font-medium text-foreground">Model Mode</label>
+          <div className="w-full border border-border/60 bg-secondary/40 rounded-md px-3 py-2 text-xs font-mono text-foreground flex items-center gap-2">
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${freeOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} />
             {freeOnly ? 'FREE ONLY' : `PRICING: ${pricingFilter}`}
           </div>
           <span className="text-[11px] text-muted-foreground">
@@ -189,9 +190,9 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
 
         {/* Allow Paid Toggle */}
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-foreground flex items-center gap-1">
+          <label className="text-xs font-medium text-foreground flex items-center gap-1">
             Allow Paid Models
-            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${allowPaid ? 'bg-amber-500 text-white' : 'bg-secondary text-muted-foreground border'}`}>
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-secondary text-muted-foreground border border-border/60">
               {allowPaid ? 'ON' : 'OFF'}
             </span>
           </label>
@@ -241,16 +242,16 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
             <span className="flex items-center gap-2 truncate">
               {selectedModel === 'auto' ? (
                 <>
-                  <Star className="w-3.5 h-3.5 text-amber-500" />
-                  <span className="font-semibold">Auto — Best Free for Trading</span>
+                  <Star className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="font-medium">Auto — Best free for trading</span>
                   {defaultModel && <span className="text-muted-foreground">({defaultModel.name})</span>}
                 </>
               ) : selectedModelObj ? (
                 <>
                   {getCategoryIcon(selectedModelObj.category)}
                   <span className="font-medium">{selectedModelObj.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/15 text-emerald-700 rounded font-mono">FREE</span>
-                  {selectedModelObj.recommended_for_trading && <span className="text-[10px]">⭐</span>}
+                  <span className="text-[10px] px-1.5 py-0.5 bg-secondary text-muted-foreground border border-border/60 rounded font-mono">Free</span>
+                  {selectedModelObj.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended</span>}
                 </>
               ) : (
                 <span className="truncate">{selectedModel}</span>
@@ -260,7 +261,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           </button>
 
           {showDropdown && (
-            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-xl shadow-sm max-h-[520px] overflow-hidden flex flex-col">
+            <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-lg max-h-[520px] overflow-hidden flex flex-col">
               {/* Search + §33 Filters */}
               <div className="p-2 border-b border-border space-y-2">
                 <div className="relative">
@@ -321,18 +322,18 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                     onChange({ openRouterSelectedModel: 'auto', openRouterModel: 'auto' });
                     setShowDropdown(false);
                   }}
-                  className={`w-full text-left px-3 py-2.5 hover:bg-secondary/50 border-b border-border flex items-center justify-between cursor-pointer ${selectedModel === 'auto' ? 'bg-primary/10' : ''}`}
+                  className={`w-full text-left px-3 py-2.5 hover:bg-secondary/50 border-b border-border/40 flex items-center justify-between cursor-pointer ${selectedModel === 'auto' ? 'bg-secondary/50' : ''}`}
                 >
                   <div className="flex items-center gap-2">
-                    <Star className="w-4 h-4 text-amber-500" />
+                    <Star className="w-4 h-4 text-muted-foreground" />
                     <div>
-                      <div className="text-xs font-semibold text-foreground">Auto — Best Free for Trading</div>
+                      <div className="text-xs font-medium text-foreground">Auto — Best free for trading</div>
                       <div className="text-[11px] text-muted-foreground">
                         {defaultModel ? `${defaultModel.name} • ${defaultModel.category} • rank ${defaultModel.trading_rank}` : 'Highest-ranked free finance/reasoning model'}
                       </div>
                     </div>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 bg-primary text-primary-foreground rounded font-mono">AUTO</span>
+                  <span className="text-[10px] px-2 py-0.5 bg-secondary border border-border/60 text-muted-foreground rounded font-mono">Auto</span>
                 </button>
 
                 {grouped.length === 0 && (
@@ -340,10 +341,10 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                 )}
 
                 {grouped.map(([cat, models]) => (
-                  <div key={cat} className="border-b border-border/50 last:border-0">
-                    <div className="px-3 py-1.5 bg-secondary/30 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground sticky top-0">
+                  <div key={cat} className="border-b border-border/40 last:border-0">
+                    <div className="px-3 py-1.5 bg-secondary/30 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground sticky top-0">
                       {getCategoryIcon(cat)}
-                      {cat === 'Finance' ? '⭐ Finance' : cat === 'Reasoning' ? '🧠 Reasoning' : cat === 'Fast' ? '⚡ Fast' : cat === 'Vision' ? '👁 Vision' : cat}
+                      {cat}
                       <span className="ml-auto text-[10px] font-mono">{models.length}</span>
                     </div>
                     {models.map((m) => (
@@ -354,19 +355,17 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                           onChange({ openRouterSelectedModel: m.id, openRouterModel: m.id });
                           setShowDropdown(false);
                         }}
-                        className={`w-full text-left px-3 py-2 hover:bg-secondary/50 flex flex-col gap-0.5 cursor-pointer ${selectedModel === m.id ? 'bg-primary/10 border-l-2 border-primary' : 'border-l-2 border-transparent'}`}
+                        className={`w-full text-left px-3 py-2 hover:bg-secondary/50 flex flex-col gap-0.5 cursor-pointer ${selectedModel === m.id ? 'bg-secondary/50 border-l-2 border-foreground/40' : 'border-l-2 border-transparent'}`}
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-foreground truncate">{m.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/15 text-emerald-700 rounded font-mono border border-emerald-500/20">FREE</span>
-                          {m.recommended_for_trading && <span className="text-[10px]">⭐ Recommended</span>}
-                          {m.category === 'Fast' && <span className="text-[10px]">⚡</span>}
-                          {m.category === 'Reasoning' && <span className="text-[10px]">🧠</span>}
+                          <span className="text-[10px] px-1.5 py-0.5 bg-secondary text-muted-foreground rounded font-mono border border-border/60">Free</span>
+                          {m.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended</span>}
                         </div>
                         <div className="text-[11px] text-muted-foreground truncate flex items-center gap-2">
                           <span className="font-mono truncate">{m.id}</span>
                           <span className="shrink-0">ctx {m.context_length.toLocaleString()}</span>
-                          {m.supports_tools && <span className="text-emerald-600">tools</span>}
+                          {m.supports_tools && <span className="text-muted-foreground">tools</span>}
                         </div>
                         {m.description && <div className="text-[11px] text-muted-foreground line-clamp-1">{m.description.slice(0, 120)}</div>}
                       </button>
@@ -402,11 +401,11 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted-foreground">
             <span>Provider: OpenRouter</span>
             <span>•</span>
-            <span className={freeOnly ? 'text-emerald-600 font-semibold' : ''}>{freeOnly ? 'FREE ONLY' : pricingFilter}</span>
+            <span>{freeOnly ? 'FREE ONLY' : pricingFilter}</span>
             <span>•</span>
             <span>{catalog.models.length} shown</span>
             <span>•</span>
-            <span className={usingCached ? 'text-amber-600' : 'text-emerald-600'}>{usingCached ? 'Using cached model list' : 'Live catalog'}</span>
+            <span>{usingCached ? 'Using cached model list' : 'Live catalog'}</span>
           </div>
         )}
       </div>
@@ -415,23 +414,22 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
       {selectedModel !== 'auto' && selectedModelObj && (
         <div className="bg-secondary/30 border border-border/60 rounded-lg p-3 text-xs space-y-1">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-foreground">{selectedModelObj.name}</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 border border-emerald-500/20">💰 Free</span>
-            {selectedModelObj.recommended_for_trading && <span className="text-[10px] bg-amber-500/15 text-amber-700 px-2 py-0.5 rounded border border-amber-500/20">⭐ Recommended for Trading</span>}
-            {selectedModelObj.supports_tools && <span className="text-[10px]">🧠 tools</span>}
-            {selectedModelObj.category === 'Fast' && <span className="text-[10px]">⚡ Fast</span>}
+            <span className="font-medium text-foreground">{selectedModelObj.name}</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-muted-foreground border border-border/60">Free</span>
+            {selectedModelObj.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended for trading</span>}
+            {selectedModelObj.supports_tools && <span className="text-[10px] text-muted-foreground">tools</span>}
           </div>
           <div className="text-[11px] text-muted-foreground font-mono break-all">{selectedModelObj.id}</div>
           <div className="text-[11px] text-muted-foreground">Category: {selectedModelObj.category} • Context: {selectedModelObj.context_length.toLocaleString()} • Rank: {selectedModelObj.trading_rank}</div>
         </div>
       )}
       {selectedModel === 'auto' && defaultModel && (
-        <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 text-xs">
-          <div className="font-semibold text-foreground flex items-center gap-1">
-            <Star className="w-3 h-3 text-amber-500" />
+        <div className="bg-secondary/30 border border-border/60 rounded-lg p-3 text-xs">
+          <div className="font-medium text-foreground flex items-center gap-1">
+            <Star className="w-3 h-3 text-muted-foreground" />
             Auto will use: {defaultModel.name}
           </div>
-          <div className="text-[11px] text-muted-foreground">{defaultModel.id} • {defaultModel.category} • rank {defaultModel.trading_rank} • Probabilistic Outlook (not guaranteed)</div>
+          <div className="text-[11px] text-muted-foreground">{defaultModel.id} • {defaultModel.category} • rank {defaultModel.trading_rank} • Probabilistic outlook (not guaranteed)</div>
         </div>
       )}
     </div>

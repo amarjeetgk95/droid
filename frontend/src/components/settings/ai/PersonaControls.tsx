@@ -13,8 +13,8 @@ interface Props {
 export function PersonaControls({ settings, onChange }: Props) {
   return (
     <SettingSection
-      title="Analyst Persona &amp; Reasoning Controls"
-      description="Tailor the analytical perspective, sampling temperature, and query cache duration."
+      title="Analyst persona & reasoning"
+      description="Analytical perspective, sampling temperature, and cache duration."
       icon={Sliders}
     >
       <SettingRow

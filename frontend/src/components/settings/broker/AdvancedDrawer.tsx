@@ -14,7 +14,7 @@ export function AdvancedDrawer({ settings, onChange }: Props) {
   const flattradeCreds = settings.flattrade || { userId: '', apiKey: '', apiSecret: '', redirectUri: '', token: '' };
 
   return (
-    <div className="border border-border/60 rounded-xl overflow-hidden bg-card/50">
+    <div className="border border-border/60 rounded-lg overflow-hidden bg-card">
       <button
         type="button"
         onClick={() => setShowAdvanced(!showAdvanced)}

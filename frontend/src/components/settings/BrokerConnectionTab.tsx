@@ -19,11 +19,11 @@ interface Props {
 
 export function BrokerConnectionTab({ settings, fullSettings, onChange }: Props) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 1. Market Universe & Active Broker */}
       <SettingSection
-        title="Market Universe &amp; Active Broker"
-        description="Select market universe and active execution broker. Credentials are securely held on Render."
+        title="Market universe & active broker"
+        description="Market universe and execution broker. Credentials are held on Render."
         icon={Globe}
       >
         <ApiTypeSelector settings={settings} onChange={onChange} />
@@ -36,8 +36,8 @@ export function BrokerConnectionTab({ settings, fullSettings, onChange }: Props)
       {/* 3. Binance Public Gateway note (if crypto) */}
       {settings.provider === 'binance' && (
         <SettingSection
-          title="Binance Spot &amp; Futures Gateway"
-          description="Public streaming feeds for crypto spot prices, order book depth, and funding rates."
+          title="Binance spot & futures gateway"
+          description="Public streaming feeds for spot prices, order book depth, and funding rates."
           icon={Key}
           action={
             <a

@@ -39,8 +39,8 @@ def compute_historical_confidence(
     sim_score = max(0.0, min(1.0, (avg_sim - 0.50) / 0.40))  # Scales 0.50 - 0.90 to 0 - 1
 
     # 3. Outcome Directional Consensus (30m horizon)
-    bull_count = sum(1 for a in analogs if a.outcome_30m.direction == "BULLISH")
-    bear_count = sum(1 for a in analogs if a.outcome_30m.direction == "BEARISH")
+    bull_count = sum(1 for a in analogs if a.outcome_30m and a.outcome_30m.direction == "BULLISH")
+    bear_count = sum(1 for a in analogs if a.outcome_30m and a.outcome_30m.direction == "BEARISH")
     consensus_score = abs(bull_count - bear_count) / n
 
     # 4. Regime Consistency

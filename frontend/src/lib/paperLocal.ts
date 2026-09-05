@@ -44,10 +44,7 @@ function calcMargin(payload: OrderPayload, fill: number): number {
 }
 
 function getFillPrice(payload: OrderPayload): number {
-  if (payload.price > 0) return payload.price;
-  // mock fill when market price not supplied
-  const isOpt = payload.symbol.includes('CE') || payload.symbol.includes('PE');
-  return isOpt ? 85.5 : 24800;
+  return payload.price > 0 ? payload.price : 0;
 }
 
 export function isBackendUnreachableError(err: unknown): boolean {
@@ -88,6 +85,19 @@ export function placeLocalOrder(payload: OrderPayload): VirtualOrder {
   const now = new Date().toISOString();
   const orderId = `ORD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const fill = getFillPrice(payload);
+
+  if (fill <= 0) {
+    const rejected: VirtualOrder = {
+      order_id: orderId, timestamp: now, symbol: payload.symbol, underlying: payload.underlying,
+      side: payload.side, order_type: (payload.order_type ?? 'MARKET'), product: (payload.product ?? 'INTRADAY'),
+      quantity: payload.quantity, price: payload.price, trigger_price: payload.trigger_price ?? null,
+      status: 'REJECTED', fill_price: null, rejection_reason: 'Market price unavailable. Please specify an execution price or ensure live data is connected.',
+    };
+    orders.unshift(rejected);
+    saveOrders(orders.slice(0, 100));
+    return rejected;
+  }
+
   const reqMargin = calcMargin(payload, fill);
 
   const portfolio = getLocalPortfolio();

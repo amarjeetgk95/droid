@@ -25,11 +25,11 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     (settings.provider === 'openrouter' ? 'OpenRouter' : settings.provider === 'ollama' ? 'Local Ollama' : 'OpenRouter');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 1. Inference Gateway & Architecture */}
       <SettingSection
-        title="Inference Gateway &amp; Routing"
-        description="Select AI execution runtime and dispatch policy for option strategies and signals."
+        title="Inference gateway & routing"
+        description="AI execution runtime and dispatch policy for strategies and signals."
         icon={Brain}
       >
         <ConnectionModeSelector settings={settings} onChange={onChange} />

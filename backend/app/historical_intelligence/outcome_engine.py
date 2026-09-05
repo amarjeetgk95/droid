@@ -200,21 +200,14 @@ def aggregate_matched_outcomes(
         }
 
     def _horizon_probs(horizon_attr: str) -> dict[str, float]:
-        bull = 0
-        bear = 0
-        neut = 0
-        for m in matches:
-            out: ForwardOutcomeHorizon = getattr(m, horizon_attr)
-            d = out.direction.upper()
-            if d == "BULLISH":
-                bull += 1
-            elif d == "BEARISH":
-                bear += 1
-            else:
-                neut += 1
-
-        p_bull = round(bull / n, 2)
-        p_bear = round(bear / n, 2)
+        valid_outcomes = [getattr(m, horizon_attr) for m in matches if getattr(m, horizon_attr) is not None]
+        if not valid_outcomes:
+            return {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0}
+        n_valid = len(valid_outcomes)
+        bull = sum(1 for out in valid_outcomes if out.direction.upper() == "BULLISH")
+        bear = sum(1 for out in valid_outcomes if out.direction.upper() == "BEARISH")
+        p_bull = round(bull / n_valid, 2)
+        p_bear = round(bear / n_valid, 2)
         p_neut = round(max(0.0, 1.0 - (p_bull + p_bear)), 2)
         return {"bullish": p_bull, "bearish": p_bear, "neutral": p_neut}
 
@@ -222,21 +215,24 @@ def aggregate_matched_outcomes(
     prob_30 = _horizon_probs("outcome_30m")
     prob_60 = _horizon_probs("outcome_60m")
 
+    valid_30m = [m.outcome_30m for m in matches if m.outcome_30m is not None]
+    n_30m = len(valid_30m) if valid_30m else 1
+
     # Failure: stop hit or failed continuation at 30m horizon
-    failures = sum(1 for m in matches if m.outcome_30m.failure or m.outcome_30m.stop_hit)
-    failure_rate = round(failures / n, 2)
+    failures = sum(1 for out in valid_30m if out.failure or out.stop_hit)
+    failure_rate = round(failures / n_30m, 2) if valid_30m else 0.0
 
-    continuations = sum(1 for m in matches if m.outcome_30m.continuation)
-    continuation_rate = round(continuations / n, 2)
+    continuations = sum(1 for out in valid_30m if out.continuation)
+    continuation_rate = round(continuations / n_30m, 2) if valid_30m else 0.0
 
-    reversals = sum(1 for m in matches if m.outcome_30m.reversal)
-    reversal_rate = round(reversals / n, 2)
+    reversals = sum(1 for out in valid_30m if out.reversal)
+    reversal_rate = round(reversals / n_30m, 2) if valid_30m else 0.0
 
-    ret_15 = [m.outcome_15m.return_pct for m in matches]
-    ret_30 = [m.outcome_30m.return_pct for m in matches]
-    ret_60 = [m.outcome_60m.return_pct for m in matches]
-    mfes = [m.outcome_30m.mfe_pct for m in matches]
-    maes = [m.outcome_30m.mae_pct for m in matches]
+    ret_15 = [m.outcome_15m.return_pct for m in matches if m.outcome_15m is not None]
+    ret_30 = [m.outcome_30m.return_pct for m in matches if m.outcome_30m is not None]
+    ret_60 = [m.outcome_60m.return_pct for m in matches if m.outcome_60m is not None]
+    mfes = [m.outcome_30m.mfe_pct for m in matches if m.outcome_30m is not None]
+    maes = [m.outcome_30m.mae_pct for m in matches if m.outcome_30m is not None]
 
     return {
         "sample_count": n,

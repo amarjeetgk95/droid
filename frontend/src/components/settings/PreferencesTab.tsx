@@ -84,7 +84,7 @@ export function PreferencesTab({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
@@ -111,17 +111,17 @@ export function PreferencesTab({
 
       {/* 1. Display & Regional Formatting */}
       <SettingSection
-        title="Display & Regional Formatting"
-        description="Configure terminal visual aesthetics, numeral conventions, and default active indices."
+        title="Display & formatting"
+        description="Numeral conventions and default active index."
         icon={Palette}
       >
         <SettingRow
-          label="Visual Appearance"
-          description="Daylight Light clean architecture optimized for financial data legibility."
+          label="Visual appearance"
+          description="Clean light theme optimized for financial data legibility."
         >
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/50 border border-border/50 text-xs font-medium text-foreground">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Daylight Light</span>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/40 border border-border/60 text-xs text-muted-foreground">
+            <span className="w-1.5 h-1.5 rounded-full bg-foreground/40" />
+            <span>Light</span>
           </div>
         </SettingRow>
 
@@ -158,8 +158,8 @@ export function PreferencesTab({
 
       {/* 2. Backup, Import & Reset */}
       <SettingSection
-        title="Configuration Management"
-        description="Export rules and parameters for backup, migrate between environments, or reset."
+        title="Configuration management"
+        description="Export, migrate between environments, or reset."
         icon={Sliders}
       >
         <SettingRow

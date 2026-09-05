@@ -69,24 +69,24 @@ export const ProviderGrid = memo(function ProviderGrid({ settings, onChange }: P
               key={p.id}
               type="button"
               onClick={() => handleProviderSelect(p.id)}
-              className={`flex items-start justify-between text-left p-4 rounded-lg border transition-all cursor-pointer ${
+              className={`flex items-start justify-between text-left p-4 rounded-lg border transition-colors cursor-pointer ${
                 isSelected
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                  ? 'border-foreground/30 bg-secondary/50'
                   : 'border-border/60 bg-card hover:bg-secondary/30'
               }`}
             >
               <div className="flex items-start gap-3">
                 <div
                   className={`p-2 rounded-md shrink-0 ${
-                    isSelected ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground'
+                    isSelected ? 'bg-foreground text-background' : 'bg-secondary text-muted-foreground'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-foreground">{p.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded font-mono text-muted-foreground bg-secondary">
+                    <span className="text-xs font-medium text-foreground">{p.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-mono text-muted-foreground bg-secondary border border-border/40">
                       {p.badge}
                     </span>
                   </div>
@@ -94,7 +94,7 @@ export const ProviderGrid = memo(function ProviderGrid({ settings, onChange }: P
                 </div>
               </div>
               {isSelected && (
-                <div className="shrink-0 text-primary">
+                <div className="shrink-0 text-foreground">
                   <Check className="w-4 h-4" />
                 </div>
               )}

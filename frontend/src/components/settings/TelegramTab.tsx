@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { TelegramPreferences, TelegramAuditRecord } from '@/lib/types';
-import { SettingSection, SettingRow } from './ui/SettingPrimitives';
+import { SettingSection, SettingRow, StatTile } from './ui/SettingPrimitives';
 
 interface TelegramStatus {
   bot_configured: boolean;
@@ -371,7 +371,7 @@ export function TelegramTab() {
   const statuses = queueStats?.statuses as Record<string, number> | undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
         <div
           className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
@@ -398,8 +398,8 @@ export function TelegramTab() {
 
       {/* 1. Telegram Connection Gateway */}
       <SettingSection
-        title="Telegram Notification Gateway"
-        description="Stream real-time algorithmic breakouts and risk execution alerts directly to your personal chat."
+        title="Telegram notification gateway"
+        description="Real-time breakout and execution alerts in your personal chat."
         icon={Bot}
         action={
           <div className="flex items-center gap-2">
@@ -501,8 +501,8 @@ export function TelegramTab() {
       {/* 2. Notification Subscriptions & Filters */}
       {prefs && (
         <SettingSection
-          title="Signal &amp; Event Subscriptions"
-          description="Instant per-user dispatch filters. Unchecked events are muted without restarting workers."
+          title="Signal & event subscriptions"
+          description="Per-user dispatch filters. Unchecked events are muted without restarting workers."
           icon={ListChecks}
           action={
             <div className="flex items-center gap-1.5">
@@ -609,8 +609,8 @@ export function TelegramTab() {
 
       {/* 3. Signal Simulator Probe */}
       <SettingSection
-        title="Delivery Probe Simulator"
-        description="Construct a mock signal event and dispatch through rate-limiter and formatting pipelines."
+        title="Delivery probe simulator"
+        description="Mock signal event through rate-limiter and formatting pipeline."
         icon={Activity}
       >
         <div className="p-5 space-y-4">
@@ -715,8 +715,8 @@ export function TelegramTab() {
 
       {/* 4. Telemetry & Audit Trail */}
       <SettingSection
-        title="Delivery Telemetry &amp; Recent Audit"
-        description="Inspect background dispatcher queue health and delivery status logs."
+        title="Delivery telemetry & recent audit"
+        description="Background dispatcher queue health and delivery logs."
         icon={RefreshCw}
         action={
           <button
@@ -736,49 +736,28 @@ export function TelegramTab() {
       >
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Queued
-              </span>
-              <span className="font-mono font-bold text-base text-foreground mt-1 block">
-                {String(queueStats?.queued ?? '0')}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Dead Letter
-              </span>
-              <span className="font-mono font-bold text-base text-foreground mt-1 block">
-                {String(queueStats?.dead_letter ?? '0')}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Total Audited
-              </span>
-              <span className="font-mono font-bold text-base text-foreground mt-1 block">
-                {String(queueStats?.total ?? '0')}
-              </span>
-            </div>
-
-            <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-              <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-                Status Counts
-              </span>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {statuses &&
-                  Object.entries(statuses).map(([k, v]) => (
-                    <span
-                      key={k}
-                      className="text-[10px] px-1 py-0.2 rounded font-mono bg-secondary text-muted-foreground"
-                    >
-                      {k}: {String(v)}
-                    </span>
-                  ))}
-              </div>
-            </div>
+            <StatTile label="Queued" value={String(queueStats?.queued ?? '0')} />
+            <StatTile
+              label="Dead letter"
+              value={String(queueStats?.dead_letter ?? '0')}
+              tone={String(queueStats?.dead_letter ?? '0') !== '0' ? 'negative' : 'default'}
+            />
+            <StatTile label="Total audited" value={String(queueStats?.total ?? '0')} />
+            <StatTile
+              label="Status counts"
+              value={statuses ? String(Object.values(statuses).reduce((a: number, b) => a + Number(b), 0)) : '0'}
+              sub={
+                statuses ? (
+                  <span className="flex flex-wrap gap-1">
+                    {Object.entries(statuses).map(([k, v]) => (
+                      <span key={k} className="font-mono">
+                        {k}: {String(v)}
+                      </span>
+                    ))}
+                  </span>
+                ) : undefined
+              }
+            />
           </div>
 
           {audit.length > 0 ? (

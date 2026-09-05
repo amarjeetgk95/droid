@@ -6,14 +6,12 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Landmark,
-  Bitcoin,
 } from 'lucide-react';
 import type { BrokerSettings, AppSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { useSettings } from '@/components/settings/SettingsProvider';
 import { getProviderMeta } from './constants';
-import { SettingSection } from '../ui/SettingPrimitives';
+import { SettingSection, StatTile } from '../ui/SettingPrimitives';
 
 interface Props {
   settings: BrokerSettings;
@@ -114,8 +112,8 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
 
   return (
     <SettingSection
-      title="Session Telemetry &amp; Gateway Health"
-      description="Real-time token lifecycle and gateway heartbeat monitored by Render TokenManager."
+      title="Session telemetry & gateway health"
+      description="Token lifecycle and gateway heartbeat monitored by Render TokenManager."
       icon={Activity}
       action={
         <div className="flex items-center gap-2">
@@ -198,67 +196,35 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
         )}
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-            <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-              Active Provider
-            </span>
-            <span className="font-mono font-bold text-sm text-foreground mt-1 block uppercase">
-              {settings.provider}
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-            <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-              Universe
-            </span>
-            <span className="font-semibold text-sm mt-1 flex items-center gap-1.5 text-foreground">
-              {settings.apiType === 'crypto' ? (
-                <Bitcoin className="w-3.5 h-3.5 text-muted-foreground" />
-              ) : (
-                <Landmark className="w-3.5 h-3.5 text-muted-foreground" />
-              )}
-              {settings.apiType.toUpperCase()}
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-            <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-              Auth State
-            </span>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  providerMeta.tone === 'emerald'
-                    ? 'bg-emerald-500'
-                    : providerMeta.tone === 'amber'
-                      ? 'bg-amber-500'
-                      : 'bg-destructive'
-                }`}
-              />
-              <span className="text-xs font-semibold text-foreground truncate">
-                {providerMeta.label}
+          <StatTile label="Active provider" value={settings.provider.toUpperCase()} />
+          <StatTile
+            label="Universe"
+            value={settings.apiType.toUpperCase()}
+          />
+          <StatTile
+            label="Auth state"
+            value={
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    providerMeta.tone === 'emerald'
+                      ? 'bg-emerald-500'
+                      : providerMeta.tone === 'amber'
+                        ? 'bg-amber-500'
+                        : 'bg-destructive'
+                  }`}
+                />
+                <span className="truncate">{providerMeta.label}</span>
               </span>
-            </div>
-            <span className="text-[10px] text-muted-foreground block truncate mt-0.5">
-              {providerMeta.sub}
-            </span>
-          </div>
-
-          <div className="bg-secondary/30 border border-border/40 rounded-lg p-3">
-            <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block">
-              Stream Health
-            </span>
-            <span
-              className={`font-mono text-xs font-semibold mt-1 block ${
-                providerMeta.connected ? 'text-emerald-600' : 'text-muted-foreground'
-              }`}
-            >
-              {providerMeta.connected ? 'Connected' : 'Offline'}
-            </span>
-            <span className="text-[10px] text-muted-foreground block truncate mt-0.5">
-              {providerMeta.connected ? 'WebSocket Stream Live' : 'Auth Required'}
-            </span>
-          </div>
+            }
+            sub={providerMeta.sub}
+          />
+          <StatTile
+            label="Stream health"
+            value={providerMeta.connected ? 'Connected' : 'Offline'}
+            tone={providerMeta.connected ? 'positive' : 'default'}
+            sub={providerMeta.connected ? 'WebSocket live' : 'Auth required'}
+          />
         </div>
       </div>
     </SettingSection>

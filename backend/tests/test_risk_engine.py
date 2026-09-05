@@ -12,6 +12,11 @@ from decimal import Decimal
 from app.signals.risk_engine import central_risk_engine, StrategySetup, resolve_realistic_atr
 
 
+@pytest.fixture(autouse=True)
+def open_market_fixture(mock_market_open):
+    yield
+
+
 def test_nifty_normal_5m_trade_acceptance():
     setup = StrategySetup(
         strategy_name="BREAKOUT",

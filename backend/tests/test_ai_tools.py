@@ -42,10 +42,29 @@ async def test_execute_get_option_chain_summary():
 
 @pytest.mark.asyncio
 async def test_execute_get_futures_overview():
+    # When futures is unavailable, return status without fake data
     res = await execute_tool("get_futures_overview", {"symbol": "NIFTY"})
     assert res["symbol"] == "NIFTY"
-    assert "buildup" in res
-    assert "term_structure_curve" in res
+    assert res.get("status") == "futures_data_unavailable"
+
+    # With mocked futures provider
+    from types import SimpleNamespace
+    from unittest.mock import patch, AsyncMock
+
+    mock_futures = SimpleNamespace(
+        spot_price=25000.0,
+        term_structure=SimpleNamespace(
+            contracts=[SimpleNamespace(ltp=25020.0, basis=20.0, basis_percent=0.08, cost_of_carry_percent=5.0, open_interest=10000, oi_change_percent=2.5)],
+            curve_state="CONTANGO",
+        ),
+        buildup=SimpleNamespace(buildup_type="LONG_BUILDUP", interpretation="Bullish", strength="STRONG"),
+        rollover=SimpleNamespace(rollover_percent=75.0, rollover_pace="IN_LINE", three_month_avg_rollover=72.5),
+    )
+    with patch("app.ai.tools._fetch_futures_safe", new=AsyncMock(return_value=mock_futures)):
+        res_mock = await execute_tool("get_futures_overview", {"symbol": "NIFTY"})
+        assert res_mock["symbol"] == "NIFTY"
+        assert "buildup" in res_mock
+        assert "term_structure_curve" in res_mock
 
 
 @pytest.mark.asyncio
