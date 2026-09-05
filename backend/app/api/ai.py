@@ -793,6 +793,7 @@ async def get_deep_insight(
     symbol: str,
     provider: str | None = Query(default=None),
     model: str | None = Query(default=None),
+    gemini_model: str | None = Query(default=None, alias="geminiModel"),
     openrouter_api_key: str | None = Query(default=None, alias="openRouterApiKey"),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     x_openrouter_model: str | None = Header(default=None, alias="X-OpenRouter-Model"),
@@ -810,7 +811,7 @@ async def get_deep_insight(
         effective_provider = (provider or x_ai_provider or "").strip() or None
         effective_openrouter_key = (openrouter_api_key or x_openrouter_key or "").strip() or None
         effective_gemini_key = (gemini_api_key or x_gemini_key or "").strip() or None
-        effective_model = (model or x_openrouter_model or "").strip() or None
+        effective_model = (model or gemini_model or x_openrouter_model or "").strip() or None
 
         payload = await deep_insight_service.get_deep_insight(
             symbol.upper(),

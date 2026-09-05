@@ -169,42 +169,49 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
 
     try {
       const s = getStoredSettings();
-      const headers: Record<string, string> = {};
       const qp = new URLSearchParams();
 
       const ai = s?.ai;
       if (ai) {
         const effProvider = ai.provider === 'mock_ai' ? 'openrouter' : (ai.provider || 'openrouter');
         qp.set('provider', effProvider);
-        headers['X-AI-Provider'] = effProvider;
 
-        if (ai.openRouterApiKey) {
-          headers['X-OpenRouter-Key'] = ai.openRouterApiKey;
-          qp.set('openRouterApiKey', ai.openRouterApiKey);
-        }
-        const orModel = ai.openRouterSelectedModel || ai.openRouterModel;
-        if (orModel) {
-          headers['X-OpenRouter-Model'] = orModel;
-          qp.set('model', orModel);
-        }
-        if (ai.geminiApiKey) {
-          headers['X-Gemini-Key'] = ai.geminiApiKey;
-          qp.set('geminiApiKey', ai.geminiApiKey);
-        }
-        if (ai.geminiModel) {
-          headers['X-Gemini-Model'] = ai.geminiModel;
+        if (effProvider === 'gemini') {
+          if (ai.geminiApiKey) {
+            qp.set('geminiApiKey', ai.geminiApiKey);
+          }
+          if (ai.geminiModel) {
+            qp.set('model', ai.geminiModel);
+            qp.set('geminiModel', ai.geminiModel);
+          }
+        } else {
+          if (ai.openRouterApiKey) {
+            qp.set('openRouterApiKey', ai.openRouterApiKey);
+          }
+          const orModel = ai.openRouterSelectedModel || ai.openRouterModel;
+          if (orModel) {
+            qp.set('model', orModel);
+          }
         }
       }
 
       const queryString = qp.toString();
       const endpoint = `${API_BASE}/api/v1/ai/deep-insight/${targetSymbol}${queryString ? `?${queryString}` : ''}`;
       const response = await fetch(endpoint, {
-        headers,
+        headers: {
+          'Accept': 'application/json',
+        },
         signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let errDetail = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errJson = await response.json();
+          if (errJson?.detail) errDetail = errJson.detail;
+          else if (errJson?.error) errDetail = errJson.error;
+        } catch {}
+        throw new Error(errDetail);
       }
 
       const data: DeepInsightApiResponse = await response.json();
@@ -216,7 +223,10 @@ export function DeepInsightProvider({ children }: { children: React.ReactNode })
       dispatch({ type: 'FETCH_SUCCESS', payload: data.data });
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      let msg = err instanceof Error ? err.message : 'Unknown error';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        msg = 'Unable to connect to backend server. The cloud service may be waking up from sleep, or check your internet connection.';
+      }
       dispatch({ type: 'FETCH_ERROR', error: msg });
     }
   }, [symbol]);

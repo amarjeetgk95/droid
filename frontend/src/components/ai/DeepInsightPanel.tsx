@@ -15,6 +15,7 @@ import {
   BarChart3,
   Clock,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import type { DeepInsightDirection, DeepInsightRegime, DeepInsightSignalState } from '@/lib/deep-insight-types';
 
@@ -69,11 +70,20 @@ function LoadingState() {
 }
 
 function ErrorState({ msg }: { msg: string }) {
+  const { symbol, evaluate, state } = useDeepInsight();
   return (
     <div className="h-full flex items-center justify-center py-16">
-      <div className="text-center max-w-md p-6 bg-card border border-border rounded-xl">
+      <div className="text-center max-w-md p-6 bg-card border border-border rounded-xl flex flex-col items-center gap-3">
         <div className="text-red-500 font-bold mb-1">Intelligence Error</div>
         <div className="text-muted-foreground text-xs leading-relaxed">{msg || 'Failed to load deep insight'}</div>
+        <button
+          onClick={() => evaluate(symbol)}
+          disabled={state.status === 'loading'}
+          className="mt-2 flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold cursor-pointer transition-all shadow-xs disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${state.status === 'loading' ? 'animate-spin' : ''}`} />
+          <span>Retry Analysis</span>
+        </button>
       </div>
     </div>
   );
