@@ -22,11 +22,7 @@ export function RenderIntegrationCard({ settings }: Props) {
 
   if (settings.apiType !== 'indian') return null;
 
-  const customFyersAppId = settings.fyers?.appId?.trim();
-  const customFyersSecret = settings.fyers?.secret?.trim();
-  const fyersServerLoginUrl = customFyersAppId && customFyersSecret
-    ? `${FYERS_LOGIN_URL}?app_id=${encodeURIComponent(customFyersAppId)}&secret_key=${encodeURIComponent(customFyersSecret)}`
-    : FYERS_LOGIN_URL;
+  const fyersServerLoginUrl = FYERS_LOGIN_URL;
   const flattradeServerLoginUrl = FLATTRADE_LOGIN_URL;
   const providerKey = settings.provider === 'fyers' ? 'fyers' : 'flattrade';
   const portalUrl =

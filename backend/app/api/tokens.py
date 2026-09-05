@@ -438,10 +438,11 @@ async def fyers_oauth_callback(
                         </div>
 
                         <div style="text-align:left;color:#94a3b8;font-size:12px;line-height:1.6;border-top:1px solid #334155;padding-top:14px;">
-                            <p style="color:#e2e8f0;font-weight:600;margin:0 0 6px 0;">Why Fyers returns "internal server error":</p>
+                            <p style="color:#e2e8f0;font-weight:600;margin:0 0 6px 0;">Common causes for "{err_text}":</p>
                             <ol style="margin:0;padding-left:18px;">
-                                <li><strong>App ID Mismatch:</strong> In Fyers MyAPI, verify your App ID matches <code>{app_id}</code> character-by-character.</li>
-                                <li><strong>Secret ID Mismatch:</strong> In Fyers MyAPI, copy the <strong>Secret ID</strong> (not trading PIN). If you recently regenerated it, the old secret is invalid.</li>
+                                <li><strong>Secret ID Mismatch (Most Common):</strong> Fyers creates a SHA-256 hash of <code>App_ID:Secret_ID</code>. If the Secret ID is wrong, outdated, or regenerated, Fyers returns <code>invalid app id hash</code>. Note that <strong>Secret ID</strong> is from the API dashboard, NOT your User/Client ID, login password, or trading PIN.</li>
+                                <li><strong>Secret ID Was Regenerated:</strong> In Fyers MyAPI Dashboard, regenerating the secret key revokes the previous one immediately. Copy the newest Secret ID.</li>
+                                <li><strong>App ID Mismatch:</strong> In Fyers MyAPI, verify your App ID matches <code>{app_id}</code> character-by-character (including <code>-100</code>).</li>
                                 <li><strong>Redirect URL:</strong> In Fyers MyAPI Dashboard, ensure Redirect URL is exactly: <code style="color:#38bdf8;word-break:break-all;">{redirect_uri}</code></li>
                                 <li><strong>App Status:</strong> In <a href="https://myapi.fyers.in/dashboard" target="_blank" style="color:#38bdf8;">Fyers MyAPI Dashboard</a>, ensure app toggle is <strong>Active</strong>.</li>
                             </ol>
