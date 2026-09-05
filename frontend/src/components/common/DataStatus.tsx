@@ -2,19 +2,49 @@ import { DataStatus as DataStatusType } from '@/lib/types';
 
 export function DataStatus({ status }: { status: DataStatusType }) {
   let badgeClass = '';
+  let icon = '●';
+  let label = status as string;
+
   switch (status) {
-    case 'OFFLINE': badgeClass = 'bg-warning/20 text-warning border-warning/50'; break;
-    case 'LIVE': badgeClass = 'bg-success/20 text-success border-success/50 animate-pulse'; break;
-    case 'STALE': badgeClass = 'bg-yellow-500/20 text-yellow-500 border-yellow-500/50'; break;
-    case 'CLOSED': badgeClass = 'bg-slate-500/20 text-muted-foreground border-slate-500/50'; break;
+    case 'LIVE':
+      badgeClass = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30';
+      icon = '●';
+      label = 'LIVE';
+      break;
+    case 'STALE':
+      badgeClass = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30';
+      icon = '▲';
+      label = 'STALE';
+      break;
+    case 'OFFLINE':
+      badgeClass = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30';
+      icon = '■';
+      label = 'OFFLINE';
+      break;
+    case 'CLOSED':
+      badgeClass = 'bg-secondary text-muted-foreground border-border';
+      icon = '○';
+      label = 'CLOSED';
+      break;
     case 'DISCONNECTED':
-    case 'ERROR': badgeClass = 'bg-destructive/20 text-destructive border-destructive/50'; break;
-    default: badgeClass = 'bg-muted text-muted-foreground border-border';
+    case 'ERROR':
+      badgeClass = 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30';
+      icon = '■';
+      label = 'FEED DOWN';
+      break;
+    default:
+      badgeClass = 'bg-muted text-muted-foreground border-border';
+      icon = '○';
+      label = status || 'UNKNOWN';
   }
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${badgeClass}`}>
-      {status === 'OFFLINE' ? 'OFFLINE DATA' : status === 'CLOSED' ? 'MARKET CLOSED' : status}
+    <span
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-tight border select-none ${badgeClass}`}
+    >
+      <span className={`text-[8px] leading-none ${status === 'LIVE' ? 'animate-pulse' : ''}`}>{icon}</span>
+      <span>{label}</span>
     </span>
   );
 }
+

@@ -32,21 +32,35 @@ logger = structlog.get_logger()
 # concurrent requests (or a request racing lifespan) can never spawn a second
 # upstream FYERS connection.
 _provider_lock: asyncio.Lock | None = None
+_provider_loop: asyncio.AbstractEventLoop | None = None
 # Serializes Telegram stack starts for the same reason.
 _telegram_lock: asyncio.Lock | None = None
+_telegram_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_provider_lock() -> asyncio.Lock:
-    global _provider_lock
-    if _provider_lock is None:
+    global _provider_lock, _provider_loop
+    current_loop = None
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    if _provider_lock is None or (_provider_loop is not None and _provider_loop is not current_loop):
         _provider_lock = asyncio.Lock()
+        _provider_loop = current_loop
     return _provider_lock
 
 
 def _get_telegram_lock() -> asyncio.Lock:
-    global _telegram_lock
-    if _telegram_lock is None:
+    global _telegram_lock, _telegram_loop
+    current_loop = None
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    if _telegram_lock is None or (_telegram_loop is not None and _telegram_loop is not current_loop):
         _telegram_lock = asyncio.Lock()
+        _telegram_loop = current_loop
     return _telegram_lock
 
 

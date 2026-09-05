@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,7 +57,6 @@ async def lifespan(app: FastAPI):
     # Load persisted broker config from DB (so Groww token survives restart/Re-deploy)
     # Non-blocking with 3s timeout — previously blocked lifespan for 10s+ when DB cold (caused slow load)
     try:
-        import asyncio as _aio
         from app.core.database import get_async_session_factory
         from app.core.broker_runtime import apply_app_settings
         from app.providers.registry import reset_provider
@@ -73,8 +73,8 @@ async def lifespan(app: FastAPI):
                             reset_provider()
                             logger.info("startup_broker_config_loaded_from_db", provider=_row[0].get("broker", {}).get("provider") if isinstance(_row[0], dict) else "unknown")
             try:
-                await _aio.wait_for(_load_broker(), timeout=3.0)
-            except _aio.TimeoutError:
+                await asyncio.wait_for(_load_broker(), timeout=3.0)
+            except asyncio.TimeoutError:
                 logger.warning("startup_broker_config_load_timeout", hint="DB slow — continuing with env config")
     except Exception as _e:
         logger.warning("startup_broker_config_load_failed", error=str(_e)[:200])
@@ -94,8 +94,13 @@ async def lifespan(app: FastAPI):
     await start_provider_with_retry()
 
     # Pre-warm dashboard summary cache in background so the very first user request loads in <5ms
-    import asyncio as _asyncio
-    _asyncio.create_task(dashboard_api.prewarm_dashboard_summary())
+    async def _safe_prewarm():
+        try:
+            await dashboard_api.prewarm_dashboard_summary()
+        except Exception as prewarm_err:
+            logger.warning("dashboard_summary_prewarm_failed", error=str(prewarm_err)[:200])
+
+    asyncio.create_task(_safe_prewarm())
 
     # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
     await hpi_service.start()
@@ -138,23 +143,32 @@ async def lifespan(app: FastAPI):
     # ── BACKEND SHUTDOWN: gracefully close persistent services ──
     # Only here (process teardown) are FYERS/Telegram stopped — never on
     # frontend disconnect.
+    async def _shutdown_services():
+        try:
+            from app.signals.worker import automated_signal_worker
+            await automated_signal_worker.stop()
+        except Exception:
+            pass
+        try:
+            from app.services.morning_briefing_service import morning_briefing_service
+            await morning_briefing_service.stop()
+        except Exception:
+            pass
+        await stop_telegram_stack()
+        await pattern_outcome_worker.stop()
+        await hpi_service.stop()
+        await stop_provider_stream()
+        await central_feed.stop()
+        await snapshot_service.stop()
+        await write_pipeline.stop()
+
     try:
-        from app.signals.worker import automated_signal_worker
-        await automated_signal_worker.stop()
-    except Exception:
-        pass
-    try:
-        from app.services.morning_briefing_service import morning_briefing_service
-        await morning_briefing_service.stop()
-    except Exception:
-        pass
-    await stop_telegram_stack()
-    await pattern_outcome_worker.stop()
-    await hpi_service.stop()
-    await stop_provider_stream()
-    await central_feed.stop()
-    await snapshot_service.stop()
-    await write_pipeline.stop()
+        await asyncio.wait_for(_shutdown_services(), timeout=15.0)
+    except asyncio.TimeoutError:
+        logger.warning("app_shutdown_timeout", detail="Graceful shutdown timed out after 15s")
+    except Exception as _shut_err:
+        logger.warning("app_shutdown_error", error=str(_shut_err)[:200])
+
     logger.info("app_shutdown")
 
 
@@ -177,8 +191,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "User-Agent", "X-Requested-With"],
     )
     
     # Root endpoint

@@ -693,15 +693,17 @@ async def generate_signal(req: GenerateSignalRequest):
     except Exception:
         quote = None
     quote_ok = quote is not None and getattr(quote, "ltp", None) is not None and not _quote_is_fallback(quote)
-    spot = Decimal(str(quote.ltp)) if quote_ok else None
-    if spot is None:
-        if req.current_price or req.trigger or req.trigger_level:
-            spot = Decimal(str(req.current_price or req.trigger or req.trigger_level))
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Live price for {u} is unavailable (feed degraded) and no manual price was supplied. Retry when LIVE.",
-            )
+    if req.current_price:
+        spot = Decimal(str(req.current_price))
+    elif quote_ok:
+        spot = Decimal(str(quote.ltp))
+    elif req.trigger or req.trigger_level:
+        spot = Decimal(str(req.trigger or req.trigger_level))
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Live price for {u} is unavailable (feed degraded) and no manual price was supplied. Retry when LIVE.",
+        )
     tick = Decimal("0.05")
 
     is_put = "PUT" in dir_val or "BEARISH" in dir_val

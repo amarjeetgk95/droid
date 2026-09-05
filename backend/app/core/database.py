@@ -2,6 +2,7 @@ import os
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 import structlog
 
@@ -142,6 +143,3 @@ def get_sync_session_factory():
 def is_database_configured() -> bool:
     """Check if database URL is configured."""
     return bool(settings.database_url)
-
-
-from sqlalchemy.orm import sessionmaker

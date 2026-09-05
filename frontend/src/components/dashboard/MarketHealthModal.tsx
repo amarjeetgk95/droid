@@ -1,12 +1,18 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { MarketHealthStatus } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { api } from '@/lib/api';
-import { X, Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw, KeyRound, ExternalLink } from 'lucide-react';
+import { Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw, KeyRound, ExternalLink } from 'lucide-react';
 import { safeStr } from '@/lib/utils';
 import { getStoredSettings } from '@/lib/settings';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export function MarketHealthModal({
   isOpen,
@@ -66,23 +72,6 @@ export function MarketHealthModal({
     };
   }, [isOpen]);
 
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!isOpen) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    dialogRef.current?.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [isOpen, onClose]);
-
   const handleResetCircuitBreaker = async () => {
     setActionLoading(true);
     try {
@@ -107,52 +96,35 @@ export function MarketHealthModal({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={onClose}
-    >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="High-Frequency & Ingestion Telemetry"
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-card border border-border rounded-xl w-full max-w-xl shadow-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none"
-      >
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border bg-muted/40">
+        <DialogHeader className="p-4 border-b border-border bg-secondary/30">
           <div className="flex items-center gap-2">
             <Activity className="w-5 h-5 text-primary" />
-            <h2 className="font-bold text-base text-foreground">High-Frequency & Ingestion Telemetry</h2>
+            <DialogTitle className="font-bold text-sm text-foreground">
+              High-Frequency &amp; Ingestion Telemetry
+            </DialogTitle>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
         {/* Content */}
-        <div className="p-6 space-y-5 text-sm max-h-[80vh] overflow-y-auto">
+        <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
           {/* Main Status Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="bg-secondary/70 p-3 rounded-lg border border-border">
-              <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <div className="bg-secondary/50 p-2.5 rounded-lg border border-border">
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1">
                 <Server className="w-3.5 h-3.5 text-primary" /> Provider
               </span>
               <p className="font-bold text-foreground capitalize">{safeStr(health?.provider, '—')}</p>
-              <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-mono">
+              <span className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.2 rounded font-mono">
                 {health?.mode || 'OFFLINE'}
               </span>
             </div>
 
-            <div className="bg-secondary/70 p-3 rounded-lg border border-border">
-              <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
+            <div className="bg-secondary/50 p-2.5 rounded-lg border border-border">
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1">
                 <Radio className="w-3.5 h-3.5 text-success" /> Feed Stream
               </span>
               <p className={`font-bold ${streamState === 'CONNECTED' ? 'text-success' : 'text-warning'}`}>
@@ -163,20 +135,20 @@ export function MarketHealthModal({
               </span>
             </div>
 
-            <div className="bg-secondary/70 p-3 rounded-lg border border-border sm:col-span-1 col-span-2">
-              <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
+            <div className="bg-secondary/50 p-2.5 rounded-lg border border-border sm:col-span-1 col-span-2">
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-primary" /> Circuit Breaker
               </span>
               <p className={`font-bold ${health?.circuit_breaker_state === 'OPEN' ? 'text-destructive' : 'text-foreground'}`}>
                 {health?.circuit_breaker_state || 'CLOSED'}
               </p>
-              <span className="text-[10px] text-success">Active Protection</span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Active Protection</span>
             </div>
           </div>
 
           {/* Broker Auth Status */}
-          <div className="bg-secondary/70 p-3 rounded-lg border border-border">
-            <span className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
+          <div className="bg-secondary/50 p-2.5 rounded-lg border border-border">
+            <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1">
               <KeyRound className="w-3.5 h-3.5 text-primary" /> Broker Auth
             </span>
             <p className={`font-bold ${(tokenStatus as any)?.is_token_valid ? 'text-success' : 'text-warning'}`}>
@@ -195,7 +167,7 @@ export function MarketHealthModal({
                 href={`https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400 hover:text-amber-300 transition-colors"
+                className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 hover:underline"
               >
                 Re-authenticate <ExternalLink className="w-3 h-3" />
               </a>
@@ -203,10 +175,10 @@ export function MarketHealthModal({
           </div>
 
           {/* Buffer & Queue Metrics */}
-          <div className="border border-border rounded-lg p-4 bg-muted/20 space-y-3">
+          <div className="border border-border rounded-lg p-3 bg-secondary/30 space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-warning" /> High-Frequency Ring Buffer
+                <Zap className="w-3.5 h-3.5 text-amber-500" /> High-Frequency Ring Buffer
               </span>
               <span className="text-xs text-muted-foreground font-mono">
                 Depth: {health?.buffer_depth ?? 0} / 10,000
@@ -220,15 +192,15 @@ export function MarketHealthModal({
               />
             </div>
 
-            <div className="flex justify-between text-xs text-muted-foreground pt-1">
+            <div className="flex justify-between text-[11px] text-muted-foreground pt-1">
               <span>Subscriptions: {health?.subscriptions ?? 4}</span>
               <span>Dropped Events: {health?.dropped_events ?? 0}</span>
             </div>
           </div>
 
-          {/* Phase 3 Infrastructure: Cache & Time-Series Batch Pipeline */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="border border-border rounded-lg p-3 bg-muted/20 space-y-2">
+          {/* LRU Cache & Batch Pipeline */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="border border-border rounded-lg p-2.5 bg-secondary/30 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-xs text-foreground flex items-center gap-1">
                   <Database className="w-3.5 h-3.5 text-primary" /> LRU Cache Layer
@@ -241,7 +213,7 @@ export function MarketHealthModal({
                   Flush
                 </button>
               </div>
-              <div className="text-xs space-y-1 text-muted-foreground">
+              <div className="text-[11px] space-y-1 text-muted-foreground">
                 <div className="flex justify-between">
                   <span>Hit Ratio:</span>
                   <span className="font-mono font-medium text-foreground">
@@ -257,13 +229,13 @@ export function MarketHealthModal({
               </div>
             </div>
 
-            <div className="border border-border rounded-lg p-3 bg-muted/20 space-y-2">
+            <div className="border border-border rounded-lg p-2.5 bg-secondary/30 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-xs text-foreground flex items-center gap-1">
                   <RefreshCw className="w-3.5 h-3.5 text-success" /> Batch Pipeline
                 </span>
               </div>
-              <div className="text-xs space-y-1 text-muted-foreground">
+              <div className="text-[11px] space-y-1 text-muted-foreground">
                 <div className="flex justify-between">
                   <span>Write Queue:</span>
                   <span className="font-mono font-medium text-foreground">
@@ -281,7 +253,7 @@ export function MarketHealthModal({
           </div>
 
           {/* System Uptime */}
-          <div className="flex justify-between items-center text-xs border-t border-border pt-3">
+          <div className="flex justify-between items-center text-[11px] border-t border-border pt-2">
             <div>
               <span className="text-muted-foreground">Provider Uptime:</span>
               <span className="font-mono font-medium ml-1.5 text-foreground">
@@ -300,24 +272,22 @@ export function MarketHealthModal({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-border bg-muted/40 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleResetCircuitBreaker}
-              disabled={actionLoading}
-              className="px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs transition-colors cursor-pointer"
-            >
-              Reset Circuit Breaker
-            </button>
-          </div>
+        <div className="p-3 border-t border-border bg-secondary/30 flex items-center justify-between gap-2">
+          <button
+            onClick={handleResetCircuitBreaker}
+            disabled={actionLoading}
+            className="px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs transition-colors cursor-pointer border border-border"
+          >
+            Reset Circuit Breaker
+          </button>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-xs transition-colors cursor-pointer"
+            className="px-4 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-xs transition-colors cursor-pointer"
           >
             Close Telemetry
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

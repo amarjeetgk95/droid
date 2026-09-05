@@ -1,29 +1,31 @@
 @import "tailwindcss";
 
-/* Light-only design system — clean, airy, fast */
+/* Dual-Theme Tokenized Architecture (Tailwind v4 inline theme) */
 @theme inline {
-  --color-background: #f8fafc;
-  --color-foreground: #0f172a;
-  --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #0f172a;
-  --color-primary: #2563eb;
-  --color-primary-foreground: #f8fafc;
-  --color-secondary: #f1f5f9;
-  --color-secondary-foreground: #334155;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-accent: #f1f5f9;
-  --color-accent-foreground: #0f172a;
-  --color-destructive: #dc2626;
+  --color-background: var(--bg-page);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--bg-surface);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg-surface);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--accent-primary);
+  --color-primary-foreground: var(--accent-primary-fg);
+  --color-secondary: var(--bg-surface-secondary);
+  --color-secondary-foreground: var(--text-secondary);
+  --color-muted: var(--bg-surface-secondary);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--bg-surface-secondary);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--status-negative);
   --color-destructive-foreground: #f8fafc;
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-ring: #2563eb;
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger: #dc2626;
+  --color-border: var(--border-subtle);
+  --color-input: var(--border-subtle);
+  --color-ring: var(--accent-primary);
+  --color-success: var(--status-positive);
+  --color-warning: var(--status-warning);
+  --color-danger: var(--status-negative);
+  --color-positive: var(--status-positive);
+  --color-negative: var(--status-negative);
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
@@ -33,22 +35,50 @@
 }
 
 :root {
+  /* Institutional Light (Default) */
+  --bg-page: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-secondary: #f1f5f9;
+  --border-subtle: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --accent-primary: #2563eb;
+  --accent-primary-fg: #f8fafc;
+  --status-positive: #16a34a;
+  --status-negative: #dc2626;
+  --status-warning: #d97706;
+
   --sidebar-w: 268px;
   --sidebar-w-collapsed: 68px;
   --header-h: 56px;
 }
 
+[data-theme="dark"],
+.dark {
+  /* Professional Terminal Dark */
+  --bg-page: #0c0d10;
+  --bg-surface: #16181d;
+  --bg-surface-secondary: #1e2028;
+  --border-subtle: #2a2d35;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --accent-primary: #3b82f6;
+  --accent-primary-fg: #ffffff;
+  --status-positive: #22c55e;
+  --status-negative: #ef4444;
+  --status-warning: #f59e0b;
+}
+
 html {
-  color-scheme: light;
   scrollbar-gutter: stable;
   font-feature-settings: "tnum" 1, "ss01" 1;
 }
 
 body {
-  background-color: var(--color-background);
-  color: var(--color-foreground);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -73,12 +103,19 @@ header { contain-intrinsic-size: 0 56px; }
   contain-intrinsic-size: 0 320px;
 }
 
-/* Scrollbar — light */
+/* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--color-background); }
+::-webkit-scrollbar-track { background: var(--bg-page); }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb,
+.dark ::-webkit-scrollbar-thumb { background: #334155; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 * { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+[data-theme="dark"] *,
+.dark * { scrollbar-color: #334155 transparent; }
+
+/* Typographic scale */
+.text-2xs { font-size: 10px; line-height: 14px; }
 
 /* Marquee */
 @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
@@ -107,9 +144,23 @@ header { contain-intrinsic-size: 0 56px; }
 .tabular-nums { font-variant-numeric: tabular-nums; }
 .font-mono { font-family: var(--font-mono); }
 
+/* Price micro-flash animations */
+@keyframes tickUp { 
+  0% { background-color: rgba(22, 163, 74, 0.25); } 
+  100% { background-color: transparent; } 
+}
+@keyframes tickDown { 
+  0% { background-color: rgba(220, 38, 38, 0.25); } 
+  100% { background-color: transparent; } 
+}
+.tick-up { animation: tickUp 0.6s ease-out; }
+.tick-down { animation: tickDown 0.6s ease-out; }
+
 @keyframes shimmer { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-.skeleton { animation: shimmer 1.6s ease-in-out infinite; background: #e2e8f0; }
+.skeleton { animation: shimmer 1.6s ease-in-out infinite; background: var(--color-muted); }
 
 @keyframes livePulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 .animate-live { animation: livePulse 1.8s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .animate-live { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { 
+  .animate-live, .tick-up, .tick-down { animation: none !important; } 
+}

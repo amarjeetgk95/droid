@@ -289,7 +289,7 @@ export default function MarketIntelligencePage() {
 
       {/* Top instrument tabs — 5 tabs NOT in global sidebar */}
       <div className="border-b border-border">
-        <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-px scrollbar-none" role="tablist">
+        <div className="flex gap-1.5 sm:gap-2 overflow-x-auto pb-2 scrollbar-none" role="tablist">
           {INSTRUMENTS.map(iid => {
             const isActive = selected === iid;
             const label = INSTRUMENT_LABELS[iid];
@@ -300,9 +300,13 @@ export default function MarketIntelligencePage() {
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => { setSelected(iid); if (!isBreakout) setSecondary('overview'); }}
-                className={`px-3 sm:px-5 py-2.5 text-sm font-bold tracking-widest border-b-2 whitespace-nowrap transition-colors ${isActive ? 'border-primary text-foreground bg-secondary/50' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/30'} ${isBreakout ? 'flex items-center gap-1.5' : ''}`}
+                className={`px-3.5 sm:px-4 py-2 text-xs font-bold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/70'
+                } ${isBreakout ? 'flex items-center gap-1.5' : ''}`}
               >
-                {isBreakout && <Zap className="w-4 h-4" />}{label}
+                {isBreakout && <Zap className="w-3.5 h-3.5" />}{label}
               </button>
             );
           })}
@@ -311,62 +315,77 @@ export default function MarketIntelligencePage() {
 
       {/* Selected Instrument Workspace */}
       {isLoading && (
-        <div className="bg-card border rounded-lg p-8 animate-pulse space-y-3">
+        <div className="bg-card border border-border rounded-xl p-8 animate-pulse space-y-3">
           <div className="h-6 bg-muted rounded w-32" /> <div className="h-4 bg-muted rounded w-48" /> <div className="h-40 bg-muted rounded" />
         </div>
       )}
 
       {err && !data && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-6 text-sm">
-          <p className="font-semibold text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Failed to load {selected}</p>
-          <p className="text-muted-foreground mt-1">{err}</p>
-          <p className="text-xs mt-2">Backend: {(process.env.NEXT_PUBLIC_API_URL || 'relative') + `/api/v1/institutional/market-intelligence/${selected}/full`}</p>
+        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-xl text-sm space-y-2">
+          <p className="font-semibold text-destructive flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" /> Failed to load {selected}
+          </p>
+          <p className="text-muted-foreground text-xs">{err}</p>
+          <button
+            onClick={() => fetchFor(selected, true)}
+            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Retry
+          </button>
         </div>
       )}
 
       {data && (
         <div className="space-y-4">
           {/* Instrument Header (§5) */}
-          <div className="bg-card border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
             <div>
-              <h2 className="text-lg font-bold tracking-tight">{data.header.display_name} <span className="text-sm font-mono text-muted-foreground">{data.header.instrument}</span></h2>
+              <h2 className="text-lg font-bold tracking-tight text-foreground">
+                {data.header.display_name} <span className="text-xs font-mono text-muted-foreground">{data.header.instrument}</span>
+              </h2>
               <div className="flex items-center gap-2 mt-1">
-                <span className={`w-2 h-2 rounded-full ${data.header.live_status === 'LIVE' ? 'bg-emerald-500 animate-pulse' : data.header.live_status === 'FEED_DEGRADED' ? 'bg-red-500' : 'bg-amber-400'}`} />
-                <span className="text-xs font-mono font-bold">{data.header.live_status}</span>
+                <span className={`w-2 h-2 rounded-full ${data.header.live_status === 'LIVE' ? 'bg-emerald-500 animate-pulse' : data.header.live_status === 'FEED_DEGRADED' ? 'bg-destructive' : 'bg-amber-400'}`} />
+                <span className="text-xs font-mono font-bold text-foreground">{data.header.live_status}</span>
                 <span className="text-xs text-muted-foreground">Price: <span className="font-mono font-bold text-foreground">{data.header.price_formatted}</span></span>
-                <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium">{data.header.session_label}</span></span>
+                <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium text-foreground">{data.header.session_label}</span></span>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-xs text-muted-foreground">Last Update</div>
-              <div className="text-xs font-mono font-medium">{data.header.last_update_iso}</div>
-              <div className="text-[11px] text-muted-foreground">{data.header.data_quality} • {data.header.feed_health} • {data.asset_class} {data.pipeline}</div>
+              <div className="text-[11px] text-muted-foreground">Last Update</div>
+              <div className="text-xs font-mono font-medium text-foreground">{data.header.last_update_iso}</div>
+              <div className="text-[10px] text-muted-foreground">{data.header.data_quality} • {data.header.feed_health} • {data.asset_class} {data.pipeline}</div>
             </div>
           </div>
 
           {/* FE-degraded prominent banner (§25/§17) */}
           {isDegraded && (
-            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
-              <p className="font-bold text-sm flex items-center gap-2 text-amber-800"><AlertTriangle className="w-4 h-4" /> ⚠ FEED DEGRADED</p>
-              <p className="text-xs text-muted-foreground mt-1">Sequence integrity failure detected.</p>
-              <ul className="text-xs mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1 list-disc pl-4">
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs">
+              <p className="font-bold text-sm flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="w-4 h-4 shrink-0" /> FEED DEGRADED
+              </p>
+              <p className="text-muted-foreground mt-1">Sequence integrity failure detected.</p>
+              <ul className="text-xs mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1 list-disc pl-4 text-muted-foreground">
                 <li>Breakout candidates: DISABLED</li>
                 <li>AI confirmation: DISABLED</li>
                 <li>Execution: DISABLED</li>
               </ul>
-              <p className="text-xs font-medium mt-2">Waiting for clean resynchronization.</p>
-              {data.data_health.feed_reason && <p className="text-xs text-muted-foreground mt-1">Reason: {data.data_health.feed_reason}</p>}
+              <p className="font-medium mt-2 text-foreground">Waiting for clean resynchronization.</p>
+              {data.data_health.feed_reason && <p className="text-muted-foreground mt-1">Reason: {data.data_health.feed_reason}</p>}
             </div>
           )}
 
           {/* Secondary detail navigation — below primary tabs (§19) */}
-          <div className="bg-card border rounded-lg p-2 overflow-x-auto">
+          <div className="bg-secondary/40 border border-border rounded-xl p-1.5 overflow-x-auto">
             <div className="flex gap-1 flex-wrap sm:flex-nowrap sm:overflow-x-auto">
               {SECONDARY_TABS.map(t => (
                 <button
                   key={t.id}
                   onClick={() => setSecondary(t.id)}
-                  className={`px-2.5 py-1.5 text-xs font-medium rounded whitespace-nowrap border ${secondary === t.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary'}`}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
+                    secondary === t.id
+                      ? 'bg-card text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                  }`}
                 >
                   {t.label}
                 </button>

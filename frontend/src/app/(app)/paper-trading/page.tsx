@@ -24,6 +24,8 @@ import { PortfolioBanner } from '@/components/paper/PortfolioBanner';
 import { PositionsTable } from '@/components/paper/PositionsTable';
 import { OrderBookTable } from '@/components/paper/OrderBookTable';
 import { OrderEntryTicket } from '@/components/paper/OrderEntryTicket';
+import { PageTabs } from '@/components/ui/PageTabs';
+import { ErrorCard } from '@/components/ui/ErrorCard';
 import { Layers, ListOrdered, Send, WifiOff, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 
 type Toast = {
@@ -502,89 +504,69 @@ export default function PaperTradingPage() {
         onExportPositions={handleExportPositions}
       />
 
-      {/* Navigation Sub-Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab('POSITIONS')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'POSITIONS'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Positions ({positions.filter((p) => p.is_open).length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('ORDERS')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'ORDERS'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <ListOrdered className="w-3.5 h-3.5" />
-            <span>Order Book ({orders.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('TRADE')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'TRADE'
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'bg-secondary text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Place Order / Baskets</span>
-          </button>
+      {/* Freshness & Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-1">
+        <div className="flex-1 min-w-[280px]">
+          <PageTabs
+            tabs={[
+              {
+                id: 'POSITIONS',
+                label: 'Positions',
+                icon: Layers,
+                badge: positions.filter((p) => p.is_open).length,
+                content: initialLoading ? (
+                  <div className="bg-card border border-border rounded-xl p-4 space-y-2 shadow-xs" aria-label="Loading positions">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="h-10 rounded-lg bg-secondary/60 animate-pulse" />
+                    ))}
+                  </div>
+                ) : (
+                  <PositionsTable
+                    positions={positions}
+                    onSquareOff={handleSquareOffPosition}
+                    onPartialExit={handlePartialExit}
+                    onTrade={() => setActiveTab('TRADE')}
+                    squareOffId={squareOffId}
+                  />
+                ),
+              },
+              {
+                id: 'ORDERS',
+                label: 'Order Book',
+                icon: ListOrdered,
+                badge: orders.length,
+                content: <OrderBookTable orders={orders} onRetry={handleRetryOrder} />,
+              },
+              {
+                id: 'TRADE',
+                label: 'Place Order / Baskets',
+                icon: Send,
+                content: (
+                  <OrderEntryTicket
+                    onPlaceOrder={handlePlaceOrder}
+                    onPlaceBasket={handlePlaceBasket}
+                    loading={placing}
+                    prefill={prefillOrder}
+                    availableMargin={summary.available_margin}
+                  />
+                ),
+              },
+            ]}
+            activeTab={activeTab}
+            onTabChange={(tabId) => setActiveTab(tabId as 'POSITIONS' | 'ORDERS' | 'TRADE')}
+          />
         </div>
 
         {/* Freshness indicator — MTM is only trustworthy when fresh */}
-        <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground" title="Portfolio+positions refresh every ~5s, orders every ~15s">
+        <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground self-start mt-1.5" title="Portfolio+positions refresh every ~5s, orders every ~15s">
           <span className={`h-1.5 w-1.5 rounded-full ${feedStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
           {offlineMode ? 'OFFLINE • local' : feedStale ? 'STALE' : 'LIVE'}
           {updatedAgoSecs !== null && <span>• {updatedAgoSecs}s ago</span>}
         </span>
       </div>
 
-      {/* Main Tab Content */}
       {error && (
-        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-semibold">
-          {error}
-        </div>
-      )}
-
-      {initialLoading && activeTab === 'POSITIONS' ? (
-        <div className="bg-card border border-border rounded-xl p-4 space-y-2 shadow-xs" aria-label="Loading positions">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-10 rounded-lg bg-secondary/60 animate-pulse" />
-          ))}
-        </div>
-      ) : activeTab === 'POSITIONS' ? (
-        <PositionsTable
-          positions={positions}
-          onSquareOff={handleSquareOffPosition}
-          onPartialExit={handlePartialExit}
-          onTrade={() => setActiveTab('TRADE')}
-          squareOffId={squareOffId}
-        />
-      ) : null}
-
-      {activeTab === 'ORDERS' && (
-        <OrderBookTable orders={orders} onRetry={handleRetryOrder} />
-      )}
-
-      {activeTab === 'TRADE' && (
-        <OrderEntryTicket
-          onPlaceOrder={handlePlaceOrder}
-          onPlaceBasket={handlePlaceBasket}
-          loading={placing}
-          prefill={prefillOrder}
-          availableMargin={summary.available_margin}
-        />
+        <ErrorCard title="Portfolio synchronization issue" message={error} mode="banner" />
       )}
 
       {/* Toasts — success/error feedback without blocking the page */}

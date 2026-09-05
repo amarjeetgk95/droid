@@ -330,23 +330,37 @@ class TelegramNotificationQueue:
             return None
 
 
-    # ── Worker ───────────────────────────────────────────────────────
+    def _ensure_queue(self) -> None:
+        try:
+            curr_loop = asyncio.get_running_loop()
+            q_loop = getattr(self._q, "_loop", None)
+            if self._q is None or (q_loop is not None and q_loop is not curr_loop):
+                old_q = self._q
+                self._q = asyncio.Queue()
+                if old_q is not None:
+                    while not old_q.empty():
+                        try:
+                            self._q.put_nowait(old_q.get_nowait())
+                        except Exception:
+                            break
+        except Exception:
+            if self._q is None:
+                self._q = asyncio.Queue()
+
     async def start(self) -> None:
         # Backend-lifecycle start: preserve queued jobs across restarts
         # (never drop), single worker per process.
+        self._ensure_queue()
         if self._running and self._worker_task and not self._worker_task.done():
             return
-        if self._q is None:
-            self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
 
     async def ensure_started(self) -> None:
         """Auto-recovery: restart the worker if it died, keep queued jobs."""
+        self._ensure_queue()
         if self._running and self._worker_task and not self._worker_task.done():
             return
-        if self._q is None:
-            self._q = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
         logger.info("telegram_notification_worker_running")

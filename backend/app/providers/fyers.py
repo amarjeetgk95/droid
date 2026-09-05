@@ -62,6 +62,7 @@ class FyersProvider(MarketDataProvider):
         self._start_lock: asyncio.Lock | None = None
         self._consecutive_failures = 0
         self._last_known_quotes: dict[str, NormalizedQuote] = {}
+        self._http_client: httpx.AsyncClient | None = None
 
         self.symbol_map = {
             "NIFTY 50": "NSE:NIFTY50-INDEX",
@@ -70,6 +71,15 @@ class FyersProvider(MarketDataProvider):
             "SENSEX": "BSE:SENSEX-INDEX",
             "INDIA VIX": "NSE:INDIAVIX-INDEX",
         }
+
+    def _get_http_client(self, timeout: float = 6.0) -> httpx.AsyncClient:
+        """Shared persistent HTTP client with connection pooling."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=timeout,
+                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+            )
+        return self._http_client
 
     @property
     def provider_name(self) -> str:
@@ -113,63 +123,63 @@ class FyersProvider(MarketDataProvider):
         status = DataStatus.LIVE if is_open else DataStatus.CLOSED
 
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(
-                    f"https://api-t1.fyers.in/data/quotes?symbols={syms_str}",
-                    headers={"Authorization": auth_header},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("s") == "ok" and "d" in data and isinstance(data["d"], list):
-                        self._consecutive_failures = 0
-                        inv_map = {v: k for k, v in self.symbol_map.items()}
-                        quotes_map = {}
-                        for item in data["d"]:
-                            f_sym = item.get("n", "")
-                            v = item.get("v", {})
-                            int_sym = inv_map.get(f_sym, f_sym)
-                            ltp = float(v.get("lp", 0.0))
-                            if ltp <= 0:
-                                continue
-                            open_p = float(v.get("open_price") or ltp)
-                            high_p = float(v.get("high_price") or ltp)
-                            low_p = float(v.get("low_price") or ltp)
-                            prev_p = float(v.get("prev_close_price") or 0.0)
-                            ch = float(v.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
-                            chp = float(v.get("chp") or (round((ch / prev_p * 100) if prev_p else 0.0, 2)))
-                            vol = int(v.get("volume") or 0)
-                            oi = int(v.get("oi")) if v.get("oi") is not None else None
+            client = self._get_http_client(timeout=4.0)
+            resp = await client.get(
+                f"https://api-t1.fyers.in/data/quotes?symbols={syms_str}",
+                headers={"Authorization": auth_header},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("s") == "ok" and "d" in data and isinstance(data["d"], list):
+                    self._consecutive_failures = 0
+                    inv_map = {v: k for k, v in self.symbol_map.items()}
+                    quotes_map = {}
+                    for item in data["d"]:
+                        f_sym = item.get("n", "")
+                        v = item.get("v", {})
+                        int_sym = inv_map.get(f_sym, f_sym)
+                        ltp = float(v.get("lp", 0.0))
+                        if ltp <= 0:
+                            continue
+                        open_p = float(v.get("open_price") or ltp)
+                        high_p = float(v.get("high_price") or ltp)
+                        low_p = float(v.get("low_price") or ltp)
+                        prev_p = float(v.get("prev_close_price") or 0.0)
+                        ch = float(v.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
+                        chp = float(v.get("chp") or (round((ch / prev_p * 100) if prev_p else 0.0, 2)))
+                        vol = int(v.get("volume") or 0)
+                        oi = int(v.get("oi")) if v.get("oi") is not None else None
 
-                            nq = NormalizedQuote(
-                                symbol=int_sym,
-                                display_name=int_sym,
-                                timestamp=now,
-                                ltp=round(ltp, 2),
-                                open=round(open_p, 2),
-                                high=round(high_p, 2),
-                                low=round(low_p, 2),
-                                previous_close=round(prev_p, 2),
-                                change=round(ch, 2),
-                                change_percent=round(chp, 2),
-                                volume=vol,
-                                open_interest=oi,
-                                status=status,
-                                provider=self.provider_name,
-                            )
-                            quotes_map[int_sym] = nq
-                            self._last_known_quotes[int_sym] = nq
-                        return quotes_map
-                    else:
-                        self._consecutive_failures += 1
-                        logger.warning("fyers_quotes_api_error", response=data)
-                        if "token" in str(data).lower() or "auth" in str(data).lower() or data.get("code") in (-100, 401, 403):
-                            self.token_manager.mark_expired("FYERS token expired or invalid")
-                elif resp.status_code in (401, 403):
-                    self._consecutive_failures += 1
-                    logger.warning("fyers_quotes_unauthorized", status_code=resp.status_code)
-                    self.token_manager.mark_expired(f"FYERS unauthorized (HTTP {resp.status_code})")
+                        nq = NormalizedQuote(
+                            symbol=int_sym,
+                            display_name=int_sym,
+                            timestamp=now,
+                            ltp=round(ltp, 2),
+                            open=round(open_p, 2),
+                            high=round(high_p, 2),
+                            low=round(low_p, 2),
+                            previous_close=round(prev_p, 2),
+                            change=round(ch, 2),
+                            change_percent=round(chp, 2),
+                            volume=vol,
+                            open_interest=oi,
+                            status=status,
+                            provider=self.provider_name,
+                        )
+                        quotes_map[int_sym] = nq
+                        self._last_known_quotes[int_sym] = nq
+                    return quotes_map
                 else:
                     self._consecutive_failures += 1
+                    logger.warning("fyers_quotes_api_error", response=data)
+                    if "token" in str(data).lower() or "auth" in str(data).lower() or data.get("code") in (-100, 401, 403):
+                        self.token_manager.mark_expired("FYERS token expired or invalid")
+            elif resp.status_code in (401, 403):
+                self._consecutive_failures += 1
+                logger.warning("fyers_quotes_unauthorized", status_code=resp.status_code)
+                self.token_manager.mark_expired(f"FYERS unauthorized (HTTP {resp.status_code})")
+            else:
+                self._consecutive_failures += 1
         except Exception as e:
             self._consecutive_failures += 1
             logger.debug("fyers_api_quotes_failed", error=str(e)[:150])
@@ -221,14 +231,14 @@ class FyersProvider(MarketDataProvider):
         res_str = res_map.get(resolution, "5")
 
         try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
-                url = (
-                    f"https://api-t1.fyers.in/data/history"
-                    f"?symbol={fyers_sym}&resolution={res_str}&date_format=0"
-                    f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
-                )
-                resp = await client.get(url, headers={"Authorization": auth_header})
-                if resp.status_code == 200:
+            client = self._get_http_client(timeout=6.0)
+            url = (
+                f"https://api-t1.fyers.in/data/history"
+                f"?symbol={fyers_sym}&resolution={res_str}&date_format=0"
+                f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
+            )
+            resp = await client.get(url, headers={"Authorization": auth_header})
+            if resp.status_code == 200:
                     data = resp.json()
                     if data.get("s") == "ok" and "candles" in data and isinstance(data["candles"], list):
                         candles = []
@@ -443,16 +453,46 @@ class FyersProvider(MarketDataProvider):
         )
 
     async def get_market_breadth(self) -> MarketBreadthData:
+        now = datetime.now(timezone.utc)
+        is_open = calendar_service.is_market_open_now()
+        quotes = [q for q in self._last_known_quotes.values() if q.ltp > 0]
+        if quotes:
+            adv = sum(1 for q in quotes if q.change > 0)
+            dec = sum(1 for q in quotes if q.change < 0)
+            unc = sum(1 for q in quotes if q.change == 0)
+            total = adv + dec + unc
+            ratio = round(adv / dec, 2) if dec > 0 else (float(adv) if adv > 0 else 1.0)
+            score = round((adv / total) * 100, 1) if total > 0 else 50.0
+            sentiment = "NEUTRAL"
+            if score >= 70:
+                sentiment = "VERY_BULLISH"
+            elif score >= 55:
+                sentiment = "BULLISH"
+            elif score <= 30:
+                sentiment = "VERY_BEARISH"
+            elif score <= 45:
+                sentiment = "BEARISH"
+            return MarketBreadthData(
+                advancing=adv,
+                declining=dec,
+                unchanged=unc,
+                advance_decline_ratio=ratio,
+                sectors=[],
+                sentiment=sentiment,
+                sentiment_score=score,
+                status=DataStatus.LIVE if is_open else DataStatus.CLOSED,
+                timestamp=now,
+            )
         return MarketBreadthData(
-            advancing=320,
-            declining=150,
-            unchanged=30,
-            advance_decline_ratio=2.13,
+            advancing=0,
+            declining=0,
+            unchanged=0,
+            advance_decline_ratio=1.0,
             sectors=[],
-            sentiment="BULLISH",
-            sentiment_score=68.5,
-            status=DataStatus.LIVE,
-            timestamp=datetime.now(timezone.utc),
+            sentiment="NEUTRAL",
+            sentiment_score=50.0,
+            status=DataStatus.OFFLINE,
+            timestamp=now,
         )
 
     async def get_expiries(self, symbol: str) -> list[datetime]:
@@ -595,4 +635,10 @@ class FyersProvider(MarketDataProvider):
                         pass
             self._poll_task = None
             self._stream_task = None
+            if self._http_client and not self._http_client.is_closed:
+                try:
+                    await self._http_client.aclose()
+                except Exception:
+                    pass
+                self._http_client = None
             logger.info("fyers_stream_stopped")

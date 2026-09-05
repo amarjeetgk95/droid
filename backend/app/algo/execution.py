@@ -161,11 +161,69 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
     provider_name = "fyers"
 
     async def submit_order(self, record: OrderRecord) -> dict:
-        # In safe-by-default, route through simulation if live credentials not active
+        """Place live order via Fyers Open API v3 endpoint with safe simulation fallback."""
+        from app.core.broker_runtime import get_config
+        import httpx
+
+        cfg = get_config()
+        app_id = cfg.credentials.get("app_id") or ""
+        token = cfg.credentials.get("access_token") or cfg.credentials.get("token") or ""
+
+        # If live credentials not active or paper mode, gracefully route through simulation safely
+        if not app_id or not token or token in ("", "mock-demo-token"):
+            logger.info("fyers_execution_fallback_to_safe_simulation", symbol=record.symbol)
+            return await PaperBrokerAdapter().submit_order(record)
+
+        try:
+            side_code = 1 if record.side.upper() in ("BUY", "LONG") else -1
+            order_type = 1 if record.price and record.price > 0 else 2
+            payload = {
+                "symbol": record.symbol,
+                "qty": record.quantity,
+                "type": order_type,
+                "side": side_code,
+                "productType": "INTRADAY",
+                "limitPrice": float(record.price) if record.price else 0.0,
+                "stopPrice": 0.0,
+                "validity": "DAY",
+                "disclosedQty": 0,
+                "offlineOrder": False,
+                "stopLoss": 0.0,
+                "takeProfit": 0.0,
+            }
+            auth_header = f"{app_id}:{token}" if ":" not in token else token
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    "https://api-t1.fyers.in/api/v3/orders/sync",
+                    json=payload,
+                    headers={"Authorization": auth_header, "Content-Type": "application/json"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("s") == "ok":
+                        fyers_order_id = data.get("id") or str(uuid.uuid4())
+                        return {
+                            "broker_order_id": fyers_order_id,
+                            "status": "SUBMITTED",
+                            "fill_price": record.price or D("0.0"),
+                            "fill_quantity": record.quantity,
+                            "client_order_id": str(record.client_order_id),
+                        }
+                    else:
+                        err_msg = data.get("message", "Order rejected by Fyers")
+                        logger.warning("fyers_place_order_rejected", error=err_msg)
+                        return {
+                            "broker_order_id": None,
+                            "status": "REJECTED",
+                            "reason": err_msg,
+                        }
+        except Exception as e:
+            logger.error("fyers_order_submission_failed", error=str(e))
+
         return await PaperBrokerAdapter().submit_order(record)
 
     async def query_order(self, broker_order_id: str) -> dict:
-        return {"broker_order_id": broker_order_id, "status": "FILLED"}
+        return {"broker_order_id": broker_order_id, "status": "UNKNOWN"}
 
     async def cancel_order(self, broker_order_id: str) -> dict:
         return {"broker_order_id": broker_order_id, "status": "CANCELLED"}
@@ -186,6 +244,7 @@ class FlattradeLiveBrokerAdapter(BrokerAdapter):
         from app.core.broker_runtime import get_config
         import httpx
         import json
+        import urllib.parse
 
         cfg = get_config()
         user_id = cfg.credentials.get("user_id") or ""
@@ -214,7 +273,10 @@ class FlattradeLiveBrokerAdapter(BrokerAdapter):
                 "prctyp": order_type,
                 "ret": "DAY",
             }
-            jData_str = f"jData={json.dumps(payload)}&jKey={token}"
+            jData_str = urllib.parse.urlencode({
+                "jData": json.dumps(payload),
+                "jKey": token,
+            })
 
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
@@ -247,7 +309,7 @@ class FlattradeLiveBrokerAdapter(BrokerAdapter):
         return await PaperBrokerAdapter().submit_order(record)
 
     async def query_order(self, broker_order_id: str) -> dict:
-        return {"broker_order_id": broker_order_id, "status": "FILLED"}
+        return {"broker_order_id": broker_order_id, "status": "UNKNOWN"}
 
     async def cancel_order(self, broker_order_id: str) -> dict:
         return {"broker_order_id": broker_order_id, "status": "CANCELLED"}
@@ -277,7 +339,7 @@ class BrokerRegistry:
 
     def is_healthy(self, provider: str) -> bool:
         ad = self._adapters.get(provider)
-        return True
+        return ad is not None
 
 
 broker_registry = BrokerRegistry()
@@ -349,9 +411,10 @@ class OrderManager:
     Cancel vs fill race: broker fill wins (§52)
     """
 
-    def __init__(self, broker_registry: BrokerRegistry | None = None):
+    def __init__(self, registry: BrokerRegistry | None = None):
         self._orders: dict[str, OrderRecord] = {}  # client_order_id -> record (in-mem + DB)
-        self._broker = broker_registry or broker_registry
+        self._broker = registry if registry is not None else broker_registry
+        self._max_cached_orders: int = 10000
 
     def _key(self, account_id: Any, cid: uuid.UUID) -> str:
         return f"{account_id}:{cid}"
@@ -370,6 +433,14 @@ class OrderManager:
         is_paper: bool = True,
         client_order_id: uuid.UUID | None = None,
     ) -> OrderRecord:
+        # Prevent unbounded memory growth: prune oldest terminal records when capacity is exceeded
+        if len(self._orders) >= self._max_cached_orders:
+            terminal_keys = [
+                k for k, v in self._orders.items()
+                if getattr(v, "status", None) in ("CLOSED", "REJECTED", "CANCELLED")
+            ]
+            for k in terminal_keys[:1000]:
+                self._orders.pop(k, None)
         cid = client_order_id or uuid.uuid4()
         key = self._key(account_id, cid)
         # Idempotency per account (§3, §49)
@@ -439,7 +510,7 @@ class OrderManager:
         rec.status = "SUBMITTED"  # type: ignore
         rec.attempt_count += 1
         rec.updated_at = datetime.now(timezone.utc)
-        adapter = broker_registry.get(paper=rec.is_paper)
+        adapter = self._broker.get(paper=rec.is_paper)
         try:
             result = await asyncio.wait_for(adapter.submit_order(rec), timeout=timeout_s)
             # Success path
@@ -493,7 +564,7 @@ class OrderManager:
             logger.warning("reconcile_no_broker_id", client_order_id=str(rec.client_order_id))
             rec.status = "UNKNOWN"  # type: ignore
             return rec
-        adapter = broker_registry.get(paper=rec.is_paper)
+        adapter = self._broker.get(paper=rec.is_paper)
         try:
             result = await adapter.query_order(rec.broker_order_id)
             broker_status = result.get("status", "UNKNOWN")
@@ -528,7 +599,7 @@ class OrderManager:
         prev = rec.status
         rec.status = "CANCEL_PENDING"  # type: ignore
         rec.updated_at = datetime.now(timezone.utc)
-        adapter = broker_registry.get(paper=rec.is_paper)
+        adapter = self._broker.get(paper=rec.is_paper)
         try:
             result = await adapter.cancel_order(rec.broker_order_id)
             if result.get("status") in ("FILLED","PARTIALLY_FILLED"):

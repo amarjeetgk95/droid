@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 from typing import NamedTuple
 
@@ -18,6 +19,7 @@ class TokenBucketRateLimiter:
     - Burst limit capacity
     - Accurate Retry-After calculation
     - Non-blocking and async waiting modes
+    - Thread-safe and race-condition free token refill
     """
 
     def __init__(
@@ -32,43 +34,51 @@ class TokenBucketRateLimiter:
         self.tokens = float(burst_limit)
         self.last_refill = time.monotonic()
         self._lock = asyncio.Lock()
+        self._sync_lock = threading.Lock()
 
     def _refill(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self.last_refill
-        
-        # Effective rate is the minimum of per-second and per-minute constraints
-        effective_rate = self.requests_per_second
-        if self.requests_per_minute:
-            effective_rate = min(effective_rate, self.requests_per_minute / 60.0)
+        with self._sync_lock:
+            now = time.monotonic()
+            elapsed = now - self.last_refill
+            
+            # Effective rate is the minimum of per-second and per-minute constraints
+            effective_rate = self.requests_per_second
+            if self.requests_per_minute:
+                effective_rate = min(effective_rate, self.requests_per_minute / 60.0)
 
-        # Add new tokens based on elapsed time
-        self.tokens = min(float(self.burst_limit), self.tokens + elapsed * effective_rate)
-        self.last_refill = now
+            # Add new tokens based on elapsed time
+            self.tokens = min(float(self.burst_limit), self.tokens + elapsed * effective_rate)
+            self.last_refill = now
 
     def check(self, tokens_required: float = 1.0) -> RateLimitStatus:
         """Non-blocking check if a request is allowed."""
         self._refill()
-        if self.tokens >= tokens_required:
-            return RateLimitStatus(allowed=True, retry_after=0.0, current_tokens=self.tokens)
+        with self._sync_lock:
+            if self.tokens >= tokens_required:
+                return RateLimitStatus(allowed=True, retry_after=0.0, current_tokens=self.tokens)
 
-        effective_rate = self.requests_per_second
-        if self.requests_per_minute:
-            effective_rate = min(effective_rate, self.requests_per_minute / 60.0)
+            effective_rate = self.requests_per_second
+            if self.requests_per_minute:
+                effective_rate = min(effective_rate, self.requests_per_minute / 60.0)
 
-        missing = tokens_required - self.tokens
-        retry_after = missing / effective_rate if effective_rate > 0 else 1.0
-        return RateLimitStatus(allowed=False, retry_after=retry_after, current_tokens=self.tokens)
+            missing = tokens_required - self.tokens
+            retry_after = missing / effective_rate if effective_rate > 0 else 1.0
+            return RateLimitStatus(allowed=False, retry_after=retry_after, current_tokens=self.tokens)
 
     async def acquire(self, tokens_required: float = 1.0) -> None:
         """Asynchronously acquire tokens, waiting if rate limit is exceeded."""
         while True:
             async with self._lock:
-                status = self.check(tokens_required)
-                if status.allowed:
-                    self.tokens -= tokens_required
-                    return
-                wait_time = status.retry_after
+                self._refill()
+                with self._sync_lock:
+                    if self.tokens >= tokens_required:
+                        self.tokens -= tokens_required
+                        return
+                    effective_rate = self.requests_per_second
+                    if self.requests_per_minute:
+                        effective_rate = min(effective_rate, self.requests_per_minute / 60.0)
+                    missing = tokens_required - self.tokens
+                    wait_time = missing / effective_rate if effective_rate > 0 else 1.0
             
             # Wait outside the lock
             await asyncio.sleep(wait_time)
@@ -76,7 +86,8 @@ class TokenBucketRateLimiter:
     def try_acquire(self, tokens_required: float = 1.0) -> bool:
         """Synchronous attempt to acquire token without waiting."""
         self._refill()
-        if self.tokens >= tokens_required:
-            self.tokens -= tokens_required
-            return True
-        return False
+        with self._sync_lock:
+            if self.tokens >= tokens_required:
+                self.tokens -= tokens_required
+                return True
+            return False

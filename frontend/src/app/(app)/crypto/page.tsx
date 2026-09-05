@@ -36,6 +36,7 @@ import { CryptoDerivativesCard } from '@/components/crypto/CryptoDerivativesCard
 import { CryptoMarketOverviewStrip } from '@/components/crypto/CryptoMarketOverviewStrip';
 import { CryptoPairComparisonCard } from '@/components/crypto/CryptoPairComparisonCard';
 import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
+import { PageTabs } from '@/components/ui/PageTabs';
 
 export default function CryptoPage() {
   const [tickers, setTickers] = useState<CryptoTicker[]>([]);
@@ -480,48 +481,39 @@ export default function CryptoPage() {
 
         {/* Right 5 Columns: L2 Order Book & Derivatives Flow */}
         <div className="lg:col-span-5 space-y-3">
-          {/* Tab Switcher */}
-          <div className="flex bg-secondary rounded-lg p-1 border border-border">
-            <button
-              type="button"
-              onClick={() => setRightTab('orderbook')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                rightTab === 'orderbook'
-                  ? 'bg-card text-foreground shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              L2 Order Book Depth
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab('derivatives')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                rightTab === 'derivatives'
-                  ? 'bg-card text-foreground shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Futures & Funding Rate
-            </button>
-          </div>
-
-          {/* Tab Content */}
-          {rightTab === 'orderbook' ? (
-            <CryptoOrderBook
-              orderbook={displayedOrderBook}
-              loading={loadingDetails && !displayedOrderBook}
-              isLive={orderBookIsLive}
-              streamState={symbolStreamState}
-            />
-          ) : (
-            <CryptoDerivativesCard
-              derivatives={displayedDerivatives}
-              loading={loadingDetails && !displayedDerivatives}
-              isLive={fundingIsLive}
-              fundingLive={!!derivativesLive}
-            />
-          )}
+          {/* Tab Switcher & Content */}
+          <PageTabs
+            tabs={[
+              {
+                id: 'orderbook',
+                label: 'L2 Order Book Depth',
+                icon: BarChart3,
+                content: (
+                  <CryptoOrderBook
+                    orderbook={displayedOrderBook}
+                    loading={loadingDetails && !displayedOrderBook}
+                    isLive={orderBookIsLive}
+                    streamState={symbolStreamState}
+                  />
+                ),
+              },
+              {
+                id: 'derivatives',
+                label: 'Futures & Funding Rate',
+                icon: Activity,
+                content: (
+                  <CryptoDerivativesCard
+                    derivatives={displayedDerivatives}
+                    loading={loadingDetails && !displayedDerivatives}
+                    isLive={fundingIsLive}
+                    fundingLive={!!derivativesLive}
+                  />
+                ),
+              },
+            ]}
+            activeTab={rightTab}
+            onTabChange={(tabId) => setRightTab(tabId as 'orderbook' | 'derivatives')}
+          />
 
           {/* Safety & Telemetry Card */}
           <div className="bg-card border border-border rounded-xl p-3.5 text-xs text-muted-foreground flex flex-col gap-2">

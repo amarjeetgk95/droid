@@ -42,3 +42,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore:.*Using .httpx. with .starlette.testclient..*:DeprecationWarning",
+    "ignore:Use 'content=.*':DeprecationWarning",
+    "ignore::DeprecationWarning:httpx",
+    "ignore:coroutine 'Connection._cancel' was never awaited:RuntimeWarning",
+]

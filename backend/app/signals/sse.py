@@ -35,7 +35,15 @@ class SignalSSEHub:
         for q in list(self._subscribers):
             try:
                 if priority == "P0":
-                    await q.put(payload)
+                    try:
+                        q.put_nowait(payload)
+                    except asyncio.QueueFull:
+                        # Evict oldest item to ensure critical P0 event is delivered without stalling broadcast
+                        try:
+                            q.get_nowait()
+                        except Exception:
+                            pass
+                        q.put_nowait(payload)
                 else:
                     if q.qsize() < 80:
                         q.put_nowait(payload)

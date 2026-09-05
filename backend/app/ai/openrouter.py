@@ -150,21 +150,51 @@ class OpenRouterProvider(BaseLLMProvider):
                     parsed.setdefault("model", self.model)
                     return parsed
 
+                def _safe_float(val: Any, default: float = 80.0) -> float:
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, str):
+                        clean = val.replace("%", "").strip()
+                        try:
+                            return float(clean)
+                        except ValueError:
+                            pass
+                    return default
+
+                def _safe_str(val: Any, default: str = "") -> str:
+                    if val is None:
+                        return default
+                    if isinstance(val, str):
+                        return val
+                    if isinstance(val, dict):
+                        lines = []
+                        for k, v in val.items():
+                            k_title = k.replace("_", " ").title()
+                            lines.append(f"{k_title}: {v}")
+                        return "\n".join(lines)
+                    if isinstance(val, list):
+                        return "\n".join(f"• {item}" if not str(item).startswith("•") else str(item) for item in val)
+                    return str(val)
+
                 return AIInsightResponse(
                     symbol=symbol,
                     timestamp=datetime.now(timezone.utc),
-                    market_bias=parsed.get("market_bias", "NEUTRAL"),
-                    confidence=parsed.get("confidence", 80.0),
-                    executive_summary=parsed.get("executive_summary", ""),
-                    simple_takeaway=parsed.get("simple_takeaway", ""),
-                    options_interpretation=parsed.get("options_interpretation", ""),
-                    futures_flow_analysis=parsed.get("futures_flow_analysis", ""),
-                    regime_and_levels=parsed.get("regime_and_levels", ""),
-                    recommended_strategy_framework=parsed.get("recommended_strategy_framework", ""),
-                    risk_management_notes=parsed.get("risk_management_notes", ""),
-                    disclaimer=parsed.get("disclaimer", "Quantitative analysis for research only."),
+                    market_bias=_safe_str(parsed.get("market_bias"), "NEUTRAL"),
+                    confidence=_safe_float(parsed.get("confidence"), 80.0),
+                    executive_summary=_safe_str(parsed.get("executive_summary")),
+                    simple_takeaway=_safe_str(parsed.get("simple_takeaway")),
+                    options_interpretation=_safe_str(parsed.get("options_interpretation")),
+                    futures_flow_analysis=_safe_str(parsed.get("futures_flow_analysis")),
+                    regime_and_levels=_safe_str(parsed.get("regime_and_levels")),
+                    recommended_strategy_framework=_safe_str(parsed.get("recommended_strategy_framework")),
+                    risk_management_notes=_safe_str(parsed.get("risk_management_notes")),
+                    disclaimer=_safe_str(parsed.get("disclaimer"), "Quantitative analysis for research only."),
                     provider_used=f"openrouter:{self.model}",
                 )
+        except httpx.TimeoutException:
+            raise ValueError("OpenRouter request timed out after 60s. Provider is under heavy load, please retry.")
+        except httpx.RequestError as req_err:
+            raise ValueError(f"OpenRouter network connection failed: {req_err}")
         except ValueError:
             raise
         except Exception as e:

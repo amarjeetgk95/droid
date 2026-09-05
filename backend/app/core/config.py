@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     
     # Auth
     auth_required: bool = False
-    supabase_jwt_secret: str = "ec57f217-3c5a-46e3-b72e-1970acef6de8"
+    supabase_jwt_secret: str = ""
     
     # Database
-    database_url: str = "postgresql+asyncpg://postgres.rvwidboufaprjgvwbrjn:amarjeet123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+    database_url: str = ""
     
     # Market Data — api_type gates Indian vs Crypto universes
     api_type: str = "indian"

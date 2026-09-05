@@ -196,31 +196,28 @@ export default function DashboardPage() {
   const isStreamWaiting = !isMarketClosed && streamState === 'CONNECTED' && !ticksFresh;
 
   return (
-    <div className="space-y-5 pb-8">
+    <div className="space-y-4 pb-8">
       {/* 1. Hero Live Command Bar */}
-      <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-card border border-border rounded-xl p-3.5 sm:p-4 shadow-2xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
-            <TrendingUp className="w-5 h-5" />
+          <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
+            <TrendingUp className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black tracking-tight text-foreground">
-                Institutional Market Terminal
+              <h1 className="text-sm sm:text-base font-bold tracking-tight text-foreground">
+                Command Dashboard
               </h1>
-              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
-                FYERS v3 LIVE
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-secondary text-foreground border border-border">
+                {activeSymbol === 'NIFTY' ? 'NIFTY 50' : activeSymbol}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Real-time tick streaming, probabilistic ML regimes &amp; institutional FII/DII metrics.
-            </p>
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap gap-2.5 w-full md:w-auto justify-start md:justify-end border-t md:border-t-0 pt-3 md:pt-0 border-border/60">
+        <div className="flex items-center flex-wrap gap-2 w-full md:w-auto justify-start md:justify-end border-t md:border-t-0 pt-2.5 md:pt-0 border-border/60">
           {/* Market Session Pill */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs font-medium">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary/80 border border-border text-xs font-medium">
             <Clock className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="capitalize text-foreground font-semibold">
               {marketStatus?.session ? marketStatus.session.replace(/_/g, ' ').toLowerCase() : 'Active'}
@@ -458,26 +455,28 @@ export default function DashboardPage() {
               </div>
 
               {/* Quick Engine Telemetry */}
-              <div className="bg-card border border-border rounded-xl p-4 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                  <span className="text-muted-foreground text-[10px] block">Active Gateway</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">FYERS v3</span>
+              <div className="bg-card border border-border rounded-xl p-3 shadow-2xs grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
+                  <span className="text-muted-foreground text-[10px] block">Broker Feed</span>
+                  <span className="font-mono font-bold text-foreground block mt-0.5">{health?.provider || 'FYERS'}</span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
+                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
                   <span className="text-muted-foreground text-[10px] block">Instruments</span>
                   <span className="font-mono font-bold text-foreground block mt-0.5">
-                    {health?.active_instruments ?? 5} Live
+                    {health?.active_instruments ?? 5} Active
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                  <span className="text-muted-foreground text-[10px] block">Pipeline Mode</span>
-                  <span className="font-mono font-bold text-emerald-400 block mt-0.5">
-                    {health?.mode ?? 'LIVE'}
+                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
+                  <span className="text-muted-foreground text-[10px] block">Circuit Breaker</span>
+                  <span className={`font-mono font-bold block mt-0.5 ${health?.circuit_breaker_state === 'OPEN' ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {health?.circuit_breaker_state || 'CLOSED'}
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                  <span className="text-muted-foreground text-[10px] block">Quant Sync</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">100% Valid</span>
+                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
+                  <span className="text-muted-foreground text-[10px] block">Feed Latency</span>
+                  <span className="font-mono font-bold text-foreground block mt-0.5">
+                    {health?.latency_ms != null ? `${health.latency_ms.toFixed(0)}ms` : '—'}
+                  </span>
                 </div>
               </div>
             </div>
