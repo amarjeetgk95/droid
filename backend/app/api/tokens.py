@@ -168,8 +168,8 @@ async def fyers_oauth_login(
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
     
-    clean_app_id = (app_id or creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
-    clean_secret = (secret_key or creds.get("secret_key") or cfg.fyers_secret_key or "").strip().strip("\"'")
+    clean_app_id = (cfg.fyers_app_id or app_id or creds.get("app_id") or creds.get("appId") or "").strip().strip("\"'")
+    clean_secret = (cfg.fyers_secret_key or secret_key or creds.get("secret_key") or creds.get("secret") or "").strip().strip("\"'")
     redirect_uri = (creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback").strip()
     
     if not clean_app_id:
@@ -291,9 +291,9 @@ async def fyers_oauth_callback(
     # 4. Resolve credentials with fallback hierarchy
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
-    app_id = custom_app_id or (creds.get("app_id") or cfg.fyers_app_id or "").strip().strip("\"'")
-    secret_key = custom_secret or (creds.get("secret_key") or cfg.fyers_secret_key or "").strip().strip("\"'")
-    cred_source = "Custom Browser Session" if custom_app_id else "Render Server Environment Variables"
+    app_id = (cfg.fyers_app_id or custom_app_id or creds.get("app_id") or creds.get("appId") or "").strip().strip("\"'")
+    secret_key = (cfg.fyers_secret_key or custom_secret or creds.get("secret_key") or creds.get("secret") or "").strip().strip("\"'")
+    cred_source = "Render Server Environment Variables" if (cfg.fyers_secret_key and cfg.fyers_app_id) else ("Custom Browser Session" if custom_app_id else "Render Server Environment Variables")
 
     if not app_id or not secret_key:
         error_html = """
