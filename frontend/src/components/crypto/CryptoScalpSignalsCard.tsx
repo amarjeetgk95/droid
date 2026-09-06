@@ -36,7 +36,7 @@ const STAGES = [
 ] as const;
 
 function getStageIndex(state?: string): number {
-  if (!state) return 2; // Default to ARMED
+  if (!state) return 2;
   const s = state.toUpperCase();
   if (s === 'DETECTED') return 0;
   if (s === 'VALIDATED') return 1;
@@ -109,7 +109,7 @@ export function CryptoScalpSignalsCard({
   const handleCopyPlan = (sig: CryptoScalpSignal) => {
     const text = `⚡ CRYPTO SCALP [${getSpecialId(sig)}]: ${sig.direction} ${sig.symbol} (${sig.timeframe.toUpperCase()})
 Strategy: ${sig.strategy_name}
-Status / FSM: ${sig.fsm_state || 'ARMED'}
+Status: ${sig.fsm_state || 'ARMED'}
 Confidence: ${sig.confidence.toFixed(0)}% | R:R: 1:${sig.risk_reward_ratio.toFixed(1)}
 Timestamp: ${formatSignalDate(sig.created_at_utc, sig.timestamp).formatted}
 🎯 Entry Trigger: $${sig.entry_price.toLocaleString()}
@@ -141,22 +141,22 @@ Rationale: ${sig.rationale}`;
   });
 
   return (
-    <div className="bg-[#090C15] border border-slate-800/80 rounded-2xl p-6 shadow-sm space-y-6">
+    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
       {/* ── HEADER & CONTROLS ────────────────────────────────────────── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/70">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <div className="p-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200">
               <Zap className="w-4 h-4" />
             </div>
-            <h2 className="text-base font-semibold tracking-tight text-slate-100">
-              Active Institutional Scalping Signals
+            <h2 className="text-base font-semibold tracking-tight text-slate-900">
+              Live Scalping Signals
             </h2>
-            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono bg-[#141A26] text-amber-400 font-bold border border-amber-500/20">
+            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono bg-slate-100 text-slate-700 font-bold border border-slate-200">
               {filteredSignals.length} Active
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+          <p className="text-xs text-slate-500 mt-1 leading-relaxed">
             Multi-stage verified setups passing Trigger Integrity, Risk Envelopes, and Confluence Fusion.
           </p>
         </div>
@@ -164,7 +164,7 @@ Rationale: ${sig.rationale}`;
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Asset Pills */}
-          <div className="flex bg-[#05070C] rounded-lg p-1 border border-slate-800/80">
+          <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
             {['ALL', 'BTC', 'ETH'].map((sym) => (
               <button
                 key={sym}
@@ -172,8 +172,8 @@ Rationale: ${sig.rationale}`;
                 onClick={() => handleAssetSelect(sym)}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                   assetFilter === sym
-                    ? 'bg-[#141A26] text-slate-100 font-semibold shadow-xs border border-slate-700/60'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-white text-slate-900 font-semibold shadow-xs border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {sym}
@@ -182,7 +182,7 @@ Rationale: ${sig.rationale}`;
           </div>
 
           {/* Direction Filter */}
-          <div className="flex bg-[#05070C] rounded-lg p-1 border border-slate-800/80">
+          <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
             {(['ALL', 'LONG', 'SHORT'] as const).map((dir) => (
               <button
                 key={dir}
@@ -191,11 +191,11 @@ Rationale: ${sig.rationale}`;
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                   dirFilter === dir
                     ? dir === 'LONG'
-                      ? 'bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30'
+                      ? 'bg-emerald-100 text-emerald-800 font-semibold border border-emerald-300'
                       : dir === 'SHORT'
-                      ? 'bg-rose-500/20 text-rose-400 font-semibold border border-rose-500/30'
-                      : 'bg-[#141A26] text-slate-100 font-semibold border border-slate-700/60'
-                    : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-rose-100 text-rose-800 font-semibold border border-rose-300'
+                      : 'bg-white text-slate-900 font-semibold shadow-xs border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {dir}
@@ -209,26 +209,26 @@ Rationale: ${sig.rationale}`;
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-56 bg-[#0C101A] border border-slate-800/80 rounded-xl animate-pulse" />
+            <div key={i} className="h-56 bg-slate-50 border border-slate-200 rounded-xl animate-pulse" />
           ))}
         </div>
       ) : filteredSignals.length === 0 ? (
-        <div className="p-10 text-center border border-slate-800/70 rounded-xl space-y-3 bg-[#06080E]">
-          <div className="w-10 h-10 rounded-full bg-[#0C101A] flex items-center justify-center mx-auto border border-slate-800 text-slate-400">
+        <div className="p-10 text-center border border-dashed border-slate-200 rounded-xl space-y-3 bg-slate-50/60">
+          <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center mx-auto border border-slate-200 text-slate-400 shadow-2xs">
             <Filter className="w-5 h-5" />
           </div>
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-slate-200">No Scalp Signals Active Right Now</p>
-            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            <p className="text-sm font-semibold text-slate-900">No Scalp Signals Active Right Now</p>
+            <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
               Institutional criteria require confirmed breakout momentum, 5M/15M MTF trend agreement, and favorable order book depth before a signal is armed.
             </p>
           </div>
           <button
             type="button"
             onClick={onRefresh}
-            className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-[#141A26] hover:bg-[#1C2436] text-slate-200 rounded-lg text-xs font-semibold border border-slate-700/80 transition-all cursor-pointer shadow-xs"
+            className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
           >
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <Zap className="w-3.5 h-3.5 text-amber-300" />
             <span>Scan Market Now</span>
           </button>
         </div>
@@ -245,7 +245,7 @@ Rationale: ${sig.rationale}`;
             return (
               <div
                 key={sig.id}
-                className="relative flex flex-col justify-between rounded-xl border border-slate-800/80 bg-[#0C101A] hover:border-slate-700/80 transition-all p-5 shadow-xs space-y-4"
+                className="relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all p-5 shadow-xs space-y-4"
               >
                 {/* 1. TOP BAR: Asset, Direction, Special ID, Time & Delete */}
                 <div className="flex items-start justify-between gap-3">
@@ -254,8 +254,8 @@ Rationale: ${sig.rationale}`;
                     <span
                       className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono tracking-wider ${
                         isLong
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'
-                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/25'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-rose-50 text-rose-700 border border-rose-200'
                       }`}
                     >
                       {isLong ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
@@ -263,12 +263,12 @@ Rationale: ${sig.rationale}`;
                     </span>
 
                     {/* Symbol */}
-                    <span className="font-bold text-sm text-slate-100 tracking-tight font-mono">
+                    <span className="font-bold text-sm text-slate-900 tracking-tight font-mono">
                       {sig.symbol}
                     </span>
 
                     {/* Timeframe */}
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#06080E] text-slate-300 border border-slate-800">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                       {sig.timeframe.toUpperCase()}
                     </span>
 
@@ -277,26 +277,26 @@ Rationale: ${sig.rationale}`;
                       type="button"
                       onClick={(e) => handleCopyId(sig, e)}
                       title={`Full ID: ${sig.id} (Click to copy)`}
-                      className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#06080E] text-slate-300 hover:text-white border border-slate-700/80 cursor-pointer transition-all"
+                      className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 cursor-pointer transition-all"
                     >
-                      <span className="font-semibold text-cyan-400">{specialId}</span>
+                      <span className="font-bold text-slate-900">{specialId}</span>
                       {copiedId === sig.id ? (
-                        <Check className="w-2.5 h-2.5 text-emerald-400" />
+                        <Check className="w-2.5 h-2.5 text-emerald-600" />
                       ) : (
-                        <Copy className="w-2.5 h-2.5 text-slate-400 opacity-60 hover:opacity-100" />
+                        <Copy className="w-2.5 h-2.5 text-slate-400 hover:text-slate-700" />
                       )}
                     </button>
                   </div>
 
                   {/* Right Actions: Time & Delete Button */}
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2">
                     {/* Date / Time */}
                     <div className="text-right">
-                      <div className="flex items-center gap-1 text-[11px] font-mono text-slate-300">
-                        <Clock className="w-3 h-3 text-slate-500" />
+                      <div className="flex items-center gap-1 text-[11px] font-mono text-slate-600 font-medium">
+                        <Clock className="w-3 h-3 text-slate-400" />
                         <span>{relativeTime}</span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500 block">
+                      <span className="text-[10px] font-mono text-slate-400 block">
                         {dateStr.substring(5, 16)}
                       </span>
                     </div>
@@ -308,7 +308,7 @@ Rationale: ${sig.rationale}`;
                         onClick={(e) => handleDelete(sig.id, e)}
                         disabled={deletingId === sig.id}
                         title="Dismiss / Delete this signal"
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all border border-transparent hover:border-rose-500/20 cursor-pointer disabled:opacity-50"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all border border-transparent hover:border-rose-200 cursor-pointer disabled:opacity-50"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -317,20 +317,20 @@ Rationale: ${sig.rationale}`;
                 </div>
 
                 {/* 2. STAGE PROGRESSION STEPPER (FSM LIFECYCLE) */}
-                <div className="bg-[#06080E] border border-slate-800/70 rounded-lg p-2.5 space-y-2">
+                <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-mono text-slate-400">Signal Lifecycle:</span>
+                    <span className="font-mono text-slate-500 font-medium">Signal Lifecycle:</span>
                     <span
                       className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded ${
                         currentState === 'ARMED'
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
                           : currentState === 'TRIGGERED'
-                          ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
                           : currentState === 'CONFIRMED'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                           : currentState.includes('TARGET_1')
-                          ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                          : 'bg-[#141A26] text-slate-300'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-slate-200 text-slate-700'
                       }`}
                     >
                       {currentState === 'ARMED' && 'ARMED · Waiting Breakout'}
@@ -355,21 +355,21 @@ Rationale: ${sig.rationale}`;
                             <div
                               className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-mono font-bold transition-all ${
                                 isPast
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                  ? 'bg-emerald-600 text-white shadow-2xs'
                                   : isCurrent
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-400 ring-2 ring-amber-400/20 animate-pulse'
-                                  : 'bg-[#06080E] text-slate-600 border border-slate-800'
+                                  ? 'bg-amber-500 text-white ring-2 ring-amber-200 animate-pulse'
+                                  : 'bg-slate-200 text-slate-500 border border-slate-300'
                               }`}
                             >
-                              {isPast ? <Check className="w-3 h-3 text-emerald-400" /> : idx + 1}
+                              {isPast ? <Check className="w-3 h-3 text-white" /> : idx + 1}
                             </div>
                             <span
                               className={`text-[9px] font-mono tracking-tight ${
                                 isCurrent
-                                  ? 'text-amber-300 font-semibold'
+                                  ? 'text-amber-800 font-bold'
                                   : isPast
-                                  ? 'text-slate-300'
-                                  : 'text-slate-600'
+                                  ? 'text-slate-700 font-medium'
+                                  : 'text-slate-400'
                               }`}
                             >
                               {st.label}
@@ -377,8 +377,8 @@ Rationale: ${sig.rationale}`;
                           </div>
                           {idx < STAGES.length - 1 && (
                             <div
-                              className={`h-[1px] flex-1 mb-3 transition-all ${
-                                idx < stageIndex ? 'bg-emerald-500/40' : 'bg-slate-800/80'
+                              className={`h-[2px] flex-1 mb-3 transition-all ${
+                                idx < stageIndex ? 'bg-emerald-500' : 'bg-slate-200'
                               }`}
                             />
                           )}
@@ -390,57 +390,57 @@ Rationale: ${sig.rationale}`;
 
                 {/* 3. STRATEGY & METRICS SUMMARY */}
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5 font-medium text-slate-200">
-                    <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                  <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                    <Layers className="w-3.5 h-3.5 text-blue-600" />
                     <span>{sig.strategy_name}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] font-mono text-slate-400">
-                      Confidence: <strong className="text-emerald-400">{sig.confidence.toFixed(0)}%</strong>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      Confidence: <strong className="text-emerald-700">{sig.confidence.toFixed(0)}%</strong>
                     </span>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      R:R <strong className="text-slate-200">1:{sig.risk_reward_ratio.toFixed(1)}</strong>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      R:R <strong className="text-slate-800">1:{sig.risk_reward_ratio.toFixed(1)}</strong>
                     </span>
                   </div>
                 </div>
 
-                {/* 4. CLEAN PRICING MATRIX GRID (NO MUDDY GREY) */}
-                <div className="grid grid-cols-4 gap-2 bg-[#06080E] border border-slate-800/70 rounded-lg p-3 text-center">
+                {/* 4. CLEAN PRICING MATRIX GRID (SOBER LIGHT TONE) */}
+                <div className="grid grid-cols-4 gap-2 bg-slate-50 border border-slate-200/80 rounded-lg p-3 text-center">
                   <div>
-                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
+                    <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">
                       Entry Trigger
                     </span>
-                    <span className="text-xs font-mono font-bold text-slate-100">
+                    <span className="text-xs font-mono font-bold text-slate-900">
                       ${sig.entry_price.toFixed(priceDecimals)}
                     </span>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-mono text-rose-400 uppercase tracking-wider block">
+                    <span className="text-[10px] font-mono text-rose-600 uppercase tracking-wider block">
                       Stop Loss
                     </span>
-                    <span className="text-xs font-mono font-bold text-rose-400">
+                    <span className="text-xs font-mono font-bold text-rose-600">
                       ${sig.stop_loss.toFixed(priceDecimals)}
                     </span>
-                    <span className="text-[9px] font-mono text-rose-400/80 block">
+                    <span className="text-[9px] font-mono text-rose-500 block">
                       -{sig.risk_percent.toFixed(2)}%
                     </span>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider block">
+                    <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-wider block">
                       Target 1 (50%)
                     </span>
-                    <span className="text-xs font-mono font-bold text-emerald-400">
+                    <span className="text-xs font-mono font-bold text-emerald-700">
                       ${sig.target_1.toFixed(priceDecimals)}
                     </span>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-mono text-emerald-300 uppercase tracking-wider block">
+                    <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-wider block">
                       Target 2 (Runner)
                     </span>
-                    <span className="text-xs font-mono font-bold text-emerald-300">
+                    <span className="text-xs font-mono font-bold text-emerald-800">
                       ${sig.target_2.toFixed(priceDecimals)}
                     </span>
                   </div>
@@ -453,9 +453,9 @@ Rationale: ${sig.rationale}`;
                       {sig.confluence_factors.map((factor, idx) => (
                         <span
                           key={idx}
-                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-[#06080E] text-slate-300 border border-slate-800"
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200"
                         >
-                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
                           <span>{factor}</span>
                         </span>
                       ))}
@@ -463,20 +463,20 @@ Rationale: ${sig.rationale}`;
                   )}
 
                   {sig.rationale && (
-                    <p className="text-[11px] text-slate-400 leading-relaxed border-l-2 border-slate-700 pl-2.5 py-0.5">
+                    <p className="text-[11px] text-slate-600 leading-relaxed border-l-2 border-slate-300 pl-2.5 py-0.5">
                       {sig.rationale}
                     </p>
                   )}
                 </div>
 
                 {/* 6. BOTTOM BAR: Telemetry & Copy Plan */}
-                <div className="flex items-center justify-between pt-3 border-t border-slate-800/80 text-[10px] text-slate-400">
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-[10px] text-slate-500">
                   <div className="flex items-center gap-3">
-                    <span className="inline-flex items-center gap-1 text-emerald-400 font-mono">
+                    <span className="inline-flex items-center gap-1 text-emerald-700 font-mono font-medium">
                       <ShieldCheck className="w-3 h-3" />
                       <span>Two-Clock Guard</span>
                     </span>
-                    <span className="text-slate-500 font-mono">
+                    <span className="text-slate-400 font-mono">
                       Created: {dateStr.substring(0, 19)}
                     </span>
                   </div>
@@ -484,12 +484,12 @@ Rationale: ${sig.rationale}`;
                   <button
                     type="button"
                     onClick={() => handleCopyPlan(sig)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#141A26] hover:bg-[#1C2436] text-slate-200 transition-all cursor-pointer border border-slate-700/80 text-xs font-medium"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all cursor-pointer border border-slate-200 text-xs font-medium"
                   >
                     {copiedId === `plan_${sig.id}` ? (
                       <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span className="text-emerald-400 font-semibold">Plan Copied</span>
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        <span className="text-emerald-700 font-semibold">Plan Copied</span>
                       </>
                     ) : (
                       <>
