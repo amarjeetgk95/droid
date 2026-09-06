@@ -23,9 +23,9 @@ import { PortfolioGreeksTab } from '@/components/options-intelligence/PortfolioG
 import { Brain, Gauge, Layers, Scale } from 'lucide-react';
 
 const SPOT_BASELINES: Record<UnderlyingSymbol, number> = {
-  NIFTY: 24920.0,
-  BANKNIFTY: 51850.0,
-  SENSEX: 81850.0,
+  NIFTY: 25050.0,
+  BANKNIFTY: 57920.0, // Calibrated to ~58,000 baseline!
+  SENSEX: 82150.0,
 };
 
 const INSTRUMENT_IV: Record<UnderlyingSymbol, number> = {
@@ -48,15 +48,31 @@ export default function OptionsIntelligencePage() {
   const [synthesizing, setSynthesizing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Spot override state for interactive price testing
+  const [customSpots, setCustomSpots] = useState<Partial<Record<UnderlyingSymbol, number>>>({});
+
   // Intelligence Data States
   const [researchData, setResearchData] = useState<FinancialResearchReport | null>(null);
   const [expectedMoveData, setExpectedMoveData] = useState<ExpectedMoveProjection | null>(null);
   const [contractSelection, setContractSelection] = useState<ContractSelectionReport | null>(null);
   const [portfolioGreeks, setPortfolioGreeks] = useState<PortfolioGreeksSummary | null>(null);
 
-  const spot = SPOT_BASELINES[underlying] || 25000.0;
+  const spot = customSpots[underlying] ?? SPOT_BASELINES[underlying] ?? 25000.0;
+  const isCustomSpot = customSpots[underlying] !== undefined;
   const currentIv = INSTRUMENT_IV[underlying] || 0.155;
   const stopLoss = STOP_LOSS_POINTS[underlying]?.[horizon] || 35;
+
+  const handleUpdateSpot = (newVal: number) => {
+    setCustomSpots((prev) => ({ ...prev, [underlying]: newVal }));
+  };
+
+  const handleResetSpot = () => {
+    setCustomSpots((prev) => {
+      const copy = { ...prev };
+      delete copy[underlying];
+      return copy;
+    });
+  };
 
   const loadAllIntelligence = useCallback(async () => {
     setLoading(true);
@@ -156,6 +172,9 @@ export default function OptionsIntelligencePage() {
         spotPrice={spot}
         currentIv={currentIv}
         lotSize={contractSelection?.selected_contract?.lot_size}
+        isCustomSpot={isCustomSpot}
+        onUpdateSpot={handleUpdateSpot}
+        onResetSpot={handleResetSpot}
         loading={loading}
         synthesizing={synthesizing}
         onRefresh={loadAllIntelligence}

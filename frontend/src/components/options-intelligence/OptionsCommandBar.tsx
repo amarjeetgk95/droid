@@ -11,6 +11,10 @@ import {
   Sparkles,
   Layers,
   ShieldCheck,
+  Edit2,
+  Check,
+  X,
+  RotateCcw,
 } from 'lucide-react';
 import { UnderlyingSymbol, TradingHorizon, DirectionalBias } from './options-types';
 
@@ -24,6 +28,9 @@ interface OptionsCommandBarProps {
   spotPrice: number;
   currentIv: number;
   lotSize?: number;
+  isCustomSpot?: boolean;
+  onUpdateSpot?: (val: number) => void;
+  onResetSpot?: () => void;
   loading: boolean;
   synthesizing: boolean;
   onRefresh: () => void;
@@ -53,12 +60,30 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
   spotPrice,
   currentIv,
   lotSize,
+  isCustomSpot,
+  onUpdateSpot,
+  onResetSpot,
   loading,
   synthesizing,
   onRefresh,
   onSynthesizeAI,
 }) => {
   const activeLot = lotSize || LOT_SIZES[underlying] || 25;
+  const [editingSpot, setEditingSpot] = React.useState<boolean>(false);
+  const [spotInputValue, setSpotInputValue] = React.useState<string>(spotPrice.toString());
+
+  React.useEffect(() => {
+    setSpotInputValue(spotPrice.toString());
+  }, [spotPrice, underlying]);
+
+  const handleSpotSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const val = parseFloat(spotInputValue);
+    if (!isNaN(val) && val > 0 && onUpdateSpot) {
+      onUpdateSpot(val);
+      setEditingSpot(false);
+    }
+  };
   return (
     <div className="bg-card/90 backdrop-blur-md rounded-2xl border border-border/70 shadow-sm p-4 space-y-3.5">
       {/* Top Tier: Title, Active Spot Metric, and Primary Action Toolbar */}
@@ -82,15 +107,64 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
           </div>
         </div>
 
-        {/* Live Asset Context Badge */}
+        {/* Live Asset Context Badge with Interactive Spot Editing */}
         <div className="flex flex-wrap items-center gap-2 bg-muted/40 p-1.5 px-3 rounded-xl border border-border/50 self-start lg:self-auto">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-bold font-mono text-foreground">{underlying} Spot:</span>
-            <span className="text-sm font-bold font-mono text-primary">
-              ₹{spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </span>
-          </div>
+          {editingSpot ? (
+            <form onSubmit={handleSpotSubmit} className="flex items-center gap-1.5">
+              <span className="text-xs font-bold font-mono text-foreground">{underlying}:</span>
+              <input
+                type="number"
+                step="5"
+                value={spotInputValue}
+                onChange={(e) => setSpotInputValue(e.target.value)}
+                className="w-24 px-1.5 py-0.5 text-xs font-mono font-bold bg-background border border-primary rounded text-foreground focus:outline-hidden"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="p-1 rounded hover:bg-emerald-500/20 text-emerald-400"
+                title="Save spot price"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingSpot(false)}
+                className="p-1 rounded hover:bg-rose-500/20 text-rose-400"
+                title="Cancel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-bold font-mono text-foreground">{underlying} Spot:</span>
+              <span className="text-sm font-bold font-mono text-primary">
+                ₹{spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
+              {onUpdateSpot && (
+                <button
+                  type="button"
+                  onClick={() => setEditingSpot(true)}
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Edit spot price"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
+              {isCustomSpot && onResetSpot && (
+                <button
+                  type="button"
+                  onClick={onResetSpot}
+                  className="p-1 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
+                  title="Reset to default baseline"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
           <span className="text-muted-foreground/40">|</span>
           <span className="text-xs font-mono text-muted-foreground">
             IV: <strong className="text-foreground">{(currentIv * 100).toFixed(1)}%</strong>
