@@ -13,9 +13,7 @@ import {
   CheckCircle2,
   Trash2,
   Layers,
-  ArrowRight,
   ShieldCheck,
-  AlertCircle,
 } from 'lucide-react';
 import { CryptoScalpSignal } from '@/lib/types';
 
@@ -36,8 +34,6 @@ const STAGES = [
   { id: 'TRIGGERED', label: 'Triggered' },
   { id: 'CONFIRMED', label: 'Confirmed' },
 ] as const;
-
-type StageId = (typeof STAGES)[number]['id'];
 
 function getStageIndex(state?: string): number {
   if (!state) return 2; // Default to ARMED
@@ -145,9 +141,9 @@ Rationale: ${sig.rationale}`;
   });
 
   return (
-    <div className="bg-[#0B0F17] border border-slate-800 rounded-2xl p-6 shadow-sm space-y-6">
+    <div className="bg-[#090C15] border border-slate-800/80 rounded-2xl p-6 shadow-sm space-y-6">
       {/* ── HEADER & CONTROLS ────────────────────────────────────────── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/70">
         <div>
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -156,7 +152,7 @@ Rationale: ${sig.rationale}`;
             <h2 className="text-base font-semibold tracking-tight text-slate-100">
               Active Institutional Scalping Signals
             </h2>
-            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono bg-slate-800 text-slate-300 font-medium border border-slate-700">
+            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono bg-[#141A26] text-amber-400 font-bold border border-amber-500/20">
               {filteredSignals.length} Active
             </span>
           </div>
@@ -168,7 +164,7 @@ Rationale: ${sig.rationale}`;
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Asset Pills */}
-          <div className="flex bg-[#070A10] rounded-lg p-1 border border-slate-800">
+          <div className="flex bg-[#05070C] rounded-lg p-1 border border-slate-800/80">
             {['ALL', 'BTC', 'ETH'].map((sym) => (
               <button
                 key={sym}
@@ -176,7 +172,7 @@ Rationale: ${sig.rationale}`;
                 onClick={() => handleAssetSelect(sym)}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                   assetFilter === sym
-                    ? 'bg-slate-800 text-slate-100 shadow-xs'
+                    ? 'bg-[#141A26] text-slate-100 font-semibold shadow-xs border border-slate-700/60'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -186,7 +182,7 @@ Rationale: ${sig.rationale}`;
           </div>
 
           {/* Direction Filter */}
-          <div className="flex bg-[#070A10] rounded-lg p-1 border border-slate-800">
+          <div className="flex bg-[#05070C] rounded-lg p-1 border border-slate-800/80">
             {(['ALL', 'LONG', 'SHORT'] as const).map((dir) => (
               <button
                 key={dir}
@@ -195,10 +191,10 @@ Rationale: ${sig.rationale}`;
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                   dirFilter === dir
                     ? dir === 'LONG'
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      ? 'bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30'
                       : dir === 'SHORT'
-                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                      : 'bg-slate-800 text-slate-100'
+                      ? 'bg-rose-500/20 text-rose-400 font-semibold border border-rose-500/30'
+                      : 'bg-[#141A26] text-slate-100 font-semibold border border-slate-700/60'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -213,12 +209,12 @@ Rationale: ${sig.rationale}`;
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-56 bg-slate-900/40 border border-slate-800 rounded-xl animate-pulse" />
+            <div key={i} className="h-56 bg-[#0C101A] border border-slate-800/80 rounded-xl animate-pulse" />
           ))}
         </div>
       ) : filteredSignals.length === 0 ? (
-        <div className="p-10 text-center border border-slate-800/80 rounded-xl space-y-3 bg-[#080C14]">
-          <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center mx-auto border border-slate-800 text-slate-400">
+        <div className="p-10 text-center border border-slate-800/70 rounded-xl space-y-3 bg-[#06080E]">
+          <div className="w-10 h-10 rounded-full bg-[#0C101A] flex items-center justify-center mx-auto border border-slate-800 text-slate-400">
             <Filter className="w-5 h-5" />
           </div>
           <div className="space-y-1">
@@ -230,7 +226,7 @@ Rationale: ${sig.rationale}`;
           <button
             type="button"
             onClick={onRefresh}
-            className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
+            className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-[#141A26] hover:bg-[#1C2436] text-slate-200 rounded-lg text-xs font-semibold border border-slate-700/80 transition-all cursor-pointer shadow-xs"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span>Scan Market Now</span>
@@ -249,7 +245,7 @@ Rationale: ${sig.rationale}`;
             return (
               <div
                 key={sig.id}
-                className="relative flex flex-col justify-between rounded-xl border border-slate-800 bg-[#0E131F] hover:border-slate-700 transition-all p-5 shadow-xs space-y-4.5"
+                className="relative flex flex-col justify-between rounded-xl border border-slate-800/80 bg-[#0C101A] hover:border-slate-700/80 transition-all p-5 shadow-xs space-y-4"
               >
                 {/* 1. TOP BAR: Asset, Direction, Special ID, Time & Delete */}
                 <div className="flex items-start justify-between gap-3">
@@ -272,7 +268,7 @@ Rationale: ${sig.rationale}`;
                     </span>
 
                     {/* Timeframe */}
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#06080E] text-slate-300 border border-slate-800">
                       {sig.timeframe.toUpperCase()}
                     </span>
 
@@ -281,7 +277,7 @@ Rationale: ${sig.rationale}`;
                       type="button"
                       onClick={(e) => handleCopyId(sig, e)}
                       title={`Full ID: ${sig.id} (Click to copy)`}
-                      className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900/90 text-slate-300 hover:text-white border border-slate-700/80 cursor-pointer transition-all"
+                      className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#06080E] text-slate-300 hover:text-white border border-slate-700/80 cursor-pointer transition-all"
                     >
                       <span className="font-semibold text-cyan-400">{specialId}</span>
                       {copiedId === sig.id ? (
@@ -321,7 +317,7 @@ Rationale: ${sig.rationale}`;
                 </div>
 
                 {/* 2. STAGE PROGRESSION STEPPER (FSM LIFECYCLE) */}
-                <div className="bg-[#090D15] border border-slate-800/80 rounded-lg p-2.5 space-y-2">
+                <div className="bg-[#06080E] border border-slate-800/70 rounded-lg p-2.5 space-y-2">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-mono text-slate-400">Signal Lifecycle:</span>
                     <span
@@ -334,7 +330,7 @@ Rationale: ${sig.rationale}`;
                           ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                           : currentState.includes('TARGET_1')
                           ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-300'
+                          : 'bg-[#141A26] text-slate-300'
                       }`}
                     >
                       {currentState === 'ARMED' && 'ARMED · Waiting Breakout'}
@@ -362,7 +358,7 @@ Rationale: ${sig.rationale}`;
                                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                                   : isCurrent
                                   ? 'bg-amber-500/20 text-amber-300 border border-amber-400 ring-2 ring-amber-400/20 animate-pulse'
-                                  : 'bg-slate-900 text-slate-600 border border-slate-800'
+                                  : 'bg-[#06080E] text-slate-600 border border-slate-800'
                               }`}
                             >
                               {isPast ? <Check className="w-3 h-3 text-emerald-400" /> : idx + 1}
@@ -382,7 +378,7 @@ Rationale: ${sig.rationale}`;
                           {idx < STAGES.length - 1 && (
                             <div
                               className={`h-[1px] flex-1 mb-3 transition-all ${
-                                idx < stageIndex ? 'bg-emerald-500/40' : 'bg-slate-800'
+                                idx < stageIndex ? 'bg-emerald-500/40' : 'bg-slate-800/80'
                               }`}
                             />
                           )}
@@ -409,7 +405,7 @@ Rationale: ${sig.rationale}`;
                 </div>
 
                 {/* 4. CLEAN PRICING MATRIX GRID (NO MUDDY GREY) */}
-                <div className="grid grid-cols-4 gap-2 bg-[#080C14] border border-slate-800/80 rounded-lg p-3 text-center">
+                <div className="grid grid-cols-4 gap-2 bg-[#06080E] border border-slate-800/70 rounded-lg p-3 text-center">
                   <div>
                     <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
                       Entry Trigger
@@ -457,7 +453,7 @@ Rationale: ${sig.rationale}`;
                       {sig.confluence_factors.map((factor, idx) => (
                         <span
                           key={idx}
-                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800"
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-[#06080E] text-slate-300 border border-slate-800"
                         >
                           <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
                           <span>{factor}</span>
@@ -474,7 +470,7 @@ Rationale: ${sig.rationale}`;
                 </div>
 
                 {/* 6. BOTTOM BAR: Telemetry & Copy Plan */}
-                <div className="flex items-center justify-between pt-3 border-t border-slate-800 text-[10px] text-slate-400">
+                <div className="flex items-center justify-between pt-3 border-t border-slate-800/80 text-[10px] text-slate-400">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex items-center gap-1 text-emerald-400 font-mono">
                       <ShieldCheck className="w-3 h-3" />
@@ -488,7 +484,7 @@ Rationale: ${sig.rationale}`;
                   <button
                     type="button"
                     onClick={() => handleCopyPlan(sig)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-all cursor-pointer border border-slate-700 text-xs font-medium"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#141A26] hover:bg-[#1C2436] text-slate-200 transition-all cursor-pointer border border-slate-700/80 text-xs font-medium"
                   >
                     {copiedId === `plan_${sig.id}` ? (
                       <>

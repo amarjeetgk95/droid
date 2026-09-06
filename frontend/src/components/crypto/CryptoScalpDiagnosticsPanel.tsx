@@ -2,13 +2,11 @@
 
 import React, { useState } from 'react';
 import {
-  Activity,
-  Send,
   Clock,
   Database,
   RefreshCw,
-  Cpu,
   Layers,
+  Send,
 } from 'lucide-react';
 import { CryptoScalpDiagnostics } from '@/lib/types';
 import { api } from '@/lib/api';
@@ -62,7 +60,7 @@ export function CryptoScalpDiagnosticsPanel({
   };
 
   return (
-    <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-4 shadow-xs">
+    <div className="bg-[#090C15] border border-slate-800/80 rounded-xl p-4 shadow-xs">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Left: Engine Status & Telemetry */}
         <div className="flex flex-wrap items-center gap-4">
@@ -101,7 +99,7 @@ export function CryptoScalpDiagnosticsPanel({
         {/* Right: Controls (Interval, Telegram Toggle, Manual Trigger) */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Configurable Scan Interval */}
-          <div className="flex items-center gap-1.5 bg-[#070A10] px-2.5 py-1 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-1.5 bg-[#05070C] px-2.5 py-1 rounded-lg border border-slate-800/80">
             <Clock className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-[11px] text-slate-400">Cadence:</span>
             <select
@@ -110,10 +108,10 @@ export function CryptoScalpDiagnosticsPanel({
               disabled={updatingConfig}
               className="bg-transparent text-xs font-medium text-slate-200 focus:outline-hidden cursor-pointer"
             >
-              <option value={15} className="bg-slate-900 text-slate-200">15s (Aggressive)</option>
-              <option value={30} className="bg-slate-900 text-slate-200">30s (Default)</option>
-              <option value={60} className="bg-slate-900 text-slate-200">60s (Balanced)</option>
-              <option value={120} className="bg-slate-900 text-slate-200">120s (Conservative)</option>
+              <option value={15} className="bg-[#0A0E17] text-slate-200">15s (Aggressive)</option>
+              <option value={30} className="bg-[#0A0E17] text-slate-200">30s (Default)</option>
+              <option value={60} className="bg-[#0A0E17] text-slate-200">60s (Balanced)</option>
+              <option value={120} className="bg-[#0A0E17] text-slate-200">120s (Conservative)</option>
             </select>
           </div>
 
@@ -125,7 +123,7 @@ export function CryptoScalpDiagnosticsPanel({
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
               telegramOn
                 ? 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'
-                : 'bg-[#070A10] text-slate-400 border-slate-800 hover:text-slate-200'
+                : 'bg-[#05070C] text-slate-400 border-slate-800/80 hover:text-slate-200'
             }`}
           >
             <Send className="w-3 h-3" />
@@ -137,7 +135,7 @@ export function CryptoScalpDiagnosticsPanel({
             type="button"
             onClick={onRefresh}
             disabled={scanning}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg text-xs font-semibold border border-slate-700 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#141A26] hover:bg-[#1C2436] text-slate-100 rounded-lg text-xs font-semibold border border-slate-700/80 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin text-cyan-400' : ''}`} />
             <span>{scanning ? 'Scanning...' : 'Scan Now'}</span>
