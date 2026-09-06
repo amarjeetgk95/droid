@@ -38,7 +38,7 @@ export const ExpectedMoveTab: React.FC<ExpectedMoveTabProps> = ({ expectedMoveDa
   }
 
   const isVelocityApproved = expectedMoveData.is_fast_enough_for_option ?? true;
-  const spot = expectedMoveData.spot_price;
+  const spot = expectedMoveData.spot_price ?? expectedMoveData.spot ?? 0;
   const t1 = expectedMoveData.conservative_move_points ?? spot + 80;
   const t2 = expectedMoveData.aggressive_move_points ?? spot + 160;
   const t3 = spot + (expectedMoveData.expected_move_points || 100);

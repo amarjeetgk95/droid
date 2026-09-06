@@ -111,7 +111,7 @@ class SignalCenterService:
         elif age_ms is None and session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY":
             data_health = "CLOSED"
         elif age_ms is None:
-            data_health = "LIVE"  # after synthetic seed, age 0 -> LIVE
+            data_health = "STALE"  # no snapshot → unknown freshness, never assume LIVE
         elif age_ms > 5000:
             data_health = "STALE"
         else:
@@ -249,25 +249,39 @@ class SignalCenterService:
                     options_confirm = "BEARISH_CONFIRMING"
         except Exception:
             pass
-        # Create authoritative Signal
-        ttl_ms = 5000
-        signal = create_signal(
-            instrument_id=iid,
-            strategy="BREAKOUT",
-            direction=direction,  # type: ignore
-            market_context_id=str(last_update_ms),
-            short_horizon={"status": short_out.status, "confidence": short_out.confidence, "horizon_minutes": 10, "entry_zone": short_out.entry_zone, "stop_loss": short_out.stop_loss, "target_zone": short_out.target_zone, "reason": short_out.reason},
-            continuation={"status": cont_out.status, "confidence": cont_out.confidence, "max_holding_minutes": 119, "reason": cont_out.reason},
-            ai={"status": "UNAVAILABLE", "reason": "AI confirmation pending — deterministic WATCH"},
-            ttl_ms=ttl_ms,
-        )
-        # Store and register
-        signal_fsm.register(signal)
-        # Mark validated for demo
-        signal_fsm.transition(signal.signal_id, "VALIDATED")
+        # Create authoritative Signal — persistent per (instrument, direction, level bucket),
+        # 60s TTL with update-in-place (no UUID churn per poll).
+        ttl_ms = 60000
+        level_bucket = str(int(float(breakout_level))) if breakout_level is not None else "na"
+        day_bucket = time.strftime("%Y%m%d", time.gmtime(last_update_ms / 1000.0))
+        persistent_id = f"BRK-{iid}-{direction}-{level_bucket}-{day_bucket}"
+        existing = None
+        try:
+            existing = signal_fsm.get(persistent_id)
+        except Exception:
+            existing = None
+        if existing is not None and not existing.is_expired(now_ms):
+            signal = existing
+            signal.expires_at_utc = now_ms + ttl_ms
+            signal.ttl_ms = ttl_ms
+        else:
+            signal = create_signal(
+                instrument_id=iid,
+                strategy="BREAKOUT",
+                direction=direction,  # type: ignore
+                market_context_id=str(last_update_ms),
+                short_horizon={"status": short_out.status, "confidence": short_out.confidence, "horizon_minutes": 10, "entry_zone": short_out.entry_zone, "stop_loss": short_out.stop_loss, "target_zone": short_out.target_zone, "reason": short_out.reason},
+                continuation={"status": cont_out.status, "confidence": cont_out.confidence, "max_holding_minutes": 119, "reason": cont_out.reason},
+                ai={"status": "UNAVAILABLE", "reason": "AI confirmation pending — deterministic WATCH"},
+                ttl_ms=ttl_ms,
+            )
+            signal.signal_id = persistent_id
+            # Store and register
+            signal_fsm.register(signal)
         # Keep by instrument (cap 20)
         lst = self._by_instrument.setdefault(iid, [])
-        lst.insert(0, signal.signal_id)
+        if persistent_id not in lst:
+            lst.insert(0, persistent_id)
         self._by_instrument[iid] = lst[:20]
 
         # Audit
@@ -339,8 +353,9 @@ class SignalCenterService:
             "short_horizon": short_out.to_dict(),
             "continuation": cont_out.to_dict(),
             "options_confirmation": options_confirm,
-            "ai_decision": "WATCH",
-            "ai_confidence": 68,
+            "ai_decision": "WATCH" if (signal.ai or {}).get("status") == "UNAVAILABLE" else (signal.ai or {}).get("decision", "WATCH"),
+            "ai_confidence": float(getattr(short_out, "confidence", 0.0) or 0.0) or None,
+            "ai_status": (signal.ai or {}).get("status", "UNAVAILABLE"),
             "risk_status": "APPROVED" if data_health not in ("STALE","FEED_DEGRADED") else "REJECTED",
             "risk_reason": None,
             "ttl_ms": ttl_ms,
@@ -375,7 +390,7 @@ class SignalCenterService:
                         continue
                 results.append(ev)
             else:
-                # No setup — represent as NO_SETUP for completeness if filter allows
+                # No setup — honest NO_SETUP with null metrics (no synthetic quality scores)
                 if not status or status == "NO_SETUP":
                     prof = asset_registry.get(iid)
                     results.append({
@@ -385,14 +400,15 @@ class SignalCenterService:
                         "status": "NO_SETUP",
                         "direction": "NEUTRAL",
                         "trigger_level": None,
-                        "breakout_pressure": 50,
-                        "false_breakout_risk": 30,
-                        "breakout_quality": 70,
+                        "breakout_pressure": None,
+                        "false_breakout_risk": None,
+                        "breakout_quality": None,
                         "short_horizon": {"status":"REJECTED","confidence":0},
                         "continuation": {"status":"REJECTED","confidence":0},
                         "options_confirmation": "NEUTRAL",
                         "ai_decision": "UNAVAILABLE",
-                        "risk_status": "APPROVED",
+                        "ai_confidence": None,
+                        "risk_status": "NO_SETUP",
                         "price": None,
                         "supporting": [],
                         "conflicting": [],

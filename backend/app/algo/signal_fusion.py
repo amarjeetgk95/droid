@@ -14,15 +14,40 @@ from app.algo.money import D
 
 logger = structlog.get_logger()
 
-# §26 default weights
-DEFAULT_WEIGHTS = {
-    "technical": Decimal("40"),
-    "mtf": Decimal("20"),
-    "fno": Decimal("15"),
-    "regime": Decimal("10"),
-    "ai": Decimal("10"),
-    "event_risk": Decimal("5"),
-}
+# §26 default weights — single source of truth: backend/config/scoring_weights.json (v2).
+# Kept inline as fallback if config file is missing (tests, minimal installs).
+def _load_scoring_weights_percent() -> dict:
+    try:
+        import json
+        from pathlib import Path
+        for p in (
+            Path(__file__).resolve().parents[2] / "config" / "scoring_weights.json",
+            Path("backend/config/scoring_weights.json"),
+            Path("config/scoring_weights.json"),
+        ):
+            if p.exists():
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                w = data.get("weights_percent", {})
+                if w:
+                    return {k: Decimal(str(v)) for k, v in w.items() if k != "ml_max"}
+    except Exception:
+        pass
+    return {
+        "technical": Decimal("40"),
+        "mtf": Decimal("20"),
+        "fno": Decimal("15"),
+        "regime": Decimal("10"),
+        "ai": Decimal("10"),
+        "event_risk": Decimal("5"),
+    }
+
+
+DEFAULT_WEIGHTS = _load_scoring_weights_percent()
+
+# Unified thresholds (scoring_weights.json: fusion_long 62 / fusion_short 38 / armed 70)
+FUSION_LONG_THRESHOLD = Decimal("62")
+FUSION_SHORT_THRESHOLD = Decimal("38")
 
 
 @dataclass
@@ -115,23 +140,26 @@ class SignalFusion:
         if any(f in ("HIGH_RISK", "EVENT_RISK_HIGH", "LIQUIDITY_RISK") for f in risk_flags):
             direction: Literal["LONG","SHORT","NO_TRADE"] = "NO_TRADE"
             fused = min(fused, D(45))
-        elif fused >= D(62):
+        elif fused >= FUSION_LONG_THRESHOLD:
             direction = "LONG"
-        elif fused <= D(38):
+        elif fused <= FUSION_SHORT_THRESHOLD:
             direction = "SHORT"
         else:
             direction = "NO_TRADE"
 
-        # Confidence derived from agreement among components
-        # High when technical, mtf, ai all agree
+        # Confidence: agreement + distance from 50, capped at 0.90 (§35).
+        # 0.07/agreement (not 0.10) + /200 (not /100) prevents borderline 62 → 0.92 inflation.
         agreement = 0
         if inputs.technical.get("trend") == "BULLISH" and direction == "LONG": agreement += 1
         if inputs.technical.get("trend") == "BEARISH" and direction == "SHORT": agreement += 1
         if inputs.mtf.get("overall_bias") == "BULLISH" and direction == "LONG": agreement += 1
         if inputs.mtf.get("overall_bias") == "BEARISH" and direction == "SHORT": agreement += 1
         if ai_bias == direction: agreement += 1
-        confidence = D("0.5") + D(agreement) * D("0.1") + (abs(fused - D(50)) / D(100))
-        confidence = max(D("0.1"), min(D("0.95"), confidence))
+        confidence = D("0.5") + D(agreement) * D("0.07") + (abs(fused - D(50)) / D(200))
+        # Haircut when AI unavailable (no AI key or NEUTRAL with low confidence)
+        if not inputs.ai or inputs.ai.get("bias", "NEUTRAL") == "NEUTRAL":
+            confidence -= D("0.08")
+        confidence = max(D("0.1"), min(D("0.90"), confidence))
 
         return Signal(
             signal_id=uuid4(),
@@ -215,6 +243,58 @@ class ConflictResolver:
             return [candidates[0].signal], f"NET_{wanted_dir}_RESIDUAL_{abs(net)}"
 
         return [], "UNKNOWN_POLICY"
+
+    def resolve_candidate_conflicts(
+        self,
+        candidates: list[Any],
+        tie_epsilon: float = 5.0,
+    ) -> tuple[list[Any], list[str]]:
+        """
+        Arbitrate between competing SignalCandidates on the same underlying instrument (§28).
+        If opposing directions (CALL vs PUT) fire simultaneously:
+          - If |confidence_A - confidence_B| < tie_epsilon: Reject both (NO_TRADE on tie).
+          - Else: Pick higher confidence candidate, drop opposing candidate.
+        """
+        if len(candidates) <= 1:
+            return candidates, []
+
+        from collections import defaultdict
+        by_underlying = defaultdict(list)
+        for c in candidates:
+            by_underlying[c.underlying].append(c)
+
+        approved = []
+        dropped_reasons = []
+
+        for underlying, c_list in by_underlying.items():
+            calls = [c for c in c_list if "CALL" in c.direction]
+            puts = [c for c in c_list if "PUT" in c.direction]
+
+            if calls and puts:
+                best_call = max(calls, key=lambda c: getattr(c, "overall_confidence", 50.0) or 50.0)
+                best_put = max(puts, key=lambda c: getattr(c, "overall_confidence", 50.0) or 50.0)
+                diff = abs(float(best_call.overall_confidence or 50.0) - float(best_put.overall_confidence or 50.0))
+
+                if diff < tie_epsilon:
+                    dropped_reasons.append(
+                        f"{underlying}:CONFLICT_TIE_REJECT_BOTH (call={best_call.overall_confidence}, put={best_put.overall_confidence})"
+                    )
+                    logger.warning("candidate_conflict_tie_reject_both", underlying=underlying, diff=diff)
+                    continue
+
+                if (best_call.overall_confidence or 50.0) > (best_put.overall_confidence or 50.0):
+                    approved.append(best_call)
+                    dropped_reasons.append(f"{underlying}:{best_put.strategy}_DROPPED_IN_FAVOR_OF_{best_call.strategy}_CALL")
+                else:
+                    approved.append(best_put)
+                    dropped_reasons.append(f"{underlying}:{best_call.strategy}_DROPPED_IN_FAVOR_OF_{best_put.strategy}_PUT")
+            else:
+                approved.extend(c_list)
+
+        return approved, dropped_reasons
+
+
+conflict_resolver = ConflictResolver()
 
 
 # ── Trigger Engine §31 ───────────────────────────────────────────────

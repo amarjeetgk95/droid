@@ -40,6 +40,9 @@ class StrategyContext(BaseModel):
     volume_ma_20: Optional[float] = None
     is_new_1m_candle: bool = False
     is_new_5m_candle: bool = False
+    fno_degraded: bool = False
+    vwap_degraded: bool = False
+    vwap_coverage_pct: float = 100.0
 
 
 class SignalCandidate(BaseModel):
@@ -49,6 +52,9 @@ class SignalCandidate(BaseModel):
     direction: TradeDirection
     timeframe: Timeframe
     spot_price: Decimal
+    fno_degraded: bool = False
+    vwap_degraded: bool = False
+    vwap_coverage_pct: float = 100.0
 
     # Desk & Classification
     signal_type: SignalType = "INTRADAY"
@@ -89,6 +95,7 @@ class SignalCandidate(BaseModel):
     expected_move: Optional[dict[str, Any]] = None
     ai_research: Optional[dict[str, Any]] = None
     path_simulation: Optional[dict[str, Any]] = None
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
 
     created_at_utc: int = Field(default_factory=lambda: int(__import__("time").time() * 1000))
     strategy_version: str = "v6.0"

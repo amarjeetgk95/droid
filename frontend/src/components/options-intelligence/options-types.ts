@@ -71,6 +71,9 @@ export interface ExpectedMoveProjection {
   conservative_target_t1: number;
   structural_target_t2: number;
   extended_target_t3: number;
+  spot_price?: number;
+  conservative_move_points?: number;
+  aggressive_move_points?: number;
 }
 
 export interface GreeksData {
@@ -127,6 +130,7 @@ export interface ContractSelectionReport {
     strike: number;
     option_type: OptionType;
     current_iv: number;
+    lot_size?: number;
   };
   selected_greeks: GreeksData;
   path_simulation: PathSimulationReport;

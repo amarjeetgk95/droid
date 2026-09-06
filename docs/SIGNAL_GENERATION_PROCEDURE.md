@@ -269,22 +269,23 @@ If same underlying + same strategy + same direction already ACTIVE and not expir
 
 **Files:** `backend/app/signals/confluence.py`, `backend/app/services/ai_service.py`, `backend/app/ai/*`, `backend/app/ml/predictor.py`
 
-System now combines all marks like school report card:
+System now combines all marks like school report card (single source: `backend/config/scoring_weights.json` v2):
 
 ```
-Final Score = 40% Technical + 20% Multi-timeframe + 20% F&O + 10% Regime + 10% AI
+Final Score = 40% Technical + 20% Multi-timeframe + 15% F&O + 10% Regime + 10% AI + 5% Event-risk (+7% ML when available)
 ```
 
 - Technical = from Step 4 indicators
 - MTF = from Step 5 alignment
-- F&O = option crowd support?
-- Regime = market mood support?
-- AI = quick AI bias (1500ms timeout) + historical similar cases (400ms) + ML model (XGBoost) prediction
+- F&O = option crowd support (15% + 5% event overlay = 20% F&O domain)?
+- Regime = market mood support (now includes COMPRESSION_SQUEEZE / EVENT)?
+- AI = desk-specific bias (scalp 500ms / intraday 1500ms timeouts) + ML model prediction
+- Missing-data haircuts: AI unavailable −8, F&O degraded blocks ARMED (VALIDATED only), session-VWAP degraded −10
 
-If AI times out, remaining marks are re-adjusted so system never stops.
+If AI times out, remaining marks are re-adjusted so system never stops (with −8 haircut so silent renormalization cannot inflate).
 
-- If final score >= 70 → state = `ARMED` (strong)
-- Else → state = `VALIDATED` (ok, but less strong)
+- If final score >= 70 → state = `ARMED` (strong, requires LIVE F&O)
+- Else → state = `VALIDATED` (ok, but less strong; F&O-degraded signals stay here)
 
 Other AI helpers:
 - `ScalpingAI` - special fast check for 1-min trades

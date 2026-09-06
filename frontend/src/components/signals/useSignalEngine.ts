@@ -11,7 +11,7 @@ import { deskCache } from '@/lib/useDeskCache';
 
 export type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
 export type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
-export type FilterAssetClass = 'INDEX';
+export type FilterAssetClass = 'ALL' | 'INDEX';
 export type OppSource = 'live' | 'scanner';
 export type TrackView = 'performance' | 'ledger';
 export type FilterStrategy =
@@ -31,6 +31,7 @@ export interface ScanDiagnostics {
   data_quality?: string;
   reasons?: string[];
   candidates_found?: number;
+  scanned?: number;
   error?: string | null;
 }
 

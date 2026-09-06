@@ -20,23 +20,34 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
         # ── Session Time Window Enforcement (§15: Active 09:30 - 11:30 IST) ──
-        ts_ms = ctx.timestamp_ms if (ctx.timestamp_ms and ctx.timestamp_ms > 0) else int(__import__("time").time() * 1000)
-        utc_minutes = (ts_ms // 60000) % 1440
-        ist_minutes = (utc_minutes + 330) % 1440
-        if ist_minutes < 570 or ist_minutes > 690:
-            return None
+        if ctx.timestamp_ms and ctx.timestamp_ms > 0:
+            utc_minutes = (ctx.timestamp_ms // 60000) % 1440
+            ist_minutes = (utc_minutes + 330) % 1440
+            if ist_minutes < 570 or ist_minutes > 690:
+                return None
 
         ind = ctx.indicators
         spot = ctx.spot_price
         tick = Decimal("0.05")
 
-        # Check for ORB range in indicators or fallback to first candle extremes
+        # Check for ORB range in indicators or calculate from opening candle extremes
         orb_data = ind.get("orb") or ind.get("price_action", {}).get("opening_range", {})
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
 
-        orb_high = Decimal(str(orb_data.get("high") or spot * Decimal("1.004")))
-        orb_low = Decimal(str(orb_data.get("low") or spot * Decimal("0.996")))
-        range_height = orb_high - orb_low
+        if orb_data.get("high") and orb_data.get("low"):
+            orb_high = Decimal(str(orb_data["high"]))
+            orb_low = Decimal(str(orb_data["low"]))
+        elif ctx.candles and len(ctx.candles) >= 2:
+            # 5M timeframe: first 3 candles = 15m opening range; 1M timeframe: first 15 candles.
+            n_candles = 3 if ctx.timeframe == "5M" else (15 if ctx.timeframe == "1M" else 3)
+            opening_candles = ctx.candles[:min(len(ctx.candles), n_candles)]
+            orb_high = Decimal(str(max(float(c.get("high", spot)) for c in opening_candles)))
+            orb_low = Decimal(str(min(float(c.get("low", spot)) for c in opening_candles)))
+        else:
+            # Fail closed: ORB requires true opening range or opening candles
+            return None
+
+        range_height = max(atr * Decimal("0.5"), orb_high - orb_low)
         mid_point = (orb_high + orb_low) / Decimal("2")
 
         vol_ratio = float(ind.get("volume_ratio", 1.3))

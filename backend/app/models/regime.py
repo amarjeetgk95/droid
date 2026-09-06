@@ -8,6 +8,7 @@ MarketRegimeState = Literal[
     "RANGEBOUND_HIGH_VOL",
     "VOLATILE_EXPANSION",
     "COMPRESSION_SQUEEZE",
+    "UNKNOWN",
 ]
 
 VixRegimeCategory = Literal[

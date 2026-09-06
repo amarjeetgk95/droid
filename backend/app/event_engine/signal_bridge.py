@@ -94,8 +94,19 @@ class EventSignalBridge:
         direction: str,
         simulated_entry_price: float,
     ) -> ShadowSignalRecord:
-        """Record shadow execution for paper forward-testing without touching real capital."""
+        """Record shadow execution for paper forward-testing without touching real capital.
+
+        Sizing: opportunity-weighted advisory factor in [0.25, 1.0]:
+          base 1.0 → scaled by opportunity/100, penalized by importance (high importance
+          = high uncertainty → smaller). Consumers (risk_engine) multiply lots by this.
+        """
         ctx = self.create_event_context(event, underlying)
+        try:
+            opp = float(ctx.opportunity_score or 70.0) / 100.0
+            imp = float(ctx.event_importance_score or 80.0) / 100.0
+            sizing = max(0.25, min(1.0, round(opp * (1.15 - 0.4 * imp), 2)))
+        except Exception:
+            sizing = 1.0
         record = ShadowSignalRecord(
             canonical_event_id=event.canonical_event_id,
             base_signal_id=signal_id,
@@ -106,7 +117,7 @@ class EventSignalBridge:
             event_importance_score=ctx.importance_score,
             event_market_impact_score=ctx.market_impact_score,
             event_opportunity_score=ctx.opportunity_score,
-            suggested_sizing_factor=1.0,
+            suggested_sizing_factor=sizing,
             simulated_entry_price=simulated_entry_price,
             shadow_status="TRACKING",
         )
@@ -123,6 +134,26 @@ class EventSignalBridge:
 
     def get_shadow_records(self, limit: int = 50) -> list[ShadowSignalRecord]:
         return list(self._shadow_records.values())[:limit]
+
+    def complete_shadow_execution(
+        self,
+        shadow_signal_id: str,
+        simulated_exit_price: float,
+    ) -> ShadowSignalRecord | None:
+        """Close the loop: record exit + simulated PnL% for calibration."""
+        rec = self._shadow_records.get(shadow_signal_id)
+        if rec is None or rec.simulated_entry_price is None or rec.simulated_entry_price <= 0:
+            return rec
+        try:
+            entry = float(rec.simulated_entry_price)
+            exit_px = float(simulated_exit_price)
+            direction_mult = -1.0 if "PUT" in rec.direction.upper() or "SHORT" in rec.direction.upper() or "BEAR" in rec.direction.upper() else 1.0
+            rec.simulated_exit_price = exit_px
+            rec.simulated_pnl_pct = round((exit_px - entry) / entry * 100.0 * direction_mult, 2)
+            rec.shadow_status = "COMPLETED"
+        except Exception:
+            pass
+        return rec
 
 
 event_signal_bridge = EventSignalBridge()

@@ -309,7 +309,7 @@ export interface VixRegimeInfo {
 export interface MarketRegimeOverview {
   symbol: string;
   spot_price: number;
-  regime_state: 'TRENDING_BULLISH' | 'TRENDING_BEARISH' | 'RANGEBOUND_LOW_VOL' | 'RANGEBOUND_HIGH_VOL' | 'VOLATILE_EXPANSION' | 'COMPRESSION_SQUEEZE';
+  regime_state: 'TRENDING_BULLISH' | 'TRENDING_BEARISH' | 'RANGEBOUND_LOW_VOL' | 'RANGEBOUND_HIGH_VOL' | 'VOLATILE_EXPANSION' | 'COMPRESSION_SQUEEZE' | 'UNKNOWN';
   confidence_score: number;
   summary_headline: string;
   institutional_rationale: string;

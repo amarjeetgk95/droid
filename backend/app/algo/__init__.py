@@ -11,7 +11,7 @@ from app.algo.positions import PositionManager, ExitEngine
 from app.algo.reconciliation import ReconciliationEngine
 from app.algo.audit import AuditTrail
 from app.algo.ai_governance import AIModelGovernance
-from app.algo.signal_fusion import SignalFusion, TriggerEngine, ConflictResolver
+from app.algo.signal_fusion import SignalFusion, TriggerEngine, ConflictResolver, conflict_resolver
 
 __all__ = [
     "Money", "D", "quantize_price", "quantize_qty",
@@ -22,5 +22,5 @@ __all__ = [
     "OrderManager", "BrokerAdapter", "ExecutionSafety",
     "PositionManager", "ExitEngine",
     "ReconciliationEngine", "AuditTrail",
-    "AIModelGovernance", "SignalFusion", "TriggerEngine", "ConflictResolver",
+    "AIModelGovernance", "SignalFusion", "TriggerEngine", "ConflictResolver", "conflict_resolver",
 ]

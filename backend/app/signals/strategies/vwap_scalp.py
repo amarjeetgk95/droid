@@ -90,6 +90,16 @@ class VWAPScalpStrategy(Strategy):
                 # Strike selector: ATM or 1-strike ITM for CE (offset -1)
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=-1)
 
+                # Dynamic Scoring (§4)
+                wick_ratio_val = float(lower_wick / candle_range)
+                dev_pct_val = float(dev_pct)
+                tech_score = round(min(95.0, max(50.0, 50.0 + (wick_ratio_val * 35.0) + (min(dev_pct_val, 1.5) * 12.0))), 1)
+                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
+                pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                fno_score = round(min(90.0, max(45.0, 50.0 + ((pcr_val - 1.0) * 40.0))), 1)
+                reg_score = 85.0 if ctx.regime in ("RANGE", "LOW_VOL") else (60.0 if ctx.regime == "HIGH_VOL" else 70.0)
+                conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * reg_score, 1)
+
                 return SignalCandidate(
                     underlying=ctx.underlying,
                     strategy=self.name,
@@ -111,11 +121,11 @@ class VWAPScalpStrategy(Strategy):
                     ttl_seconds=240,
                     time_stop_seconds=240,
                     runner_ttl_seconds=480,
-                    technical_score=78.0,
-                    mtf_score=70.0,
-                    fno_score=75.0,
-                    regime_score=85.0 if ctx.regime in ("RANGE", "LOW_VOL") else 70.0,
-                    overall_confidence=78.0,
+                    technical_score=tech_score,
+                    mtf_score=mtf_score,
+                    fno_score=fno_score,
+                    regime_score=reg_score,
+                    overall_confidence=conf_score,
                     rationale=[
                         f"Price stretched {float(dev_pct):.2f}% below VWAP ({float(vwap_val)}) with bullish rejection wick",
                         f"Mean-reversion magnet targeting institutional session VWAP",
@@ -140,6 +150,16 @@ class VWAPScalpStrategy(Strategy):
                 # Strike selector: ATM or 1-strike ITM for PE (offset +1)
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=1)
 
+                # Dynamic Scoring (§4)
+                wick_ratio_val = float(upper_wick / candle_range)
+                dev_pct_val = float(dev_pct)
+                tech_score = round(min(95.0, max(50.0, 50.0 + (wick_ratio_val * 35.0) + (min(dev_pct_val, 1.5) * 12.0))), 1)
+                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
+                pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                fno_score = round(min(90.0, max(45.0, 50.0 + ((1.0 - pcr_val) * 40.0))), 1)
+                reg_score = 85.0 if ctx.regime in ("RANGE", "LOW_VOL") else (60.0 if ctx.regime == "HIGH_VOL" else 70.0)
+                conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * reg_score, 1)
+
                 return SignalCandidate(
                     underlying=ctx.underlying,
                     strategy=self.name,
@@ -161,11 +181,11 @@ class VWAPScalpStrategy(Strategy):
                     ttl_seconds=240,
                     time_stop_seconds=240,
                     runner_ttl_seconds=480,
-                    technical_score=78.0,
-                    mtf_score=70.0,
-                    fno_score=75.0,
-                    regime_score=85.0 if ctx.regime in ("RANGE", "LOW_VOL") else 70.0,
-                    overall_confidence=78.0,
+                    technical_score=tech_score,
+                    mtf_score=mtf_score,
+                    fno_score=fno_score,
+                    regime_score=reg_score,
+                    overall_confidence=conf_score,
                     rationale=[
                         f"Price extended {float(dev_pct):.2f}% above VWAP ({float(vwap_val)}) with bearish rejection wick",
                         f"Mean-reversion magnet targeting institutional session VWAP",

@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "effective_from": "2026-09-06",
+  "note": "Single source of truth for signal scoring. Both SignalFusion (§26) and ConfluenceEngine (§16) must load this file. FNO weight unified at 15 (fusion) + 5 event_risk; confluence maps fno 20 -> 15+5 split via event overlay.",
+  "weights_percent": {
+    "technical": 40.0,
+    "mtf": 20.0,
+    "fno": 15.0,
+    "regime": 10.0,
+    "ai": 10.0,
+    "event_risk": 5.0,
+    "ml_max": 7.0
+  },
+  "weights_fraction": {
+    "technical": 0.40,
+    "mtf": 0.20,
+    "fno": 0.15,
+    "regime": 0.10,
+    "ai": 0.10,
+    "event_risk": 0.05,
+    "ml_max": 0.07
+  },
+  "thresholds": {
+    "fusion_long": 62.0,
+    "fusion_short": 38.0,
+    "armed": 70.0,
+    "conflict_tie_epsilon": 5.0,
+    "ai_max_weight": 0.10,
+    "ml_max_weight": 0.07
+  },
+  "penalties": {
+    "ai_unavailable_haircut": 8.0,
+    "ml_unavailable_haircut": 0.0,
+    "fno_degraded_block_arming": true,
+    "fno_degraded_haircut": 10.0,
+    "vwap_degraded_haircut": 10.0,
+    "max_confidence": 0.90
+  }
+}

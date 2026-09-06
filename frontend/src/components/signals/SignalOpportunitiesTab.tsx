@@ -259,7 +259,7 @@ export function SignalOpportunitiesTab({
                 className="h-6 text-[11px] cursor-pointer"
                 onClick={() => {
                   if (selectedOppIds.size === oppSignals.length) setSelectedOppIds(new Set());
-                  else setSelectedOppIds(new Set(oppSignals.map((s) => s.id)));
+                  else setSelectedOppIds(new Set(oppSignals.map((s) => s.id || s.signal_id)));
                 }}
               >
                 {selectedOppIds.size === oppSignals.length ? 'Deselect All' : 'Select All'}
@@ -275,8 +275,8 @@ export function SignalOpportunitiesTab({
                   if (selectedOppIds.size === 0) return;
                   try {
                     setBulkDeletingOpp(true);
-                    await api.bulkDeleteSignals(Array.from(selectedOppIds));
-                    setActive((prev) => prev.filter((s) => !selectedOppIds.has(s.id)));
+                    await api.bulkDeleteSignals({ signal_ids: Array.from(selectedOppIds) });
+                    setActive((prev) => prev.filter((s) => !selectedOppIds.has(s.id || s.signal_id)));
                     setSelectedOppIds(new Set());
                     setSelectMode(false);
                   } catch (e: any) {
@@ -300,7 +300,7 @@ export function SignalOpportunitiesTab({
             </span>
             {isScannerMode && (
               <span className="text-muted-foreground/70">
-                Universe: {scanDiagnostics.reduce((acc, d) => acc + d.scanned, 0)} scanned
+                Universe: {scanDiagnostics.reduce((acc, d) => acc + (d.scanned ?? d.candidates_found ?? 0), 0)} scanned
               </span>
             )}
           </div>
@@ -308,7 +308,8 @@ export function SignalOpportunitiesTab({
             {(() => {
               const counts: Record<string, number> = {};
               oppSignals.forEach((s) => {
-                counts[s.instrument] = (counts[s.instrument] || 0) + 1;
+                const inst = s.instrument || s.underlying || 'UNKNOWN';
+                counts[inst] = (counts[inst] || 0) + 1;
               });
               return Object.entries(counts).map(([inst, cnt]) => (
                 <span key={inst} className="bg-muted px-1.5 py-0.5 rounded text-[10px]">
@@ -367,27 +368,30 @@ export function SignalOpportunitiesTab({
 
           {!isScannerMode && viewMode === 'grid' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {oppSignals.map((signal) => (
-                <SignalCard
-                  key={signal.id}
-                  signal={signal}
-                  cardsNowMs={cardsNowMs}
-                  onInspect={() => onInspectSignal(signal.id)}
-                  selectMode={selectMode}
-                  isSelected={selectedOppIds.has(signal.id)}
-                  onToggleSelect={(id) => {
-                    setSelectedOppIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    });
-                  }}
-                  onDeleted={(deletedId) => {
-                    setActive((prev) => prev.filter((s) => s.id !== deletedId));
-                  }}
-                />
-              ))}
+              {oppSignals.map((signal) => {
+                const sid = signal.id || signal.signal_id;
+                return (
+                  <SignalCard
+                    key={sid}
+                    signal={signal}
+                    cardsNowMs={cardsNowMs}
+                    onInspect={() => onInspectSignal(sid)}
+                    selectMode={selectMode}
+                    isSelected={selectedOppIds.has(sid)}
+                    onToggleSelect={(id: string) => {
+                      setSelectedOppIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(id)) next.delete(id);
+                        else next.add(id);
+                        return next;
+                      });
+                    }}
+                    onDeleted={(deletedId) => {
+                      setActive((prev) => prev.filter((s) => (s.id || s.signal_id) !== deletedId));
+                    }}
+                  />
+                );
+              })}
             </div>
           )}
 

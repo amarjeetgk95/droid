@@ -41,6 +41,12 @@ export function RegimeBanner({
           badge: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
           border: 'border-purple-500/40',
         };
+      case 'UNKNOWN':
+        return {
+          icon: <AlertTriangle className="w-5 h-5 text-muted-foreground" />,
+          badge: 'bg-secondary text-muted-foreground border-border',
+          border: 'border-border',
+        };
       default:
         return {
           icon: <Layers className="w-5 h-5 text-primary" />,

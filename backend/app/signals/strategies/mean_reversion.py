@@ -22,22 +22,23 @@ class MeanReversionStrategy(Strategy):
         spot = ctx.spot_price
         tick = Decimal("0.05")
 
-        bb = ind.get("bollinger_bands") or ind.get("volatility", {}).get("bollinger_bands", {})
+        vol = ind.get("volatility", {})
+        bb = ind.get("bollinger_bands") or vol.get("bollinger_bands", {})
         rsi = float(ind.get("rsi") or ind.get("momentum", {}).get("rsi", 50.0))
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         
-        bb_upper = Decimal(str(bb.get("upper", spot * Decimal("1.01"))))
-        bb_middle = Decimal(str(bb.get("middle", spot)))
-        bb_lower = Decimal(str(bb.get("lower", spot * Decimal("0.99"))))
+        bb_upper = Decimal(str(bb.get("upper") or vol.get("bollinger_upper") or ind.get("bollinger_upper") or (spot * Decimal("1.01"))))
+        bb_middle = Decimal(str(bb.get("middle") or vol.get("bollinger_middle") or ind.get("bollinger_middle") or spot))
+        bb_lower = Decimal(str(bb.get("lower") or vol.get("bollinger_lower") or ind.get("bollinger_lower") or (spot * Decimal("0.99"))))
 
-        # Check regime compatibility: primarily RANGE or LOW_VOL
-        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN"):
+        # Check regime compatibility: primarily RANGE, LOW_VOL, or COMPRESSION_SQUEEZE
+        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE"):
             return None
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
-        # Both BB touch AND RSI exhaustion required (OR fired mid-range noise).
+        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 35.0).
         # Trigger sits a confirmation gap above spot — never spot ± 1 tick.
-        if (spot <= bb_lower * Decimal("1.002")) and rsi <= 28.0:
+        if (spot <= bb_lower * Decimal("1.003")) and rsi <= 35.0:
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
@@ -53,7 +54,7 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = min(92.0, 50.0 + ((30.0 - rsi) * 2.0) + 15.0)
+                tech_score = min(92.0, 50.0 + max(0.0, (35.0 - rsi) * 2.0) + 15.0)
                 mtf_score = float(ctx.mtf.get("alignment_score", 65.0))
                 fno_score = 70.0
                 regime_score = 85.0 if ctx.regime == "RANGE" else 65.0
@@ -89,7 +90,7 @@ class MeanReversionStrategy(Strategy):
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
-        if (spot >= bb_upper * Decimal("0.998")) and rsi >= 72.0:
+        if (spot >= bb_upper * Decimal("0.997")) and rsi >= 65.0:
             entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
             entry_max = normalize_price(spot, tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
@@ -105,7 +106,7 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = min(92.0, 50.0 + ((rsi - 70.0) * 2.0) + 15.0)
+                tech_score = min(92.0, 50.0 + max(0.0, (rsi - 65.0) * 2.0) + 15.0)
                 mtf_score = float(ctx.mtf.get("alignment_score", 65.0))
                 fno_score = 70.0
                 regime_score = 85.0 if ctx.regime == "RANGE" else 65.0

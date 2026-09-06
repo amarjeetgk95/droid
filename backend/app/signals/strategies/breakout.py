@@ -68,7 +68,8 @@ class BreakoutStrategy(Strategy):
                     
                     tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))
                     mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                    fno_score = 75.0 if float(ctx.fno.get("pcr", 1.0)) >= 1.0 else 55.0
+                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                    fno_score = round(min(95.0, max(40.0, 60.0 + ((pcr_val - 1.0) * 50.0))), 1)
                     regime_score = 80.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 60.0
 
                     return SignalCandidate(
@@ -137,7 +138,8 @@ class BreakoutStrategy(Strategy):
 
                     tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))
                     mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                    fno_score = 75.0 if float(ctx.fno.get("pcr", 1.0)) <= 0.9 else 55.0
+                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                    fno_score = round(min(95.0, max(40.0, 60.0 + ((1.0 - pcr_val) * 50.0))), 1)
                     regime_score = 80.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 60.0
 
                     return SignalCandidate(

@@ -92,12 +92,11 @@ class MasterPipeline:
 
         # Observability: start
         log_pipeline_event(analysis_id, "VALID_LIVE_MARKET_DATA", {"symbol": symbol, "current_price": current_price})
-        mtf = mtf or {"1m": "BULLISH", "5m": "BULLISH", "15m": "NEUTRAL_BULLISH", "1h": "BULLISH"}
-        technical = technical or {"rsi": 64, "macd": "POSITIVE", "vwap": 24710, "atr": atr}
-        direction_model = direction_model or {"prob_up": 0.68, "prob_down": 0.32}
-        tsfm = tsfm or {"p10": 24695, "p50": 24782, "p90": 24835}
-        orderflow = orderflow or {"ofi": 0.42, "volume_change": 0.31}
-        options = options or {"pcr": 1.12}
+        # Strict fail-closed feature validation (§7) — no synthetic bullish defaults
+        mtf = mtf or {}
+        tsfm = tsfm or {}
+        orderflow = orderflow or {}
+        options = options or {}
         futures = futures or {}
         news = news or []
 
@@ -110,6 +109,9 @@ class MasterPipeline:
         log_pipeline_event(analysis_id, "VALID_TECHNICAL_FEATURES", {"technical": technical})
 
         # 2. VALID DIRECTION MODEL
+        if not direction_model:
+            log_pipeline_event(analysis_id, "VALID_DIRECTION_MODEL", {"error": "missing direction model"}, status="error")
+            return self._abort(analysis_id, PipelineOutcome.NO_TRADE, "missing direction model")
         prob_up = direction_model.get("prob_up")
         prob_down = direction_model.get("prob_down")
         if prob_up is None or prob_down is None:
@@ -117,11 +119,16 @@ class MasterPipeline:
             return self._abort(analysis_id, PipelineOutcome.NO_TRADE, "missing direction model")
         log_pipeline_event(analysis_id, "VALID_DIRECTION_MODEL", {"prob_up": prob_up, "prob_down": prob_down})
 
-        # 3. TSFM FORECAST — forecast module removed, use synthetic P10/P50/P90 placeholder
+        # 3. TSFM FORECAST — forecast module removed. Fail-closed for automated triggers:
+        # MANUAL_ANALYSIS may proceed without forecast; all other trigger types require
+        # explicit p10/p50/p90. No synthetic placeholders.
         p10, p50, p90 = tsfm.get("p10"), tsfm.get("p50"), tsfm.get("p90")
-        # Forecast validation removed; assume valid for pipeline continuity
-        forecast_result_valid = True
-        log_pipeline_event(analysis_id, "TSFM_FORECAST_REMOVED", {"p10": p10, "p50": p50, "p90": p90, "note": "forecast module removed — validation skipped"})
+        from app.services.trigger_gateway import TriggerType as _TT
+        if (p10 is None or p50 is None or p90 is None) and trigger_type != _TT.MANUAL_ANALYSIS:
+            log_pipeline_event(analysis_id, "TSFM_FORECAST_MISSING", {"note": "forecast required for automated triggers"}, status="error")
+            return self._abort(analysis_id, PipelineOutcome.NO_TRADE, "missing forecast for automated trigger")
+        forecast_result_valid = (p10 is not None and p50 is not None and p90 is not None)
+        log_pipeline_event(analysis_id, "TSFM_FORECAST", {"p10": p10, "p50": p50, "p90": p90, "valid": forecast_result_valid})
 
         # 4. SIGNIFICANT STATE CHANGE (§7)
         snapshot = {

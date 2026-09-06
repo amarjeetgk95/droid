@@ -26,7 +26,9 @@ import {
 
 export type SignalDTO = {
   signal_id: string;
+  id?: string;
   underlying: string;
+  instrument?: string;
   strategy: string;
   direction: string;
   timeframe: string;
@@ -105,13 +107,22 @@ export function SignalCard({
   onPaperExecuted,
   onDeleted,
   nowMs,
+  cardsNowMs,
+  selectMode,
+  isSelected,
+  onToggleSelect,
 }: {
   signal: SignalDTO;
   onInspect?: (signalId: string) => void;
   onPaperExecuted?: (result: any) => void;
   onDeleted?: (signalId: string) => void;
-  nowMs: number;
+  nowMs?: number;
+  cardsNowMs?: number;
+  selectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
+  const currentNowMs = nowMs ?? cardsNowMs ?? Date.now();
   const [executing, setExecuting] = useState(false);
   const [paperResult, setPaperResult] = useState<any>(signal.paper_order || null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -127,7 +138,7 @@ export function SignalCard({
   const isStopHit = fsm === 'STOP_LOSS_HIT';
   const isExpired = fsm === 'EXPIRED' || (
     ['DETECTED', 'VALIDATED', 'ARMED', 'CONFIRMED'].includes(fsm) && (
-      (signal.expires_at_utc ? nowMs > signal.expires_at_utc : false) || isMarketClosed
+      (signal.expires_at_utc ? currentNowMs > signal.expires_at_utc : false) || isMarketClosed
     )
   );
 
@@ -219,7 +230,7 @@ export function SignalCard({
               </span>
             ) : null}
             {signal.created_at_utc ? <span>•</span> : null}
-            <span>TTL: {ttlLabel(signal, nowMs)}</span>
+            <span>TTL: {ttlLabel(signal, currentNowMs)}</span>
           </div>
         </div>
       </div>

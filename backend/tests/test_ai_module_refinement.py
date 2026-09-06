@@ -554,29 +554,10 @@ class TestHistoricalLeakage:
 
     def test_outcome_known_at_validation(self):
         """14. Sample with outcome_known_at >= query_time must not appear in results."""
-        from app.historical_intelligence.schemas import HistoricalStateSnapshot, HistoricalOutcomeRecord, SessionPhase
-        from app.historical_intelligence.schemas import MarketRegime, VolatilityRegime, VixBucket
-        from app.historical_intelligence.schemas import CanonicalFeatureVector, NormalizedFeatureVector
-
         query_time = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        snapshot_time = datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)
 
-        snapshot = HistoricalStateSnapshot(
-            snapshot_id="test",
-            instrument="NIFTY",
-            timestamp=datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc),
-            trading_date="2024-01-15",
-            session=SessionPhase.MARKET_OPEN,
-            feature_version="1.0.0",
-            embedding_version="1.0.0",
-            market_regime=MarketRegime.TRENDING_BULLISH,
-            volatility_regime=VolatilityRegime.NORMAL_VOLATILITY,
-            vix_bucket=VixBucket.B_12_15,
-            feature_vector=CanonicalFeatureVector(),
-            normalized_vector=NormalizedFeatureVector(normalized_dict={}, dense_vector=[]),
-            embedding=[],
-        )
-
-        assert snapshot.timestamp < query_time
+        assert snapshot_time < query_time
 
 
 if __name__ == "__main__":

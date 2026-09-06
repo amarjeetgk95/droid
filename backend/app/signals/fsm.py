@@ -60,6 +60,54 @@ class FSMTransitionAudit(BaseModel):
     guard_snapshot: dict = Field(default_factory=dict)
 
 
+def compute_option_friction_r(
+    entry_premium: float,
+    exit_premium: float,
+    lots: int = 1,
+    lot_size: int = 65,
+    risk_points_premium: float = 20.0,
+) -> tuple[float, dict]:
+    """
+    Computes total round-trip transaction costs + slippage normalized to 1R for Indian Index Options.
+    Brokerage: Rs 20 entry + Rs 20 exit
+    STT: 0.1% on sell side turnover
+    Exchange txn: 0.05% on total turnover
+    GST: 18% on (brokerage + exchange txn)
+    SEBI & Stamp duty: ~0.003%
+    Slippage model: 0.5% of combined entry + exit premium
+    Returns (friction_in_r, breakdown_dict).
+    """
+    lots = max(1, lots)
+    lot_size = max(1, lot_size)
+    qty = lots * lot_size
+    turnover_entry = entry_premium * qty
+    turnover_exit = exit_premium * qty
+
+    brokerage = 40.0
+    stt = 0.001 * turnover_exit
+    txn_charges = 0.0005 * (turnover_entry + turnover_exit)
+    gst = 0.18 * (brokerage + txn_charges)
+    sebi_stamp = (0.00003 * turnover_entry) + (0.000001 * (turnover_entry + turnover_exit))
+    slippage_pts = max(0.5, (entry_premium + exit_premium) * 0.005)
+    slippage_cost = slippage_pts * qty
+
+    total_cost_inr = brokerage + stt + txn_charges + gst + sebi_stamp + slippage_cost
+    risk_inr = max(100.0, risk_points_premium * qty)
+    friction_r = total_cost_inr / risk_inr
+
+    breakdown = {
+        "brokerage_inr": round(brokerage, 2),
+        "stt_inr": round(stt, 2),
+        "txn_charges_inr": round(txn_charges, 2),
+        "gst_inr": round(gst, 2),
+        "sebi_stamp_inr": round(sebi_stamp, 2),
+        "slippage_cost_inr": round(slippage_cost, 2),
+        "total_friction_inr": round(total_cost_inr, 2),
+        "friction_r": round(friction_r, 4),
+    }
+    return round(friction_r, 4), breakdown
+
+
 class SignalInstance(BaseModel):
     signal_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     underlying: str
@@ -148,6 +196,10 @@ class SignalInstance(BaseModel):
     confirmed_at_utc: Optional[int] = None
     exit_price: Optional[Decimal] = None
     realized_rr: Optional[float] = None
+    realized_rr_gross: Optional[float] = None
+    realized_rr_net: Optional[float] = None
+    cost_breakdown_r: Optional[dict] = None
+    terminal_outcome: Optional[str] = None  # FULL_WIN, PARTIAL_WIN, BREAKEVEN, TIME_STOP_LOSS, STOP_LOSS_HIT, EXPIRED, INVALIDATED
     outcome_status: Optional[str] = None  # WIN_T1, WIN_T2, LOSS_SL, TIME_STOP, RUNNER_TIME_STOP, EXPIRED, INVALIDATED
     paper_order: Optional[dict] = None
 
@@ -392,6 +444,13 @@ class SignalFSMManager:
                 logger.warning("fsm_illegal_transition", signal_id=signal_id, error=err)
                 return False, err
 
+            # State-Aware F&O Guard (§1): Never allow degraded F&O signals to ARM or TRIGGER
+            if to_state in ("ARMED", "TRIGGERED", "CONFIRMED"):
+                if sig.confluence_breakdown and sig.confluence_breakdown.get("fno_degraded"):
+                    err = "FNO_DATA_DEGRADED_CANNOT_ARM"
+                    logger.warning("fsm_fno_degraded_arm_blocked", signal_id=signal_id, to_state=to_state)
+                    return False, err
+
             from_st = sig.fsm_state
             sig.fsm_state = to_state
             sig.last_updated_utc = int(time.time() * 1000)
@@ -410,7 +469,16 @@ class SignalFSMManager:
                 sig.t1_fill_timestamp = sig.last_updated_utc
                 sig.exit_price = market_price
                 sig.outcome_status = "WIN_T1"
-                sig.realized_rr = sig.risk_reward_t1
+                sig.terminal_outcome = "PARTIAL_WIN"
+                gross_r = float(sig.risk_reward_t1)
+                sig.realized_rr = gross_r
+                sig.realized_rr_gross = gross_r
+                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
+                exit_p = float(market_price or sig.target_1 or 150.0)
+                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
+                sig.realized_rr_net = round(gross_r - f_r, 4)
+                sig.cost_breakdown_r = bdown
 
                 # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
                 runner_ttl_sec = sig.runner_ttl_seconds or 300
@@ -429,23 +497,65 @@ class SignalFSMManager:
                 sig.t2_hit = True
                 sig.exit_price = market_price
                 sig.outcome_status = "WIN_T2"
-                sig.realized_rr = sig.risk_reward_t2
+                sig.terminal_outcome = "FULL_WIN"
+                gross_r = float(sig.risk_reward_t2)
+                sig.realized_rr = gross_r
+                sig.realized_rr_gross = gross_r
+                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
+                exit_p = float(market_price or sig.target_2 or 200.0)
+                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
+                sig.realized_rr_net = round(gross_r - f_r, 4)
+                sig.cost_breakdown_r = bdown
             elif to_state == "STOP_LOSS_HIT":
                 sig.exit_price = market_price
                 sig.outcome_status = "LOSS_SL"
-                sig.realized_rr = -1.0 if not sig.breakeven_activated else 0.0
+                if sig.breakeven_activated:
+                    sig.terminal_outcome = "BREAKEVEN"
+                    gross_r = 0.0
+                else:
+                    sig.terminal_outcome = "STOP_LOSS_HIT"
+                    gross_r = -1.0
+                sig.realized_rr = gross_r
+                sig.realized_rr_gross = gross_r
+                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
+                exit_p = float(market_price or sig.stop_loss or 80.0)
+                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
+                sig.realized_rr_net = round(gross_r - f_r, 4)
+                sig.cost_breakdown_r = bdown
             elif to_state == "TIME_STOP_HIT":
                 sig.exit_price = market_price
                 sig.outcome_status = "TIME_STOP"
-                sig.realized_rr = 0.0
+                sig.terminal_outcome = "TIME_STOP_LOSS"
+                gross_r = 0.0
+                sig.realized_rr = gross_r
+                sig.realized_rr_gross = gross_r
+                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
+                exit_p = float(market_price or entry_p)
+                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
+                sig.realized_rr_net = round(gross_r - f_r, 4)
+                sig.cost_breakdown_r = bdown
             elif to_state == "RUNNER_TIME_STOP_HIT":
                 sig.exit_price = market_price
                 sig.outcome_status = "RUNNER_TIME_STOP"
-                sig.realized_rr = sig.risk_reward_t1
+                sig.terminal_outcome = "PARTIAL_WIN"
+                gross_r = float(sig.risk_reward_t1)
+                sig.realized_rr = gross_r
+                sig.realized_rr_gross = gross_r
+                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
+                exit_p = float(market_price or sig.target_1 or 150.0)
+                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
+                sig.realized_rr_net = round(gross_r - f_r, 4)
+                sig.cost_breakdown_r = bdown
             elif to_state == "EXPIRED":
                 sig.outcome_status = "EXPIRED"
+                sig.terminal_outcome = "EXPIRED"
             elif to_state == "INVALIDATED":
                 sig.outcome_status = "INVALIDATED"
+                sig.terminal_outcome = "INVALIDATED"
 
             audit = FSMTransitionAudit(
                 signal_id=signal_id,

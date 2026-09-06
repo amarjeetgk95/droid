@@ -21,12 +21,13 @@ const STRATEGY_FILTERS = ['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK',
 
 interface Props {
   signals: SignalDTO[];
-  onInspect: (signalId: string) => void;
+  onInspect?: (signalId: string) => void;
+  onInspectSignal?: (signalId: string) => void;
   onRefresh?: () => void;
   loading?: boolean;
 }
 
-export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: Props) {
+export function SignalScannerTable({ signals, onInspect, onInspectSignal, onRefresh, loading }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
   const [strategyFilter, setStrategyFilter] = useState('ALL');
   const [executingId, setExecutingId] = useState<string | null>(null);
@@ -119,7 +120,7 @@ export function SignalScannerTable({ signals, onInspect, onRefresh, loading }: P
                   <tr
                     key={s.signal_id}
                     className="hover:bg-muted/40 cursor-pointer transition-colors"
-                    onClick={() => onInspect(s.signal_id)}
+                    onClick={() => (onInspect || onInspectSignal)?.(s.signal_id)}
                   >
                     <td className="p-3 font-bold font-sans">
                       <div className="flex items-center gap-1.5">

@@ -26,7 +26,53 @@ class CryptoSignalEngine:
     """
     Quantitative signal generation engine evaluating real-time order-book imbalance,
     perpetual funding rate skew, and spot-futures basis divergence.
+
+    Hardening (Truth-of-Wall): fail-closed on stale quotes (>15s), wide spreads
+    (>0.15%), non-LIVE status; symmetric basis (contango LONG / backwardation SHORT);
+    calibrated confidence (no hardcoded 84.5/87/88.5); conflict best-only option.
     """
+
+    MAX_QUOTE_AGE_S = 15.0
+    MAX_SPREAD_PCT = 0.15
+    MAX_SL_PCT = {"BTC": 1.5, "ETH": 2.0}
+    MIN_RR = 1.3
+    MIN_CONF = 65.0
+
+    @staticmethod
+    def _age_s(ts) -> float:
+        try:
+            if ts is None:
+                return 9999.0
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - ts).total_seconds()
+        except Exception:
+            return 9999.0
+
+    def _feed_ok(self, ticker: CryptoTicker, orderbook=None, derivatives=None) -> tuple[bool, str]:
+        from app.models.market import DataStatus
+        if getattr(ticker, "status", DataStatus.LIVE) != DataStatus.LIVE:
+            return False, f"ticker status {getattr(ticker, 'status', '?')} != LIVE"
+        if self._age_s(getattr(ticker, "last_updated", None)) > self.MAX_QUOTE_AGE_S:
+            return False, "stale ticker >15s"
+        if getattr(ticker, "data_age_ms", 0) and ticker.data_age_ms > 15000:
+            return False, "ticker data_age_ms >15s"
+        if orderbook is not None:
+            if getattr(orderbook, "status", DataStatus.LIVE) != DataStatus.LIVE:
+                return False, "orderbook not LIVE"
+            if self._age_s(getattr(orderbook, "timestamp", None)) > self.MAX_QUOTE_AGE_S:
+                return False, "stale orderbook >15s"
+            try:
+                if float(orderbook.spread_percent or 0) > self.MAX_SPREAD_PCT:
+                    return False, f"spread {orderbook.spread_percent:.3f}% > 0.15%"
+            except Exception:
+                pass
+        if derivatives is not None:
+            if getattr(derivatives, "status", DataStatus.LIVE) != DataStatus.LIVE:
+                return False, "derivatives not LIVE"
+            if self._age_s(getattr(derivatives, "timestamp", None)) > 60.0:
+                return False, "stale derivatives >60s"
+        return True, "OK"
 
     def generate_signals_for_pair(
         self,
@@ -34,12 +80,17 @@ class CryptoSignalEngine:
         orderbook: Optional[CryptoOrderBook] = None,
         derivatives: Optional[CryptoDerivatives] = None,
         comparison: Optional[CryptoPairComparison] = None,
+        *,
+        single_best_only: bool = False,
     ) -> list[CryptoSignal]:
         signals: list[CryptoSignal] = []
         symbol = ticker.symbol.upper()
         asset = "BTC" if "BTC" in symbol else "ETH"
         price = ticker.price
         if price <= 0:
+            return signals
+        ok, _ = self._feed_ok(ticker, orderbook, derivatives)
+        if not ok:
             return signals
 
         # -------------------------------------------------------------
@@ -210,13 +261,15 @@ class CryptoSignalEngine:
                 )
 
         # -------------------------------------------------------------
-        # 3. Basis Divergence Strategy
+        # 3. Basis Divergence Strategy (symmetric: contango LONG / backwardation SHORT)
         # -------------------------------------------------------------
         if derivatives and derivatives.basis_percent is not None:
             basis_pct = derivatives.basis_percent
             basis_val = derivatives.basis
 
             if abs(basis_pct) >= 0.06:
+                # Calibrated confidence: 72 + min(|basis|-0.06,0.5)*24, capped 88
+                basis_conf = round(min(88.0, 72.0 + (min(abs(basis_pct) - 0.06, 0.5) * 24.0)), 1)
                 if basis_pct > 0:
                     # Healthy Contango expansion -> Institutional momentum carry
                     direction = SignalDirection.LONG
@@ -239,7 +292,7 @@ class CryptoSignalEngine:
                             target_2=t2,
                             current_price=round(price, 2),
                             risk_reward_ratio=rr,
-                            confidence=84.5,
+                            confidence=basis_conf,
                             timeframe="4H",
                             status=CryptoSignalStatus.ACTIVE,
                             confluence_factors=[
@@ -253,12 +306,52 @@ class CryptoSignalEngine:
                             ),
                         )
                     )
+                else:
+                    # Backwardation -> spot premium, futures discount: defensive SHORT
+                    direction = SignalDirection.SHORT
+                    sl = round(price * (1.012 if asset == "BTC" else 1.017), 2)
+                    risk = max(1.0, sl - price)
+                    t1 = round(price - risk * 1.9, 2)
+                    t2 = round(price - risk * 2.9, 2)
+                    rr = round((price - t1) / risk, 2)
+                    signals.append(
+                        CryptoSignal(
+                            id=f"sig-basis-{symbol.lower()}-{uuid.uuid4().hex[:6]}",
+                            symbol=symbol,
+                            asset=asset,
+                            direction=direction,
+                            strategy="BASIS_DIVERGENCE",
+                            strategy_name="Perp-Spot Backwardation Discount",
+                            entry_price=round(price, 2),
+                            stop_loss=sl,
+                            target_1=t1,
+                            target_2=t2,
+                            current_price=round(price, 2),
+                            risk_reward_ratio=rr,
+                            confidence=basis_conf,
+                            timeframe="4H",
+                            status=CryptoSignalStatus.ACTIVE,
+                            confluence_factors=[
+                                f"Backwardation Basis: ${basis_val:.2f} ({basis_pct:.3f}%)",
+                                "Futures Discount / Spot Premium",
+                                "Defensive Positioning Bias",
+                            ],
+                            rationale=(
+                                f"Perpetual contract is trading at a ${basis_val:.2f} discount to spot ({basis_pct:.3f}%). "
+                                f"Backwardation reflects near-term distribution pressure; fading bounce with defined risk."
+                            ),
+                        )
+                    )
 
         # -------------------------------------------------------------
-        # 4. ETH/BTC Cross-Momentum Rotation Strategy
+        # 4. ETH/BTC Cross-Momentum Rotation Strategy (calibrated, not hardcoded)
         # -------------------------------------------------------------
         if comparison:
             spread = comparison.performance_spread_24h
+            # Calibrated: 74 + min(|spread|,4)*3.2, capped 88. Spread-gated (min 0.8%).
+            cross_conf = round(min(88.0, 74.0 + min(abs(spread), 4.0) * 3.2), 1)
+            if abs(spread) < 0.8:
+                cross_conf = 0.0  # below gate, filtered later
             if asset == "ETH" and comparison.relative_strength.value == "ETH_OUTPERFORMING":
                 direction = SignalDirection.LONG
                 sl = round(price * 0.980, 2)
@@ -280,7 +373,7 @@ class CryptoSignalEngine:
                         target_2=t2,
                         current_price=round(price, 2),
                         risk_reward_ratio=rr,
-                        confidence=87.0,
+                        confidence=cross_conf,
                         timeframe="4H",
                         status=CryptoSignalStatus.ACTIVE,
                         confluence_factors=[
@@ -316,7 +409,7 @@ class CryptoSignalEngine:
                         target_2=t2,
                         current_price=round(price, 2),
                         risk_reward_ratio=rr,
-                        confidence=88.5,
+                        confidence=cross_conf,
                         timeframe="4H",
                         status=CryptoSignalStatus.ACTIVE,
                         confluence_factors=[
@@ -331,8 +424,28 @@ class CryptoSignalEngine:
                     )
                 )
 
+        # Enforce risk/confidence floors + conflict best-only (§28)
+        filtered: list[CryptoSignal] = []
+        for s in signals:
+            try:
+                sl_pct = abs(s.entry_price - s.stop_loss) / s.entry_price * 100.0
+            except Exception:
+                sl_pct = 999.0
+            if sl_pct > self.MAX_SL_PCT.get(s.asset, 2.0):
+                continue
+            if (s.risk_reward_ratio or 0) < self.MIN_RR:
+                continue
+            if (s.confidence or 0) < self.MIN_CONF:
+                continue
+            filtered.append(s)
+        signals = filtered
         # Sort signals by confidence descending
         signals.sort(key=lambda s: s.confidence, reverse=True)
+        if single_best_only and signals:
+            # If LONG and SHORT both present, keep highest confidence only
+            dirs = {s.direction for s in signals}
+            if len(dirs) > 1:
+                signals = signals[:1]
         return signals
 
     def build_signals_response(

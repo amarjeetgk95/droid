@@ -183,18 +183,33 @@ class ScalpConfirmationEngine:
                 metrics={"fingerprint": fp},
             )
 
-        # 3. Inter-Signal Cooldown
+        # 3. Inter-Signal Candle-Anchored Cooldown (§5)
         cd_key = f"{candidate.underlying.upper()}|{candidate.strategy.upper()}"
         last_ts = self._last_signal_time.get(cd_key, 0)
         elapsed_sec = (ts_now - last_ts) / 1000.0
-        cooldown_sec = self.default_cooldown_seconds
+        tf_cooldown_map = {
+            "1M": 60,
+            "3M": 180,
+            "5M": 300,
+            "15M": 900,
+            "1H": 3600,
+            "1D": 86400,
+        }
+        cooldown_sec = tf_cooldown_map.get(str(candidate.timeframe).upper(), self.default_cooldown_seconds)
+        # Vol-adaptive: volatile/event regimes extend cooldown 1.5x (avoid chop overtrade),
+        # compression/low-vol shortens to 0.75x (allow fresh mean-reversion attempts).
+        r_up = (regime or "").upper()
+        if any(k in r_up for k in ("HIGH_VOL", "VOLATILE", "EVENT")):
+            cooldown_sec = int(cooldown_sec * 1.5)
+        elif any(k in r_up for k in ("COMPRESSION", "LOW_VOL")):
+            cooldown_sec = int(cooldown_sec * 0.75)
         if elapsed_sec < cooldown_sec:
             return ScalpConfirmationResult(
                 passed=False,
                 candidate=candidate,
                 reason_code="REJECTED_COOLDOWN",
-                rejection_message=f"Strategy {cd_key} in cooldown ({elapsed_sec:.1f}s < {cooldown_sec}s)",
-                metrics={"elapsed_seconds": elapsed_sec, "cooldown_seconds": cooldown_sec},
+                rejection_message=f"Strategy {cd_key} in candle cooldown ({elapsed_sec:.1f}s < {cooldown_sec}s for {candidate.timeframe})",
+                metrics={"elapsed_seconds": elapsed_sec, "cooldown_seconds": cooldown_sec, "timeframe": candidate.timeframe},
             )
 
         # 4. Anti-Chase Ceiling (§16)

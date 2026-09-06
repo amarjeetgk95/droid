@@ -175,8 +175,19 @@ async def get_crypto_derivatives(symbol: str):
 
 @router.get("/{symbol}/signals")
 async def get_crypto_signals_for_symbol(symbol: str):
-    """Retrieve active quantitative trading signals for a specific symbol (BTCUSDT or ETHUSDT)."""
+    """Retrieve active quantitative trading signals for a specific symbol (BTCUSDT or ETHUSDT).
+
+    Hardened: fail-closed on stale/wide-spread feeds, risk floors (SL%/RR/conf),
+    cross-direction conflict best-only, 15-min per-symbol cooldown. Quant signals
+    are preview-grade; execution-grade flow is crypto_scalp scanner (30m + cap 2).
+    """
+    import time as _time
     clean_sym = _check_symbol(symbol)
+    # In-memory quant-API cooldown (15 min) — prevents polling spam from minting
+    # new UUIDs every call; scalp scanner remains the execution path.
+    _cool = getattr(get_crypto_signals_for_symbol, "_cooldown", {})
+    now = _time.time()
+    QUANT_COOLDOWN_S = 900.0
     try:
         ticker = await binance_service.get_ticker(clean_sym)
         try:
@@ -197,10 +208,21 @@ async def get_crypto_signals_for_symbol(symbol: str):
             orderbook=ob,
             derivatives=derivs,
             comparison=comp,
+            single_best_only=True,
         )
+        if sigs:
+            last = _cool.get(clean_sym, 0.0)
+            if (now - last) < QUANT_COOLDOWN_S:
+                sigs = []  # cooldown active — preview suppressed, scalp path unaffected
+            elif sigs:
+                _cool[clean_sym] = now
+                setattr(get_crypto_signals_for_symbol, "_cooldown", _cool)
         resp = crypto_signal_engine.build_signals_response(sigs)
+        data = resp.model_dump(mode="json")
+        data["preview_only"] = True
+        data["execution_path"] = "crypto_scalp scanner (30m cooldown, cap 2)"
         return {
-            "data": resp.model_dump(mode="json"),
+            "data": data,
             "error": None,
             "meta": _make_meta("crypto_quant_engine").model_dump(),
         }

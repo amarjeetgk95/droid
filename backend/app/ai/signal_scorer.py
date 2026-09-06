@@ -41,6 +41,10 @@ class SignalScorer:
     STRUCTURE_WEIGHT = 0.15
     DIRECTION_ALIGNMENT_WEIGHT = 0.15
 
+    # Historical Intelligence module removed — when historical is None the 0.15
+    # weight is redistributed to confidence (+0.09) and regime (+0.06) instead of
+    # silently scoring 50 (neutral wash).
+
     def score(
         self,
         signal: AISignal,
@@ -70,14 +74,24 @@ class SignalScorer:
         historical_score = self._score_historical(historical)
         options_score = self._score_options(options, signal)
 
-        raw_score = (
-            confidence_score * self.CONFIDENCE_WEIGHT
-            + regime_score * self.REGIME_ALIGNMENT_WEIGHT
-            + structure_score * self.STRUCTURE_WEIGHT
-            + direction_score * self.DIRECTION_ALIGNMENT_WEIGHT
-            + historical_score * self.HISTORICAL_WEIGHT
-            + options_score * self.OPTIONS_WEIGHT
-        )
+        if historical is None:
+            # Redistribute 0.15 historical weight explicitly (no neutral wash)
+            raw_score = (
+                confidence_score * (self.CONFIDENCE_WEIGHT + 0.09)
+                + regime_score * (self.REGIME_ALIGNMENT_WEIGHT + 0.06)
+                + structure_score * self.STRUCTURE_WEIGHT
+                + direction_score * self.DIRECTION_ALIGNMENT_WEIGHT
+                + options_score * self.OPTIONS_WEIGHT
+            )
+        else:
+            raw_score = (
+                confidence_score * self.CONFIDENCE_WEIGHT
+                + regime_score * self.REGIME_ALIGNMENT_WEIGHT
+                + structure_score * self.STRUCTURE_WEIGHT
+                + direction_score * self.DIRECTION_ALIGNMENT_WEIGHT
+                + historical_score * self.HISTORICAL_WEIGHT
+                + options_score * self.OPTIONS_WEIGHT
+            )
 
         return min(100, max(0, int(raw_score)))
 

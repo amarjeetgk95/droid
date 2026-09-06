@@ -25,17 +25,17 @@ class TrendPullbackStrategy(Strategy):
         trend_data = ind.get("trend", {})
         ema20 = Decimal(str(trend_data.get("ema20") or spot * Decimal("0.998")))
         ema50 = Decimal(str(trend_data.get("ema50") or spot * Decimal("0.995")))
-        ema200 = Decimal(str(trend_data.get("ema200") or spot * Decimal("0.990")))
         adx = float(ind.get("adx") or trend_data.get("adx", 25.0))
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
-        if spot > Decimal("0") and (ema20 >= ema50 >= ema200 or trend_data.get("trend") == "BULLISH") and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 20.0:
-            # Check if spot is near EMA20 (within 0.4%)
+        is_bull_trend = (ema20 >= ema50 or trend_data.get("trend") == "BULLISH" or ctx.regime == "TREND_UP")
+        if spot > Decimal("0") and is_bull_trend and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 18.0:
+            # Check if spot is near EMA20 (within 0.6%)
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
-            if dist_pct <= Decimal("0.5") or spot >= ema20:
-                min_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+            if dist_pct <= Decimal("0.6") or spot >= ema20:
+                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 raw_trigger = spot + min_gap
                 trigger = normalize_price(raw_trigger, tick)
                 if abs(trigger - spot) < min_gap:
@@ -43,7 +43,7 @@ class TrendPullbackStrategy(Strategy):
 
                 entry_min = normalize_price(spot, tick)
                 entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
-                stop_loss = normalize_price(trigger - (atr * Decimal("1.0")), tick)
+                stop_loss = normalize_price(trigger - (atr * Decimal("0.8")), tick)
                 risk_pts = trigger - stop_loss
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
@@ -86,10 +86,11 @@ class TrendPullbackStrategy(Strategy):
                     )
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
-        if spot > Decimal("0") and (ema20 <= ema50 <= ema200 or trend_data.get("trend") == "BEARISH") and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 20.0:
+        is_bear_trend = (ema20 <= ema50 or trend_data.get("trend") == "BEARISH" or ctx.regime == "TREND_DOWN")
+        if spot > Decimal("0") and is_bear_trend and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 18.0:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
-            if dist_pct <= Decimal("0.5") or spot <= ema20:
-                min_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
+            if dist_pct <= Decimal("0.6") or spot <= ema20:
+                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 raw_trigger = spot - min_gap
                 trigger = normalize_price(raw_trigger, tick)
                 if abs(spot - trigger) < min_gap:
@@ -97,7 +98,7 @@ class TrendPullbackStrategy(Strategy):
 
                 entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
                 entry_max = normalize_price(spot, tick)
-                stop_loss = normalize_price(trigger + (atr * Decimal("1.0")), tick)
+                stop_loss = normalize_price(trigger + (atr * Decimal("0.8")), tick)
                 risk_pts = stop_loss - trigger
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)

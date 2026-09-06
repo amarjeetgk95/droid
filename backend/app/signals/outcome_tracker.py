@@ -26,17 +26,23 @@ class PerformanceMetrics(BaseModel):
     winning_signals: int = 0
     losing_signals: int = 0
     expired_signals: int = 0
+    throttled_signals_total: int = 0
 
     win_rate_pct: float = 0.0
     profit_factor: float = 0.0
     average_rr: float = 0.0
     expectancy_r: float = 0.0
+    realized_rr_gross_sum: float = 0.0
+    realized_rr_net_sum: float = 0.0
 
     target_1_hits: int = 0
     target_2_hits: int = 0
     stop_loss_hits: int = 0
     time_stop_hits: int = 0
     runner_time_stop_hits: int = 0
+    full_wins: int = 0
+    partial_wins: int = 0
+    breakeven_hits: int = 0
 
     strategy_breakdown: dict[str, dict] = Field(default_factory=dict)
     underlying_breakdown: dict[str, dict] = Field(default_factory=dict)
@@ -449,26 +455,122 @@ class SignalOutcomeTracker:
         t1_hits = sum(1 for s in all_signals if s.fsm_state == "TARGET_1_HIT" or s.outcome_status == "WIN_T1")
         t2_hits = sum(1 for s in all_signals if s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2")
         sl_hits = sum(1 for s in all_signals if s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL")
-        time_stops = sum(1 for s in all_signals if s.fsm_state in ("TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("TIME_STOP", "RUNNER_TIME_STOP"))
+
+        # Distinct runner time stops (partial wins, locked in T1) vs pure time stops (timed out with no profit)
+        runner_time_stops = sum(
+            1 for s in all_signals
+            if s.fsm_state == "RUNNER_TIME_STOP_HIT" or s.outcome_status == "RUNNER_TIME_STOP" or getattr(s, "terminal_outcome", None) == "PARTIAL_WIN"
+        )
+        pure_time_stops = sum(
+            1 for s in all_signals
+            if (s.fsm_state == "TIME_STOP_HIT" or s.outcome_status == "TIME_STOP" or getattr(s, "terminal_outcome", None) == "TIME_STOP_LOSS")
+            and not (s.fsm_state == "RUNNER_TIME_STOP_HIT" or s.outcome_status == "RUNNER_TIME_STOP")
+        )
+        time_stops = pure_time_stops + runner_time_stops
         expired = sum(1 for s in all_signals if s.fsm_state == "EXPIRED" or s.outcome_status == "EXPIRED")
 
         completed_trades = (t1_hits + t2_hits) + sl_hits + time_stops
-        wins = t1_hits + t2_hits
-        losses = sl_hits + time_stops
+        # Runner time stops are partial wins (+1.5R secured at T1)
+        wins = t1_hits + t2_hits + runner_time_stops
+        # Only pure time stops and SL hits are losses
+        losses = sl_hits + pure_time_stops
 
         win_rate = (wins / completed_trades * 100.0) if completed_trades > 0 else 0.0
 
-        # Profit Factor & R:R
-        gross_profit_r = (t1_hits * 1.5) + (t2_hits * 3.0)
-        gross_loss_r = losses * 1.0
+        # Completed trades list for empirical metrics (§6)
+        completed_signals_list = [
+            s for s in all_signals
+            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")
+            or s.outcome_status in ("WIN_T1", "WIN_T2", "LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP")
+            or getattr(s, "terminal_outcome", None) in ("FULL_WIN", "PARTIAL_WIN", "STOP_LOSS_HIT", "TIME_STOP_LOSS", "BREAKEVEN")
+        ]
+
+        def _signal_is_win(s: SignalInstance) -> bool:
+            return (
+                s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "RUNNER_TIME_STOP_HIT")
+                or s.outcome_status in ("WIN_T1", "WIN_T2", "RUNNER_TIME_STOP")
+                or getattr(s, "terminal_outcome", None) in ("FULL_WIN", "PARTIAL_WIN")
+            )
+
+        # Empirical Average Win R (average_rr)
+        win_r_list: list[float] = []
+        for s in completed_signals_list:
+            if _signal_is_win(s):
+                r_val = getattr(s, "realized_rr_net", None)
+                if r_val is None:
+                    r_val = getattr(s, "realized_rr_gross", None)
+                if r_val is None:
+                    r_val = s.realized_rr
+                if r_val is not None:
+                    win_r_list.append(float(r_val))
+                else:
+                    target_ref = s.risk_reward_t2 if (s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2") else s.risk_reward_t1
+                    win_r_list.append(float(target_ref or 1.5))
+
+        empirical_average_rr = (sum(win_r_list) / len(win_r_list)) if win_r_list else 0.0
+
+        # Empirical Expectancy & Profit Factor based on realized net R
+        all_completed_net_r: list[float] = []
+        gross_profit_r = 0.0
+        gross_loss_r = 0.0
+
+        for s in completed_signals_list:
+            net_r = getattr(s, "realized_rr_net", None)
+            if net_r is None:
+                net_r = getattr(s, "realized_rr_gross", None)
+            if net_r is None:
+                net_r = s.realized_rr
+            if net_r is None:
+                if _signal_is_win(s):
+                    target_ref = s.risk_reward_t2 if (s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2") else s.risk_reward_t1
+                    net_r = float(target_ref or 1.5)
+                else:
+                    net_r = -1.0
+
+            val = float(net_r)
+            all_completed_net_r.append(val)
+            if val > 0:
+                gross_profit_r += val
+            elif val < 0:
+                gross_loss_r += abs(val)
+
         profit_factor = (gross_profit_r / gross_loss_r) if gross_loss_r > 0 else (gross_profit_r if gross_profit_r > 0 else 1.0)
-        expectancy = ((win_rate / 100.0 * 2.0) - ((1.0 - (win_rate / 100.0)) * 1.0)) if completed_trades > 0 else 0.0
+        empirical_expectancy = (sum(all_completed_net_r) / len(all_completed_net_r)) if all_completed_net_r else 0.0
+
+        # Net Realized R Sum (Reconciliation Invariant)
+        net_r_sum = sum(
+            float(getattr(s, "realized_rr_net", None) if getattr(s, "realized_rr_net", None) is not None else (s.realized_rr or 0.0))
+            for s in all_signals
+            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")
+            or s.outcome_status in ("WIN_T1", "WIN_T2", "LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP")
+        )
+        gross_r_sum = sum(
+            float(getattr(s, "realized_rr_gross", None) or s.realized_rr or 0.0)
+            for s in all_signals
+            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")
+            or s.outcome_status in ("WIN_T1", "WIN_T2", "LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP")
+        )
+
+        full_win_ct = t2_hits
+        partial_win_ct = t1_hits + runner_time_stops
+        be_ct = sum(1 for s in all_signals if getattr(s, "terminal_outcome", None) == "BREAKEVEN")
 
         # Desk breakdowns
         def _calc_desk(sub_list: list[SignalInstance]) -> dict:
             sub_total = len(sub_list)
-            sub_w = sum(1 for s in sub_list if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"))
-            sub_l = sum(1 for s in sub_list if s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"))
+            sub_w = sum(
+                1 for s in sub_list
+                if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "RUNNER_TIME_STOP_HIT")
+                or s.outcome_status in ("WIN_T1", "WIN_T2", "RUNNER_TIME_STOP")
+                or getattr(s, "terminal_outcome", None) in ("FULL_WIN", "PARTIAL_WIN")
+            )
+            sub_l = sum(
+                1 for s in sub_list
+                if (s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT")
+                    or s.outcome_status in ("LOSS_SL", "TIME_STOP")
+                    or getattr(s, "terminal_outcome", None) in ("STOP_LOSS_HIT", "TIME_STOP_LOSS"))
+                and not (s.fsm_state == "RUNNER_TIME_STOP_HIT" or s.outcome_status == "RUNNER_TIME_STOP")
+            )
             sub_comp = sub_w + sub_l
             sub_wr = round((sub_w / sub_comp * 100.0), 1) if sub_comp > 0 else 0.0
             return {"total": sub_total, "completed": sub_comp, "wins": sub_w, "losses": sub_l, "win_rate_pct": sub_wr}
@@ -482,9 +584,20 @@ class SignalOutcomeTracker:
             st_name = s.strategy
             entry = strat_breakdown.setdefault(st_name, {"total": 0, "wins": 0, "losses": 0, "win_rate": 0.0})
             entry["total"] += 1
-            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"):
+            is_win = (
+                s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "RUNNER_TIME_STOP_HIT")
+                or s.outcome_status in ("WIN_T1", "WIN_T2", "RUNNER_TIME_STOP")
+                or getattr(s, "terminal_outcome", None) in ("FULL_WIN", "PARTIAL_WIN")
+            )
+            is_loss = (
+                (s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT")
+                 or s.outcome_status in ("LOSS_SL", "TIME_STOP")
+                 or getattr(s, "terminal_outcome", None) in ("STOP_LOSS_HIT", "TIME_STOP_LOSS"))
+                and not is_win
+            )
+            if is_win:
                 entry["wins"] += 1
-            elif s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"):
+            elif is_loss:
                 entry["losses"] += 1
             entry["win_rate"] = round((entry["wins"] / (entry["wins"] + entry["losses"]) * 100.0), 1) if (entry["wins"] + entry["losses"]) > 0 else 0.0
 
@@ -494,9 +607,20 @@ class SignalOutcomeTracker:
             u_name = s.underlying
             entry = under_breakdown.setdefault(u_name, {"total": 0, "wins": 0, "losses": 0, "win_rate": 0.0})
             entry["total"] += 1
-            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT") or s.outcome_status in ("WIN_T1", "WIN_T2"):
+            is_win = (
+                s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "RUNNER_TIME_STOP_HIT")
+                or s.outcome_status in ("WIN_T1", "WIN_T2", "RUNNER_TIME_STOP")
+                or getattr(s, "terminal_outcome", None) in ("FULL_WIN", "PARTIAL_WIN")
+            )
+            is_loss = (
+                (s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT")
+                 or s.outcome_status in ("LOSS_SL", "TIME_STOP")
+                 or getattr(s, "terminal_outcome", None) in ("STOP_LOSS_HIT", "TIME_STOP_LOSS"))
+                and not is_win
+            )
+            if is_win:
                 entry["wins"] += 1
-            elif s.fsm_state in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT") or s.outcome_status in ("LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP"):
+            elif is_loss:
                 entry["losses"] += 1
             entry["win_rate"] = round((entry["wins"] / (entry["wins"] + entry["losses"]) * 100.0), 1) if (entry["wins"] + entry["losses"]) > 0 else 0.0
 
@@ -507,6 +631,13 @@ class SignalOutcomeTracker:
         except Exception:
             pass
 
+        throttled_total = 0
+        try:
+            from app.signals.scanner import signal_scanner
+            throttled_total = sum(getattr(d, "throttled_signals_count", 0) for d in signal_scanner._last_diagnostics.values())
+        except Exception:
+            pass
+
         return PerformanceMetrics(
             total_signals=total,
             active_signals=active_ct,
@@ -514,15 +645,21 @@ class SignalOutcomeTracker:
             winning_signals=wins,
             losing_signals=losses,
             expired_signals=expired,
+            throttled_signals_total=throttled_total,
             win_rate_pct=round(win_rate, 1),
             profit_factor=round(profit_factor, 2),
-            average_rr=2.25 if wins > 0 else 0.0,
-            expectancy_r=round(expectancy, 2),
+            average_rr=round(empirical_average_rr, 2),
+            expectancy_r=round(empirical_expectancy, 2),
+            realized_rr_gross_sum=round(gross_r_sum, 2),
+            realized_rr_net_sum=round(net_r_sum, 2),
             target_1_hits=t1_hits,
             target_2_hits=t2_hits,
             stop_loss_hits=sl_hits,
-            time_stop_hits=time_stops,
-            runner_time_stop_hits=time_stops,
+            time_stop_hits=pure_time_stops,
+            runner_time_stop_hits=runner_time_stops,
+            full_wins=full_win_ct,
+            partial_wins=partial_win_ct,
+            breakeven_hits=be_ct,
             strategy_breakdown=strat_breakdown,
             underlying_breakdown=under_breakdown,
             scalp_summary=_calc_desk(scalp_sigs),
