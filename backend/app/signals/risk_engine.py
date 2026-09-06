@@ -36,6 +36,10 @@ class StrategySetup(BaseModel):
     structural_target_candidates: list[Decimal] = Field(default_factory=list)
     atr_5m: Decimal = Decimal("22.0")
     confidence: float = 75.0
+    option_delta: Optional[float] = None
+    option_premium: Optional[float] = None
+    option_theta_hour: Optional[float] = None
+    option_iv: Optional[float] = None
 
 
 class ValidatedRiskDecision(BaseModel):
@@ -65,6 +69,12 @@ class ValidatedRiskDecision(BaseModel):
     quantity: int
     max_rupee_loss: float
     lot_size: int
+
+    # Option Greeks & Economics Context
+    option_delta: Optional[float] = None
+    option_theta_hour: Optional[float] = None
+    option_economic_viability: Optional[bool] = None
+    option_viability_rationale: list[str] = Field(default_factory=list)
 
 
 class CentralRiskEngine:
@@ -225,8 +235,12 @@ class CentralRiskEngine:
         lot_size = int(self._config.get("lot_sizes", {}).get(setup.underlying, 75))
         allowed_rupee_risk = available_capital * (risk_per_trade_pct / 100.0)
 
-        # In index options, stop loss in spot translates via ATM delta (~0.50)
-        delta = float(self._config.get("options_scaling", {}).get("default_atm_delta", 0.50))
+        # In index options, stop loss in spot translates via specific or default delta (~0.50)
+        if setup.option_delta is not None and abs(setup.option_delta) >= 0.15:
+            delta = abs(float(setup.option_delta))
+        else:
+            delta = float(self._config.get("options_scaling", {}).get("default_atm_delta", 0.50))
+
         option_risk_per_unit = validated_risk * delta
         rupee_risk_per_lot = option_risk_per_unit * lot_size
 
@@ -242,7 +256,26 @@ class CentralRiskEngine:
         total_qty = lots * lot_size
         max_rupee_loss = round(total_qty * option_risk_per_unit, 2)
 
-        # ── 5. Independent Lifecycle Clocks ──
+        # ── 5. Options Economics & Theta Drag Guard (§27, §35) ──
+        viability_notes: list[str] = []
+        is_viable = True
+        if setup.option_theta_hour is not None:
+            theta_hr = abs(float(setup.option_theta_hour))
+            expected_gain_per_unit = candidate_t1_pts * delta
+            if expected_gain_per_unit > 0:
+                theta_drag_pct = (theta_hr / expected_gain_per_unit) * 100.0
+                if theta_drag_pct > 35.0:
+                    viability_notes.append(f"High theta drag: ₹{theta_hr:.1f}/hr consumes {theta_drag_pct:.1f}% of target move")
+                    if theta_drag_pct > 50.0 and (setup.is_scalp or desk_key == "1m_scalp"):
+                        return self._reject(
+                            "EXCESSIVE_THETA_DRAG",
+                            f"Hourly theta decay (₹{theta_hr:.1f}/hr) exceeds 50% of expected target gain",
+                            setup,
+                        )
+                else:
+                    viability_notes.append(f"Theta drag acceptable: {theta_drag_pct:.1f}% of target gain/hr")
+
+        # ── 6. Independent Lifecycle Clocks ──
         time_stop = int(underlying_rules["active_time_stop_seconds"])
         if is_expiry_day:
             time_stop = int(time_stop * float(self._config.get("options_scaling", {}).get("expiry_day_time_stop_factor", 0.5)))
@@ -265,6 +298,10 @@ class CentralRiskEngine:
             quantity=total_qty,
             max_rupee_loss=max_rupee_loss,
             lot_size=lot_size,
+            option_delta=round(delta, 4),
+            option_theta_hour=setup.option_theta_hour,
+            option_economic_viability=is_viable,
+            option_viability_rationale=viability_notes,
         )
 
     def _reject(self, reason_code: str, message: str, setup: StrategySetup) -> ValidatedRiskDecision:

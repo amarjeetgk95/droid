@@ -240,3 +240,70 @@ def calculate_position_sizing(
         "allowed": final_lots >= 1,
         "reason": "OK" if final_lots >= 1 else f"Insufficient risk capital (requires ₹{risk_per_lot:,.2f} for 1 lot)",
     }
+
+
+def calculate_option_buyer_sizing(
+    available_capital: Decimal | float,
+    risk_percent: float,
+    option_entry_premium: Decimal | float,
+    option_stop_premium: Optional[Decimal | float] = None,
+    delta: Optional[float] = None,
+    underlying_risk_points: Optional[Decimal | float] = None,
+    lot_size: int = 75,
+    max_capital_allocation_pct: float = 20.0,
+    max_lots: int = 50,
+) -> dict:
+    """
+    Precision position sizing for option buyers (§35).
+    Determines lots based on option premium risk per lot, capped by maximum capital allocation.
+    """
+    d_cap = Decimal(str(available_capital))
+    d_risk_pct = Decimal(str(risk_percent)) / Decimal("100")
+    d_entry = Decimal(str(option_entry_premium))
+    d_lot = Decimal(str(lot_size))
+
+    if d_entry <= Decimal("0"):
+        return {"lots": 0, "quantity": 0, "allowed": False, "reason": "Option entry premium must be positive"}
+
+    # Determine risk per option share
+    if option_stop_premium is not None and Decimal(str(option_stop_premium)) > Decimal("0"):
+        d_stop = Decimal(str(option_stop_premium))
+        option_risk_per_share = max(Decimal("1.0"), d_entry - d_stop)
+    elif delta is not None and underlying_risk_points is not None:
+        # Delta-implied option risk
+        d_delta = Decimal(str(abs(delta)))
+        d_und_risk = Decimal(str(underlying_risk_points))
+        option_risk_per_share = max(Decimal("1.0"), min(d_entry, d_und_risk * d_delta))
+    else:
+        # Default conservative: 35% premium stop loss
+        option_risk_per_share = d_entry * Decimal("0.35")
+
+    risk_per_lot = option_risk_per_share * d_lot
+    risk_capital = d_cap * d_risk_pct
+
+    # Max rupee allocation per single option position (to prevent buying 100% OTM lots)
+    max_trade_capital = d_cap * (Decimal(str(max_capital_allocation_pct)) / Decimal("100"))
+    capital_per_lot = d_entry * d_lot
+
+    # Sizing constrained by both risk capital and max allocation
+    lots_by_risk = int(math.floor(risk_capital / risk_per_lot)) if risk_per_lot > 0 else 0
+    lots_by_capital = int(math.floor(max_trade_capital / capital_per_lot)) if capital_per_lot > 0 else 0
+
+    raw_lots = min(lots_by_risk, lots_by_capital)
+    final_lots = max(0, min(raw_lots, max_lots))
+    final_qty = final_lots * lot_size
+    premium_outlay = float((Decimal(str(final_qty)) * d_entry).quantize(Decimal("0.01")))
+    total_rupee_risk = float((Decimal(str(final_lots)) * risk_per_lot).quantize(Decimal("0.01")))
+
+    return {
+        "lots": final_lots,
+        "quantity": final_qty,
+        "lot_size": lot_size,
+        "premium_outlay": premium_outlay,
+        "max_rupee_loss": total_rupee_risk,
+        "risk_per_lot": float(risk_per_lot.quantize(Decimal("0.01"))),
+        "option_risk_per_share": float(option_risk_per_share.quantize(Decimal("0.01"))),
+        "allowed": final_lots >= 1,
+        "reason": "OK" if final_lots >= 1 else f"Insufficient risk capital (requires ₹{risk_per_lot:,.2f} for 1 lot)",
+    }
+

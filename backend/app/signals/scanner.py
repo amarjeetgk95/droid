@@ -460,6 +460,10 @@ class SignalScanner:
                 },
                 rationale=cand.rationale,
                 option_contract=cand.option_contract.model_dump() if cand.option_contract else None,
+                greeks=cand.greeks,
+                expected_move=cand.expected_move,
+                ai_research=cand.ai_research,
+                path_simulation=cand.path_simulation,
                 fsm_state="ARMED" if fused_score >= 70.0 else "VALIDATED",
             )
 

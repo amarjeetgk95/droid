@@ -104,6 +104,12 @@ class SignalInstance(BaseModel):
     quantity: Optional[int] = None
     max_rupee_loss: Optional[float] = None
 
+    # Options Intelligence & Multi-Horizon Economics (§40)
+    greeks: Optional[dict] = None
+    expected_move: Optional[dict] = None
+    ai_research: Optional[dict] = None
+    path_simulation: Optional[dict] = None
+
     # Staged Target Execution (§18, §25)
     t1_price: Optional[Decimal] = None
     t2_price: Optional[Decimal] = None

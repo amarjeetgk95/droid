@@ -123,6 +123,14 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['ai', 'signals', 'regime', 'scalping', 'intraday', 'decision', 'live'],
       },
       {
+        id: 'options-intelligence',
+        href: '/options-intelligence',
+        label: 'Options Intelligence',
+        icon: Zap,
+        description: 'AI Research, Greeks, Expected Move & Portfolio Risk',
+        keywords: ['options', 'intelligence', 'greeks', 'expected move', 'contradiction', 'simulation', 'portfolio'],
+      },
+      {
         id: 'options-desk',
         href: '/options',
         label: 'Options & Greeks',

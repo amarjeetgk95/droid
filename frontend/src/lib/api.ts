@@ -1275,6 +1275,50 @@ class ApiClient {
       method: 'POST',
     });
   }
+
+  // Options Intelligence & Financial Research (§42)
+  async getFinancialResearch(underlying: string, horizon = 'INTRADAY', direction = 'BULLISH') {
+    return this.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
+  }
+
+  async calculateGreeks(params: { spot: number; strike: number; dte_days: number; volatility: number; option_type: 'CE' | 'PE' }) {
+    return this.request<any>('/api/v1/options-intelligence/greeks', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async solveIV(params: { market_price: number; spot: number; strike: number; dte_days: number; option_type: 'CE' | 'PE' }) {
+    return this.request<any>('/api/v1/options-intelligence/solve-iv', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async simulateOptionPath(params: any) {
+    return this.request<any>('/api/v1/options-intelligence/simulate-path', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async selectOptimalContract(params: any) {
+    return this.request<any>('/api/v1/options-intelligence/select-contract', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async projectExpectedMove(params: any) {
+    return this.request<any>('/api/v1/options-intelligence/expected-move', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async getPortfolioGreeksSummary() {
+    return this.request<any>('/api/v1/options-intelligence/portfolio-greeks/summary');
+  }
 }
 
 export const api = new ApiClient(API_BASE);

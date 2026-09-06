@@ -83,6 +83,13 @@ class SignalCandidate(BaseModel):
 
     rationale: list[str] = Field(default_factory=list)
     option_contract: Optional[InstrumentMaster] = None
+
+    # Options Intelligence, Expected Move & Economics Context (§40)
+    greeks: Optional[dict[str, Any]] = None
+    expected_move: Optional[dict[str, Any]] = None
+    ai_research: Optional[dict[str, Any]] = None
+    path_simulation: Optional[dict[str, Any]] = None
+
     created_at_utc: int = Field(default_factory=lambda: int(__import__("time").time() * 1000))
     strategy_version: str = "v6.0"
 
