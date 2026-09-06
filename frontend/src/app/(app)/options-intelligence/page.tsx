@@ -24,14 +24,20 @@ import { Brain, Gauge, Layers, Scale } from 'lucide-react';
 
 const SPOT_BASELINES: Record<UnderlyingSymbol, number> = {
   NIFTY: 24920.0,
-  BANKNIFTY: 53240.0,
+  BANKNIFTY: 51850.0,
   SENSEX: 81850.0,
 };
 
-const STOP_LOSS_POINTS: Record<UnderlyingSymbol, number> = {
-  NIFTY: 35,
-  BANKNIFTY: 85,
-  SENSEX: 130,
+const INSTRUMENT_IV: Record<UnderlyingSymbol, number> = {
+  NIFTY: 0.142,
+  BANKNIFTY: 0.198,
+  SENSEX: 0.138,
+};
+
+const STOP_LOSS_POINTS: Record<UnderlyingSymbol, Record<TradingHorizon, number>> = {
+  NIFTY: { SCALP: 18, INTRADAY: 35, SWING: 80, POSITIONAL: 160 },
+  BANKNIFTY: { SCALP: 60, INTRADAY: 110, SWING: 240, POSITIONAL: 500 },
+  SENSEX: { SCALP: 80, INTRADAY: 150, SWING: 340, POSITIONAL: 700 },
 };
 
 export default function OptionsIntelligencePage() {
@@ -49,7 +55,8 @@ export default function OptionsIntelligencePage() {
   const [portfolioGreeks, setPortfolioGreeks] = useState<PortfolioGreeksSummary | null>(null);
 
   const spot = SPOT_BASELINES[underlying] || 25000.0;
-  const currentIv = 0.155;
+  const currentIv = INSTRUMENT_IV[underlying] || 0.155;
+  const stopLoss = STOP_LOSS_POINTS[underlying]?.[horizon] || 35;
 
   const loadAllIntelligence = useCallback(async () => {
     setLoading(true);
@@ -70,7 +77,7 @@ export default function OptionsIntelligencePage() {
           underlying,
           spot_price: spot,
           direction: optDirection,
-          stop_loss_points: STOP_LOSS_POINTS[underlying],
+          stop_loss_points: stopLoss,
           current_iv: currentIv,
         }),
         api.getPortfolioGreeksSummary(),
@@ -85,7 +92,7 @@ export default function OptionsIntelligencePage() {
     } finally {
       setLoading(false);
     }
-  }, [underlying, horizon, direction, spot]);
+  }, [underlying, horizon, direction, spot, currentIv, stopLoss]);
 
   useEffect(() => {
     loadAllIntelligence();
@@ -148,6 +155,7 @@ export default function OptionsIntelligencePage() {
         setDirection={setDirection}
         spotPrice={spot}
         currentIv={currentIv}
+        lotSize={contractSelection?.selected_contract?.lot_size}
         loading={loading}
         synthesizing={synthesizing}
         onRefresh={loadAllIntelligence}

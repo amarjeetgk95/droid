@@ -191,7 +191,9 @@ export const ContractSelectorTab: React.FC<ContractSelectorTabProps> = ({
                   </div>
 
                   <div>
-                    <div className="text-[10px] text-muted-foreground">Net Rupee Outcome</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      Net P&amp;L (1 Lot = {contractSelection?.selected_contract?.lot_size ?? (underlying === 'BANKNIFTY' ? 30 : underlying === 'SENSEX' ? 10 : 75)} Qty)
+                    </div>
                     <div
                       className={`text-lg font-bold font-mono flex items-center gap-1 mt-0.5 ${
                         isProfit ? 'text-emerald-400' : 'text-rose-400'

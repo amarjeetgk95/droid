@@ -162,17 +162,21 @@ def resolve_option_contract(
     option_type: Literal["CE", "PE"],
     strike_offset: int = 0,
     ref_date: Optional[date] = None,
+    exact_strike: Optional[Decimal | float] = None,
 ) -> InstrumentMaster:
     """Resolve authoritative InstrumentMaster for an option contract."""
     u = validate_underlying(underlying)
     cfg = INDEX_CONTRACT_CONFIGS[u]
-    atm_strike = resolve_atm_strike(u, spot_price)
     step = cfg["strike_interval"]
-    
-    if option_type == "CE":
-        selected_strike = atm_strike + (Decimal(strike_offset) * step)
+
+    if exact_strike is not None:
+        selected_strike = Decimal(str(exact_strike))
     else:
-        selected_strike = atm_strike - (Decimal(strike_offset) * step)
+        atm_strike = resolve_atm_strike(u, spot_price)
+        if option_type == "CE":
+            selected_strike = atm_strike + (Decimal(strike_offset) * step)
+        else:
+            selected_strike = atm_strike - (Decimal(strike_offset) * step)
         
     expiry, expiry_type = resolve_nearest_expiry(u, ref_date)
     

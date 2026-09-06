@@ -23,6 +23,7 @@ interface OptionsCommandBarProps {
   setDirection: (d: DirectionalBias) => void;
   spotPrice: number;
   currentIv: number;
+  lotSize?: number;
   loading: boolean;
   synthesizing: boolean;
   onRefresh: () => void;
@@ -30,8 +31,8 @@ interface OptionsCommandBarProps {
 }
 
 const LOT_SIZES: Record<UnderlyingSymbol, number> = {
-  NIFTY: 25,
-  BANKNIFTY: 15,
+  NIFTY: 75,
+  BANKNIFTY: 30,
   SENSEX: 10,
 };
 
@@ -51,11 +52,13 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
   setDirection,
   spotPrice,
   currentIv,
+  lotSize,
   loading,
   synthesizing,
   onRefresh,
   onSynthesizeAI,
 }) => {
+  const activeLot = lotSize || LOT_SIZES[underlying] || 25;
   return (
     <div className="bg-card/90 backdrop-blur-md rounded-2xl border border-border/70 shadow-sm p-4 space-y-3.5">
       {/* Top Tier: Title, Active Spot Metric, and Primary Action Toolbar */}
@@ -94,7 +97,7 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
           </span>
           <span className="text-muted-foreground/40">|</span>
           <span className="text-xs font-mono text-muted-foreground">
-            Lot: <strong className="text-foreground">{LOT_SIZES[underlying]}</strong>
+            Lot: <strong className="text-foreground">{activeLot}</strong>
           </span>
         </div>
 

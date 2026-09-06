@@ -231,6 +231,7 @@ class QuantitativeContractSelector:
             option_type=opt_type,
             strike_offset=offset,
             ref_date=now.date(),
+            exact_strike=best_candidate.strike,
         )
 
         rationale = [
