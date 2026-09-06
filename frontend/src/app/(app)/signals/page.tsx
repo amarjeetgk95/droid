@@ -38,7 +38,7 @@ export default function SignalsPage() {
     .slice(0, 3)
     .flatMap((d) => (d.reasons || []).slice(0, 1).map((r) => `${d.underlying || '?'}: ${r}`));
 
-  const totalSetups = engine.active.length + engine.cryptoSignals.length;
+  const totalSetups = engine.active.length;
 
   const tabs = [
     {
@@ -126,11 +126,11 @@ export default function SignalsPage() {
             <Radio className="w-5 h-5 text-primary" /> Signal Centre
             <Badge className="bg-primary text-primary-foreground font-mono text-[10px]">QUANT RADAR</Badge>
             <span className="text-xs font-normal text-muted-foreground ml-2 hidden md:inline">
-              Unified Index + Crypto Intelligence (NIFTY • BANKNIFTY • SENSEX • BTC • ETH)
+              Indian Indices Quantitative Radar (NIFTY • BANKNIFTY • SENSEX • FINNIFTY)
             </span>
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-            Real-time multi-strategy scanner with FSM lifecycle (index) + order-book signals (crypto).
+            Real-time multi-strategy scanner with deterministic FSM lifecycle for Indian index derivatives.
             <span
               className={`inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border ${
                 engine.streamState === 'CONNECTED'
@@ -163,7 +163,6 @@ export default function SignalsPage() {
             onClick={() => {
               void engine.fetchActive(true);
               void engine.fetchScanner(true);
-              void engine.fetchCrypto(true);
             }}
             disabled={engine.loading}
             className="h-8 text-xs gap-1 cursor-pointer"
@@ -203,7 +202,7 @@ export default function SignalsPage() {
           <div>
             <span className="text-muted-foreground">Opportunities:</span>
             <span className="ml-1 font-bold text-foreground">{totalSetups} Setups</span>
-            <span className="text-[10px] text-muted-foreground ml-1">({engine.active.length} index • {engine.cryptoSignals.length} crypto)</span>
+            <span className="text-[10px] text-muted-foreground ml-1">({engine.active.length} active index)</span>
           </div>
           <div>
             <span className="text-muted-foreground">⚡ Scalp Win (1M):</span>

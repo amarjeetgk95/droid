@@ -10,7 +10,7 @@ export default function SignalsLoading() {
       {/* Top Controls & Filter Strip */}
       <div className="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          {['ALL', 'NIFTY', 'BANKNIFTY', 'STOCKS', 'CRYPTO'].map((f) => (
+          {['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY'].map((f) => (
             <Skeleton key={f} className="h-8 w-18 rounded-lg" />
           ))}
         </div>
