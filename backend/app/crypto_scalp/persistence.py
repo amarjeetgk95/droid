@@ -751,3 +751,92 @@ async def load_unclosed_execution_records() -> list[CryptoScalpExecutionRecord]:
     """Retrieve all open/active/partially closed positions for restart recovery."""
     all_recs = await fetch_execution_records(limit=200)
     return [r for r in all_recs if r.position_state in (CryptoScalpPositionState.ACTIVE, CryptoScalpPositionState.PARTIALLY_CLOSED)]
+
+
+# ── Full Crypto FSM & Fill Reconciler Local Cache Layer ──
+
+CRYPTO_FSM_STATE_FILE = Path("crypto_signals_fsm_state.json")
+
+
+def save_crypto_signals_state_local() -> bool:
+    """Safely persist active crypto FSM signals and fill reconciliation records to local cache file."""
+    try:
+        from app.crypto_scalp.fsm import crypto_signal_fsm
+        from app.crypto_scalp.fill_reconciler import crypto_fill_reconciler
+
+        fsm_dict = crypto_signal_fsm._signals
+        recon_dict = getattr(crypto_fill_reconciler, "_records", {})
+
+        serialized_fsm = {}
+        for sid, s in fsm_dict.items():
+            if hasattr(s, "model_dump"):
+                serialized_fsm[sid] = s.model_dump(mode="json")
+            elif isinstance(s, dict):
+                serialized_fsm[sid] = s
+
+        serialized_recon = {}
+        for rid, r in recon_dict.items():
+            if hasattr(r, "model_dump"):
+                serialized_recon[rid] = r.model_dump(mode="json")
+            elif isinstance(r, dict):
+                serialized_recon[rid] = r
+
+        payload = {
+            "fsm_signals": serialized_fsm,
+            "fill_reconciliations": serialized_recon,
+            "updated_at_utc": int(time.time() * 1000),
+        }
+
+        tmp_file = CRYPTO_FSM_STATE_FILE.with_suffix(".tmp")
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        tmp_file.replace(CRYPTO_FSM_STATE_FILE)
+        return True
+    except Exception as e:
+        logger.warning("save_crypto_signals_state_local_failed", error=str(e)[:250])
+        return False
+
+
+def restore_crypto_signals_state_local() -> int:
+    """Restore crypto FSM signals and fill reconciliations from local cache file."""
+    if not CRYPTO_FSM_STATE_FILE.exists():
+        return 0
+
+    try:
+        from app.crypto_scalp.fsm import crypto_signal_fsm, CryptoSignalInstance
+        from app.crypto_scalp.fill_reconciler import crypto_fill_reconciler, CryptoFillReconciliationRecord
+        from decimal import Decimal
+
+        with open(CRYPTO_FSM_STATE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        count = 0
+        raw_fsm = payload.get("fsm_signals", {})
+        for sid, sdata in raw_fsm.items():
+            if sid not in crypto_signal_fsm._signals and isinstance(sdata, dict):
+                try:
+                    for dec_field in ("spot_price", "trigger", "stop_loss", "initial_stop_loss", "current_stop_loss", "target_1", "target_2", "t1_price", "t2_price", "risk_points", "risk_r"):
+                        if dec_field in sdata and sdata[dec_field] is not None:
+                            sdata[dec_field] = Decimal(str(sdata[dec_field]))
+                    inst = CryptoSignalInstance(**sdata)
+                    crypto_signal_fsm._signals[sid] = inst
+                    count += 1
+                except Exception as ex:
+                    logger.debug("restore_crypto_fsm_instance_failed", signal_id=sid, error=str(ex))
+
+        raw_recon = payload.get("fill_reconciliations", {})
+        for rid, rdata in raw_recon.items():
+            if rid not in crypto_fill_reconciler._records and isinstance(rdata, dict):
+                try:
+                    rec = CryptoFillReconciliationRecord(**rdata)
+                    crypto_fill_reconciler._records[rid] = rec
+                except Exception:
+                    pass
+
+        if count:
+            logger.info("crypto_fsm_signals_restored_from_local_cache", count=count)
+        return count
+    except Exception as e:
+        logger.warning("restore_crypto_signals_state_local_failed", error=str(e)[:250])
+        return 0
+

@@ -226,7 +226,112 @@ class CryptoScalpOutcomeTracker:
                 if transitioned:
                     modified_trades.append(trade)
 
+        # ── Evaluate Institutional Crypto Signal FSM Instances ──
+        try:
+            await self.process_fsm_tick(
+                symbol=symbol,
+                current_price=current_price,
+                high=bar_high,
+                low=bar_low,
+                timestamp_ms=now_ms,
+            )
+        except Exception as fsm_err:
+            logger.debug("crypto_fsm_tick_eval_failed", symbol=symbol, error=str(fsm_err))
+
         return modified_trades
+
+    async def process_fsm_tick(
+        self,
+        symbol: str,
+        current_price: float,
+        high: Optional[float] = None,
+        low: Optional[float] = None,
+        timestamp_ms: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Ordered priority evaluation for active Crypto Signal FSM instances:
+          1. Check Trigger & Confirmation for ARMED/VALIDATED signals.
+          2. Check Time-Stop / Runner Time-Stop for CONFIRMED/TARGET_1_HIT.
+          3. Check Stop-Loss / Breakeven Stop.
+          4. Check Target 1 (50% staged exit + SL ratchet to Entry).
+          5. Check Target 2 (Runner terminal exit).
+          6. Check +0.8R Breakeven Ratchet.
+        """
+        from app.crypto_scalp.fsm import crypto_signal_fsm
+        from app.crypto_scalp.fill_reconciler import crypto_fill_reconciler
+        from app.crypto_scalp.sse import crypto_sse_hub
+        from decimal import Decimal
+
+        now_ms = timestamp_ms or int(time.time() * 1000)
+        d_price = Decimal(str(current_price))
+        d_high = Decimal(str(high if high is not None else current_price))
+        d_low = Decimal(str(low if low is not None else current_price))
+
+        active_fsm = crypto_signal_fsm.list_active(symbol=symbol)
+        events = []
+
+        for sig in active_fsm:
+            st = sig.fsm_state
+            if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+                continue
+
+            is_long = sig.direction == "LONG"
+
+            # 1. Trigger & Confirmation
+            if st in ("VALIDATED", "ARMED"):
+                triggered = False
+                if is_long and d_high >= sig.trigger:
+                    triggered = True
+                elif not is_long and d_low <= sig.trigger:
+                    triggered = True
+
+                if triggered:
+                    crypto_signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=sig.trigger, reason="TRIGGER_LEVEL_HIT")
+                    crypto_fill_reconciler.reconcile_entry(sig, fill_price=float(sig.trigger), quantity=sig.quantity or 0.01)
+                    crypto_signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=sig.trigger, reason="ENTRY_CONFIRMED")
+                    events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(sig.trigger)})
+                    try:
+                        await crypto_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
+                    except Exception:
+                        pass
+
+            # 2. Ordered evaluation for CONFIRMED and TARGET_1_HIT
+            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                res = crypto_signal_fsm.evaluate_tick(sig, d_price, now_ms)
+                if res == "BE_ACTIVATED":
+                    crypto_signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
+                    events.append({"signal_id": sig.signal_id, "event": "BREAKEVEN_RATCHET", "price": float(d_price)})
+                    try:
+                        await crypto_sse_hub.broadcast("breakeven_ratchet", {"signal_id": sig.signal_id, "price": float(d_price)}, priority="P0")
+                    except Exception:
+                        pass
+                elif res == "TARGET_1_HIT":
+                    crypto_fill_reconciler.reconcile_t1_exit(sig, exit_fill_price=float(sig.target_1), exit_time_ms=now_ms)
+                    crypto_signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=sig.target_1, reason="T1_HIT")
+                    events.append({"signal_id": sig.signal_id, "event": "TARGET_1_HIT", "price": float(sig.target_1), "rr": sig.realized_rr})
+                    try:
+                        await crypto_sse_hub.broadcast("target_1_hit", sig.model_dump(), priority="P0")
+                    except Exception:
+                        pass
+                elif res == "TARGET_2_HIT":
+                    crypto_fill_reconciler.reconcile_final_exit(sig, exit_fill_price=float(sig.target_2), exit_reason="TARGET_2", exit_time_ms=now_ms)
+                    crypto_signal_fsm.transition(sig.signal_id, "TARGET_2_HIT", market_price=sig.target_2, reason="T2_HIT")
+                    events.append({"signal_id": sig.signal_id, "event": "TARGET_2_HIT", "price": float(sig.target_2), "rr": sig.realized_rr})
+                    try:
+                        await crypto_sse_hub.broadcast("target_2_hit", sig.model_dump(), priority="P0")
+                    except Exception:
+                        pass
+                elif res in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT"):
+                    exit_p = float(sig.current_stop_loss or sig.stop_loss) if res == "STOP_LOSS_HIT" else current_price
+                    crypto_fill_reconciler.reconcile_final_exit(sig, exit_fill_price=exit_p, exit_reason=res, exit_time_ms=now_ms)
+                    crypto_signal_fsm.transition(sig.signal_id, res, market_price=Decimal(str(exit_p)), reason=f"{res}_TRIGGERED")
+                    events.append({"signal_id": sig.signal_id, "event": res, "price": exit_p, "rr": sig.realized_rr})
+                    try:
+                        await crypto_sse_hub.broadcast("signal_exit", {"signal_id": sig.signal_id, "status": res, "exit_price": exit_p, "rr": sig.realized_rr}, priority="P0")
+                    except Exception:
+                        pass
+
+        return events
 
     async def _evaluate_long(
         self,
