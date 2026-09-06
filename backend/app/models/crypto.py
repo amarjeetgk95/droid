@@ -195,3 +195,62 @@ class CryptoSignalsResponse(BaseModel):
     btc_signals: int
     eth_signals: int
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CryptoScalpSignal(BaseModel):
+    id: str
+    symbol: str
+    asset: str
+    direction: SignalDirection
+    strategy: str
+    strategy_name: str
+    entry_price: float
+    stop_loss: float
+    target_1: float
+    target_2: float
+    current_price: float
+    risk_points: float = 0.0
+    risk_percent: float = 0.0
+    risk_reward_ratio: float = 1.5
+    confidence: float = 75.0
+    timeframe: str = "1m"
+    status: CryptoSignalStatus = CryptoSignalStatus.ACTIVE
+    confluence_factors: list[str] = Field(default_factory=list)
+    rationale: str
+    atr_value: float | None = None
+    volume_ratio: float | None = None
+    funding_rate: float | None = None
+    depth_imbalance: float | None = None
+    is_scalp: bool = True
+    persisted_to_supabase: bool = False
+    telegram_dispatched: bool = False
+    created_at_utc: int = Field(default_factory=lambda: int(__import__("time").time() * 1000))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CryptoScalpDiagnostics(BaseModel):
+    data_quality: DataStatus = DataStatus.LIVE
+    candles_count: dict[str, int] = Field(default_factory=dict)
+    strategies_evaluated: int = 5
+    candidates_found: int = 0
+    duration_ms: float = 0.0
+    last_scan_time: datetime | None = None
+    worker_running: bool = False
+    scan_interval_seconds: int = 30
+    telegram_enabled: bool = True
+    supabase_persisted_count: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class CryptoScalpSignalsResponse(BaseModel):
+    signals: list[CryptoScalpSignal]
+    total_active: int
+    btc_signals: int
+    eth_signals: int
+    diagnostics: CryptoScalpDiagnostics | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CryptoScalpConfig(BaseModel):
+    scan_interval_seconds: int = 30
+    telegram_enabled: bool = True

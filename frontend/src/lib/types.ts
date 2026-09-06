@@ -1011,6 +1011,65 @@ export interface CryptoSignalsResponse {
   timestamp: string;
 }
 
+export interface CryptoScalpSignal {
+  id: string;
+  symbol: string;
+  asset: string;
+  direction: CryptoSignalDirection;
+  strategy: string;
+  strategy_name: string;
+  entry_price: number;
+  stop_loss: number;
+  target_1: number;
+  target_2: number;
+  current_price: number;
+  risk_points: number;
+  risk_percent: number;
+  risk_reward_ratio: number;
+  confidence: number;
+  timeframe: string;
+  status: CryptoSignalStatus;
+  confluence_factors: string[];
+  rationale: string;
+  atr_value?: number;
+  volume_ratio?: number;
+  funding_rate?: number;
+  depth_imbalance?: number;
+  is_scalp: boolean;
+  persisted_to_supabase: boolean;
+  telegram_dispatched: boolean;
+  created_at_utc: number;
+  timestamp: string;
+}
+
+export interface CryptoScalpDiagnostics {
+  data_quality: string;
+  candles_count: Record<string, number>;
+  strategies_evaluated: number;
+  candidates_found: number;
+  duration_ms: number;
+  last_scan_time?: string;
+  worker_running: boolean;
+  scan_interval_seconds: number;
+  telegram_enabled: boolean;
+  supabase_persisted_count: number;
+  errors: string[];
+}
+
+export interface CryptoScalpSignalsResponse {
+  signals: CryptoScalpSignal[];
+  total_active: number;
+  btc_signals: number;
+  eth_signals: number;
+  diagnostics?: CryptoScalpDiagnostics;
+  timestamp: string;
+}
+
+export interface CryptoScalpConfig {
+  scan_interval_seconds: number;
+  telegram_enabled: boolean;
+}
+
 
 // ============================================================
 // Historical Pattern Intelligence (HPI)

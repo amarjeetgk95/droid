@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     scanner_quote_age_seconds: float = 10.0      # Stricter quote age threshold for signal scanner
     stale_data_age_seconds: float = 5.0          # Threshold to mark a quote as STALE
 
+    # Crypto Scalping Engine Settings
+    crypto_scalp_scan_interval_seconds: int = 30
+    crypto_scalp_telegram_enabled: bool = True
+
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog

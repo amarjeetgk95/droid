@@ -20,6 +20,8 @@ import {
   CryptoPairComparison,
   CryptoHealthResponse,
   CryptoSignal,
+  CryptoScalpSignal,
+  CryptoScalpDiagnostics,
 } from '@/lib/types';
 import { api } from '@/lib/api';
 import {
@@ -36,6 +38,8 @@ import { CryptoDerivativesCard } from '@/components/crypto/CryptoDerivativesCard
 import { CryptoMarketOverviewStrip } from '@/components/crypto/CryptoMarketOverviewStrip';
 import { CryptoPairComparisonCard } from '@/components/crypto/CryptoPairComparisonCard';
 import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
+import { CryptoScalpSignalsCard } from '@/components/crypto/CryptoScalpSignalsCard';
+import { CryptoScalpDiagnosticsPanel } from '@/components/crypto/CryptoScalpDiagnosticsPanel';
 import { PageTabs } from '@/components/ui/PageTabs';
 
 export default function CryptoPage() {
@@ -56,6 +60,61 @@ export default function CryptoPage() {
   const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
   const [aiAnalyzing, setAiAnalyzing] = useState<boolean>(false);
   const [aiInsight, setAiInsight] = useState<{ bias: string; confidence: number; summary: string } | null>(null);
+
+  // --- Dedicated Scalp Signals State ---
+  const [topTab, setTopTab] = useState<'terminal' | 'scalp'>('terminal');
+  const [scalpSignals, setScalpSignals] = useState<CryptoScalpSignal[]>([]);
+  const [scalpDiagnostics, setScalpDiagnostics] = useState<CryptoScalpDiagnostics | null>(null);
+  const [loadingScalpSignals, setLoadingScalpSignals] = useState<boolean>(false);
+  const [scanningScalp, setScanningScalp] = useState<boolean>(false);
+
+  const fetchScalpSignals = useCallback(async () => {
+    try {
+      setLoadingScalpSignals(true);
+      const [sRes, dRes] = await Promise.all([
+        api.getCryptoScalpSignals().catch(() => null),
+        api.getCryptoScalpDiagnostics().catch(() => null),
+      ]);
+      if (sRes?.signals) {
+        setScalpSignals(sRes.signals);
+      }
+      if (dRes) {
+        setScalpDiagnostics(dRes);
+      } else if (sRes?.diagnostics) {
+        setScalpDiagnostics(sRes.diagnostics);
+      }
+    } catch (err) {
+      console.error('Failed to fetch crypto scalp signals:', err);
+    } finally {
+      setLoadingScalpSignals(false);
+    }
+  }, []);
+
+  const handleManualScalpScan = useCallback(async () => {
+    try {
+      setScanningScalp(true);
+      const res = await api.triggerCryptoScalpScan().catch(() => null);
+      if (res?.signals) {
+        setScalpSignals(res.signals);
+      }
+      if (res?.diagnostics) {
+        setScalpDiagnostics(res.diagnostics);
+      }
+    } catch (err) {
+      console.error('Failed manual scalp scan:', err);
+    } finally {
+      setScanningScalp(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchScalpSignals();
+    const intervalSec = scalpDiagnostics?.scan_interval_seconds || 30;
+    const timer = setInterval(() => {
+      fetchScalpSignals();
+    }, intervalSec * 1000);
+    return () => clearInterval(timer);
+  }, [fetchScalpSignals, scalpDiagnostics?.scan_interval_seconds]);
 
   // --- Strictly Bitcoin (BTC) & Ethereum (ETH) streams ---
   const trackedSymbols = useMemo(() => ['BTCUSDT', 'ETHUSDT'], []);
@@ -344,201 +403,245 @@ export default function CryptoPage() {
         </div>
       </div>
 
-      {/* 2. Global Macro Market Overview */}
-      <CryptoMarketOverviewStrip overview={overview} />
+      {/* 2. Top-Level Page Navigation Tabs */}
+      <PageTabs
+        tabs={[
+          {
+            id: 'terminal',
+            label: 'Market Terminal',
+            icon: Coins,
+            badge: 'Spot & Futures',
+            content: (
+              <div className="space-y-6">
+                {/* Global Macro Market Overview */}
+                <CryptoMarketOverviewStrip overview={overview} />
 
-      {/* 3. Hero Asset Cards Grid (Bitcoin & Ethereum) */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-primary" />
-            <span>Core Institutional Assets</span>
-          </span>
-          <span className="text-[11px] text-muted-foreground font-mono">
-            Active Selection: <strong className="text-foreground">{selectedSymbol}</strong>
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {loadingTickers && primaryHeroTickers.length === 0 ? (
-            Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="h-40 bg-card border border-border rounded-2xl animate-pulse p-4" />
-            ))
-          ) : (
-            primaryHeroTickers.map((t) => (
-              <CryptoTickerCard
-                key={t.symbol}
-                ticker={t}
-                isSelected={selectedSymbol === t.symbol}
-                onSelect={(sel) => setSelectedSymbol(sel.symbol)}
-              />
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* 4. ETH / BTC Relative Strength Barometer */}
-      <CryptoPairComparisonCard comparison={comparison} loading={loadingTickers && !comparison} />
-
-      {/* 5. Institutional Quant Signals Cockpit */}
-      <CryptoSignalsCard
-        signals={signals}
-        loading={loadingSignals}
-        selectedAsset={selectedSymbol.replace('USDT', '')}
-        onSelectAsset={(asset) => setSelectedSymbol(`${asset}USDT`)}
-      />
-
-      {/* 6. Deep Analysis Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left 7 Columns: AI Quantitative Synthesis & Key Metrics */}
-        <div className="lg:col-span-7 space-y-4">
-          {/* AI Quantitative Synthesis */}
-          <div className="bg-card border border-border rounded-xl p-4 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Brain className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-bold text-foreground">
-                    AI Quantitative Synthesis · {selectedTicker?.display_name || 'Bitcoin'}
-                  </span>
-                  {aiInsight && (
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${
-                        aiInsight.bias === 'BULLISH'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : aiInsight.bias === 'BEARISH'
-                          ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                      }`}
-                    >
-                      {aiInsight.bias} ({aiInsight.confidence}% Confidence)
+                {/* Hero Asset Cards Grid (Bitcoin & Ethereum) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-primary" />
+                      <span>Core Institutional Assets</span>
                     </span>
-                  )}
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                      Active Selection: <strong className="text-foreground">{selectedSymbol}</strong>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {loadingTickers && primaryHeroTickers.length === 0 ? (
+                      Array.from({ length: 2 }).map((_, i) => (
+                        <div key={i} className="h-40 bg-card border border-border rounded-2xl animate-pulse p-4" />
+                      ))
+                    ) : (
+                      primaryHeroTickers.map((t) => (
+                        <CryptoTickerCard
+                          key={t.symbol}
+                          ticker={t}
+                          isSelected={selectedSymbol === t.symbol}
+                          onSelect={(sel) => setSelectedSymbol(sel.symbol)}
+                        />
+                      ))
+                    )}
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                  {aiInsight
-                    ? aiInsight.summary
-                    : `Evaluate Binance spot order-flow imbalance, perpetual basis skew, and funding rate pressure with Gemini.`}
-                </p>
+
+                {/* ETH / BTC Relative Strength Barometer */}
+                <CryptoPairComparisonCard comparison={comparison} loading={loadingTickers && !comparison} />
+
+                {/* Institutional Quant Signals Cockpit */}
+                <CryptoSignalsCard
+                  signals={signals}
+                  loading={loadingSignals}
+                  selectedAsset={selectedSymbol.replace('USDT', '')}
+                  onSelectAsset={(asset) => setSelectedSymbol(`${asset}USDT`)}
+                />
+
+                {/* Deep Analysis Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left 7 Columns: AI Quantitative Synthesis & Key Metrics */}
+                  <div className="lg:col-span-7 space-y-4">
+                    {/* AI Quantitative Synthesis */}
+                    <div className="bg-card border border-border rounded-xl p-4 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Brain className="w-4 h-4 text-primary" />
+                            <span className="text-xs font-bold text-foreground">
+                              AI Quantitative Synthesis · {selectedTicker?.display_name || 'Bitcoin'}
+                            </span>
+                            {aiInsight && (
+                              <span
+                                className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${
+                                  aiInsight.bias === 'BULLISH'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : aiInsight.bias === 'BEARISH'
+                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                }`}
+                              >
+                                {aiInsight.bias} ({aiInsight.confidence}% Confidence)
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                            {aiInsight
+                              ? aiInsight.summary
+                              : `Evaluate Binance spot order-flow imbalance, perpetual basis skew, and funding rate pressure with Gemini.`}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleGenerateAIInsight}
+                          disabled={aiAnalyzing}
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shrink-0 shadow-xs"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 ${aiAnalyzing ? 'animate-spin' : ''}`} />
+                          <span>{aiAnalyzing ? 'Synthesizing...' : 'Generate AI Outlook'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Key Institutional Metrics Cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
+                        <span className="text-[10px] font-mono text-muted-foreground block">24H RANGE</span>
+                        <span className="text-sm font-bold font-mono text-foreground mt-1 block">
+                          {selectedTicker?.high_low_spread_pct?.toFixed(2) || '3.45'}%
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">High/Low Spread</span>
+                      </div>
+
+                      <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
+                        <span className="text-[10px] font-mono text-muted-foreground block">VWAP</span>
+                        <span className="text-sm font-bold font-mono text-foreground mt-1 block">
+                          ${selectedTicker?.vwap?.toLocaleString() || selectedTicker?.price?.toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">Volume-Weighted</span>
+                      </div>
+
+                      <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
+                        <span className="text-[10px] font-mono text-muted-foreground block">TRADE COUNT</span>
+                        <span className="text-sm font-bold font-mono text-foreground mt-1 block">
+                          {(selectedTicker?.trade_count || 1850000).toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">24h Fills</span>
+                      </div>
+
+                      <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
+                        <span className="text-[10px] font-mono text-muted-foreground block">BASIS STATUS</span>
+                        <span
+                          className={`text-sm font-bold font-mono mt-1 block ${
+                            displayedDerivatives?.basis_status === 'CONTANGO'
+                              ? 'text-emerald-400'
+                              : displayedDerivatives?.basis_status === 'BACKWARDATION'
+                              ? 'text-rose-400'
+                              : 'text-foreground'
+                          }`}
+                        >
+                          {displayedDerivatives?.basis_status || 'CONTANGO'}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {displayedDerivatives?.basis ? `$${Math.abs(displayedDerivatives.basis).toFixed(2)}` : '0.01%'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right 5 Columns: L2 Order Book & Derivatives Flow */}
+                  <div className="lg:col-span-5 space-y-3">
+                    <PageTabs
+                      tabs={[
+                        {
+                          id: 'orderbook',
+                          label: 'L2 Order Book Depth',
+                          icon: BarChart3,
+                          content: (
+                            <CryptoOrderBook
+                              orderbook={displayedOrderBook}
+                              loading={loadingDetails && !displayedOrderBook}
+                              isLive={orderBookIsLive}
+                              streamState={symbolStreamState}
+                            />
+                          ),
+                        },
+                        {
+                          id: 'derivatives',
+                          label: 'Futures & Funding Rate',
+                          icon: Activity,
+                          content: (
+                            <CryptoDerivativesCard
+                              derivatives={displayedDerivatives}
+                              loading={loadingDetails && !displayedDerivatives}
+                              isLive={fundingIsLive}
+                              fundingLive={!!derivativesLive}
+                            />
+                          ),
+                        },
+                      ]}
+                      activeTab={rightTab}
+                      onTabChange={(tabId) => setRightTab(tabId as 'orderbook' | 'derivatives')}
+                    />
+
+                    {/* Safety & Telemetry Card */}
+                    <div className="bg-card border border-border rounded-xl p-3.5 text-xs text-muted-foreground flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                          <span>{market === 'spot' ? 'Binance Spot' : 'Binance Futures (fapi)'} Public Streams · Zero-Auth</span>
+                        </div>
+                        <a
+                          href={`https://www.binance.com/en/trade/${selectedSymbol.replace('USDT', '_USDT')}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-primary hover:underline flex items-center gap-1 font-mono"
+                        >
+                          <span>Binance</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                      <div className="text-[10px] font-mono text-muted-foreground/70 flex justify-between">
+                        <span>WS: {getBinanceWsUrl(market)}</span>
+                        <span>Sequence Gap Resync Active</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={handleGenerateAIInsight}
-                disabled={aiAnalyzing}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shrink-0 shadow-xs"
-              >
-                <Sparkles className={`w-3.5 h-3.5 ${aiAnalyzing ? 'animate-spin' : ''}`} />
-                <span>{aiAnalyzing ? 'Synthesizing...' : 'Generate AI Outlook'}</span>
-              </button>
-            </div>
-          </div>
+            ),
+          },
+          {
+            id: 'scalp',
+            label: 'Scalping Signals',
+            icon: Zap,
+            badge: scalpSignals.length > 0 ? scalpSignals.length : '24/7 Live',
+            badgeClassName: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+            content: (
+              <div className="space-y-6">
+                {/* 1. Scalp Engine Diagnostics & Config Panel */}
+                <CryptoScalpDiagnosticsPanel
+                  diagnostics={scalpDiagnostics}
+                  onRefresh={handleManualScalpScan}
+                  scanning={scanningScalp}
+                />
 
-          {/* Key Institutional Metrics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-              <span className="text-[10px] font-mono text-muted-foreground block">24H RANGE</span>
-              <span className="text-sm font-bold font-mono text-foreground mt-1 block">
-                {selectedTicker?.high_low_spread_pct?.toFixed(2) || '3.45'}%
-              </span>
-              <span className="text-[10px] text-muted-foreground">High/Low Spread</span>
-            </div>
-
-            <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-              <span className="text-[10px] font-mono text-muted-foreground block">VWAP</span>
-              <span className="text-sm font-bold font-mono text-foreground mt-1 block">
-                ${selectedTicker?.vwap?.toLocaleString() || selectedTicker?.price?.toLocaleString()}
-              </span>
-              <span className="text-[10px] text-muted-foreground">Volume-Weighted</span>
-            </div>
-
-            <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-              <span className="text-[10px] font-mono text-muted-foreground block">TRADE COUNT</span>
-              <span className="text-sm font-bold font-mono text-foreground mt-1 block">
-                {(selectedTicker?.trade_count || 1850000).toLocaleString()}
-              </span>
-              <span className="text-[10px] text-muted-foreground">24h Fills</span>
-            </div>
-
-            <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-              <span className="text-[10px] font-mono text-muted-foreground block">BASIS STATUS</span>
-              <span
-                className={`text-sm font-bold font-mono mt-1 block ${
-                  displayedDerivatives?.basis_status === 'CONTANGO'
-                    ? 'text-emerald-400'
-                    : displayedDerivatives?.basis_status === 'BACKWARDATION'
-                    ? 'text-rose-400'
-                    : 'text-foreground'
-                }`}
-              >
-                {displayedDerivatives?.basis_status || 'CONTANGO'}
-              </span>
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {displayedDerivatives?.basis ? `$${Math.abs(displayedDerivatives.basis).toFixed(2)}` : '0.01%'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right 5 Columns: L2 Order Book & Derivatives Flow */}
-        <div className="lg:col-span-5 space-y-3">
-          {/* Tab Switcher & Content */}
-          <PageTabs
-            tabs={[
-              {
-                id: 'orderbook',
-                label: 'L2 Order Book Depth',
-                icon: BarChart3,
-                content: (
-                  <CryptoOrderBook
-                    orderbook={displayedOrderBook}
-                    loading={loadingDetails && !displayedOrderBook}
-                    isLive={orderBookIsLive}
-                    streamState={symbolStreamState}
-                  />
-                ),
-              },
-              {
-                id: 'derivatives',
-                label: 'Futures & Funding Rate',
-                icon: Activity,
-                content: (
-                  <CryptoDerivativesCard
-                    derivatives={displayedDerivatives}
-                    loading={loadingDetails && !displayedDerivatives}
-                    isLive={fundingIsLive}
-                    fundingLive={!!derivativesLive}
-                  />
-                ),
-              },
-            ]}
-            activeTab={rightTab}
-            onTabChange={(tabId) => setRightTab(tabId as 'orderbook' | 'derivatives')}
-          />
-
-          {/* Safety & Telemetry Card */}
-          <div className="bg-card border border-border rounded-xl p-3.5 text-xs text-muted-foreground flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>{market === 'spot' ? 'Binance Spot' : 'Binance Futures (fapi)'} Public Streams · Zero-Auth</span>
+                {/* 2. Dedicated Scalping Signals Cockpit */}
+                <CryptoScalpSignalsCard
+                  signals={scalpSignals}
+                  loading={loadingScalpSignals}
+                  onRefresh={handleManualScalpScan}
+                  selectedAssetFilter="ALL"
+                  onSelectAssetFilter={(asset) => setSelectedSymbol(`${asset}USDT`)}
+                />
               </div>
-              <a
-                href={`https://www.binance.com/en/trade/${selectedSymbol.replace('USDT', '_USDT')}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-primary hover:underline flex items-center gap-1 font-mono"
-              >
-                <span>Binance</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <div className="text-[10px] font-mono text-muted-foreground/70 flex justify-between">
-              <span>WS: {getBinanceWsUrl(market)}</span>
-              <span>Sequence Gap Resync Active</span>
-            </div>
-          </div>
-        </div>
-      </div>
+            ),
+          },
+        ]}
+        defaultTab="terminal"
+        activeTab={topTab}
+        onTabChange={(tabId) => setTopTab(tabId as 'terminal' | 'scalp')}
+        syncWithUrl
+      />
     </div>
   );
 }

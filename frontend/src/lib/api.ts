@@ -718,6 +718,40 @@ class ApiClient {
     return this.request<{ data: import('./types').CryptoSignalsResponse; error: string | null; meta: import('./types').ApiMeta }>(path);
   }
 
+  // Crypto Scalping Engine (Dedicated 24/7 Module)
+  async getCryptoScalpSignals(params?: { symbol?: string; direction?: string }) {
+    const query = new URLSearchParams();
+    if (params?.symbol) query.set('symbol', params.symbol);
+    if (params?.direction) query.set('direction', params.direction);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<import('./types').CryptoScalpSignalsResponse>(`/api/v1/crypto/scalp-signals${qs}`);
+  }
+
+  async getCryptoScalpHistory(params?: { symbol?: string; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.symbol) query.set('symbol', params.symbol);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<import('./types').CryptoScalpSignal[]>(`/api/v1/crypto/scalp-signals/history${qs}`);
+  }
+
+  async triggerCryptoScalpScan() {
+    return this.request<import('./types').CryptoScalpSignalsResponse>('/api/v1/crypto/scalp-signals/scan', {
+      method: 'POST',
+    });
+  }
+
+  async getCryptoScalpDiagnostics() {
+    return this.request<import('./types').CryptoScalpDiagnostics>('/api/v1/crypto/scalp-signals/diagnostics');
+  }
+
+  async updateCryptoScalpConfig(config: import('./types').CryptoScalpConfig) {
+    return this.request<import('./types').CryptoScalpConfig>('/api/v1/crypto/scalp-signals/config', {
+      method: 'PATCH',
+      body: JSON.stringify(config),
+    });
+  }
+
   // Auth
   async getProfile() {
     return this.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');
