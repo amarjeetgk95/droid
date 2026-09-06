@@ -14,6 +14,7 @@ from app.api import institutional as institutional_api
 from app.api import telegram as telegram_api
 from app.api import events as events_api
 from app.api import options_intelligence as options_intelligence_api
+from app.api import research as research_api
 from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
@@ -260,6 +261,7 @@ def create_app() -> FastAPI:
     app.include_router(strategy.router)
     app.include_router(events_api.router)
     app.include_router(options_intelligence_api.router)
+    app.include_router(research_api.router)
     
     return app
 
