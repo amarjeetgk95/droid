@@ -15,6 +15,7 @@ import {
   Zap,
   ArrowLeftRight,
   Calendar,
+  FlaskConical,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -73,6 +74,16 @@ export const NAV_GROUPS: NavGroup[] = [
         description: 'RBI policy, macro events, impact & setup',
         shortcut: '⌘0',
         keywords: ['events', 'rbi', 'mpc', 'macro', 'policy', 'calendar', 'impact'],
+      },
+      {
+        id: 'research-lab',
+        href: '/research',
+        label: 'Indicator Research Lab',
+        icon: FlaskConical,
+        description: 'Proprietary OMPI & cheap validation gate',
+        shortcut: '⌘4',
+        keywords: ['research', 'indicators', 'ompi', 'backtest', 'lab', 'prediction', 'validation'],
+        isBeta: true,
       },
     ],
   },

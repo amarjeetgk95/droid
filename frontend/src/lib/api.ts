@@ -1159,6 +1159,94 @@ class ApiClient {
   async getPortfolioGreeksSummary() {
     return this.request<any>('/api/v1/options-intelligence/portfolio-greeks/summary');
   }
+
+  // ---------------------------------------------------------------------------
+  // Chart Intelligence & Indicator Research Laboratory (§45)
+  // ---------------------------------------------------------------------------
+  async getResearchIndicators(category?: string, lifecycle?: string) {
+    const params = new URLSearchParams();
+    if (category) params.set('category', category);
+    if (lifecycle) params.set('lifecycle', lifecycle);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return this.request<any[]>(`/api/v1/research/indicators${qs}`);
+  }
+
+  async getResearchIndicator(id: string) {
+    return this.request<any>(`/api/v1/research/indicators/${id}`);
+  }
+
+  async calculateResearchIndicator(id: string, params: { instrument: string; timeframe: string; parameters?: any; candles?: any[] }) {
+    return this.request<any>(`/api/v1/research/indicators/${id}/calculate`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async getResearchChartState(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
+    return this.request<any>(`/api/v1/research/chart/state?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`);
+  }
+
+  async getResearchFeatures(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
+    return this.request<any>(`/api/v1/research/chart/features?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`);
+  }
+
+  async getResearchOptionsContext(instrument: string = 'NIFTY 50') {
+    return this.request<any>(`/api/v1/research/options-context?instrument=${encodeURIComponent(instrument)}`);
+  }
+
+  async recordResearchPrediction(prediction: any) {
+    return this.request<any>('/api/v1/research/predictions', {
+      method: 'POST',
+      body: JSON.stringify(prediction),
+    });
+  }
+
+  async listResearchPredictions(params?: { indicator_id?: string; instrument?: string; limit?: number }) {
+    const q = new URLSearchParams();
+    if (params?.indicator_id) q.set('indicator_id', params.indicator_id);
+    if (params?.instrument) q.set('instrument', params.instrument);
+    if (params?.limit) q.set('limit', String(params.limit));
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return this.request<any[]>(`/api/v1/research/predictions${qs}`);
+  }
+
+  async measureResearchPrediction(predictionId: string, forwardCandles?: any[]) {
+    return this.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}/measure`, {
+      method: 'POST',
+      body: JSON.stringify({ forward_candles: forwardCandles }),
+    });
+  }
+
+  async runResearchExperiment(params: { indicator_id: string; instrument: string; timeframe: string; horizon_candles?: number; stride?: number; parameters?: any; candles?: any[] }) {
+    return this.request<any>('/api/v1/research/experiments/run', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async createResearchSnapshot(snapshot: any) {
+    return this.request<any>('/api/v1/research/snapshots', {
+      method: 'POST',
+      body: JSON.stringify(snapshot),
+    });
+  }
+
+  async listResearchSnapshots(instrument?: string) {
+    const qs = instrument ? `?instrument=${encodeURIComponent(instrument)}` : '';
+    return this.request<any[]>(`/api/v1/research/snapshots${qs}`);
+  }
+
+  async createResearchAnnotation(annotation: any) {
+    return this.request<any>('/api/v1/research/annotations', {
+      method: 'POST',
+      body: JSON.stringify(annotation),
+    });
+  }
+
+  async listResearchAnnotations(instrument?: string) {
+    const qs = instrument ? `?instrument=${encodeURIComponent(instrument)}` : '';
+    return this.request<any[]>(`/api/v1/research/annotations${qs}`);
+  }
 }
 
 export const api = new ApiClient(API_BASE);
