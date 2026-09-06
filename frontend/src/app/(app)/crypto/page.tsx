@@ -136,6 +136,16 @@ export default function CryptoPage() {
     }
   }, [fetchScalpSignals]);
 
+  const handleDeleteLedgerTrade = useCallback(async (tradeId: string) => {
+    try {
+      setScalpLedger((prev) => prev.filter((r) => r.trade_id !== tradeId));
+      await api.deleteCryptoScalpTrade(tradeId);
+    } catch (err) {
+      console.error('Failed to delete trade from ledger:', err);
+      fetchScalpLedger();
+    }
+  }, [fetchScalpLedger]);
+
   useEffect(() => {
     fetchScalpSignals();
     fetchScalpLedger();
@@ -527,6 +537,7 @@ export default function CryptoPage() {
             records={scalpLedger}
             loading={loadingLedger}
             onRefresh={fetchScalpLedger}
+            onDeleteRecord={handleDeleteLedgerTrade}
           />
         </div>
       )}

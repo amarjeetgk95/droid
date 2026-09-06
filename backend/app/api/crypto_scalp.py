@@ -465,3 +465,15 @@ async def get_crypto_scalp_trade_detail(trade_id: str):
     except Exception as e:
         logger.error("get_crypto_scalp_trade_detail_failed", trade_id=trade_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to fetch trade details: {str(e)}")
+
+
+@router.delete("/ledger/{trade_id}")
+async def delete_crypto_scalp_trade(trade_id: str):
+    """Delete a trade execution record and its events from the ledger."""
+    try:
+        from app.crypto_scalp.persistence import delete_execution_record
+        await delete_execution_record(trade_id)
+        return {"status": "success", "trade_id": trade_id}
+    except Exception as e:
+        logger.error("delete_crypto_scalp_trade_failed", trade_id=trade_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to delete trade {trade_id}: {str(e)}")

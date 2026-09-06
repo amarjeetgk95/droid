@@ -753,6 +753,46 @@ async def load_unclosed_execution_records() -> list[CryptoScalpExecutionRecord]:
     return [r for r in all_recs if r.position_state in (CryptoScalpPositionState.ACTIVE, CryptoScalpPositionState.PARTIALLY_CLOSED)]
 
 
+async def delete_execution_record(trade_id: str) -> bool:
+    """Delete a trade execution record and its audit events from database and local cache."""
+    try:
+        from app.crypto_scalp.outcome_tracker import crypto_outcome_tracker
+        crypto_outcome_tracker.active_positions.pop(trade_id, None)
+    except Exception:
+        pass
+
+    # Remove from local cache
+    try:
+        local_recs = restore_executions_local()
+        new_recs = [r for r in local_recs if r.trade_id != trade_id]
+        save_executions_local(new_recs)
+
+        local_evs = restore_events_local()
+        new_evs = [ev for ev in local_evs if ev.trade_id != trade_id]
+        save_events_local(new_evs)
+    except Exception as e:
+        logger.warning("delete_execution_record_local_failed", trade_id=trade_id, error=str(e)[:200])
+
+    # Remove from DB if connected
+    factory = get_async_session_factory()
+    if factory is not None:
+        try:
+            async with factory() as session:
+                await session.execute(
+                    text("DELETE FROM crypto_scalp_execution_events WHERE trade_id = :trade_id"),
+                    {"trade_id": trade_id},
+                )
+                await session.execute(
+                    text("DELETE FROM crypto_scalp_executions WHERE trade_id = :trade_id"),
+                    {"trade_id": trade_id},
+                )
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.warning("delete_execution_record_db_failed", trade_id=trade_id, error=str(e)[:200])
+    return True
+
+
 # ── Full Crypto FSM & Fill Reconciler Local Cache Layer ──
 
 CRYPTO_FSM_STATE_FILE = Path("crypto_signals_fsm_state.json")

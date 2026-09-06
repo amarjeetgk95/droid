@@ -11,7 +11,8 @@ import {
   FileText,
   DollarSign,
   CheckCircle2,
-  Percent,
+  Trash2,
+  Calendar,
 } from 'lucide-react';
 import {
   CryptoScalpExecutionRecord,
@@ -21,16 +22,41 @@ interface CryptoScalpLedgerTableProps {
   records: CryptoScalpExecutionRecord[];
   loading?: boolean;
   onRefresh?: () => void;
+  onDeleteRecord?: (tradeId: string) => void;
+}
+
+function formatLedgerDate(timestampUtc?: number): { formatted: string; relative: string } {
+  if (!timestampUtc) return { formatted: '—', relative: '—' };
+  const ts = timestampUtc < 1e11 ? timestampUtc * 1000 : timestampUtc;
+  const date = new Date(ts);
+
+  const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  let relative = 'Just now';
+  if (diffSeconds >= 86400) {
+    relative = `${Math.floor(diffSeconds / 86400)}d ago`;
+  } else if (diffSeconds >= 3600) {
+    relative = `${Math.floor(diffSeconds / 3600)}h ago`;
+  } else if (diffSeconds >= 60) {
+    relative = `${Math.floor(diffSeconds / 60)}m ago`;
+  } else if (diffSeconds > 10) {
+    relative = `${diffSeconds}s ago`;
+  }
+
+  return { formatted, relative };
 }
 
 export function CryptoScalpLedgerTable({
   records,
   loading = false,
   onRefresh,
+  onDeleteRecord,
 }: CryptoScalpLedgerTableProps) {
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
   const [filterSymbol, setFilterSymbol] = useState<string>('ALL');
   const [filterState, setFilterState] = useState<string>('ALL');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filteredRecords = records.filter((r) => {
     if (filterSymbol !== 'ALL' && !r.symbol.toUpperCase().includes(filterSymbol)) {
@@ -44,6 +70,16 @@ export function CryptoScalpLedgerTable({
 
   const toggleExpand = (tradeId: string) => {
     setExpandedTradeId((prev) => (prev === tradeId ? null : tradeId));
+  };
+
+  const handleDelete = async (tradeId: string) => {
+    if (!onDeleteRecord) return;
+    setDeletingId(tradeId);
+    try {
+      await onDeleteRecord(tradeId);
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   // Quick summary calculation for the ledger
@@ -63,7 +99,7 @@ export function CryptoScalpLedgerTable({
             <span>Profit & Loss Execution Ledger</span>
           </h3>
           <p className="text-xs text-slate-500">
-            Realized fills, slippage drag, taker fees, and chronological audit ledger.
+            Realized fills, slippage drag, taker fees, and chronological audit ledger with deletion controls.
           </p>
         </div>
 
@@ -144,6 +180,7 @@ export function CryptoScalpLedgerTable({
           <table className="w-full text-xs text-left">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                <th className="py-2.5 px-3">Date & Time</th>
                 <th className="py-2.5 px-3">Trade ID</th>
                 <th className="py-2.5 px-3">Asset</th>
                 <th className="py-2.5 px-3">Direction</th>
@@ -156,6 +193,7 @@ export function CryptoScalpLedgerTable({
                 <th className="py-2.5 px-3 text-right">Net P&L ($)</th>
                 <th className="py-2.5 px-3 text-right">Duration</th>
                 <th className="py-2.5 px-2 text-center">Audit</th>
+                <th className="py-2.5 px-2 text-center">Delete</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -163,6 +201,7 @@ export function CryptoScalpLedgerTable({
                 const isLong = trade.direction === 'LONG';
                 const isExpanded = expandedTradeId === trade.trade_id;
                 const isProfitable = trade.net_pnl_usd > 0;
+                const { formatted: dateStr, relative: relativeTime } = formatLedgerDate(trade.created_at_utc);
 
                 return (
                   <React.Fragment key={trade.trade_id}>
@@ -170,6 +209,17 @@ export function CryptoScalpLedgerTable({
                       onClick={() => toggleExpand(trade.trade_id)}
                       className="hover:bg-slate-50/80 cursor-pointer transition-colors text-slate-800"
                     >
+                      {/* Date & Time Column */}
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>{relativeTime}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                          {dateStr.substring(0, 16)}
+                        </span>
+                      </td>
+
                       <td className="py-2.5 px-3 font-mono font-medium text-slate-700">
                         #{trade.trade_id.slice(-6).toUpperCase()}
                       </td>
@@ -257,21 +307,36 @@ export function CryptoScalpLedgerTable({
                         {trade.duration_str}
                       </td>
 
+                      {/* Expand Button */}
                       <td className="py-2.5 px-2 text-center text-slate-400">
                         {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </td>
+
+                      {/* Delete Option */}
+                      <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(trade.trade_id)}
+                          disabled={deletingId === trade.trade_id}
+                          title="Delete this execution record"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer border border-transparent hover:border-rose-200 disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
 
                     {/* Expandable Audit Trail Row */}
                     {isExpanded && (
                       <tr className="bg-slate-50/80 border-b border-slate-200">
-                        <td colSpan={12} className="p-4 space-y-3">
+                        <td colSpan={14} className="p-4 space-y-3">
                           <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 border-b border-slate-200 pb-2 gap-2">
                             <span className="font-semibold text-slate-800 flex items-center gap-1.5">
                               <FileText className="w-3.5 h-3.5 text-blue-600" />
                               <span>Execution Audit Trail ({trade.events?.length || 0} events)</span>
                             </span>
                             <div className="flex items-center gap-4 text-[11px] font-mono">
+                              <span>Created: <strong>{dateStr}</strong></span>
                               <span>Theoretical: <strong>{trade.theoretical_r}R</strong></span>
                               <span>Realized: <strong>{trade.r_multiple}R</strong></span>
                               <span>Drag: <strong className="text-amber-600">-{trade.execution_drag_r}R</strong></span>
@@ -290,7 +355,7 @@ export function CryptoScalpLedgerTable({
                                 >
                                   <div className="flex items-center gap-3">
                                     <span className="font-mono text-[11px] text-slate-500">
-                                      {new Date(ev.timestamp_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                      {new Date(ev.timestamp_ms).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}
                                     </span>
                                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                                       {ev.event_type}

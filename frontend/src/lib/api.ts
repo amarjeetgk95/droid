@@ -694,6 +694,12 @@ class ApiClient {
     });
   }
 
+  async deleteCryptoScalpTrade(tradeId: string) {
+    return this.request<{ status: string; trade_id: string }>(`/api/v1/crypto/scalp-signals/ledger/${tradeId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Auth
   async getProfile() {
     return this.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');
