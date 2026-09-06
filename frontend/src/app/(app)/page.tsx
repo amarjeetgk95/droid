@@ -445,7 +445,7 @@ export default function DashboardPage() {
                         Confidence: <strong className="text-foreground">{regimeOverview.confidence_score.toFixed(0)}%</strong>
                       </span>
                       <span className="text-muted-foreground">
-                        Provider: <strong className="text-foreground">FYERS API v3</strong>
+                        Provider: <strong className="text-foreground">{health?.provider || '—'}</strong>
                       </span>
                     </div>
                   </div>
@@ -458,7 +458,7 @@ export default function DashboardPage() {
               <div className="bg-card border border-border rounded-xl p-3 shadow-2xs grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                 <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
                   <span className="text-muted-foreground text-[10px] block">Broker Feed</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">{health?.provider || 'FYERS'}</span>
+                  <span className="font-mono font-bold text-foreground block mt-0.5">{health?.provider || '—'}</span>
                 </div>
                 <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
                   <span className="text-muted-foreground text-[10px] block">Instruments</span>

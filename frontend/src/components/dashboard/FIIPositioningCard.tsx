@@ -11,12 +11,8 @@ import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 const FALLBACK_POLL_MS = 15 * 60 * 1000;
 
 export function FIIPositioningCard({ refreshKey }: { refreshKey?: number } = {}) {
-  let contextData: FIIDIIOverviewResponse | null = null;
-  try {
-    contextData = (useOptionalMarketDataContext()?.fiiDii as FIIDIIOverviewResponse | null) ?? null;
-  } catch {
-    contextData = null;
-  }
+  const marketCtx = useOptionalMarketDataContext();
+  const contextData = (marketCtx?.fiiDii as FIIDIIOverviewResponse | null) ?? null;
   const [fallback, setFallback] = useState<FIIDIIOverviewResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
