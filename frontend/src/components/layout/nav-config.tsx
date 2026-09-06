@@ -6,7 +6,6 @@ import {
   Settings,
   Layers,
   TrendingUp,
-  History,
   Bot,
   BarChart3,
   Radio,
@@ -66,15 +65,6 @@ export const NAV_GROUPS: NavGroup[] = [
         description: 'Trend direction & support / resistance',
         shortcut: '⌘3',
         keywords: ['regime', 'levels', 'support', 'resistance', 'trend', 'volatility'],
-      },
-      {
-        id: 'historical-intel',
-        href: '/historical-intelligence',
-        label: 'Historical Patterns',
-        icon: History,
-        description: 'What happened last time like this?',
-        shortcut: '⌘4',
-        keywords: ['history', 'similarity', 'patterns', 'backtest', 'scenarios'],
       },
       {
         id: 'event-intelligence',

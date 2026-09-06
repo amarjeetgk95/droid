@@ -78,9 +78,6 @@ class Settings(BaseSettings):
     batch_write_flush_interval_ms: int = 500
     batch_write_max_size: int = 200
 
-    # Pattern Outcome Worker Settings (Historical Intelligence v2)
-    pattern_outcome_worker_interval: int = 3600  # 1 hour
-
     # OpenRouter AI Model Catalog Settings (Free-Model Dynamic System)
     openrouter_api_key: str = ""
     openrouter_free_only: bool = True

@@ -36,7 +36,7 @@ class ApiClient {
     const url = `${this.baseUrl}${cleanPath}`;
 
     // Adaptive timeout: 180s for AI inference / import / historical scans; 60s for standard requests (accommodates cloud cold-starts)
-    const isHeavy = cleanPath.includes('/ai/') || cleanPath.includes('/hpi/import') || cleanPath.includes('/historical/analogs') || cleanPath.includes('/hpi/seed');
+    const isHeavy = cleanPath.includes('/ai/');
     const timeoutMs = options?.timeoutMs ?? (isHeavy ? 180_000 : 60_000);
 
     const controller = new AbortController();
@@ -537,87 +537,6 @@ class ApiClient {
     return this.request<{ data: any; error: string | null; meta: import('./types').ApiMeta }>(`/api/ai/models${qs ? `?${qs}` : ''}`);
   }
 
-  // Historical Intelligence & Pattern Recognition (Phase 9)
-  async getDetectedPatterns(symbol: string, timeframe: string = '5m') {
-    return this.request<{ data: import('./types').DetectedPatternModel[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/patterns?timeframe=${timeframe}`);
-  }
-
-  async getHistoricalShifts(symbol: string, days: number = 10) {
-    return this.request<{ data: import('./types').HistoricalShiftsResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/shifts?days=${days}`);
-  }
-
-  async getSeasonality(symbol: string) {
-    return this.request<{ data: import('./types').SeasonalityResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/seasonality`);
-  }
-
-  async getWatchlist() {
-    return this.request<{ data: import('./types').WatchlistItem[]; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/watchlist');
-  }
-
-  async addToWatchlist(symbol: string) {
-    return this.request<{ data: { symbol: string; status: string }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/watchlist/add?symbol=${encodeURIComponent(symbol)}`, {
-      method: 'POST',
-    });
-  }
-
-  async removeFromWatchlist(symbol: string) {
-    return this.request<{ data: { symbol: string; status: string }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/watchlist/remove?symbol=${encodeURIComponent(symbol)}`, {
-      method: 'POST',
-    });
-  }
-
-  // Historical Intelligence v2 — Pattern Outcomes & Hit Rates
-  async getPatternHitRates(symbol: string, timeframe?: string) {
-    const query = timeframe ? `?timeframe=${timeframe}` : '';
-    return this.request<{ data: import('./types').PatternHitRateResponse; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/hit-rates${query}`);
-  }
-
-  // Empirical S/R & Analog Similarity Engine (§30)
-  async getHistoricalAnalogs(symbol: string, timeframe: string = '5M', patternWindow: number = 15, minSimilarity: number = 0.70, topK: number = 20, forwardHorizon: number = 10) {
-    const params = new URLSearchParams({
-      symbol,
-      timeframe,
-      pattern_window: patternWindow.toString(),
-      min_similarity: minSimilarity.toString(),
-      top_k: topK.toString(),
-      forward_horizon: forwardHorizon.toString(),
-    });
-    return this.request<{ data: any; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/historical/analogs?${params.toString()}`);
-  }
-
-  async getSupportResistanceLevels(symbol: string, timeframe: string = '5M', maxZones: number = 8) {
-    const params = new URLSearchParams({
-      symbol,
-      timeframe,
-      max_zones: maxZones.toString(),
-    });
-    return this.request<{ data: { symbol: string; zones: any[]; count: number }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/historical/sr-levels?${params.toString()}`);
-  }
-
-  async getPatternOutcomes(symbol: string, patternTypes?: string, timeframe?: string, limit: number = 20) {
-    const params = new URLSearchParams();
-    if (patternTypes) params.set('pattern_types', patternTypes);
-    if (timeframe) params.set('timeframe', timeframe);
-    params.set('limit', limit.toString());
-    return this.request<{ data: import('./types').PatternOutcomeRecord[]; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/outcomes?${params.toString()}`);
-  }
-
-  async labelPatternOutcomes(symbol: string, patternTypes?: string, timeframe?: string) {
-    const params = new URLSearchParams();
-    if (patternTypes) params.set('pattern_types', patternTypes);
-    if (timeframe) params.set('timeframe', timeframe);
-    return this.request<{ data: { symbol: string; labeled_count: number; status: string }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/history/${encodeURIComponent(symbol)}/label-outcomes`, {
-      method: 'POST',
-      body: JSON.stringify({ pattern_types: patternTypes, timeframe }),
-    });
-  }
-
-  async refreshHitRatesView() {
-    return this.request<{ data: { refreshed: boolean }; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/history/hit-rates/refresh', {
-      method: 'POST',
-    });
-  }
-
   // Paper Trading & Virtual Execution (Phase 11)
   async getPaperPortfolio() {
     return this.request<{ data: import('./types').PortfolioSummary; error: string | null; meta: import('./types').ApiMeta }>('/api/v1/paper/portfolio');
@@ -995,55 +914,6 @@ class ApiClient {
       error: string | null;
       meta: import('./types').ApiMeta;
     }>('/api/v1/dashboard/summary');
-  }
-
-  // Historical Pattern Intelligence (HPI) — user-controlled derivative & historical data
-  async getHpiUniverse() {
-    return this.request<{ data: import('./types').HpiUniverse; error: string | null; meta: any }>('/api/v1/hpi/universe');
-  }
-  async getHpiSelection() {
-    return this.request<{ data: import('./types').HpiSelectionState; error: string | null; meta: any }>('/api/v1/hpi/selection');
-  }
-  async updateHpiSelection(entries: import('./types').HpiSelectionEntry[]) {
-    return this.request<{ data: import('./types').HpiSelectionState; error: string | null; meta: any }>('/api/v1/hpi/selection', { method: 'PUT', body: JSON.stringify({ entries }) });
-  }
-  async listHpiPolicies(symbol?: string) {
-    const q = symbol ? `?symbol=${encodeURIComponent(symbol)}` : '';
-    return this.request<{ data: import('./types').HpiPolicy[]; error: string | null; meta: any }>(`/api/v1/hpi/policies${q}`);
-  }
-  async createHpiPolicy(policy: Partial<import('./types').HpiPolicy>) {
-    return this.request<{ data: import('./types').HpiPolicy; error: string | null; meta: any }>('/api/v1/hpi/policies', { method: 'POST', body: JSON.stringify(policy) });
-  }
-  async updateHpiPolicy(policyId: string, patch: Partial<import('./types').HpiPolicy>) {
-    return this.request<{ data: import('./types').HpiPolicy; error: string | null; meta: any }>(`/api/v1/hpi/policies/${encodeURIComponent(policyId)}`, { method: 'PATCH', body: JSON.stringify(patch) });
-  }
-  async deleteHpiPolicy(policyId: string) {
-    return this.request<any>(`/api/v1/hpi/policies/${encodeURIComponent(policyId)}`, { method: 'DELETE' });
-  }
-  async getHpiStorageReport() {
-    return this.request<{ data: import('./types').HpiStorageReport; error: string | null; meta: any }>('/api/v1/hpi/storage/report');
-  }
-  async hpiImport(req: Record<string, unknown>) {
-    return this.request<{ data: import('./types').HpiImportPreview | import('./types').HpiImportResult; error: string | null; meta: any }>('/api/v1/hpi/import', { method: 'POST', body: JSON.stringify(req) });
-  }
-  async hpiDeletePreview(req: Record<string, unknown>) {
-    return this.request<{ data: import('./types').HpiDeletePreview; error: string | null; meta: any }>('/api/v1/hpi/delete/preview', { method: 'POST', body: JSON.stringify(req) });
-  }
-  async hpiDeleteConfirm(token: string, reason?: string) {
-    return this.request<{ data: any; error: string | null; meta: any }>('/api/v1/hpi/delete/confirm', { method: 'POST', body: JSON.stringify({ confirmation_token: token, reason }) });
-  }
-  async getHpiAudit(symbol?: string) {
-    const q = symbol ? `?symbol=${encodeURIComponent(symbol)}` : '';
-    return this.request<{ data: import('./types').HpiAuditEntry[]; error: string | null; meta: any }>(`/api/v1/hpi/audit/deletions${q}`);
-  }
-  async hpiAutoDelete() {
-    return this.request<any>('/api/v1/hpi/maintenance/auto-delete', { method: 'POST' });
-  }
-  async getHpiCoverage(symbol: string) {
-    return this.request<{ data: import('./types').HpiCoverageReport; error: string | null; meta: any }>(`/api/v1/hpi/coverage/${encodeURIComponent(symbol)}`);
-  }
-  async getHpiAnalysis(symbol: string, timeframe: string = '5m') {
-    return this.request<{ data: import('./types').HpiAnalysis; error: string | null; meta: any }>(`/api/v1/hpi/analysis/${encodeURIComponent(symbol)}?timeframe=${timeframe}`);
   }
 
   // Direct Providers testing

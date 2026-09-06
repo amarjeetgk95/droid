@@ -4,13 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, historical, paper, ml, fii_dii, crypto, instruments, futures, strategy
+from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, crypto, instruments, futures, strategy
 from app.api import crypto_scalp as crypto_scalp_api
 from app.api import settings as settings_api
 from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
-from app.api import hpi as hpi_api
 from app.api import algo as algo_api
 from app.api import institutional as institutional_api
 from app.api import telegram as telegram_api
@@ -20,8 +19,6 @@ from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
-from app.services.pattern_outcome_worker import pattern_outcome_worker
-from app.hpi.service import hpi_service
 from app.core.service_lifecycle import (
     start_provider_with_retry,
     stop_provider_stream,
@@ -105,12 +102,6 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_safe_prewarm())
 
-    # Start HPI (Historical Pattern Intelligence) — incl. optional auto-delete sweep (§12)
-    await hpi_service.start()
-
-    # Start Pattern Outcome Worker (Historical Intelligence v2)
-    await pattern_outcome_worker.start()
-
     # ── BACKEND STARTUP: Telegram stack (independent of any browser) ──
     # Restores bindings from Supabase, starts outbound/update/notification
     # queues, registers webhook with retry. One instance per process.
@@ -180,8 +171,6 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
         await stop_telegram_stack()
-        await pattern_outcome_worker.stop()
-        await hpi_service.stop()
         await stop_provider_stream()
         await central_feed.stop()
         await snapshot_service.stop()
@@ -255,7 +244,6 @@ def create_app() -> FastAPI:
     app.include_router(regime.router)
     app.include_router(ai.router)
     app.include_router(ai.compat_router)
-    app.include_router(historical.router)
     app.include_router(paper.router)
     app.include_router(ml.router)
     app.include_router(fii_dii.router)
@@ -264,7 +252,6 @@ def create_app() -> FastAPI:
     app.include_router(settings_api.router)
     app.include_router(watchlists_api.router)
     app.include_router(instruments.router)
-    app.include_router(hpi_api.router)
     app.include_router(pipeline_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(algo_api.router)

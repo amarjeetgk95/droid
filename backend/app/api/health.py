@@ -54,7 +54,6 @@ async def database_health():
             res = await session.execute(text("SELECT current_database(), current_user, inet_server_addr()"))
             row = res.first()
             cnt_sig = await session.execute(text("SELECT count(*) FROM executed_signals"))
-            cnt_hpi = await session.execute(text("SELECT count(*) FROM hpi_datasets"))
             cnt_algo = await session.execute(text("SELECT count(*) FROM algo_signals"))
             return {
                 "status": "ok",
@@ -64,7 +63,6 @@ async def database_health():
                 "server": str(row[2]) if row else None,
                 "counts": {
                     "executed_signals": cnt_sig.scalar(),
-                    "hpi_datasets": cnt_hpi.scalar(),
                     "algo_signals": cnt_algo.scalar(),
                 },
             }
