@@ -37,6 +37,7 @@ from app.models.crypto import (
     CryptoScalpSignalsResponse,
     CryptoScalpDiagnostics,
     CryptoSignalStatus,
+    SignalDirection,
 )
 from app.models.market import DataStatus
 from app.services.binance_service import binance_service
@@ -49,8 +50,8 @@ DEFAULT_SCALP_SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 class CryptoScalpScanner:
     """Production 24/7 Scalp Scanner for Bitcoin and Ethereum with institutional risk gating."""
 
-    # 15-minute cooldown per symbol before another scalp signal can be emitted
-    SYMBOL_COOLDOWN_SECONDS: float = 900.0
+    # 3-minute cooldown per symbol before another scalp signal can be emitted
+    SYMBOL_COOLDOWN_SECONDS: float = 180.0
     GLOBAL_MAX_ACTIVE_SIGNALS: int = 4
 
     def __init__(self):
@@ -196,8 +197,15 @@ class CryptoScalpScanner:
 
                 trig_d = Decimal(str(round(raw_trig, 2)))
                 sl_d = Decimal(str(round(cand.stop_loss, 2)))
-                t1_d = Decimal(str(round(cand.target_1, 2)))
-                t2_d = Decimal(str(round(cand.target_2, 2)))
+
+                # Project targets cleanly from the breakout trigger level (1.5R and 2.5R)
+                risk_pts_val = max(Decimal("1.0"), abs(trig_d - sl_d))
+                if not is_short:
+                    t1_d = trig_d + (risk_pts_val * Decimal("1.5"))
+                    t2_d = trig_d + (risk_pts_val * Decimal("2.5"))
+                else:
+                    t1_d = trig_d - (risk_pts_val * Decimal("1.5"))
+                    t2_d = trig_d - (risk_pts_val * Decimal("2.5"))
 
                 # ── 2. Trigger Integrity Gate ──
                 gate_res = check_crypto_trigger_integrity(
@@ -412,6 +420,37 @@ class CryptoScalpScanner:
                             self._active_signals[s.id] = s
 
                 all_signals = [s for s in self._active_signals.values() if s.created_at_utc >= expire_threshold_ms]
+
+            # Also surface active non-terminal signals directly from Crypto FSM Manager
+            fsm_active = crypto_signal_fsm.list_active(include_terminal=False)
+            existing_ids = {s.id for s in all_signals}
+            for fs in fsm_active:
+                if fs.signal_id not in existing_ids:
+                    all_signals.append(
+                        CryptoScalpSignal(
+                            id=fs.signal_id,
+                            symbol=fs.symbol,
+                            asset=fs.asset,
+                            direction=SignalDirection.LONG if fs.direction == "LONG" else SignalDirection.SHORT,
+                            strategy=fs.strategy,
+                            strategy_name=fs.strategy_name or fs.strategy,
+                            entry_price=float(fs.trigger),
+                            stop_loss=float(fs.current_stop_loss or fs.stop_loss),
+                            target_1=float(fs.t1_price or fs.target_1),
+                            target_2=float(fs.t2_price or fs.target_2),
+                            current_price=float(fs.spot_price),
+                            risk_points=float(fs.risk_points),
+                            risk_percent=float(round(abs(fs.trigger - fs.stop_loss) / max(Decimal("1"), fs.spot_price) * Decimal("100"), 2)),
+                            risk_reward_ratio=float(fs.risk_reward_t1),
+                            confidence=float(fs.confidence),
+                            timeframe=fs.timeframe,
+                            status=CryptoSignalStatus.ACTIVE,
+                            confluence_factors=[f"{k}: {v:.0f}%" for k, v in fs.confluence_breakdown.items() if isinstance(v, (int, float))],
+                            rationale=fs.rationale[0] if fs.rationale else f"{fs.symbol} {fs.fsm_state}",
+                            is_scalp=fs.is_scalp,
+                            created_at_utc=fs.created_at_utc,
+                        )
+                    )
 
             deduped_signals: list[CryptoScalpSignal] = []
             seen_symbols: set[str] = set()
