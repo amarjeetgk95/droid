@@ -5,7 +5,7 @@ generates indicator predictions, measures forward outcomes, and evaluates statis
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
