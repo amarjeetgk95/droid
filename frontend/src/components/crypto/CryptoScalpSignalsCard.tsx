@@ -47,23 +47,61 @@ function getStageIndex(state?: string): number {
   return 2;
 }
 
-function formatSignalDate(timestampUtc?: number, timestampStr?: string): { formatted: string; relative: string } {
-  const ts = timestampUtc ? timestampUtc : timestampStr ? new Date(timestampStr).getTime() : Date.now();
+interface FormattedSignalTimestamp {
+  localTimeStr: string;
+  localDateStr: string;
+  fullLocalStr: string;
+  utcStr: string;
+  relative: string;
+}
+
+function parseAndFormatTimestamp(timestampUtc?: number, timestampStr?: string): FormattedSignalTimestamp {
+  let ts = Date.now();
+  if (typeof timestampUtc === 'number' && timestampUtc > 0) {
+    ts = timestampUtc < 1e11 ? timestampUtc * 1000 : timestampUtc;
+  } else if (timestampStr) {
+    const parsed = new Date(timestampStr).getTime();
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      ts = parsed;
+    }
+  }
+
   const date = new Date(ts);
 
-  const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  let localTimeStr = '';
+  let localDateStr = '';
+  let fullLocalStr = '';
+  try {
+    localTimeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    localDateStr = date.toLocaleDateString([], { month: 'short', day: '2-digit' });
+    fullLocalStr = `${localDateStr}, ${localTimeStr}`;
+  } catch {
+    fullLocalStr = date.toISOString().substring(0, 16).replace('T', ' ');
+    localTimeStr = date.toISOString().substring(11, 16);
+    localDateStr = date.toISOString().substring(5, 10);
+  }
 
-  const diffSeconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  const utcHours = String(date.getUTCHours()).padStart(2, '0');
+  const utcMins = String(date.getUTCMinutes()).padStart(2, '0');
+  const utcStr = `${utcHours}:${utcMins} UTC`;
+
+  const now = Date.now();
+  const diffSeconds = Math.max(0, Math.floor((now - ts) / 1000));
   let relative = 'Just now';
-  if (diffSeconds >= 3600) {
-    relative = `${Math.floor(diffSeconds / 3600)}h ago`;
+  if (diffSeconds >= 86400) {
+    const days = Math.floor(diffSeconds / 86400);
+    relative = `${days}d ago`;
+  } else if (diffSeconds >= 3600) {
+    const hrs = Math.floor(diffSeconds / 3600);
+    const mins = Math.floor((diffSeconds % 3600) / 60);
+    relative = mins > 0 ? `${hrs}h ${mins}m ago` : `${hrs}h ago`;
   } else if (diffSeconds >= 60) {
     relative = `${Math.floor(diffSeconds / 60)}m ago`;
   } else if (diffSeconds > 10) {
     relative = `${diffSeconds}s ago`;
   }
 
-  return { formatted, relative };
+  return { localTimeStr, localDateStr, fullLocalStr, utcStr, relative };
 }
 
 function getSpecialId(sig: CryptoScalpSignal): string {
@@ -107,11 +145,12 @@ export function CryptoScalpSignalsCard({
   };
 
   const handleCopyPlan = (sig: CryptoScalpSignal) => {
+    const timeInfo = parseAndFormatTimestamp(sig.created_at_utc, sig.timestamp);
     const text = `⚡ CRYPTO SCALP [${getSpecialId(sig)}]: ${sig.direction} ${sig.symbol} (${sig.timeframe.toUpperCase()})
 Strategy: ${sig.strategy_name}
 Status: ${sig.fsm_state || 'ARMED'}
 Confidence: ${sig.confidence.toFixed(0)}% | R:R: 1:${sig.risk_reward_ratio.toFixed(1)}
-Timestamp: ${formatSignalDate(sig.created_at_utc, sig.timestamp).formatted}
+Time: ${timeInfo.fullLocalStr} (${timeInfo.utcStr}) [${timeInfo.relative}]
 🎯 Entry Trigger: $${sig.entry_price.toLocaleString()}
 🛑 Stop Loss: $${sig.stop_loss.toLocaleString()} (-${sig.risk_percent.toFixed(2)}%)
 🎯 Target 1: $${sig.target_1.toLocaleString()}
@@ -238,7 +277,7 @@ Rationale: ${sig.rationale}`;
             const isLong = sig.direction === 'LONG';
             const priceDecimals = sig.entry_price > 100 ? 2 : 4;
             const specialId = getSpecialId(sig);
-            const { formatted: dateStr, relative: relativeTime } = formatSignalDate(sig.created_at_utc, sig.timestamp);
+            const { localTimeStr, localDateStr, fullLocalStr, utcStr, relative: relativeTime } = parseAndFormatTimestamp(sig.created_at_utc, sig.timestamp);
             const stageIndex = getStageIndex(sig.fsm_state);
             const currentState = sig.fsm_state || 'ARMED';
 
@@ -292,12 +331,13 @@ Rationale: ${sig.rationale}`;
                   <div className="flex items-center gap-2">
                     {/* Date / Time */}
                     <div className="text-right">
-                      <div className="flex items-center gap-1 text-[11px] font-mono text-slate-600 font-medium">
+                      <div className="flex items-center justify-end gap-1 text-[11px] font-mono text-slate-800 font-semibold">
                         <Clock className="w-3 h-3 text-slate-400" />
-                        <span>{relativeTime}</span>
+                        <span>{localTimeStr}</span>
+                        <span className="text-slate-500 font-normal text-[10px]">({relativeTime})</span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400 block">
-                        {dateStr.substring(5, 16)}
+                      <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                        {localDateStr} · {utcStr}
                       </span>
                     </div>
 
@@ -477,7 +517,7 @@ Rationale: ${sig.rationale}`;
                       <span>Two-Clock Guard</span>
                     </span>
                     <span className="text-slate-400 font-mono">
-                      Created: {dateStr.substring(0, 19)}
+                      Created: {fullLocalStr} ({utcStr})
                     </span>
                   </div>
 

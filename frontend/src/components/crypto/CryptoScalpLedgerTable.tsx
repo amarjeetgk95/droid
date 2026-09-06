@@ -25,26 +25,55 @@ interface CryptoScalpLedgerTableProps {
   onDeleteRecord?: (tradeId: string) => void;
 }
 
-function formatLedgerDate(timestampUtc?: number): { formatted: string; relative: string } {
-  if (!timestampUtc) return { formatted: '—', relative: '—' };
+interface FormattedLedgerTimestamp {
+  localTimeStr: string;
+  localDateStr: string;
+  fullLocalStr: string;
+  utcStr: string;
+  relative: string;
+}
+
+function formatLedgerDate(timestampUtc?: number): FormattedLedgerTimestamp {
+  if (!timestampUtc) {
+    return { localTimeStr: '—', localDateStr: '—', fullLocalStr: '—', utcStr: '—', relative: '—' };
+  }
   const ts = timestampUtc < 1e11 ? timestampUtc * 1000 : timestampUtc;
   const date = new Date(ts);
 
-  const formatted = date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  let localTimeStr = '';
+  let localDateStr = '';
+  let fullLocalStr = '';
+  try {
+    localTimeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    localDateStr = date.toLocaleDateString([], { month: 'short', day: '2-digit' });
+    fullLocalStr = `${localDateStr}, ${localTimeStr}`;
+  } catch {
+    fullLocalStr = date.toISOString().substring(0, 16).replace('T', ' ');
+    localTimeStr = date.toISOString().substring(11, 16);
+    localDateStr = date.toISOString().substring(5, 10);
+  }
 
-  const diffSeconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  const utcHours = String(date.getUTCHours()).padStart(2, '0');
+  const utcMins = String(date.getUTCMinutes()).padStart(2, '0');
+  const utcStr = `${utcHours}:${utcMins} UTC`;
+
+  const now = Date.now();
+  const diffSeconds = Math.max(0, Math.floor((now - ts) / 1000));
   let relative = 'Just now';
   if (diffSeconds >= 86400) {
-    relative = `${Math.floor(diffSeconds / 86400)}d ago`;
+    const days = Math.floor(diffSeconds / 86400);
+    relative = `${days}d ago`;
   } else if (diffSeconds >= 3600) {
-    relative = `${Math.floor(diffSeconds / 3600)}h ago`;
+    const hrs = Math.floor(diffSeconds / 3600);
+    const mins = Math.floor((diffSeconds % 3600) / 60);
+    relative = mins > 0 ? `${hrs}h ${mins}m ago` : `${hrs}h ago`;
   } else if (diffSeconds >= 60) {
     relative = `${Math.floor(diffSeconds / 60)}m ago`;
   } else if (diffSeconds > 10) {
     relative = `${diffSeconds}s ago`;
   }
 
-  return { formatted, relative };
+  return { localTimeStr, localDateStr, fullLocalStr, utcStr, relative };
 }
 
 export function CryptoScalpLedgerTable({
@@ -201,7 +230,7 @@ export function CryptoScalpLedgerTable({
                 const isLong = trade.direction === 'LONG';
                 const isExpanded = expandedTradeId === trade.trade_id;
                 const isProfitable = trade.net_pnl_usd > 0;
-                const { formatted: dateStr, relative: relativeTime } = formatLedgerDate(trade.created_at_utc);
+                const { localTimeStr, localDateStr, fullLocalStr, utcStr, relative: relativeTime } = formatLedgerDate(trade.created_at_utc);
 
                 return (
                   <React.Fragment key={trade.trade_id}>
@@ -211,12 +240,13 @@ export function CryptoScalpLedgerTable({
                     >
                       {/* Date & Time Column */}
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                        <div className="flex items-center gap-1.5 font-semibold text-slate-800">
                           <Clock className="w-3 h-3 text-slate-400" />
-                          <span>{relativeTime}</span>
+                          <span>{localTimeStr}</span>
+                          <span className="text-slate-500 font-normal text-[10px]">({relativeTime})</span>
                         </div>
                         <span className="text-[10px] text-slate-400 block mt-0.5">
-                          {dateStr.substring(0, 16)}
+                          {localDateStr} · {utcStr}
                         </span>
                       </td>
 
@@ -336,7 +366,7 @@ export function CryptoScalpLedgerTable({
                               <span>Execution Audit Trail ({trade.events?.length || 0} events)</span>
                             </span>
                             <div className="flex items-center gap-4 text-[11px] font-mono">
-                              <span>Created: <strong>{dateStr}</strong></span>
+                              <span>Created: <strong>{fullLocalStr} ({utcStr})</strong></span>
                               <span>Theoretical: <strong>{trade.theoretical_r}R</strong></span>
                               <span>Realized: <strong>{trade.r_multiple}R</strong></span>
                               <span>Drag: <strong className="text-amber-600">-{trade.execution_drag_r}R</strong></span>
