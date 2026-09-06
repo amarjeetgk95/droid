@@ -1,0 +1,75 @@
+{
+  "version": "v3.0.0",
+  "effective_from": "2026-01-01T00:00:00Z",
+  "effective_to": null,
+  "scoring_modes": {
+    "phase_1": "RULE_BASED_STANDARDIZED",
+    "phase_2": "WEIGHTED_FACTOR_HYBRID"
+  },
+  "importance_factors": {
+    "source_authority": {
+      "RBI_OFFICIAL": 100.0,
+      "GOVERNMENT_OFFICIAL": 95.0,
+      "SEBI_OFFICIAL": 95.0,
+      "NSE_BSE_OFFICIAL": 90.0,
+      "LICENSED_FEED": 85.0,
+      "MANUAL_OPS": 80.0,
+      "COMMERCIAL_NEWS": 50.0,
+      "UNKNOWN": 30.0
+    },
+    "scope": {
+      "CENTRAL_BANK": 95.0,
+      "MACRO": 90.0,
+      "REGULATORY": 80.0,
+      "SECTOR": 70.0,
+      "COMPANY": 50.0,
+      "OTHER": 30.0
+    },
+    "historical_significance": {
+      "RBI_MONETARY_POLICY_RATE_DECISION": 95.0,
+      "RBI_UNSCHEDULED_INTERVENTION": 100.0,
+      "RBI_POLICY_MINUTES": 65.0,
+      "RBI_FINANCIAL_STABILITY_REPORT": 70.0,
+      "UNION_BUDGET": 98.0,
+      "DEFAULT": 60.0
+    },
+    "policy_impact": {
+      "REPO_RATE_DECISION": 100.0,
+      "STANCE_CHANGE": 90.0,
+      "CRR_SLR_CHANGES": 85.0,
+      "LIQUIDITY_MEASURES": 80.0,
+      "GDP_INFLATION_REVISION": 80.0,
+      "REGULATORY_PRUDENTIAL_NORMS": 75.0,
+      "ROUTINE_SPEECH": 40.0,
+      "DEFAULT": 50.0
+    },
+    "surprise_potential": {
+      "UNSCHEDULED": 100.0,
+      "EXPECTED_DEVIATION_RISK": 85.0,
+      "SCHEDULED_SPLIT_CONSENSUS": 75.0,
+      "SCHEDULED_CONSENSUS_ALIGNED": 40.0,
+      "UNKNOWN": 50.0
+    }
+  },
+  "importance_weights": {
+    "source_authority": 0.25,
+    "scope": 0.20,
+    "historical_significance": 0.20,
+    "policy_impact": 0.15,
+    "surprise_potential": 0.20
+  },
+  "hard_gates": [
+    "MARKET_DATA_VALID",
+    "INSTRUMENT_TRADEABLE",
+    "LIQUIDITY_ACCEPTABLE",
+    "SPREAD_ACCEPTABLE",
+    "SIGNAL_VALID",
+    "RISK_VALID",
+    "NO_FORBIDDEN_EVENT_STATE"
+  ],
+  "opportunity_gates_config": {
+    "max_allowed_options_spread_pct": 5.0,
+    "min_atm_open_interest": 50000,
+    "require_live_market_data": true
+  }
+}

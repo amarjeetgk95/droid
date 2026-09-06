@@ -1,0 +1,47 @@
+{
+  "version": "v3.0.0",
+  "source_hierarchy": {
+    "RBI": {
+      "primary": "RBI_OFFICIAL",
+      "fallback": "MANUAL_OPS",
+      "auto_merge_certainty_threshold": "CONFIRMED"
+    },
+    "GOVERNMENT_MACRO": {
+      "primary": "GOVERNMENT_OFFICIAL",
+      "fallback": "MANUAL_OPS"
+    },
+    "EARNINGS": {
+      "primary": "NSE_BSE",
+      "fallback": "COMPANY_IR"
+    },
+    "CORPORATE_ACTIONS": {
+      "primary": "NSE_BSE",
+      "fallback": "COMPANY_IR"
+    },
+    "SEBI": {
+      "primary": "SEBI_OFFICIAL",
+      "fallback": "MANUAL_OPS"
+    },
+    "GLOBAL_MACRO": {
+      "primary": "LICENSED_PROVIDER",
+      "fallback": "MANUAL_OPS"
+    }
+  },
+  "adapters": {
+    "RBI": {
+      "name": "RBISourceAdapter",
+      "enabled": true,
+      "official_base_url": "https://www.rbi.org.in",
+      "poll_interval_hours": 6,
+      "rate_limit_per_minute": 5,
+      "timeout_seconds": 15,
+      "cache_ttl_seconds": 3600,
+      "user_agent": "DroidTradingPlatform-EventEngine/3.0"
+    }
+  },
+  "deduplication": {
+    "exact_match_time_window_minutes": 1440,
+    "probable_match_time_window_minutes": 2880,
+    "possible_match_time_window_minutes": 10080
+  }
+}

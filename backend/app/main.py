@@ -14,6 +14,7 @@ from app.api import hpi as hpi_api
 from app.api import algo as algo_api
 from app.api import institutional as institutional_api
 from app.api import telegram as telegram_api
+from app.api import events as events_api
 from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
@@ -148,6 +149,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("crypto_scalp_init_failed", error=str(e))
 
+    # Initialize Event Intelligence Engine baseline (§2 Phase 1)
+    try:
+        from app.event_engine import event_engine_service
+        await event_engine_service.initialize()
+        logger.info("event_intelligence_engine_initialized")
+    except Exception as e:
+        logger.warning("event_intelligence_engine_init_failed", error=str(e))
+
     yield
 
     # ── BACKEND SHUTDOWN: gracefully close persistent services ──
@@ -263,6 +272,7 @@ def create_app() -> FastAPI:
     app.include_router(telegram_api.router)
     app.include_router(futures.router)
     app.include_router(strategy.router)
+    app.include_router(events_api.router)
     
     return app
 

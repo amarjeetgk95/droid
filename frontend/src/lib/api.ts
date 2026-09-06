@@ -1214,6 +1214,67 @@ class ApiClient {
       timestamp_ms: number;
     }>(`/api/v1/signals/status`);
   }
+
+  // Event Intelligence & Opportunity Engine v3 (§36)
+  async getUpcomingEvents(limit: number = 50) {
+    return this.request<import('./event-types').CanonicalEvent[]>(`/api/v1/events/upcoming?limit=${limit}`);
+  }
+
+  async getTodayEvents() {
+    return this.request<import('./event-types').CanonicalEvent[]>(`/api/v1/events/today`);
+  }
+
+  async getEventDetail(eventId: string) {
+    return this.request<import('./event-types').CanonicalEvent>(`/api/v1/events/${encodeURIComponent(eventId)}`);
+  }
+
+  async syncRbiEvents() {
+    return this.request<import('./event-types').CanonicalEvent[]>(`/api/v1/events/rbi/sync`, { method: 'POST' });
+  }
+
+  async syncCorporateEvents() {
+    return this.request<import('./event-types').CanonicalEvent[]>(`/api/v1/events/corporate/sync`, { method: 'POST' });
+  }
+
+  async getLiveOpportunity(eventId: string) {
+    return this.request<import('./event-types').LiveOpportunityResponse>(`/api/v1/events/${encodeURIComponent(eventId)}/live-opportunity`);
+  }
+
+  async getEventOutcome(eventId: string) {
+    return this.request<import('./event-types').EventOutcome>(`/api/v1/events/${encodeURIComponent(eventId)}/outcome`);
+  }
+
+  async getAlertsQueue() {
+    return this.request<import('./event-types').EventAlert[]>(`/api/v1/events/alerts/queue`);
+  }
+
+  async acknowledgeAlert(alertId: string, user: string = 'OPS_DESK') {
+    return this.request<import('./event-types').EventAlert>(`/api/v1/events/alerts/${encodeURIComponent(alertId)}/ack?user=${encodeURIComponent(user)}`, {
+      method: 'POST',
+    });
+  }
+
+  async getShadowSignals() {
+    return this.request<import('./event-types').ShadowSignalRecord[]>(`/api/v1/events/shadow-signals`);
+  }
+
+  async getEventTrackRecord() {
+    return this.request<import('./event-types').EventTrackRecord>(`/api/v1/events/analytics/track-record`);
+  }
+
+  async getSourceHealth() {
+    return this.request<import('./event-types').SourceHealthTelemetry>(`/api/v1/events/sources/health`);
+  }
+
+  async getEventRiskOverlay(underlying: string = 'BANKNIFTY') {
+    return this.request<import('./event-types').EventRiskParameters>(`/api/v1/events/risk/overlay?underlying=${encodeURIComponent(underlying)}`);
+  }
+
+  async triggerCalibration() {
+    return this.request<{ calibrated_events: number; summary: import('./event-types').CalibrationSummary }>(`/api/v1/events/calibrate`, {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new ApiClient(API_BASE);

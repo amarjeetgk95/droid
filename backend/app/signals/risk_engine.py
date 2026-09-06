@@ -122,10 +122,22 @@ class CentralRiskEngine:
         risk_per_trade_pct: float = 1.0,
         is_expiry_day: bool = False,
         allow_closed_market: bool = False,
+        event_overlay: Optional[object] = None,
     ) -> ValidatedRiskDecision:
         from app.services.calendar_service import calendar_service
         if not allow_closed_market and not calendar_service.can_trade_now().allowed:
             return self._reject("MARKET_CLOSED", "Market is closed. Quantitative evaluation rejected.", setup)
+
+        # ── 0. Event Risk Overlay Gate (§28) ──
+        if event_overlay is not None:
+            can_enter = getattr(event_overlay, "can_enter", True)
+            if not can_enter:
+                reason = getattr(event_overlay, "rejection_reason", "EVENT_RISK_OVERLAY_REJECTION")
+                return self._reject("EVENT_RISK_REJECTED", reason, setup)
+            # Apply sizing multiplier
+            multiplier = getattr(event_overlay, "sizing_multiplier", 1.0)
+            if multiplier < 1.0:
+                risk_per_trade_pct *= max(0.1, multiplier)
 
         desk_key = "1m_scalp" if setup.is_scalp or setup.timeframe in ("1M", "3M") else "5m_intraday"
         underlying_rules = self._config.get("envelopes", {}).get(setup.underlying, {}).get(desk_key)
@@ -282,6 +294,27 @@ class CentralRiskEngine:
             quantity=0,
             max_rupee_loss=0.0,
             lot_size=lot_size,
+        )
+
+    def evaluate_with_events(
+        self,
+        setup: StrategySetup,
+        events: list,
+        available_capital: float = 100000.0,
+        risk_per_trade_pct: float = 1.0,
+        is_expiry_day: bool = False,
+        allow_closed_market: bool = False,
+        now: Optional[datetime] = None,
+    ) -> ValidatedRiskDecision:
+        from app.event_engine.risk_overlay import event_risk_overlay_service
+        overlay = event_risk_overlay_service.evaluate_overlay(setup.underlying, events, now=now)
+        return self.evaluate(
+            setup=setup,
+            available_capital=available_capital,
+            risk_per_trade_pct=risk_per_trade_pct,
+            is_expiry_day=is_expiry_day,
+            allow_closed_market=allow_closed_market,
+            event_overlay=overlay,
         )
 
 

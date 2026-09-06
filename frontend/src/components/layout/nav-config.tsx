@@ -16,6 +16,7 @@ import {
   Compass,
   Zap,
   ArrowLeftRight,
+  Calendar,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -74,6 +75,15 @@ export const NAV_GROUPS: NavGroup[] = [
         description: 'What happened last time like this?',
         shortcut: '⌘4',
         keywords: ['history', 'similarity', 'patterns', 'backtest', 'scenarios'],
+      },
+      {
+        id: 'event-intelligence',
+        href: '/events',
+        label: 'Event Intelligence',
+        icon: Calendar,
+        description: 'RBI policy, macro events, impact & setup',
+        shortcut: '⌘0',
+        keywords: ['events', 'rbi', 'mpc', 'macro', 'policy', 'calendar', 'impact'],
       },
     ],
   },
