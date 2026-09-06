@@ -7,7 +7,6 @@ from app.core.logging import setup_logging
 from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, crypto, instruments, futures, strategy
 from app.api import crypto_scalp as crypto_scalp_api
 from app.api import settings as settings_api
-from app.api import watchlists as watchlists_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
 from app.api import algo as algo_api
@@ -250,7 +249,6 @@ def create_app() -> FastAPI:
     app.include_router(crypto.router)
     app.include_router(crypto_scalp_api.router)
     app.include_router(settings_api.router)
-    app.include_router(watchlists_api.router)
     app.include_router(instruments.router)
     app.include_router(pipeline_api.router)
     app.include_router(dashboard_api.router)

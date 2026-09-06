@@ -2,7 +2,7 @@ from typing import Optional
 from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.database import Profile, UserSettings, Watchlist, WatchlistItem, Instrument, Expiry
+from app.models.database import Profile, UserSettings, Instrument, Expiry
 import structlog
 
 logger = structlog.get_logger()
@@ -146,122 +146,6 @@ class SettingsRepository:
         if settings is None:
             settings = await SettingsRepository.create(session, user_id)
         return settings
-
-
-class WatchlistRepository:
-    """Repository for watchlist operations."""
-
-    @staticmethod
-    async def get_by_user(session: AsyncSession, user_id: UUID) -> list[Watchlist]:
-        result = await session.execute(
-            select(Watchlist).where(Watchlist.user_id == user_id).order_by(Watchlist.created_at)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def get_by_id(session: AsyncSession, watchlist_id: UUID) -> Optional[Watchlist]:
-        result = await session.execute(select(Watchlist).where(Watchlist.id == watchlist_id))
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def create(session: AsyncSession, user_id: UUID, name: str) -> Watchlist:
-        watchlist = Watchlist(user_id=user_id, name=name)
-        session.add(watchlist)
-        await session.commit()
-        await session.refresh(watchlist)
-        return watchlist
-
-    @staticmethod
-    async def update(session: AsyncSession, watchlist_id: UUID, name: str) -> Optional[Watchlist]:
-        watchlist = await WatchlistRepository.get_by_id(session, watchlist_id)
-        if watchlist is None:
-            return None
-        watchlist.name = name
-        await session.commit()
-        await session.refresh(watchlist)
-        return watchlist
-
-    @staticmethod
-    async def delete(session: AsyncSession, watchlist_id: UUID) -> bool:
-        watchlist = await WatchlistRepository.get_by_id(session, watchlist_id)
-        if watchlist is None:
-            return False
-        await session.delete(watchlist)
-        await session.commit()
-        return True
-
-    @staticmethod
-    async def belongs_to_user(session: AsyncSession, watchlist_id: UUID, user_id: UUID) -> bool:
-        watchlist = await WatchlistRepository.get_by_id(session, watchlist_id)
-        return watchlist is not None and watchlist.user_id == user_id
-
-
-class WatchlistItemRepository:
-    """Repository for watchlist item operations."""
-
-    @staticmethod
-    async def get_by_watchlist(session: AsyncSession, watchlist_id: UUID) -> list[WatchlistItem]:
-        result = await session.execute(
-            select(WatchlistItem)
-            .where(WatchlistItem.watchlist_id == watchlist_id)
-            .order_by(WatchlistItem.display_order)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def get_by_id(session: AsyncSession, item_id: UUID) -> Optional[WatchlistItem]:
-        result = await session.execute(select(WatchlistItem).where(WatchlistItem.id == item_id))
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def create(
-        session: AsyncSession,
-        watchlist_id: UUID,
-        symbol: str,
-        instrument_id: Optional[int] = None,
-        display_order: int = 0
-    ) -> WatchlistItem:
-        item = WatchlistItem(
-            watchlist_id=watchlist_id,
-            symbol=symbol.upper(),
-            instrument_id=instrument_id,
-            display_order=display_order
-        )
-        session.add(item)
-        await session.commit()
-        await session.refresh(item)
-        return item
-
-    @staticmethod
-    async def update(session: AsyncSession, item_id: UUID, **kwargs) -> Optional[WatchlistItem]:
-        item = await WatchlistItemRepository.get_by_id(session, item_id)
-        if item is None:
-            return None
-        for key, value in kwargs.items():
-            if value is not None and hasattr(item, key):
-                setattr(item, key, value)
-        await session.commit()
-        await session.refresh(item)
-        return item
-
-    @staticmethod
-    async def delete(session: AsyncSession, item_id: UUID) -> bool:
-        item = await WatchlistItemRepository.get_by_id(session, item_id)
-        if item is None:
-            return False
-        await session.delete(item)
-        await session.commit()
-        return True
-
-    @staticmethod
-    async def exists_in_watchlist(session: AsyncSession, watchlist_id: UUID, symbol: str) -> bool:
-        result = await session.execute(
-            select(WatchlistItem).where(
-                WatchlistItem.watchlist_id == watchlist_id,
-                WatchlistItem.symbol == symbol.upper()
-            )
-        )
-        return result.scalar_one_or_none() is not None
 
 
 class InstrumentRepository:

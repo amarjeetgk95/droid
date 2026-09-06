@@ -68,50 +68,6 @@ class UserSettingsResponse(BaseModel):
 
 
 # ============================================================
-# Watchlist schemas
-# ============================================================
-
-class WatchlistCreate(BaseModel):
-    name: str = Field(default="My Watchlist", min_length=1, max_length=100)
-
-class WatchlistUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
-
-class WatchlistResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: UUID
-    user_id: UUID
-    name: str
-    created_at: datetime
-    updated_at: datetime
-
-
-# ============================================================
-# Watchlist item schemas
-# ============================================================
-
-class WatchlistItemCreate(BaseModel):
-    symbol: str = Field(min_length=1, max_length=50)
-    instrument_id: Optional[int] = None
-    display_order: int = 0
-
-class WatchlistItemUpdate(BaseModel):
-    display_order: Optional[int] = None
-    symbol: Optional[str] = Field(default=None, min_length=1, max_length=50)
-
-class WatchlistItemResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: UUID
-    watchlist_id: UUID
-    instrument_id: Optional[int] = None
-    symbol: str
-    display_order: int
-    created_at: datetime
-
-
-# ============================================================
 # Instrument schemas
 # ============================================================
 

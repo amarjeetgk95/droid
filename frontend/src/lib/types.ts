@@ -698,23 +698,6 @@ export interface UserSettingsUpdate {
   app_settings?: Record<string, unknown> | null;
 }
 
-export interface WatchlistResponse {
-  id: string;
-  user_id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WatchlistItemResponse {
-  id: string;
-  watchlist_id: string;
-  instrument_id: number | null;
-  symbol: string;
-  display_order: number;
-  created_at: string;
-}
-
 export interface InstrumentResponse {
   id: number;
   symbol: string;

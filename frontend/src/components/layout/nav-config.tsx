@@ -2,7 +2,6 @@
 
 import {
   LayoutDashboard,
-  Star,
   Settings,
   Layers,
   TrendingUp,
@@ -154,14 +153,6 @@ export const NAV_GROUPS: NavGroup[] = [
         description: 'Bitcoin & crypto futures orderbook',
         shortcut: '⌘0',
         keywords: ['crypto', 'binance', 'btc', 'eth', 'futures', 'orderbook'],
-      },
-      {
-        id: 'watchlists',
-        href: '/watchlist',
-        label: 'Watchlists',
-        icon: Star,
-        description: 'Your tracked stocks & price alerts',
-        keywords: ['watchlist', 'favorites', 'instruments', 'baskets', 'tracking'],
       },
     ],
   },

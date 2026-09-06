@@ -25,7 +25,6 @@ class Profile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     settings: Mapped[Optional["UserSettings"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
-    watchlists: Mapped[list["Watchlist"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     alert_rules: Mapped[list["AlertRuleDB"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     paper_portfolio: Mapped[Optional["PaperPortfolioDB"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
 
@@ -52,42 +51,6 @@ class UserSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["Profile"] = relationship(back_populates="settings")
-
-
-# ============================================================
-# Watchlists Table
-# ============================================================
-class Watchlist(Base):
-    __tablename__ = "watchlists"
-    __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_watchlists_user_name"),
-    )
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(Text, default="My Watchlist")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    user: Mapped["Profile"] = relationship(back_populates="watchlists")
-    items: Mapped[list["WatchlistItem"]] = relationship(back_populates="watchlist", cascade="all, delete-orphan", order_by="WatchlistItem.display_order")
-
-
-# ============================================================
-# Watchlist Items Table
-# ============================================================
-class WatchlistItem(Base):
-    __tablename__ = "watchlist_items"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    watchlist_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False)
-    instrument_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("instruments.id", ondelete="SET NULL"), nullable=True)
-    symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    display_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    watchlist: Mapped["Watchlist"] = relationship(back_populates="items")
-    instrument: Mapped[Optional["Instrument"]] = relationship()
 
 
 # ============================================================

@@ -98,74 +98,6 @@ class TestSettingsEndpoints:
                 assert r.status_code == 401
 
 
-class TestWatchlistEndpoints:
-    """Test watchlist API endpoints."""
-
-    def test_list_watchlists_no_db(self, no_db_client: TestClient):
-        """GET watchlists should return 503 when DB not configured."""
-        r = no_db_client.get("/api/v1/watchlists")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_create_watchlist_no_db(self, no_db_client: TestClient):
-        """POST watchlists should return 503 when DB not configured."""
-        r = no_db_client.post("/api/v1/watchlists", json={"name": "Test"})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_get_watchlist_no_db(self, no_db_client: TestClient):
-        """GET watchlist by ID should return 503 when DB not configured."""
-        r = no_db_client.get(f"/api/v1/watchlists/{uuid4()}")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_update_watchlist_no_db(self, no_db_client: TestClient):
-        """PATCH watchlist should return 503 when DB not configured."""
-        r = no_db_client.patch(f"/api/v1/watchlists/{uuid4()}", json={"name": "Updated"})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_delete_watchlist_no_db(self, no_db_client: TestClient):
-        """DELETE watchlist should return 503 when DB not configured."""
-        r = no_db_client.delete(f"/api/v1/watchlists/{uuid4()}")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_list_items_no_db(self, no_db_client: TestClient):
-        """GET watchlist items should return 503 when DB not configured."""
-        r = no_db_client.get(f"/api/v1/watchlists/{uuid4()}/items")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_add_item_no_db(self, no_db_client: TestClient):
-        """POST watchlist item should return 503 when DB not configured."""
-        r = no_db_client.post(f"/api/v1/watchlists/{uuid4()}/items", json={"symbol": "NIFTY"})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_update_item_no_db(self, no_db_client: TestClient):
-        """PATCH watchlist item should return 503 when DB not configured."""
-        r = no_db_client.patch(f"/api/v1/watchlists/{uuid4()}/items/{uuid4()}", json={"display_order": 1})
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_remove_item_no_db(self, no_db_client: TestClient):
-        """DELETE watchlist item should return 503 when DB not configured."""
-        r = no_db_client.delete(f"/api/v1/watchlists/{uuid4()}/items/{uuid4()}")
-        assert r.status_code == 503
-        assert "Database not configured" in r.json()["detail"]
-
-    def test_watchlist_requires_auth_in_production(self):
-        """Watchlist endpoints should require auth when AUTH_REQUIRED=true."""
-        with patch("app.core.security.settings") as mock_settings:
-            mock_settings.auth_required = True
-            mock_settings.supabase_jwt_secret = "test-secret"
-            from app.main import app
-            with TestClient(app) as c:
-                r = c.get("/api/v1/watchlists")
-                assert r.status_code == 401
-
-
 class TestSettingsService:
     """Test SettingsService with mocked database."""
 
@@ -222,61 +154,6 @@ class TestSettingsService:
             result = await SettingsService.update_settings(mock_session, user_id, data)
             assert result is not None
             assert result.theme == "light"
-
-
-class TestWatchlistService:
-    """Test WatchlistService with mocked database."""
-
-    @pytest.mark.asyncio
-    async def test_get_user_watchlists(self):
-        """WatchlistService should return user watchlists."""
-        from app.services.user_service import WatchlistService
-        mock_session = AsyncMock()
-        user_id = uuid4()
-        mock_wl = MagicMock()
-        mock_wl.id = uuid4()
-        mock_wl.user_id = user_id
-        mock_wl.name = "Test Watchlist"
-        mock_wl.created_at = "2024-01-01T00:00:00Z"
-        mock_wl.updated_at = "2024-01-01T00:00:00Z"
-
-        with patch("app.services.user_service.WatchlistRepository.get_by_user", return_value=[mock_wl]):
-            result = await WatchlistService.get_user_watchlists(mock_session, user_id)
-            assert len(result) == 1
-            assert result[0].name == "Test Watchlist"
-
-    @pytest.mark.asyncio
-    async def test_create_watchlist(self):
-        """WatchlistService should create a new watchlist."""
-        from app.services.user_service import WatchlistService
-        from app.models.user import WatchlistCreate
-        mock_session = AsyncMock()
-        user_id = uuid4()
-        mock_wl = MagicMock()
-        mock_wl.id = uuid4()
-        mock_wl.user_id = user_id
-        mock_wl.name = "New Watchlist"
-        mock_wl.created_at = "2024-01-01T00:00:00Z"
-        mock_wl.updated_at = "2024-01-01T00:00:00Z"
-
-        with patch("app.services.user_service.ProfileRepository.get_or_create"), \
-             patch("app.services.user_service.WatchlistRepository.create", return_value=mock_wl):
-            data = WatchlistCreate(name="New Watchlist")
-            result = await WatchlistService.create_watchlist(mock_session, user_id, data)
-            assert result.name == "New Watchlist"
-
-    @pytest.mark.asyncio
-    async def test_watchlist_ownership_check(self):
-        """WatchlistService should enforce ownership."""
-        from app.services.user_service import WatchlistService
-        mock_session = AsyncMock()
-        owner_id = uuid4()
-        other_id = uuid4()
-        watchlist_id = uuid4()
-
-        with patch("app.services.user_service.WatchlistRepository.belongs_to_user", return_value=False):
-            result = await WatchlistService.get_watchlist(mock_session, watchlist_id, other_id)
-            assert result is None
 
 
 class TestProfileService:

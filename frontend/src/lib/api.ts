@@ -825,55 +825,6 @@ class ApiClient {
     return this.request<{ data: { query: string; results: any[]; total: number }; error: string | null; meta: import('./types').ApiMeta }>(`/api/v1/instruments/search?${params.toString()}`);
   }
 
-  // Watchlists (new Supabase-backed endpoints)
-  async listWatchlists() {
-    return this.request<import('./types').WatchlistResponse[]>('/api/v1/watchlists');
-  }
-
-  async getWatchlistById(watchlistId: string) {
-    return this.request<import('./types').WatchlistResponse>(`/api/v1/watchlists/${watchlistId}`);
-  }
-
-  async createWatchlist(name: string) {
-    return this.request<import('./types').WatchlistResponse>('/api/v1/watchlists', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    });
-  }
-
-  async updateWatchlist(watchlistId: string, name: string) {
-    return this.request<import('./types').WatchlistResponse>(`/api/v1/watchlists/${watchlistId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name }),
-    });
-  }
-
-  async deleteWatchlist(watchlistId: string) {
-    return this.request<void>(`/api/v1/watchlists/${watchlistId}`, { method: 'DELETE' });
-  }
-
-  async listWatchlistItems(watchlistId: string) {
-    return this.request<import('./types').WatchlistItemResponse[]>(`/api/v1/watchlists/${watchlistId}/items`);
-  }
-
-  async addWatchlistItem(watchlistId: string, symbol: string) {
-    return this.request<import('./types').WatchlistItemResponse>(`/api/v1/watchlists/${watchlistId}/items`, {
-      method: 'POST',
-      body: JSON.stringify({ symbol }),
-    });
-  }
-
-  async updateWatchlistItem(watchlistId: string, itemId: string, data: { display_order?: number; symbol?: string }) {
-    return this.request<import('./types').WatchlistItemResponse>(`/api/v1/watchlists/${watchlistId}/items/${itemId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async removeWatchlistItem(watchlistId: string, itemId: string) {
-    return this.request<void>(`/api/v1/watchlists/${watchlistId}/items/${itemId}`, { method: 'DELETE' });
-  }
-
   // Pipeline & Safety Gates (§4, §6, §7, §22, §23, §25, §28, §40) — forecast validation removed
   async captureMarketState(symbol: string = 'NIFTY') {
     return this.request<any>(`/api/v1/pipeline/state/capture?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' });
