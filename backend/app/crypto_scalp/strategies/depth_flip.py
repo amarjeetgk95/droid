@@ -18,55 +18,67 @@ class DepthFlipStrategy:
             return None
 
         ob = ctx.orderbook
-        imbalance = ob.depth_imbalance  # -1.0 to +1.0
-        imbalance_pct = ob.depth_imbalance_pct
+        imbalance_pct = ob.depth_imbalance_pct  # -100.0 to +100.0%
         spread_pct = ob.spread_percent
 
-        # Only evaluate if spread is tight (< 0.08%) so execution is viable
-        if spread_pct > 0.08:
+        # Strict institutional filters:
+        # 1. Spread must be ultra-tight (<= 0.05%)
+        if spread_pct > 0.05:
             return None
+
+        # 2. Require volume confirmation (volume_surge_ratio >= 1.3)
+        if ctx.volume_surge_ratio < 1.3:
+            return None
+
+        # 3. Must have 1m candle context
+        if not ctx.candles_1m:
+            return None
+
+        curr = ctx.candles_1m[-1]
+        c_range = max(0.0001, curr.high - curr.low)
+        body = abs(curr.close - curr.open)
+        body_ratio = body / c_range
 
         price = ctx.current_price
         atr = max(ctx.atr_14_1m, price * 0.001)
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 70.0
+        confidence = 72.0
 
-        # Bullish: Strong bid wall / bid depth dominance (>= +20% imbalance)
-        if imbalance >= 0.20:
-            # Confirm price is holding or pushing up
-            if not ctx.candles_1m or ctx.candles_1m[-1].close >= ctx.candles_1m[-1].low:
-                direction = SignalDirection.LONG
-                confluences.append(f"Heavy L2 Bid Cushion: {imbalance_pct:+.1f}% depth imbalance")
-                if imbalance >= 0.40:
-                    confluences.append("Extreme limit-bid concentration (>= 40% skew)")
-                    confidence += 10.0
-                else:
-                    confidence += 5.0
-                if ob.spread_percent <= 0.02:
-                    confluences.append("Ultra-tight spread (<= 0.02%) enables zero-slippage fill")
-                    confidence += 5.0
-                if ctx.vwap_session and price >= ctx.vwap_session:
-                    confluences.append("Price positioned above VWAP")
-                    confidence += 5.0
+        # Bullish: Heavy bid wall (>= +35% imbalance) with green candle push
+        if imbalance_pct >= 35.0 and curr.close > curr.open and body_ratio >= 0.35:
+            direction = SignalDirection.LONG
+            confluences.append(f"Heavy L2 Bid Cushion: {imbalance_pct:+.1f}% depth imbalance")
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x with bullish candle body")
+            if imbalance_pct >= 50.0:
+                confluences.append("Extreme limit-bid concentration (>= 50% skew)")
+                confidence += 8.0
+            else:
+                confidence += 4.0
+            if ob.spread_percent <= 0.02:
+                confluences.append("Ultra-tight spread (<= 0.02%) enables zero-slippage fill")
+                confidence += 5.0
+            if ctx.vwap_session and price >= ctx.vwap_session:
+                confluences.append("Price positioned above session VWAP")
+                confidence += 5.0
 
-        # Bearish: Strong ask wall / ask depth dominance (<= -20% imbalance)
-        elif imbalance <= -0.20:
-            if not ctx.candles_1m or ctx.candles_1m[-1].close <= ctx.candles_1m[-1].high:
-                direction = SignalDirection.SHORT
-                confluences.append(f"Heavy L2 Ask Overhead: {imbalance_pct:+.1f}% depth imbalance")
-                if imbalance <= -0.40:
-                    confluences.append("Extreme limit-ask concentration (>= 40% skew)")
-                    confidence += 10.0
-                else:
-                    confidence += 5.0
-                if ob.spread_percent <= 0.02:
-                    confluences.append("Ultra-tight spread (<= 0.02%) enables zero-slippage fill")
-                    confidence += 5.0
-                if ctx.vwap_session and price <= ctx.vwap_session:
-                    confluences.append("Price positioned below VWAP")
-                    confidence += 5.0
+        # Bearish: Heavy ask wall (<= -35% imbalance) with red candle push
+        elif imbalance_pct <= -35.0 and curr.close < curr.open and body_ratio >= 0.35:
+            direction = SignalDirection.SHORT
+            confluences.append(f"Heavy L2 Ask Overhead: {imbalance_pct:+.1f}% depth imbalance")
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x with bearish candle body")
+            if imbalance_pct <= -50.0:
+                confluences.append("Extreme limit-ask concentration (>= 50% skew)")
+                confidence += 8.0
+            else:
+                confidence += 4.0
+            if ob.spread_percent <= 0.02:
+                confluences.append("Ultra-tight spread (<= 0.02%) enables zero-slippage fill")
+                confidence += 5.0
+            if ctx.vwap_session and price <= ctx.vwap_session:
+                confluences.append("Price positioned below session VWAP")
+                confidence += 5.0
 
         if not direction:
             return None
@@ -80,16 +92,16 @@ class DepthFlipStrategy:
             t1 = round(entry + risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry + risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             rationale = (
-                f"{ctx.asset} order book is heavily bid-dominated ({imbalance_pct:+.1f}% skew). "
-                f"Thin ask book provides low resistance toward ${t1:,.2f}."
+                f"{ctx.asset} order book shows institutional bid dominance ({imbalance_pct:+.1f}% skew) "
+                f"with {ctx.volume_surge_ratio:.1f}x volume confirmation toward ${t1:,.2f}."
             )
         else:
             sl = round(entry + risk, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t1 = round(entry - risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry - risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             rationale = (
-                f"{ctx.asset} order book is heavily ask-dominated ({imbalance_pct:+.1f}% skew). "
-                f"Lack of bid support enables downside scalping toward ${t1:,.2f}."
+                f"{ctx.asset} order book shows institutional ask dominance ({imbalance_pct:+.1f}% skew) "
+                f"with {ctx.volume_surge_ratio:.1f}x volume confirmation toward ${t1:,.2f}."
             )
 
         risk_pts = abs(entry - sl)
@@ -115,5 +127,5 @@ class DepthFlipStrategy:
             rationale=rationale,
             atr_value=atr,
             volume_ratio=ctx.volume_surge_ratio,
-            depth_imbalance=imbalance,
+            depth_imbalance=imbalance_pct,
         )

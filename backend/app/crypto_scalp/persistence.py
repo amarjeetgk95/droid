@@ -55,10 +55,10 @@ async def ensure_crypto_scalp_tables() -> bool:
                     telegram_dispatched BOOLEAN DEFAULT FALSE,
                     created_at_utc BIGINT NOT NULL,
                     updated_at_utc BIGINT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_crypto_scalp_symbol ON crypto_scalp_signals(symbol);
-                CREATE INDEX IF NOT EXISTS idx_crypto_scalp_created ON crypto_scalp_signals(created_at_utc DESC);
+                )
             """))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_symbol ON crypto_scalp_signals(symbol)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_created ON crypto_scalp_signals(created_at_utc DESC)"))
             await session.commit()
             logger.info("crypto_scalp_table_provisioned_successfully")
             return True
@@ -254,3 +254,27 @@ async def fetch_persisted_scalp_signals(limit: int = 50, symbol: str | None = No
     if symbol:
         local = [s for s in local if s.symbol.upper() == symbol.upper()]
     return local[:limit]
+
+
+async def purge_stale_spam_signals(older_than_seconds: int = 1800) -> int:
+    """Purge stale scalp signals older than older_than_seconds from Supabase and local cache."""
+    factory = get_async_session_factory()
+    deleted_count = 0
+    cutoff_ms = int((time.time() - older_than_seconds) * 1000)
+    if factory is not None:
+        try:
+            async with factory() as session:
+                res = await session.execute(
+                    text("DELETE FROM crypto_scalp_signals WHERE created_at_utc < :cutoff_ms"),
+                    {"cutoff_ms": cutoff_ms},
+                )
+                await session.commit()
+                deleted_count = res.rowcount or 0
+                logger.info("purged_stale_scalp_signals_supabase", deleted=deleted_count)
+        except Exception as e:
+            logger.warning("purge_stale_scalp_signals_failed", error=str(e)[:200])
+
+    # Reset local cache
+    save_scalp_signals_local([])
+    return deleted_count
+

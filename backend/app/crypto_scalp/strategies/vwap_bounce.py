@@ -23,6 +23,10 @@ class VWAPBounceStrategy:
         price = ctx.current_price
         atr = max(ctx.atr_14_1m, price * 0.001)
 
+        # Require minimum volume confirmation to avoid flat market whipsaws
+        if ctx.volume_surge_ratio < 1.25:
+            return None
+
         # Distance to VWAP as percentage
         dist_pct = (price - vwap) / vwap * 100.0
 
@@ -39,28 +43,26 @@ class VWAPBounceStrategy:
         sl = 0.0
         t1 = 0.0
         t2 = 0.0
-        confidence = 70.0
+        confidence = 72.0
 
         # 1. BULLISH BOUNCE: Price tested VWAP from above or pierced and closed back above
-        # Low was near or below VWAP, but close is above VWAP with lower wick rejection
+        # Low tested near/below VWAP, reclaimed VWAP on close, green candle with prominent lower wick
         if (
-            current_candle.low <= vwap * 1.0015
-            and current_candle.close >= vwap
-            and (lower_wick_ratio >= 0.35 or current_candle.close > current_candle.open)
+            current_candle.low <= vwap * 1.0008
+            and current_candle.close > vwap
+            and current_candle.close > current_candle.open
+            and lower_wick_ratio >= 0.35
         ):
             direction = SignalDirection.LONG
             risk = max(atr * 1.0, (entry - min(current_candle.low, vwap * 0.998)))
-            # Max 0.8% risk for scalp
             risk = min(risk, entry * 0.008)
             sl = round(entry - risk, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t1 = round(entry + risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry + risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
 
-            confluences.append("VWAP support confirmed with lower rejection wick")
-            if ctx.volume_surge_ratio >= 1.2:
-                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x avg")
-                confidence += 8.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance > 0.1:
+            confluences.append(f"VWAP support confirmed with {lower_wick_ratio * 100:.0f}% lower rejection wick")
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x avg")
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
                 confluences.append(f"Order book bid-skewed ({ctx.orderbook.depth_imbalance_pct:+.1f}%)")
                 confidence += 7.0
             if ctx.ema_9_1m > ctx.ema_21_1m:
@@ -69,14 +71,16 @@ class VWAPBounceStrategy:
 
             rationale = (
                 f"{ctx.asset} tested session VWAP (${vwap:,.2f}) and formed a bullish rejection wick. "
-                f"Price reclaimed VWAP with {confidence:.0f}% confidence."
+                f"Price reclaimed VWAP with {confidence:.0f}% confidence and {ctx.volume_surge_ratio:.1f}x volume."
             )
 
         # 2. BEARISH REJECTION: Price tested VWAP from below and got rejected
+        # High tested near/above VWAP, rejected below VWAP on close, red candle with prominent upper wick
         elif (
-            current_candle.high >= vwap * 0.9985
-            and current_candle.close <= vwap
-            and (upper_wick_ratio >= 0.35 or current_candle.close < current_candle.open)
+            current_candle.high >= vwap * 0.9992
+            and current_candle.close < vwap
+            and current_candle.close < current_candle.open
+            and upper_wick_ratio >= 0.35
         ):
             direction = SignalDirection.SHORT
             risk = max(atr * 1.0, (max(current_candle.high, vwap * 1.002) - entry))
@@ -85,11 +89,9 @@ class VWAPBounceStrategy:
             t1 = round(entry - risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry - risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
 
-            confluences.append("VWAP resistance confirmed with upper rejection wick")
-            if ctx.volume_surge_ratio >= 1.2:
-                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x avg")
-                confidence += 8.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance < -0.1:
+            confluences.append(f"VWAP resistance confirmed with {upper_wick_ratio * 100:.0f}% upper rejection wick")
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x avg")
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:
                 confluences.append(f"Order book ask-skewed ({ctx.orderbook.depth_imbalance_pct:+.1f}%)")
                 confidence += 7.0
             if ctx.ema_9_1m < ctx.ema_21_1m:
@@ -98,7 +100,7 @@ class VWAPBounceStrategy:
 
             rationale = (
                 f"{ctx.asset} attempted to breach session VWAP (${vwap:,.2f}) and failed with an upper rejection wick. "
-                f"Sellers defended VWAP ceiling with {confidence:.0f}% confidence."
+                f"Sellers defended VWAP ceiling with {confidence:.0f}% confidence and {ctx.volume_surge_ratio:.1f}x volume."
             )
 
         if not direction or sl <= 0 or t1 <= 0:
@@ -127,5 +129,5 @@ class VWAPBounceStrategy:
             rationale=rationale,
             atr_value=atr,
             volume_ratio=ctx.volume_surge_ratio,
-            depth_imbalance=ctx.orderbook.depth_imbalance if ctx.orderbook else None,
+            depth_imbalance=ctx.orderbook.depth_imbalance_pct if ctx.orderbook else None,
         )

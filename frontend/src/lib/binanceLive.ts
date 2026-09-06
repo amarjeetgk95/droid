@@ -92,20 +92,6 @@ export function getBackendCryptoWsUrl(
   return `${wsProtocol}://${wsHost}/api/v1/ws/crypto?${params.toString()}`;
 }
 
-function generateSparkline(low: number, high: number, current: number, changePct: number): number[] {
-  const points: number[] = [];
-  const base = current / (1.0 + changePct / 100.0);
-  for (let i = 0; i < 10; i++) {
-    const ratio = i / 9.0;
-    const interpolated = base + (current - base) * ratio;
-    const noise = ((i % 3) - 1) * ((high - low) * 0.05);
-    const val = Math.max(low, Math.min(high, interpolated + noise));
-    points.push(parseFloat(val.toFixed(2)));
-  }
-  points[points.length - 1] = parseFloat(current.toFixed(2));
-  return points;
-}
-
 export async function fetchLiveBinanceTickers(): Promise<CryptoTicker[]> {
   let lastErr: Error | null = null;
   for (const base of BINANCE_MIRRORS) {
@@ -126,13 +112,13 @@ export async function fetchLiveBinanceTickers(): Promise<CryptoTicker[]> {
           const price = parseFloat(raw.lastPrice || '0');
           const change = parseFloat(raw.priceChange || '0');
           const changePct = parseFloat(raw.priceChangePercent || '0');
-          const high = parseFloat(raw.highPrice || (price * 1.02).toString());
-          const low = parseFloat(raw.lowPrice || (price * 0.98).toString());
+          const high = raw.highPrice ? parseFloat(raw.highPrice) : price;
+          const low = raw.lowPrice ? parseFloat(raw.lowPrice) : price;
           const volQuote = parseFloat(raw.quoteVolume || '0');
           const volBase = parseFloat(raw.volume || '0');
           const wavg = parseFloat(raw.weightedAvgPrice || price.toString());
-          const bidP = parseFloat(raw.bidPrice || (price * 0.9999).toString());
-          const askP = parseFloat(raw.askPrice || (price * 1.0001).toString());
+          const bidP = raw.bidPrice ? parseFloat(raw.bidPrice) : price;
+          const askP = raw.askPrice ? parseFloat(raw.askPrice) : price;
           const count = parseInt(raw.count || '0', 10);
           const spread = Math.max(0, askP - bidP);
           const spreadPct = askP > 0 ? (spread / askP) * 100 : 0;
@@ -160,7 +146,7 @@ export async function fetchLiveBinanceTickers(): Promise<CryptoTicker[]> {
             spread: parseFloat(spread.toFixed(4)),
             spread_percent: parseFloat(spreadPct.toFixed(4)),
             high_low_spread_pct: parseFloat(rangePct.toFixed(2)),
-            sparkline: generateSparkline(low, high, price, changePct),
+            sparkline: [],
             status: 'LIVE',
             provider: 'binance_direct',
             last_updated: new Date().toISOString(),
@@ -283,42 +269,6 @@ export async function fetchLiveBinanceOrderBook(symbol: string, limit: number = 
     last_update_id: data.lastUpdateId ?? null,
     sequence_status: 'ACTIVE',
     data_age_ms: 0,
-    status: 'LIVE',
-    timestamp: new Date().toISOString(),
-    provider: 'binance_direct',
-  };
-}
-
-export function generateLiveCryptoOverview(tickers: CryptoTicker[]): CryptoMarketOverview {
-  const btc = tickers.find((t) => t.symbol === 'BTCUSDT');
-  const eth = tickers.find((t) => t.symbol === 'ETHUSDT');
-  const ethBtc = tickers.find((t) => t.symbol === 'ETHBTC');
-
-  const totalVolume = tickers.reduce((acc, t) => acc + (t.volume_24h_quote || 0), 0);
-  const avgChange = tickers.length > 0 ? tickers.reduce((acc, t) => acc + t.change_percent_24h, 0) / tickers.length : 0;
-  const score = Math.round(Math.min(95, Math.max(10, 50 + avgChange * 5)));
-  let label = 'Neutral';
-  if (score >= 75) label = 'Extreme Greed';
-  else if (score >= 60) label = 'Greed';
-  else if (score >= 45) label = 'Neutral';
-  else if (score >= 30) label = 'Fear';
-  else label = 'Extreme Fear';
-
-  const ethBtcRatio = ethBtc?.price ?? (btc && eth && btc.price > 0 ? eth.price / btc.price : 0.0306);
-
-  return {
-    fear_greed_score: score,
-    fear_greed_label: label,
-    btc_dominance_pct: 58.2,
-    eth_dominance_pct: 16.8,
-    total_market_cap_usd: 2850000000000,
-    total_volume_24h_usd: parseFloat(totalVolume.toFixed(2)),
-    combined_volume_24h_usd: parseFloat(totalVolume.toFixed(2)),
-    eth_btc_ratio: parseFloat(ethBtcRatio.toFixed(6)),
-    tracked_pairs_count: 2,
-    top_assets: tickers.filter((t) => t.symbol !== 'ETHBTC'),
-    top_gainers: tickers.filter((t) => t.change_percent_24h >= 0),
-    top_losers: tickers.filter((t) => t.change_percent_24h < 0),
     status: 'LIVE',
     timestamp: new Date().toISOString(),
     provider: 'binance_direct',

@@ -87,37 +87,11 @@ async def get_crypto_health():
 
 @router.get("/signals")
 async def get_all_crypto_signals():
-    """Retrieve active quantitative trading signals for BTC and ETH based on L2 depth, funding, and basis."""
+    """Retrieve active quantitative trading signals for BTC and ETH backed by crypto_scalp_scanner."""
     try:
-        tickers = await binance_service.get_top_tickers()
-        try:
-            comp = await binance_service.get_pair_comparison()
-        except Exception:
-            comp = None
-
-        all_signals = []
-        for t in tickers:
-            if t.symbol not in ("BTCUSDT", "ETHUSDT"):
-                continue
-            try:
-                ob = await binance_service.get_order_book(t.symbol, limit=20, market_type="spot")
-            except Exception:
-                ob = None
-            try:
-                derivs = await binance_service.get_derivatives_data(t.symbol)
-            except Exception:
-                derivs = None
-
-            sigs = crypto_signal_engine.generate_signals_for_pair(
-                ticker=t,
-                orderbook=ob,
-                derivatives=derivs,
-                comparison=comp,
-            )
-            all_signals.extend(sigs)
-
-        resp = crypto_signal_engine.build_signals_response(all_signals)
-        st = tickers[0].status if tickers else DataStatus.OFFLINE
+        from app.crypto_scalp.scanner import crypto_scalp_scanner
+        resp = await crypto_scalp_scanner.scan_all()
+        st = resp.diagnostics.data_quality if resp.diagnostics else DataStatus.LIVE
         return {
             "data": resp.model_dump(mode="json"),
             "error": None,

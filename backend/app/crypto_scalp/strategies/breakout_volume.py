@@ -41,16 +41,16 @@ class BreakoutVolumeStrategy:
         bullish_break = (
             curr.close > recent_high
             and curr.close > curr.open
-            and body_ratio >= 0.50
-            and ctx.volume_surge_ratio >= 1.4
+            and body_ratio >= 0.55
+            and ctx.volume_surge_ratio >= 1.5
         )
 
         # Bearish Breakdown: 1m bar closes below recent 15m low with volume expansion
         bearish_break = (
             curr.close < recent_low
             and curr.close < curr.open
-            and body_ratio >= 0.50
-            and ctx.volume_surge_ratio >= 1.4
+            and body_ratio >= 0.55
+            and ctx.volume_surge_ratio >= 1.5
         )
 
         entry = price
@@ -73,7 +73,7 @@ class BreakoutVolumeStrategy:
                 confidence += 10.0
             else:
                 confidence += 5.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance > 0.1:
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
                 confluences.append("Depth liquidity absorption favoring buyers")
                 confidence += 5.0
 
@@ -96,7 +96,7 @@ class BreakoutVolumeStrategy:
                 confidence += 10.0
             else:
                 confidence += 5.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance < -0.1:
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:
                 confluences.append("Depth liquidity absorption favoring sellers")
                 confidence += 5.0
 
@@ -131,5 +131,5 @@ class BreakoutVolumeStrategy:
             rationale=rationale,
             atr_value=atr,
             volume_ratio=ctx.volume_surge_ratio,
-            depth_imbalance=ctx.orderbook.depth_imbalance if ctx.orderbook else None,
+            depth_imbalance=ctx.orderbook.depth_imbalance_pct if ctx.orderbook else None,
         )

@@ -17,6 +17,10 @@ class FundingSqueezeStrategy:
         if not ctx.derivatives:
             return None
 
+        # Require volume confirmation so we only scalp active squeeze velocity
+        if ctx.volume_surge_ratio < 1.3:
+            return None
+
         derivs = ctx.derivatives
         funding_rate = derivs.funding_rate  # e.g. -0.0001 (-0.01%) or 0.0003 (+0.03%)
         funding_pct = derivs.funding_rate_percent
@@ -26,39 +30,39 @@ class FundingSqueezeStrategy:
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 74.0
+        confidence = 72.0
 
         # Case 1: SHORT SQUEEZE OPPORTUNITY (Long signal)
-        # Funding is negative or heavily compressed + market pushing upwards
-        if funding_rate <= -0.00005 or (funding_rate < 0 and ls_ratio < 0.95):
-            # Price action confirmation: 1m candle green or price > session vwap
-            if ctx.candles_1m and ctx.candles_1m[-1].close >= ctx.candles_1m[-1].open:
+        # Abnormal negative funding rate (<= -0.01% or negative with heavy short positioning) + green candle
+        if (funding_rate <= -0.00010 or (funding_rate <= -0.00005 and ls_ratio < 0.85)):
+            if ctx.candles_1m and ctx.candles_1m[-1].close > ctx.candles_1m[-1].open:
                 direction = SignalDirection.LONG
                 confluences.append(f"Negative funding rate ({funding_pct:+.4f}%) penalizing shorts")
-                if ls_ratio < 0.85:
+                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x confirming squeeze thrust")
+                if ls_ratio < 0.80:
                     confluences.append(f"Heavily short-skewed L/S ratio ({ls_ratio:.2f})")
                     confidence += 8.0
                 if derivs.open_interest_usd > 1_000_000:
                     confluences.append("Elevated Open Interest (OI) fuel for squeeze")
                     confidence += 6.0
-                if ctx.orderbook and ctx.orderbook.depth_imbalance > 0.05:
+                if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
                     confluences.append("Spot depth supporting squeeze breakout")
                     confidence += 5.0
 
         # Case 2: LONG LIQUIDATION FLUSH (Short signal)
-        # Funding is excessively positive (overleveraged longs) + market turning downward
-        elif funding_rate >= 0.00025 or (funding_rate > 0.00015 and ls_ratio > 1.80):
-            # Price action confirmation: 1m candle red or price < session vwap
-            if ctx.candles_1m and ctx.candles_1m[-1].close <= ctx.candles_1m[-1].open:
+        # Excessive positive funding (>= +0.03% or overleveraged long positioning) + red candle
+        elif (funding_rate >= 0.00030 or (funding_rate >= 0.00020 and ls_ratio > 1.90)):
+            if ctx.candles_1m and ctx.candles_1m[-1].close < ctx.candles_1m[-1].open:
                 direction = SignalDirection.SHORT
                 confluences.append(f"Elevated positive funding ({funding_pct:+.4f}%) - longs overstretched")
-                if ls_ratio > 1.80:
+                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x confirming flush velocity")
+                if ls_ratio > 1.90:
                     confluences.append(f"Crowded long positioning ({ls_ratio:.2f} L/S)")
                     confidence += 8.0
                 if derivs.open_interest_usd > 1_000_000:
                     confluences.append("High OI vulnerable to cascading stop runs")
                     confidence += 6.0
-                if ctx.orderbook and ctx.orderbook.depth_imbalance < -0.05:
+                if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:
                     confluences.append("Spot depth reflecting sell-side pressure")
                     confidence += 5.0
 
@@ -74,7 +78,7 @@ class FundingSqueezeStrategy:
             t1 = round(entry + risk * 1.6, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry + risk * 2.8, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             rationale = (
-                f"{ctx.asset} perp funding ({funding_pct:+.4f}%) indicates crowded short exposure. "
+                f"{ctx.asset} perp funding ({funding_pct:+.4f}%) indicates crowded short exposure with {ctx.volume_surge_ratio:.1f}x volume. "
                 f"Anticipating short liquidation wick squeeze toward ${t1:,.2f}."
             )
         else:
@@ -82,7 +86,7 @@ class FundingSqueezeStrategy:
             t1 = round(entry - risk * 1.6, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry - risk * 2.8, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             rationale = (
-                f"{ctx.asset} funding rate ({funding_pct:+.4f}%) shows overleveraged long imbalance. "
+                f"{ctx.asset} funding rate ({funding_pct:+.4f}%) shows overleveraged long imbalance with {ctx.volume_surge_ratio:.1f}x volume. "
                 f"Anticipating liquidation cascade flush toward ${t1:,.2f}."
             )
 
@@ -110,5 +114,5 @@ class FundingSqueezeStrategy:
             atr_value=atr,
             volume_ratio=ctx.volume_surge_ratio,
             funding_rate=funding_rate,
-            depth_imbalance=ctx.orderbook.depth_imbalance if ctx.orderbook else None,
+            depth_imbalance=ctx.orderbook.depth_imbalance_pct if ctx.orderbook else None,
         )

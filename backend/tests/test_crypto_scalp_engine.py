@@ -146,7 +146,9 @@ def test_funding_squeeze_strategy():
         status=DataStatus.LIVE,
     )
 
-    candles = [make_mock_candle(90000.0) for _ in range(5)]
+    candles = [make_mock_candle(89950.0) for _ in range(4)]
+    # Green candle closing upwards
+    candles.append(make_mock_candle(price=90000.0, open_p=89980.0, high=90010.0, low=89975.0))
     ctx = CryptoScalpContext(
         symbol="BTCUSDT",
         asset="BTC",
@@ -154,12 +156,25 @@ def test_funding_squeeze_strategy():
         candles_1m=candles,
         derivatives=derivs,
         atr_14_1m=120.0,
+        volume_surge_ratio=1.5,
     )
 
     sig = strat.detect(ctx)
     assert sig is not None
     assert sig.direction == SignalDirection.LONG
     assert "funding" in sig.rationale.lower() or "squeeze" in sig.rationale.lower()
+
+    # Fail-closed test: If volume ratio is low (< 1.3), must NOT trigger
+    low_vol_ctx = CryptoScalpContext(
+        symbol="BTCUSDT",
+        asset="BTC",
+        current_price=90000.0,
+        candles_1m=candles,
+        derivatives=derivs,
+        atr_14_1m=120.0,
+        volume_surge_ratio=1.0,
+    )
+    assert strat.detect(low_vol_ctx) is None
 
 
 def test_breakout_volume_strategy():
@@ -213,12 +228,14 @@ def test_depth_flip_strategy():
         bid_depth_total=50.0,
         ask_depth_total=20.0,
         depth_imbalance=0.35,  # +35% bid dominance
-        depth_imbalance_pct=35.0,
+        depth_imbalance_pct=42.0,
         sequence_status=OrderBookSequenceStatus.ACTIVE,
         status=DataStatus.LIVE,
     )
 
-    candles = [make_mock_candle(90002.0) for _ in range(5)]
+    candles = [make_mock_candle(90000.0) for _ in range(4)]
+    # Prominent green directional candle
+    candles.append(make_mock_candle(price=90002.0, open_p=89985.0, high=90005.0, low=89980.0))
     ctx = CryptoScalpContext(
         symbol="BTCUSDT",
         asset="BTC",
@@ -226,12 +243,38 @@ def test_depth_flip_strategy():
         candles_1m=candles,
         orderbook=ob,
         atr_14_1m=100.0,
+        volume_surge_ratio=1.5,
     )
 
     sig = strat.detect(ctx)
     assert sig is not None
     assert sig.direction == SignalDirection.LONG
     assert "bid" in sig.rationale.lower()
+
+    # Fail-closed test: If depth imbalance is low (< 35%), must NOT trigger
+    low_imb_ob = ob.model_copy(update={"depth_imbalance_pct": 15.0})
+    low_imb_ctx = CryptoScalpContext(
+        symbol="BTCUSDT",
+        asset="BTC",
+        current_price=90002.0,
+        candles_1m=candles,
+        orderbook=low_imb_ob,
+        atr_14_1m=100.0,
+        volume_surge_ratio=1.5,
+    )
+    assert strat.detect(low_imb_ctx) is None
+
+    # Fail-closed test: If volume is low, must NOT trigger
+    low_vol_ctx = CryptoScalpContext(
+        symbol="BTCUSDT",
+        asset="BTC",
+        current_price=90002.0,
+        candles_1m=candles,
+        orderbook=ob,
+        atr_14_1m=100.0,
+        volume_surge_ratio=1.0,
+    )
+    assert strat.detect(low_vol_ctx) is None
 
 
 def test_risk_filter_sanity():
@@ -300,3 +343,45 @@ def test_crypto_scalp_api_endpoints():
     assert "signals" in sig_data
     assert "total_active" in sig_data
     assert "diagnostics" in sig_data
+
+
+@pytest.mark.asyncio
+async def test_scanner_anti_spam_and_cooldown():
+    from unittest.mock import AsyncMock, patch
+    from app.crypto_scalp.scanner import CryptoScalpScanner
+
+    scanner = CryptoScalpScanner()
+    candles = [make_mock_candle(2950.0, high=3000.0, low=2900.0) for _ in range(20)]
+    breakout_candle = make_mock_candle(
+        price=3015.0, open_p=2995.0, high=3020.0, low=2990.0, vol=50.0,
+    )
+    candles.append(breakout_candle)
+    ctx = CryptoScalpContext(
+        symbol="ETHUSDT",
+        asset="ETH",
+        current_price=3015.0,
+        candles_1m=candles,
+        high_15m=3000.0,
+        low_15m=2900.0,
+        atr_14_1m=15.0,
+        volume_surge_ratio=2.5,
+    )
+
+    with patch.object(scanner, "build_context", new_callable=AsyncMock) as mock_ctx:
+        mock_ctx.return_value = ctx
+        # 1. First scan generates exactly 1 signal
+        sigs1 = await scanner.scan_symbol("ETHUSDT")
+        assert len(sigs1) == 1
+        initial_id = sigs1[0].id
+
+        # 2. Second immediate scan must reuse active signal without creating a new one (anti-spam)
+        sigs2 = await scanner.scan_symbol("ETHUSDT")
+        assert len(sigs2) == 1
+        assert sigs2[0].id == initial_id
+        assert len(scanner._active_signals) == 1
+
+        # 3. If signal is archived, cooldown prevents immediate re-trigger within 30m
+        scanner._active_signals.clear()
+        sigs3 = await scanner.scan_symbol("ETHUSDT")
+        assert len(sigs3) == 0
+

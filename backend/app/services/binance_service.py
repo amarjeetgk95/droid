@@ -95,20 +95,20 @@ class BinanceService:
                         price = float(raw.get("lastPrice", 0.0))
                         change = float(raw.get("priceChange", 0.0))
                         change_pct = float(raw.get("priceChangePercent", 0.0))
-                        high = float(raw.get("highPrice", price * 1.02))
-                        low = float(raw.get("lowPrice", price * 0.98))
+                        high = float(raw["highPrice"]) if "highPrice" in raw and raw["highPrice"] is not None else price
+                        low = float(raw["lowPrice"]) if "lowPrice" in raw and raw["lowPrice"] is not None else price
                         vol_base = float(raw.get("volume", 0.0))
                         vol_quote = float(raw.get("quoteVolume", 0.0))
                         wavg = float(raw.get("weightedAvgPrice", price))
-                        bid_p = float(raw.get("bidPrice", price * 0.9999))
-                        ask_p = float(raw.get("askPrice", price * 1.0001))
+                        bid_p = float(raw["bidPrice"]) if "bidPrice" in raw and raw["bidPrice"] is not None else None
+                        ask_p = float(raw["askPrice"]) if "askPrice" in raw and raw["askPrice"] is not None else None
                         count = int(raw.get("count", 0))
 
-                        spread = max(0.0, round(ask_p - bid_p, 4))
-                        spread_pct = round((spread / ask_p * 100), 4) if ask_p > 0 else 0.0
+                        spread = max(0.0, round(ask_p - bid_p, 4)) if (ask_p is not None and bid_p is not None) else None
+                        spread_pct = round((spread / ask_p * 100), 4) if (spread is not None and ask_p and ask_p > 0) else None
                         range_spread_pct = round(((high - low) / low * 100), 2) if low > 0 else 0.0
 
-                        sparkline = self._generate_sparkline(low, high, price, change_pct)
+                        sparkline: list[float] = []
                         now = datetime.now(timezone.utc)
 
                         asset_key = "btc_ticker" if "BTC" in sym and quote == "USDT" else ("eth_ticker" if "ETH" in sym and quote == "USDT" else "btc_ticker")
@@ -158,20 +158,20 @@ class BinanceService:
                 price = float(raw.get("lastPrice", 0.0))
                 change = float(raw.get("priceChange", 0.0))
                 change_pct = float(raw.get("priceChangePercent", 0.0))
-                high = float(raw.get("highPrice", price * 1.02))
-                low = float(raw.get("lowPrice", price * 0.98))
+                high = float(raw["highPrice"]) if "highPrice" in raw and raw["highPrice"] is not None else price
+                low = float(raw["lowPrice"]) if "lowPrice" in raw and raw["lowPrice"] is not None else price
                 vol_base = float(raw.get("volume", 0.0))
                 vol_quote = float(raw.get("quoteVolume", 0.0))
                 wavg = float(raw.get("weightedAvgPrice", price))
-                bid_p = float(raw.get("bidPrice", price * 0.9999))
-                ask_p = float(raw.get("askPrice", price * 1.0001))
+                bid_p = float(raw["bidPrice"]) if "bidPrice" in raw and raw["bidPrice"] is not None else None
+                ask_p = float(raw["askPrice"]) if "askPrice" in raw and raw["askPrice"] is not None else None
                 count = int(raw.get("count", 0))
 
-                spread = max(0.0, round(ask_p - bid_p, 4))
-                spread_pct = round((spread / ask_p * 100), 4) if ask_p > 0 else 0.0
+                spread = max(0.0, round(ask_p - bid_p, 4)) if (ask_p is not None and bid_p is not None) else None
+                spread_pct = round((spread / ask_p * 100), 4) if (spread is not None and ask_p and ask_p > 0) else None
                 range_spread_pct = round(((high - low) / low * 100), 2) if low > 0 else 0.0
 
-                sparkline = self._generate_sparkline(low, high, price, change_pct)
+                sparkline: list[float] = []
                 now = datetime.now(timezone.utc)
 
                 asset_key = "btc_ticker" if base == "BTC" else "eth_ticker"
@@ -450,18 +450,6 @@ class BinanceService:
             timestamp=datetime.now(timezone.utc),
             provider="binance",
         )
-
-    def _generate_sparkline(self, low: float, high: float, current: float, change_pct: float) -> list[float]:
-        points = []
-        base = current / (1.0 + (change_pct / 100.0)) if (1.0 + (change_pct / 100.0)) != 0 else current
-        for i in range(10):
-            ratio = i / 9.0
-            interpolated = base + (current - base) * ratio
-            noise = ((i % 3) - 1) * ((high - low) * 0.05)
-            val = max(low, min(high, interpolated + noise))
-            points.append(round(val, 2))
-        points[-1] = round(current, 2)
-        return points
 
 
 binance_service = BinanceService()

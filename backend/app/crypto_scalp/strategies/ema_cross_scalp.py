@@ -36,6 +36,10 @@ class EMACrossScalpStrategy:
         confluences: list[str] = []
         confidence = 72.0
 
+        # Volume surge must confirm the EMA momentum or pullback
+        if ctx.volume_surge_ratio < 1.3:
+            return None
+
         # Bullish Crossover: EMA 9 crosses above EMA 21
         bullish_cross = ema_9_prev <= ema_21_prev and ema_9_now > ema_21_now
         # Bullish Pullback Bounce: EMA 9 > EMA 21, low touched EMA 21 and rebounded
@@ -72,19 +76,17 @@ class EMACrossScalpStrategy:
 
             trigger_type = "Bullish EMA 9/21 cross" if bullish_cross else "EMA 21 dynamic support pullback"
             confluences.append(trigger_type)
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
 
             if price > ema_50_now:
                 confluences.append("Trend alignment: Price > EMA 50")
                 confidence += 8.0
-            if ctx.volume_surge_ratio >= 1.3:
-                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
-                confidence += 7.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance > 0.15:
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
                 confluences.append("Bid-side L2 depth dominant")
                 confidence += 5.0
 
             rationale = (
-                f"{ctx.asset} triggered {trigger_type} on 1m chart. "
+                f"{ctx.asset} triggered {trigger_type} on 1m chart with {ctx.volume_surge_ratio:.1f}x volume. "
                 f"Momentum favors upside continuation toward ${t1:,.2f}."
             )
 
@@ -98,19 +100,17 @@ class EMACrossScalpStrategy:
 
             trigger_type = "Bearish EMA 9/21 cross" if bearish_cross else "EMA 21 dynamic resistance rejection"
             confluences.append(trigger_type)
+            confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
 
             if price < ema_50_now:
                 confluences.append("Trend alignment: Price < EMA 50")
                 confidence += 8.0
-            if ctx.volume_surge_ratio >= 1.3:
-                confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
-                confidence += 7.0
-            if ctx.orderbook and ctx.orderbook.depth_imbalance < -0.15:
+            if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:
                 confluences.append("Ask-side L2 depth dominant")
                 confidence += 5.0
 
             rationale = (
-                f"{ctx.asset} triggered {trigger_type} on 1m chart. "
+                f"{ctx.asset} triggered {trigger_type} on 1m chart with {ctx.volume_surge_ratio:.1f}x volume. "
                 f"Downward momentum favors scalping short toward ${t1:,.2f}."
             )
 
@@ -140,5 +140,5 @@ class EMACrossScalpStrategy:
             rationale=rationale,
             atr_value=atr,
             volume_ratio=ctx.volume_surge_ratio,
-            depth_imbalance=ctx.orderbook.depth_imbalance if ctx.orderbook else None,
+            depth_imbalance=ctx.orderbook.depth_imbalance_pct if ctx.orderbook else None,
         )

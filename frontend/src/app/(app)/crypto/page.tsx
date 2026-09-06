@@ -27,7 +27,6 @@ import { api } from '@/lib/api';
 import {
   fetchLiveBinanceTickers,
   fetchLiveBinanceOrderBook,
-  generateLiveCryptoOverview,
   BinanceMarket,
   getBinanceWsUrl,
 } from '@/lib/binanceLive';
@@ -147,9 +146,6 @@ export default function CryptoPage() {
         if (sRes?.data?.signals) setSignals(sRes.data.signals);
       } catch {
         loadedTickers = await fetchLiveBinanceTickers().catch(() => []);
-        if (loadedTickers.length > 0) {
-          loadedOverview = generateLiveCryptoOverview(loadedTickers);
-        }
       } finally {
         setLoadingSignals(false);
       }
@@ -313,11 +309,9 @@ export default function CryptoPage() {
       }
     } catch {
       setAiInsight({
-        bias: selectedTicker.change_percent_24h >= 0 ? 'BULLISH' : 'BEARISH',
-        confidence: 86.0,
-        summary: `${selectedTicker.display_name} is reflecting ${
-          selectedTicker.change_percent_24h >= 0 ? 'bullish continuation' : 'corrective pressure'
-        } with ${selectedTicker.change_percent_24h.toFixed(2)}% 24h delta, backed by L2 depth liquidity and perpetual funding rates.`,
+        bias: 'NEUTRAL',
+        confidence: 0,
+        summary: 'AI analysis service is currently unavailable. No synthetic commentary is generated.',
       });
     } finally {
       setAiAnalyzing(false);
