@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
-import { AlertTriangle, Crosshair, Eye, RefreshCw, Send, Sparkles, Wand2, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Crosshair, Eye, RefreshCw, Send, Sparkles, Wand2, Zap } from 'lucide-react';
 
 const UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
 const STRATEGIES = [
@@ -51,6 +51,30 @@ export function GenerateSignalForm({ onGenerated }: Props) {
   const [previewing, setPreviewing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Server-authoritative registration time (IST). Never use the client clock here —
+  // it must match the audit ledger / SSE / Telegram record for the same signal.
+  const registeredAt: string | null =
+    result?.signal?.created_at_str ||
+    (() => {
+      const ms = result?.signal?.created_at_utc;
+      if (!ms) return null;
+      try {
+        return (
+          new Date(Number(ms)).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }) + ' IST'
+        );
+      } catch {
+        return null;
+      }
+    })();
 
   useEffect(() => {
     api
@@ -343,9 +367,14 @@ export function GenerateSignalForm({ onGenerated }: Props) {
           {result && (
             <div className="rounded-lg border border-emerald-300 bg-emerald-50/80 p-3 space-y-2">
               <div className="text-sm font-bold flex items-center gap-2 text-emerald-900">
-                ✅ Signal Registered <Badge variant="outline">{result.signal?.signal_id?.slice(0, 8)}…</Badge>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Signal Registered <Badge variant="outline">{result.signal?.signal_id?.slice(0, 8)}…</Badge>
                 <Badge className="bg-emerald-600 text-white">{result.signal?.fsm_state || 'ARMED'}</Badge>
               </div>
+              {registeredAt && (
+                <div className="text-[11px] font-mono text-emerald-700 flex items-center gap-1.5">
+                  <Clock className="w-3 h-3" /> Registered at {registeredAt}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2 text-xs font-mono text-emerald-800">
                 <div>Underlying: {result.signal?.underlying} ({result.signal?.strategy})</div>
                 <div>Risk:Reward: 1:{result.signal?.risk_reward_t2}</div>
