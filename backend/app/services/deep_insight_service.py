@@ -206,10 +206,17 @@ class DeepInsightService:
             key_levels = None
 
         # --- Build market levels ---
-        spot = quote.ltp or regime_overview.spot_price or 24000.0
-        vwap = getattr(regime_overview, "vwap", 0.0) or (spot * 0.9995)
-        support = getattr(key_levels, "nearest_support", spot * 0.995) or (spot * 0.995)
-        resistance = getattr(key_levels, "nearest_resistance", spot * 1.005) or (spot * 1.005)
+        # THE TRUTH OF WALL: Never fabricate spot prices from hardcoded 24000.0
+        spot = (quote.ltp if quote and quote.ltp > 0 else 0.0) or (regime_overview.spot_price if regime_overview and regime_overview.spot_price > 0 else 0.0)
+        if spot <= 0.0:
+            return DeepInsightPayload(
+                symbol=symbol,
+                timestamp=now,
+                error="Broker market data offline: authentic spot price required from broker API",
+            )
+        vwap = getattr(regime_overview, "vwap", 0.0) or spot
+        support = getattr(key_levels, "nearest_support", spot) or spot
+        resistance = getattr(key_levels, "nearest_resistance", spot) or spot
 
         # --- Market ---
         regime_state = getattr(regime_overview, "regime_state", "UNKNOWN") or "UNKNOWN"

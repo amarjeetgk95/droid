@@ -26,8 +26,8 @@ logger = structlog.get_logger()
 
 CANDLE_CATEGORIES = {"1m_market_data", "futures"}
 BASE_PRICES = {
-    "NIFTY": 24000.0, "BANKNIFTY": 51000.0, "FINNIFTY": 23000.0,
-    "SENSEX": 79000.0, "BTC": 65000.0, "ETH": 3200.0, "SOL": 150.0,
+    "NIFTY": 25000.0, "BANKNIFTY": 58000.0, "FINNIFTY": 24000.0,
+    "SENSEX": 81500.0, "BTC": 65000.0, "ETH": 3200.0, "SOL": 150.0,
 }
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 

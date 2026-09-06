@@ -34,7 +34,8 @@ class OptionsService:
         """Construct full interactive Option Chain with Greeks and Analytics."""
         underlying = symbol.upper().replace(" 50", "")
         spot_quote = await self.market_service.get_quote(underlying)
-        spot_price = spot_quote.ltp if spot_quote.ltp > 0 else (81500.0 if "SENSEX" in underlying else 52000.0 if "BANK" in underlying else 24200.0 if "FIN" in underlying else 25000.0)
+        # THE TRUTH OF WALL: Never fabricate spot prices from hardcoded numbers.
+        spot_price = spot_quote.ltp if (spot_quote and spot_quote.ltp > 0) else 0.0
 
         # Resolve available expiries
         expiries_res = contract_master_service.resolve_expiries(underlying)
@@ -54,7 +55,7 @@ class OptionsService:
         r, r_source = get_risk_free_rate()
 
         # Estimated cost-of-carry futures price
-        futures_price = round(spot_price * math.exp(r * t), 2)
+        futures_price = round(spot_price * math.exp(r * t), 2) if spot_price > 0 else 0.0
 
         # Retrieve raw options from provider
         expiry_dt = datetime.combine(target_expiry_date, datetime.min.time(), tzinfo=timezone.utc)
@@ -67,7 +68,7 @@ class OptionsService:
                 strikes_map[q.strike] = {}
             strikes_map[q.strike][q.option_type] = q
 
-        if not strikes_map:
+        if not strikes_map or spot_price <= 0:
             analytics = OptionsAnalytics(
                 symbol=underlying,
                 spot_price=spot_price,
@@ -235,7 +236,7 @@ class OptionsService:
         high_row = min(strike_rows, key=lambda r: abs(r.strike - high_k), default=None)
         put_iv = low_row.put.greeks.iv if low_row and low_row.put and low_row.put.greeks else None
         call_iv = high_row.call.greeks.iv if high_row and high_row.call and high_row.call.greeks else None
-        iv_skew = round(put_iv - call_iv, 2) if put_iv is not None and call_iv is not None else 1.25
+        iv_skew = round(put_iv - call_iv, 2) if put_iv is not None and call_iv is not None else None
 
         analytics = OptionsAnalytics(
             symbol=underlying,
@@ -357,6 +358,27 @@ class OptionsService:
         atm = chain.analytics.atm_strike
         pcr_oi = chain.analytics.pcr_oi
         pcr_vol = chain.analytics.pcr_volume
+
+        # THE TRUTH OF WALL: Return clean empty flow when broker data is absent
+        if not chain.strikes or spot <= 0:
+            return InstitutionalFlowResponse(
+                symbol=chain.underlying,
+                expiry=chain.expiry,
+                spot_price=spot,
+                atm_strike=atm,
+                pcr_oi=0.0,
+                pcr_volume=0.0,
+                max_pain_strike=0.0,
+                call_wall_strike=0.0,
+                put_floor_strike=0.0,
+                institutional_sentiment="NEUTRAL",
+                institutional_score=50.0,
+                total_call_oi=0,
+                total_put_oi=0,
+                total_call_volume=0,
+                total_put_volume=0,
+                strike_flows=[],
+            )
 
         strike_flows: list[InstitutionalStrikeFlow] = []
         highest_call_oi = 0

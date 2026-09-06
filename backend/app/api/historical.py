@@ -279,28 +279,9 @@ async def _fetch_or_simulate_candles(symbol: str, timeframe: str):
             for c in candles_raw
         ]
 
-    # Fallback simulated baseline candles anchored on spot quote
-    try:
-        quote = await mkt_svc.get_quote(symbol)
-        spot_p = float(quote.ltp) if quote and quote.ltp > 0 else (50000.0 if "BANK" in symbol else 24000.0)
-    except Exception:
-        spot_p = 50000.0 if "BANK" in symbol else 24000.0
-
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    simulated = []
-    p = spot_p - 40.0
-    for i in range(25):
-        simulated.append(CandleData(
-            timestamp_utc=now_ms - (25 - i) * 60000,
-            open=round(p, 2),
-            high=round(p + 6.0, 2),
-            low=round(p - 3.0, 2),
-            close=round(p + 3.0, 2),
-            volume=2000.0,
-        ))
-        p += 3.0
-
-    return simulated
+    # THE TRUTH OF WALL: Never fabricate synthetic candles or fake price trajectories.
+    # When authentic broker historical candles are unavailable, return empty list.
+    return []
 
 
 @router.get("/api/v1/hie/query")

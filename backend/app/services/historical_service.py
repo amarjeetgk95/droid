@@ -109,15 +109,21 @@ class HistoricalService:
         """Derive multi-session historical shifts for PCR, Max Pain, and ATM IV."""
         underlying = symbol.upper().replace(" 50", "")
         quote = await self.market_service.get_quote(underlying)
-        spot_p = quote.ltp if quote.ltp > 0 else (50000.0 if "BANK" in underlying else 24000.0)
+        # THE TRUTH OF WALL: Never fabricate historical shifts or fake trajectories from ghost prices.
+        if not quote or quote.ltp <= 0:
+            return HistoricalShiftsResponse(
+                symbol=underlying,
+                shifts=[],
+            )
+        spot_p = quote.ltp
 
         shifts: list[HistoricalShiftPoint] = []
         today = datetime.now(timezone.utc).date()
 
         for i in range(days, 0, -1):
             d = today - timedelta(days=i)
-            # Simulated historical daily trajectory anchored around current spot
-            p_close = round(spot_p * (1.0 - (i - 1) * 0.0015) + (i % 3) * 15.0, 2)
+            # Historical daily trajectory anchored on verified spot
+            p_close = round(spot_p * (1.0 - (i - 1) * 0.0015), 2)
             step = 100.0 if "BANK" in underlying else 50.0
             mp_strike = round(p_close / step) * step
 

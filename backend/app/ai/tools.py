@@ -297,7 +297,21 @@ async def execute_tool(name: str, arguments: dict[str, Any] | str) -> dict[str, 
 
         elif name == "calculate_options_strategy_payoff":
             symbol = str(args.get("symbol", "NIFTY")).upper()
-            spot = float(args.get("spot_price", 25000.0))
+            spot = float(args.get("spot_price") or 0.0)
+            if spot <= 0:
+                try:
+                    from app.services.market_service import MarketService
+                    market_svc = MarketService()
+                    quote = await market_svc.get_quote(symbol)
+                    if quote and quote.ltp > 0:
+                        spot = float(quote.ltp)
+                except Exception:
+                    pass
+            if spot <= 0:
+                return {
+                    "error": "Authentic spot price required from broker API. No false data generated.",
+                    "status": "OFFLINE",
+                }
             legs = args.get("legs", [])
             
             # Simple quantitative payoff evaluation

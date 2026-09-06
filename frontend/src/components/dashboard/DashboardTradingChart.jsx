@@ -178,7 +178,15 @@ export default function DashboardTradingChart({ defaultSymbol = 'NIFTY 50', clas
           ) : error ? (
             <div className="flex-1 flex items-center justify-center bg-white text-[#ef5350] text-sm p-4 text-center">{error}</div>
           ) : data.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center bg-white text-[#6a6d78] text-sm">No candle data</div>
+            <div className="flex-1 flex flex-col items-center justify-center bg-white text-[#6a6d78] p-6 text-center">
+              <div className="w-10 h-10 rounded-full bg-[#f0f3fa] flex items-center justify-center mb-2 text-[#2962ff] text-base font-bold">
+                ⚡
+              </div>
+              <div className="text-xs font-semibold text-[#131722]">Authentic Broker Candle Feed Offline</div>
+              <div className="text-[11px] text-[#787b86] max-w-sm mt-1">
+                In accordance with <em>The Truth of Wall</em>, no synthetic or false price action is fabricated. Connect an active broker session in Settings to stream live candles.
+              </div>
+            </div>
           ) : (
             <>
               <ChartCanvas

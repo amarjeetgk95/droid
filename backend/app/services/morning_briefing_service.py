@@ -38,39 +38,55 @@ class MorningBriefingService:
         bank_quote = await market_svc.get_quote("BANKNIFTY")
         vix_quote = await market_svc.get_quote("INDIA VIX")
 
-        nifty_spot = nifty_quote.ltp if nifty_quote.ltp > 0 else 24250.0
-        bank_spot = bank_quote.ltp if bank_quote.ltp > 0 else 51200.0
-        vix = vix_quote.ltp if vix_quote.ltp > 0 else 13.5
+        nifty_spot = nifty_quote.ltp if (nifty_quote and nifty_quote.ltp > 0) else 0.0
+        bank_spot = bank_quote.ltp if (bank_quote and bank_quote.ltp > 0) else 0.0
+        vix = vix_quote.ltp if (vix_quote and vix_quote.ltp > 0) else 0.0
 
         # 2. Options Analytics & Max Pain
-        try:
-            nifty_opt = await options_svc.get_option_chain_matrix("NIFTY")
-            nifty_max_pain = f"{int(nifty_opt.analytics.max_pain.max_pain_strike)}" if nifty_opt.analytics.max_pain else "24200"
-            nifty_pcr = f"{nifty_opt.analytics.pcr_oi:.2f}"
-            call_wall = f"{int(nifty_opt.analytics.highest_call_oi_strike)}" if nifty_opt.analytics.highest_call_oi_strike else "24500 CE"
-            put_floor = f"{int(nifty_opt.analytics.highest_put_oi_strike)}" if nifty_opt.analytics.highest_put_oi_strike else "24000 PE"
-        except Exception:
-            nifty_max_pain = "24200"
-            nifty_pcr = "1.08"
-            call_wall = "24500 CE"
-            put_floor = "24000 PE"
+        nifty_max_pain = "UNAVAILABLE (Broker Data Offline)"
+        nifty_pcr = "—"
+        call_wall = "—"
+        put_floor = "—"
+        if nifty_spot > 0:
+            try:
+                nifty_opt = await options_svc.get_option_chain_matrix("NIFTY")
+                if nifty_opt and nifty_opt.analytics:
+                    if nifty_opt.analytics.max_pain:
+                        nifty_max_pain = f"{int(nifty_opt.analytics.max_pain.max_pain_strike)}"
+                    nifty_pcr = f"{nifty_opt.analytics.pcr_oi:.2f}"
+                    if nifty_opt.analytics.highest_call_oi_strike:
+                        call_wall = f"{int(nifty_opt.analytics.highest_call_oi_strike)} CE"
+                    if nifty_opt.analytics.highest_put_oi_strike:
+                        put_floor = f"{int(nifty_opt.analytics.highest_put_oi_strike)} PE"
+            except Exception as e:
+                logger.warning("failed_to_fetch_nifty_options_briefing", error=str(e))
 
-        try:
-            bank_opt = await options_svc.get_option_chain_matrix("BANKNIFTY")
-            bank_max_pain = f"{int(bank_opt.analytics.max_pain.max_pain_strike)}" if bank_opt.analytics.max_pain else "51000"
-        except Exception:
-            bank_max_pain = "51000"
+        bank_max_pain = "UNAVAILABLE (Broker Data Offline)"
+        if bank_spot > 0:
+            try:
+                bank_opt = await options_svc.get_option_chain_matrix("BANKNIFTY")
+                if bank_opt and bank_opt.analytics and bank_opt.analytics.max_pain:
+                    bank_max_pain = f"{int(bank_opt.analytics.max_pain.max_pain_strike)}"
+            except Exception as e:
+                logger.warning("failed_to_fetch_banknifty_options_briefing", error=str(e))
 
         # 3. Expected 1-Sigma Daily Range calculation (based on India VIX)
-        daily_vol_pct = (vix / (365 ** 0.5)) / 100.0
-        nifty_range_pts = round(nifty_spot * daily_vol_pct)
-        bank_range_pts = round(bank_spot * daily_vol_pct)
+        if nifty_spot > 0 and vix > 0:
+            daily_vol_pct = (vix / (365 ** 0.5)) / 100.0
+            nifty_range_pts = round(nifty_spot * daily_vol_pct)
+            nifty_range = f"{int(nifty_spot - nifty_range_pts)} – {int(nifty_spot + nifty_range_pts)} (±{nifty_range_pts} pts)"
+        else:
+            nifty_range = "UNAVAILABLE (Requires authentic spot & VIX)"
 
-        nifty_range = f"{int(nifty_spot - nifty_range_pts)} – {int(nifty_spot + nifty_range_pts)} (±{nifty_range_pts} pts)"
-        bank_range = f"{int(bank_spot - bank_range_pts)} – {int(bank_spot + bank_range_pts)} (±{bank_range_pts} pts)"
+        if bank_spot > 0 and vix > 0:
+            daily_vol_pct = (vix / (365 ** 0.5)) / 100.0
+            bank_range_pts = round(bank_spot * daily_vol_pct)
+            bank_range = f"{int(bank_spot - bank_range_pts)} – {int(bank_spot + bank_range_pts)} (±{bank_range_pts} pts)"
+        else:
+            bank_range = "UNAVAILABLE (Requires authentic spot & VIX)"
 
         # 4. Global Bias & Radar Setups
-        bias = "MILDLY BULLISH" if vix < 14.5 else "VOLATILE / NEUTRAL"
+        bias = ("MILDLY BULLISH" if vix < 14.5 else "VOLATILE / NEUTRAL") if vix > 0 else "UNAVAILABLE (Broker Data Offline)"
         radar = [
             "RELIANCE — Consolidating at 20 EMA, watch 1M breakout",
             "HDFCBANK — Strong Call OI addition at 1650 strike",
@@ -81,14 +97,14 @@ class MorningBriefingService:
         return {
             "date_str": date_str,
             "bias": bias,
-            "india_vix": f"{vix:.2f}",
-            "nifty_spot": f"{nifty_spot:,.2f}",
+            "india_vix": f"{vix:.2f}" if vix > 0 else "OFFLINE",
+            "nifty_spot": f"{nifty_spot:,.2f}" if nifty_spot > 0 else "OFFLINE (Broker feed required)",
             "nifty_range": nifty_range,
             "nifty_max_pain": nifty_max_pain,
             "nifty_pcr": nifty_pcr,
             "call_wall": call_wall,
             "put_floor": put_floor,
-            "bank_spot": f"{bank_spot:,.2f}",
+            "bank_spot": f"{bank_spot:,.2f}" if bank_spot > 0 else "OFFLINE (Broker feed required)",
             "bank_range": bank_range,
             "bank_max_pain": bank_max_pain,
             "radar_stocks": radar,

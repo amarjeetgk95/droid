@@ -1,6 +1,7 @@
 """
 Futures Analytics API — Sections 45 through 50
 Exposes Term Structure (Contango/Backwardation), Open Interest Buildup, and Expiry Rollover analytics.
+Enforces The Truth of Wall: Never fabricates synthetic futures contracts or fake basis when broker data is unavailable.
 """
 from __future__ import annotations
 
@@ -8,45 +9,56 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from app.models.market import ApiMeta, DataStatus
+from app.services.market_service import MarketService
 
 router = APIRouter(prefix="/api/v1/futures", tags=["futures"])
+market_service = MarketService()
 
 
-def _meta() -> ApiMeta:
-    return ApiMeta(provider="futures_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.LIVE)
+def _meta(is_live: bool = False) -> ApiMeta:
+    return ApiMeta(
+        provider="futures_engine",
+        timestamp=datetime.now(timezone.utc),
+        status=DataStatus.LIVE if is_live else DataStatus.OFFLINE,
+    )
 
 
 @router.get("/{symbol}/overview")
 async def get_futures_overview(symbol: str):
     underlying = symbol.upper().replace(" 50", "")
+    try:
+        quote = await market_service.get_quote(underlying)
+        spot_price = quote.ltp if (quote and quote.ltp > 0) else None
+    except Exception:
+        spot_price = None
+
+    is_live = spot_price is not None and spot_price > 0
+
     data = {
         "underlying": underlying,
-        "spot_price": 24500.0,
-        "near_future_price": 24535.0,
-        "basis_pts": 35.0,
+        "spot_price": spot_price,
+        "near_future_price": None,
+        "basis_pts": None,
         "term_structure": {
             "underlying": underlying,
-            "curve_state": "CONTANGO",
-            "contracts": [
-                {"expiry": "2026-09-24", "price": 24535.0, "oi": 15000000, "basis": 35.0},
-                {"expiry": "2026-10-29", "price": 24620.0, "oi": 5000000, "basis": 120.0},
-            ],
+            "curve_state": "UNAVAILABLE",
+            "contracts": [],
         },
         "buildup": {
             "underlying": underlying,
-            "buildup_type": "LONG_BUILDUP",
-            "price_change_pct": 0.45,
-            "oi_change_pct": 5.2,
-            "interpretation": "Fresh aggressive institutional accumulation observed",
+            "buildup_type": "UNAVAILABLE",
+            "price_change_pct": 0.0,
+            "oi_change_pct": 0.0,
+            "interpretation": "Authentic broker futures data offline or unavailable.",
         },
         "rollover": {
             "underlying": underlying,
-            "rollover_percent": 68.4,
-            "rollover_pace": "ABOVE_AVERAGE",
-            "previous_month_rollover": 64.2,
+            "rollover_percent": None,
+            "rollover_pace": "UNAVAILABLE",
+            "previous_month_rollover": None,
         },
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return {"data": data, "error": None, "meta": _meta(is_live=is_live).model_dump()}
 
 
 @router.get("/{symbol}/term-structure")
@@ -54,13 +66,10 @@ async def get_term_structure(symbol: str):
     underlying = symbol.upper().replace(" 50", "")
     data = {
         "underlying": underlying,
-        "curve_state": "CONTANGO",
-        "contracts": [
-            {"expiry": "2026-09-24", "price": 24535.0, "oi": 15000000, "basis": 35.0, "annualized_basis_pct": 6.8},
-            {"expiry": "2026-10-29", "price": 24620.0, "oi": 5000000, "basis": 120.0, "annualized_basis_pct": 7.1},
-        ],
+        "curve_state": "UNAVAILABLE",
+        "contracts": [],
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
 
 
 @router.get("/{symbol}/buildup")
@@ -68,12 +77,12 @@ async def get_oi_buildup(symbol: str):
     underlying = symbol.upper().replace(" 50", "")
     data = {
         "underlying": underlying,
-        "buildup_type": "LONG_BUILDUP",
-        "price_change_pct": 0.45,
-        "oi_change_pct": 5.2,
-        "interpretation": "Fresh aggressive institutional accumulation observed",
+        "buildup_type": "UNAVAILABLE",
+        "price_change_pct": 0.0,
+        "oi_change_pct": 0.0,
+        "interpretation": "Authentic broker futures data offline or unavailable.",
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
 
 
 @router.get("/{symbol}/rollover")
@@ -81,8 +90,9 @@ async def get_rollover(symbol: str):
     underlying = symbol.upper().replace(" 50", "")
     data = {
         "underlying": underlying,
-        "rollover_percent": 68.4,
-        "rollover_pace": "ABOVE_AVERAGE",
-        "previous_month_rollover": 64.2,
+        "rollover_percent": None,
+        "rollover_pace": "UNAVAILABLE",
+        "previous_month_rollover": None,
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
+

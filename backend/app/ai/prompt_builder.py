@@ -2,6 +2,7 @@ import math
 from typing import Any
 from app.models.options import OptionsAnalytics, MaxPainResult
 from app.models.regime import MarketRegimeOverview
+from app.core.config import settings
 
 
 def build_system_prompt() -> str:
@@ -121,7 +122,7 @@ def build_market_context_prompt(
         "- Hourly (1h): Available (Secondary confirmation — use only when N≥50)",
         "- Daily: Derived/Aggregated (from intraday OHLCV)",
         "- Weekly: Derived/Aggregated",
-        "- Data Source Mode: DEMO (MockProvider) — not LIVE broker feed",
+        f"- Data Source Mode: {settings.market_data_provider.upper()} — {'LIVE broker feed' if settings.market_data_provider != 'mock' else 'DEMO / Simulation'}",
     ]
     limitation_block = [
         "> **Data Limitation:** Tick/order-book data unavailable. 1m–15m order-flow analysis cannot be reliably performed. Primary quantitative assessment is therefore based on 1h, Daily and Weekly data.",
@@ -132,9 +133,10 @@ def build_market_context_prompt(
         "- Integrity Rule: No fabricated ticks, candles, volume, or intraday indicators — unavailable = stated as 'unavailable / proxy-estimated'",
     ]
 
+    spot_str = f"₹{regime.spot_price:,.2f}" if (regime.spot_price and regime.spot_price > 0) else "UNAVAILABLE (Broker market data offline)"
     lines = [
         f"# MARKET STATE DOSSIER: {symbol}",
-        f"- Spot LTP: ₹{regime.spot_price}",
+        f"- Spot LTP: {spot_str}",
         f"- Market Regime: {regime.regime_state} (Confidence: {regime.confidence_score}%)",
         f"- Regime Headline: {regime.summary_headline}",
         f"- Institutional Rationale: {regime.institutional_rationale}",
@@ -196,7 +198,7 @@ def build_market_context_prompt(
         atm_iv = options_analytics.atm_iv or 14.5
         # Realized vol proxy from ATR: ATR% * sqrt(252) * 100 (annualized approx)
         try:
-            spot = float(regime.spot_price) if regime.spot_price else 25000.0
+            spot = float(regime.spot_price) if (regime.spot_price and regime.spot_price > 0) else 0.0
             atr = float(regime.indicators.atr_14) if regime.indicators.atr_14 else 0.0
             realized_vol_proxy = (atr / spot * math.sqrt(252) * 100.0) if spot > 0 and atr > 0 else None
         except Exception:

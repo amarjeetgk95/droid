@@ -130,7 +130,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
                     volume: old.volume || nc.volume,
                     open_interest: old.open_interest || nc.open_interest,
                     sparkline: old.sparkline && old.sparkline.length > 0 ? old.sparkline : nc.sparkline,
-                    status: nc.status === 'OFFLINE' ? old.status : nc.status,
+                    status: 'OFFLINE',
                   };
                 }
                 return nc;
@@ -181,7 +181,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
                   volume: old.volume || nc.volume,
                   open_interest: old.open_interest || nc.open_interest,
                   sparkline: old.sparkline && old.sparkline.length > 0 ? old.sparkline : nc.sparkline,
-                  status: nc.status === 'OFFLINE' ? old.status : nc.status,
+                  status: 'OFFLINE',
                 };
               }
               return nc;
