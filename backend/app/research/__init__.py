@@ -8,3 +8,4 @@ Architecturally isolated from production signal generation.
 """
 
 __version__ = "0.1.0"
+import app.research.indicators  # noqa: F401

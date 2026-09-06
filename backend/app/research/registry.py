@@ -42,18 +42,30 @@ class IndicatorRegistry:
         cls._indicators[ind_id] = indicator_instance
 
     @classmethod
+    def _ensure_discovered(cls) -> None:
+        """Ensure built-in indicators are discovered if registry is empty."""
+        if not cls._indicators:
+            try:
+                import app.research.indicators  # noqa: F401
+            except Exception as e:
+                logger.warning("indicator_autodiscovery_failed", error=str(e))
+
+    @classmethod
     def get(cls, indicator_id: str) -> Optional[IndicatorBase]:
         """Retrieve an indicator by its unique identifier."""
+        cls._ensure_discovered()
         return cls._indicators.get(indicator_id)
 
     @classmethod
     def list_all(cls) -> List[IndicatorDefinition]:
         """List metadata definitions for all registered indicators."""
+        cls._ensure_discovered()
         return [ind.get_definition() for ind in cls._indicators.values()]
 
     @classmethod
     def get_by_category(cls, category: IndicatorCategory) -> List[IndicatorDefinition]:
         """Filter indicators by category."""
+        cls._ensure_discovered()
         return [
             ind.get_definition()
             for ind in cls._indicators.values()
@@ -63,6 +75,7 @@ class IndicatorRegistry:
     @classmethod
     def get_by_lifecycle(cls, lifecycle: IndicatorLifecycle) -> List[IndicatorDefinition]:
         """Filter indicators by lifecycle stage."""
+        cls._ensure_discovered()
         return [
             ind.get_definition()
             for ind in cls._indicators.values()
