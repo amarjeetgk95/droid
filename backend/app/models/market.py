@@ -67,6 +67,10 @@ class NormalizedOptionQuote(BaseModel):
     ask: float | None = None
     volume: int = 0
     oi: int = 0
+    change: float = 0.0
+    change_percent: float = 0.0
+    previous_close: float | None = None
+    oi_change: int = 0
 
 
 class IndexCard(BaseModel):

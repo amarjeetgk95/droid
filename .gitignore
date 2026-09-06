@@ -58,6 +58,8 @@ htmlcov/
 # HPI runtime state (user's derivative data store)
 backend/hpi_state.json
 hpi_state.json
+backend/*_state.json
+*_state.json
 telegram_state.json
 backend/telegram_state.json
 market_snapshot.json

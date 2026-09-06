@@ -33,14 +33,15 @@ export default function OptionsPage() {
   const fetchOptions = async () => {
     try {
       if (!selectedExpiry) {
-        const chainRes = await api.getOptionChain(selectedSymbol, undefined);
+        const [chainRes, mpRes] = await Promise.all([
+          api.getOptionChain(selectedSymbol, undefined),
+          api.getMaxPain(selectedSymbol, undefined),
+        ]);
         setChainData(chainRes.data);
+        setMaxPainData(mpRes.data);
 
         if (chainRes.data.expiry) {
           setSelectedExpiry(chainRes.data.expiry);
-        } else {
-          const mpRes = await api.getMaxPain(selectedSymbol, undefined);
-          setMaxPainData(mpRes.data);
         }
 
         setError(null);
@@ -79,21 +80,19 @@ export default function OptionsPage() {
     const run = async () => {
       try {
         if (!selectedExpiry) {
-          const chainRes = await api.getOptionChain(selectedSymbol, undefined);
+          const [chainRes, mpRes] = await Promise.all([
+            api.getOptionChain(selectedSymbol, undefined),
+            api.getMaxPain(selectedSymbol, undefined),
+          ]);
           if (!isMounted) return;
           setChainData(chainRes.data);
+          setMaxPainData(mpRes.data);
 
-          let mpData: any = null;
           if (chainRes.data.expiry) {
             setSelectedExpiry(chainRes.data.expiry);
-          } else {
-            const mpRes = await api.getMaxPain(selectedSymbol, undefined);
-            if (!isMounted) return;
-            mpData = mpRes.data;
-            setMaxPainData(mpData);
           }
 
-          deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpData });
+          deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpRes.data });
           setError(null);
           return;
         }

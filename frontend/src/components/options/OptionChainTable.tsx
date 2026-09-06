@@ -83,7 +83,14 @@ export function OptionChainTable({
 
    {/* Table Body */}
    <tbody className="divide-y divide-border/40 font-mono">
-   {strikes.map((row) => {
+   {strikes.length === 0 ? (
+    <tr>
+     <td colSpan={13} className="py-12 text-center text-muted-foreground font-sans text-sm">
+      No option contracts available for this expiry.
+     </td>
+    </tr>
+   ) : (
+    strikes.map((row) => {
     const ce = row.call;
     const pe = row.put;
     const isAtm = row.is_atm;
@@ -116,7 +123,7 @@ export function OptionChainTable({
       {ce?.ltp ? `₹${ce.ltp.toFixed(2)}` : '---'}
       </td>
       <td className={`py-1.5 px-2 text-right text-muted-foreground ${isCallItm ? 'bg-amber-500/5' : ''}`}>
-      {ce?.greeks?.iv ? `${ce.greeks.iv}%` : '---'}
+      {ce?.greeks?.iv != null ? `${ce.greeks.iv}%` : '---'}
       </td>
      </>
      ) : (
@@ -137,7 +144,7 @@ export function OptionChainTable({
       {ce?.ltp ? `₹${ce.ltp.toFixed(2)}` : '---'}
       </td>
       <td className={`py-1.5 px-2 text-right text-muted-foreground ${isCallItm ? 'bg-amber-500/5' : ''}`}>
-      {ce?.greeks?.iv ? `${ce.greeks.iv}%` : '---'}
+      {ce?.greeks?.iv != null ? `${ce.greeks.iv}%` : '---'}
       </td>
      </>
      )}
@@ -158,7 +165,7 @@ export function OptionChainTable({
      {viewMode === 'standard' ? (
      <>
       <td className={`py-1.5 px-2 text-left text-muted-foreground ${isPutItm ? 'bg-amber-500/5' : ''}`}>
-      {pe?.greeks?.iv ? `${pe.greeks.iv}%` : '---'}
+      {pe?.greeks?.iv != null ? `${pe.greeks.iv}%` : '---'}
       </td>
       <td className={`py-1.5 px-2 text-left font-bold text-foreground ${isPutItm ? 'bg-amber-500/10 text-amber-300' : ''}`}>
       {pe?.ltp ? `₹${pe.ltp.toFixed(2)}` : '---'}
@@ -179,7 +186,7 @@ export function OptionChainTable({
      ) : (
      <>
       <td className={`py-1.5 px-2 text-left text-muted-foreground ${isPutItm ? 'bg-amber-500/5' : ''}`}>
-      {pe?.greeks?.iv ? `${pe.greeks.iv}%` : '---'}
+      {pe?.greeks?.iv != null ? `${pe.greeks.iv}%` : '---'}
       </td>
       <td className={`py-1.5 px-2 text-left font-bold text-foreground ${isPutItm ? 'bg-amber-500/10 text-amber-300' : ''}`}>
       {pe?.ltp ? `₹${pe.ltp.toFixed(2)}` : '---'}
@@ -200,7 +207,8 @@ export function OptionChainTable({
      )}
     </tr>
     );
-   })}
+   })
+   )}
    </tbody>
   </table>
   </div>
