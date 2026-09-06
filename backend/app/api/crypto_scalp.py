@@ -12,7 +12,17 @@ import structlog
 from app.core.config import settings
 from app.crypto_scalp.scanner import crypto_scalp_scanner
 from app.crypto_scalp.worker import crypto_scalp_worker
-from app.crypto_scalp.persistence import fetch_persisted_scalp_signals
+from app.crypto_scalp.persistence import (
+    fetch_persisted_scalp_signals,
+    fetch_execution_records,
+    fetch_execution_record_by_id,
+)
+from app.crypto_scalp.models_execution import (
+    CryptoScalpPerformanceMetrics,
+    CryptoScalpExecutionRecord,
+    CryptoScalpPositionState,
+)
+from app.crypto_scalp.performance import performance_engine
 from app.models.crypto import (
     CryptoScalpSignalsResponse,
     CryptoScalpDiagnostics,
@@ -121,3 +131,60 @@ async def update_crypto_scalp_config(
     except Exception as e:
         logger.error("update_crypto_scalp_config_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Config update failed: {str(e)}")
+
+
+@router.get("/performance", response_model=CryptoScalpPerformanceMetrics)
+async def get_crypto_scalp_performance():
+    """
+    Retrieve quantitative performance attribution metrics across all scalp trades:
+    empirical win rate %, profit factor, expectancy R, execution drag, strategy & asset stats.
+    """
+    try:
+        records = await fetch_execution_records(limit=200)
+        metrics = performance_engine.calculate_metrics(records)
+        return metrics
+    except Exception as e:
+        logger.error("get_crypto_scalp_performance_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to calculate performance: {str(e)}")
+
+
+@router.get("/ledger", response_model=list[CryptoScalpExecutionRecord])
+async def get_crypto_scalp_ledger(
+    symbol: Optional[str] = Query(None, description="Filter by symbol (e.g. BTCUSDT, ETHUSDT)"),
+    state: Optional[str] = Query(None, description="Filter by position state: ACTIVE, PARTIALLY_CLOSED, CLOSED"),
+    limit: int = Query(50, ge=1, le=200, description="Max trade records to return"),
+):
+    """
+    Retrieve the chronological execution ledger of paper trades with detailed P&L and R-multiples.
+    """
+    try:
+        pos_state = None
+        if state:
+            try:
+                pos_state = CryptoScalpPositionState(state.upper().strip())
+            except ValueError:
+                pass
+
+        records = await fetch_execution_records(limit=limit, symbol=symbol, state=pos_state)
+        return records
+    except Exception as e:
+        logger.error("get_crypto_scalp_ledger_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to fetch execution ledger: {str(e)}")
+
+
+@router.get("/ledger/{trade_id}", response_model=CryptoScalpExecutionRecord)
+async def get_crypto_scalp_trade_detail(trade_id: str):
+    """
+    Retrieve full execution record and granular audit event timeline for a specific trade.
+    """
+    try:
+        trade = await fetch_execution_record_by_id(trade_id)
+        if not trade:
+            raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+        return trade
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_crypto_scalp_trade_detail_failed", trade_id=trade_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to fetch trade details: {str(e)}")
+

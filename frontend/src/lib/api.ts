@@ -752,6 +752,23 @@ class ApiClient {
     });
   }
 
+  async getCryptoScalpPerformance() {
+    return this.request<import('./types').CryptoScalpPerformanceMetrics>('/api/v1/crypto/scalp-signals/performance');
+  }
+
+  async getCryptoScalpLedger(params?: { symbol?: string; state?: string; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.symbol) query.set('symbol', params.symbol);
+    if (params?.state) query.set('state', params.state);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<import('./types').CryptoScalpExecutionRecord[]>(`/api/v1/crypto/scalp-signals/ledger${qs}`);
+  }
+
+  async getCryptoScalpTradeDetail(tradeId: string) {
+    return this.request<import('./types').CryptoScalpExecutionRecord>(`/api/v1/crypto/scalp-signals/ledger/${tradeId}`);
+  }
+
   // Auth
   async getProfile() {
     return this.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');

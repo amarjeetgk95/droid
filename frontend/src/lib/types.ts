@@ -1070,6 +1070,143 @@ export interface CryptoScalpConfig {
   telegram_enabled: boolean;
 }
 
+export type CryptoScalpPositionState = 'ACTIVE' | 'PARTIALLY_CLOSED' | 'CLOSED' | 'CANCELLED';
+
+export type CryptoScalpExitEventType =
+  | 'ENTRY_FILL'
+  | 'T1_HIT'
+  | 'BREAKEVEN_RATCHET'
+  | 'BREAKEVEN_STOP'
+  | 'T2_HIT'
+  | 'INITIAL_STOP'
+  | 'TIME_STOP'
+  | 'MANUAL_CLOSE';
+
+export interface CryptoScalpExecutionEvent {
+  event_id: string;
+  trade_id: string;
+  signal_id: string;
+  event_type: CryptoScalpExitEventType;
+  symbol: string;
+  direction: CryptoSignalDirection;
+  strategy: string;
+  timestamp_ms: number;
+  market_price: number;
+  fill_price: number;
+  quantity: number;
+  fee_usd: number;
+  slippage_usd: number;
+  gross_pnl_usd: number;
+  net_pnl_usd: number;
+  r_multiple: number;
+  state_before: CryptoScalpPositionState;
+  state_after: CryptoScalpPositionState;
+  metadata_json?: Record<string, any>;
+}
+
+export interface CryptoScalpExecutionRecord {
+  trade_id: string;
+  signal_id: string;
+  symbol: string;
+  asset: string;
+  direction: CryptoSignalDirection;
+  strategy: string;
+  strategy_name: string;
+  execution_mode: 'PAPER' | 'LIVE' | 'REPLAY';
+  position_state: CryptoScalpPositionState;
+  signal_price: number;
+  entry_fill_price: number;
+  initial_stop_price: number;
+  current_stop_price: number;
+  target_1_price: number;
+  target_2_price: number;
+  exit_price?: number | null;
+  exit_reason?: CryptoScalpExitEventType | null;
+  quantity_initial: number;
+  quantity_closed_t1: number;
+  quantity_closed_final: number;
+  quantity_remaining: number;
+  notional_usd: number;
+  initial_risk_usd: number;
+  gross_pnl_usd: number;
+  fees_usd: number;
+  slippage_usd: number;
+  net_pnl_usd: number;
+  net_return_pct: number;
+  r_multiple: number;
+  theoretical_r: number;
+  execution_drag_r: number;
+  t1_hit_at?: number | null;
+  t2_hit_at?: number | null;
+  stop_hit_at?: number | null;
+  duration_seconds: number;
+  duration_str: string;
+  created_at_utc: number;
+  closed_at_utc?: number | null;
+  events?: CryptoScalpExecutionEvent[];
+}
+
+export interface CryptoScalpStrategyStats {
+  strategy: string;
+  strategy_name: string;
+  total_signals: number;
+  filled_trades: number;
+  completed_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  breakeven_trades: number;
+  win_rate_pct: number;
+  profit_factor: number;
+  expectancy_r: number;
+  gross_profit_usd: number;
+  gross_loss_usd: number;
+  net_pnl_usd: number;
+  average_r: number;
+  average_duration_seconds: number;
+  sample_size: number;
+  insufficient_sample: boolean;
+}
+
+export interface CryptoScalpAssetStats {
+  asset: string;
+  symbol: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate_pct: number;
+  profit_factor: number;
+  net_pnl_usd: number;
+  expectancy_r: number;
+  average_duration_seconds: number;
+}
+
+export interface CryptoScalpPerformanceMetrics {
+  total_signals: number;
+  active_positions: number;
+  completed_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  breakeven_trades: number;
+  win_rate_pct: number;
+  profit_factor: number;
+  expectancy_r: number;
+  average_r: number;
+  average_win_r: number;
+  average_loss_r: number;
+  gross_profit_usd: number;
+  gross_loss_usd: number;
+  net_pnl_usd: number;
+  total_fees_usd: number;
+  total_slippage_usd: number;
+  total_execution_drag_usd: number;
+  average_duration_seconds: number;
+  average_duration_str: string;
+  insufficient_sample: boolean;
+  strategy_breakdown: Record<string, CryptoScalpStrategyStats>;
+  asset_breakdown: Record<string, CryptoScalpAssetStats>;
+}
+
+
 
 // ============================================================
 // Historical Pattern Intelligence (HPI)

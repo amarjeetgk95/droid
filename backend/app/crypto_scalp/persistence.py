@@ -1,6 +1,6 @@
 """
-Supabase PostgreSQL & Local Cache Persistence Layer for Crypto Scalp Signals.
-Guarantees full signal history survives Render redeployments and restarts.
+Supabase PostgreSQL & Local Cache Persistence Layer for Crypto Scalp Signals & Execution Track Record.
+Guarantees full signal history and execution ledger survive Render redeployments and restarts.
 """
 from __future__ import annotations
 
@@ -13,20 +13,30 @@ from sqlalchemy import text
 
 from app.core.database import get_async_session_factory
 from app.models.crypto import CryptoScalpSignal, SignalDirection, CryptoSignalStatus
+from app.crypto_scalp.models_execution import (
+    CryptoScalpExecutionRecord,
+    CryptoScalpExecutionEvent,
+    CryptoScalpPositionState,
+    CryptoScalpExitEventType,
+    CryptoScalpExecutionMode,
+)
 
 logger = structlog.get_logger()
 
 CRYPTO_SCALP_STATE_FILE = Path("crypto_scalp_signals_state.json")
+CRYPTO_SCALP_EXECUTIONS_FILE = Path("crypto_scalp_executions_state.json")
+CRYPTO_SCALP_EVENTS_FILE = Path("crypto_scalp_events_state.json")
 
 
 async def ensure_crypto_scalp_tables() -> bool:
-    """Auto-provision crypto_scalp_signals table in Supabase PostgreSQL if not present."""
+    """Auto-provision crypto_scalp tables in Supabase PostgreSQL if not present."""
     factory = get_async_session_factory()
     if factory is None:
         logger.debug("crypto_scalp_persistence_no_db_factory")
         return False
     try:
         async with factory() as session:
+            # 1. Signals Table
             await session.execute(text("""
                 CREATE TABLE IF NOT EXISTS crypto_scalp_signals (
                     signal_id TEXT PRIMARY KEY,
@@ -59,13 +69,93 @@ async def ensure_crypto_scalp_tables() -> bool:
             """))
             await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_symbol ON crypto_scalp_signals(symbol)"))
             await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_created ON crypto_scalp_signals(created_at_utc DESC)"))
+
+            # 2. Executions Table (Consolidated trade ledger)
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS crypto_scalp_executions (
+                    trade_id TEXT PRIMARY KEY,
+                    signal_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    asset TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    strategy_name TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL DEFAULT 'PAPER',
+                    position_state TEXT NOT NULL DEFAULT 'ACTIVE',
+                    signal_price DOUBLE PRECISION NOT NULL,
+                    entry_fill_price DOUBLE PRECISION NOT NULL,
+                    initial_stop_price DOUBLE PRECISION NOT NULL,
+                    current_stop_price DOUBLE PRECISION NOT NULL,
+                    target_1_price DOUBLE PRECISION NOT NULL,
+                    target_2_price DOUBLE PRECISION NOT NULL,
+                    exit_price DOUBLE PRECISION,
+                    exit_reason TEXT,
+                    quantity_initial DOUBLE PRECISION NOT NULL,
+                    quantity_closed_t1 DOUBLE PRECISION DEFAULT 0.0,
+                    quantity_closed_final DOUBLE PRECISION DEFAULT 0.0,
+                    quantity_remaining DOUBLE PRECISION NOT NULL,
+                    notional_usd DOUBLE PRECISION DEFAULT 0.0,
+                    initial_risk_usd DOUBLE PRECISION DEFAULT 0.0,
+                    gross_pnl_usd DOUBLE PRECISION DEFAULT 0.0,
+                    fees_usd DOUBLE PRECISION DEFAULT 0.0,
+                    slippage_usd DOUBLE PRECISION DEFAULT 0.0,
+                    net_pnl_usd DOUBLE PRECISION DEFAULT 0.0,
+                    net_return_pct DOUBLE PRECISION DEFAULT 0.0,
+                    r_multiple DOUBLE PRECISION DEFAULT 0.0,
+                    theoretical_r DOUBLE PRECISION DEFAULT 0.0,
+                    execution_drag_r DOUBLE PRECISION DEFAULT 0.0,
+                    t1_hit_at BIGINT,
+                    t2_hit_at BIGINT,
+                    stop_hit_at BIGINT,
+                    duration_seconds INTEGER DEFAULT 0,
+                    duration_str TEXT DEFAULT '0s',
+                    created_at_utc BIGINT NOT NULL,
+                    closed_at_utc BIGINT
+                )
+            """))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_exec_symbol ON crypto_scalp_executions(symbol)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_exec_state ON crypto_scalp_executions(position_state)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_exec_strategy ON crypto_scalp_executions(strategy)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_exec_created ON crypto_scalp_executions(created_at_utc DESC)"))
+
+            # 3. Execution Events Table (Immutable audit trail)
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS crypto_scalp_execution_events (
+                    event_id TEXT PRIMARY KEY,
+                    trade_id TEXT NOT NULL,
+                    signal_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    timestamp_ms BIGINT NOT NULL,
+                    market_price DOUBLE PRECISION NOT NULL,
+                    fill_price DOUBLE PRECISION NOT NULL,
+                    quantity DOUBLE PRECISION NOT NULL,
+                    fee_usd DOUBLE PRECISION DEFAULT 0.0,
+                    slippage_usd DOUBLE PRECISION DEFAULT 0.0,
+                    gross_pnl_usd DOUBLE PRECISION DEFAULT 0.0,
+                    net_pnl_usd DOUBLE PRECISION DEFAULT 0.0,
+                    r_multiple DOUBLE PRECISION DEFAULT 0.0,
+                    state_before TEXT NOT NULL,
+                    state_after TEXT NOT NULL,
+                    metadata_json JSONB DEFAULT '{}'::jsonb
+                )
+            """))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_events_trade ON crypto_scalp_execution_events(trade_id)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_crypto_scalp_events_time ON crypto_scalp_execution_events(timestamp_ms DESC)"))
+
             await session.commit()
-            logger.info("crypto_scalp_table_provisioned_successfully")
+            logger.info("crypto_scalp_tables_provisioned_successfully")
             return True
     except Exception as e:
         logger.warning("ensure_crypto_scalp_tables_failed", error=str(e)[:250])
         return False
 
+
+# ==============================================================================
+# Signals Persistence
+# ==============================================================================
 
 def save_scalp_signals_local(signals: list[CryptoScalpSignal]) -> bool:
     """Safely persist scalp signals to local JSON cache file."""
@@ -172,7 +262,6 @@ async def persist_scalp_signal(signal: CryptoScalpSignal) -> bool:
 
     # Also update local backup cache
     local_signals = restore_scalp_signals_local()
-    # Replace or prepend
     found = False
     for idx, s in enumerate(local_signals):
         if s.id == signal.id:
@@ -181,7 +270,6 @@ async def persist_scalp_signal(signal: CryptoScalpSignal) -> bool:
             break
     if not found:
         local_signals.insert(0, signal)
-    # Keep top 100 in local cache
     save_scalp_signals_local(local_signals[:100])
 
     return persisted_to_db
@@ -274,7 +362,392 @@ async def purge_stale_spam_signals(older_than_seconds: int = 1800) -> int:
         except Exception as e:
             logger.warning("purge_stale_scalp_signals_failed", error=str(e)[:200])
 
-    # Reset local cache
     save_scalp_signals_local([])
     return deleted_count
 
+
+# ==============================================================================
+# Executions & Ledger Persistence
+# ==============================================================================
+
+def save_executions_local(executions: list[CryptoScalpExecutionRecord]) -> bool:
+    """Persist execution records to local JSON cache."""
+    try:
+        payload = {
+            "executions": [rec.model_dump(mode="json") for rec in executions],
+            "updated_at_utc": int(time.time() * 1000),
+        }
+        tmp = CRYPTO_SCALP_EXECUTIONS_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        tmp.replace(CRYPTO_SCALP_EXECUTIONS_FILE)
+        return True
+    except Exception as e:
+        logger.warning("save_executions_local_failed", error=str(e)[:200])
+        return False
+
+
+def restore_executions_local() -> list[CryptoScalpExecutionRecord]:
+    """Restore execution records from local JSON cache."""
+    if not CRYPTO_SCALP_EXECUTIONS_FILE.exists():
+        return []
+    try:
+        with open(CRYPTO_SCALP_EXECUTIONS_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        raw_list = payload.get("executions", [])
+        return [CryptoScalpExecutionRecord(**item) for item in raw_list if isinstance(item, dict)]
+    except Exception as e:
+        logger.warning("restore_executions_local_failed", error=str(e)[:200])
+        return []
+
+
+def save_events_local(events: list[CryptoScalpExecutionEvent]) -> bool:
+    """Persist execution events to local JSON cache."""
+    try:
+        payload = {
+            "events": [ev.model_dump(mode="json") for ev in events],
+            "updated_at_utc": int(time.time() * 1000),
+        }
+        tmp = CRYPTO_SCALP_EVENTS_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        tmp.replace(CRYPTO_SCALP_EVENTS_FILE)
+        return True
+    except Exception as e:
+        logger.warning("save_events_local_failed", error=str(e)[:200])
+        return False
+
+
+def restore_events_local() -> list[CryptoScalpExecutionEvent]:
+    """Restore execution events from local JSON cache."""
+    if not CRYPTO_SCALP_EVENTS_FILE.exists():
+        return []
+    try:
+        with open(CRYPTO_SCALP_EVENTS_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        raw_list = payload.get("events", [])
+        return [CryptoScalpExecutionEvent(**item) for item in raw_list if isinstance(item, dict)]
+    except Exception as e:
+        logger.warning("restore_events_local_failed", error=str(e)[:200])
+        return []
+
+
+async def save_execution_event(event: CryptoScalpExecutionEvent) -> bool:
+    """Persist an immutable execution event to Supabase and local cache."""
+    factory = get_async_session_factory()
+    persisted = False
+    if factory is not None:
+        try:
+            async with factory() as session:
+                await session.execute(
+                    text("""
+                        INSERT INTO crypto_scalp_execution_events (
+                            event_id, trade_id, signal_id, event_type, symbol, direction,
+                            strategy, timestamp_ms, market_price, fill_price, quantity,
+                            fee_usd, slippage_usd, gross_pnl_usd, net_pnl_usd, r_multiple,
+                            state_before, state_after, metadata_json
+                        ) VALUES (
+                            :event_id, :trade_id, :signal_id, :event_type, :symbol, :direction,
+                            :strategy, :timestamp_ms, :market_price, :fill_price, :quantity,
+                            :fee_usd, :slippage_usd, :gross_pnl_usd, :net_pnl_usd, :r_multiple,
+                            :state_before, :state_after, :metadata_json
+                        )
+                        ON CONFLICT (event_id) DO NOTHING;
+                    """),
+                    {
+                        "event_id": event.event_id,
+                        "trade_id": event.trade_id,
+                        "signal_id": event.signal_id,
+                        "event_type": event.event_type.value,
+                        "symbol": event.symbol,
+                        "direction": event.direction.value,
+                        "strategy": event.strategy,
+                        "timestamp_ms": event.timestamp_ms,
+                        "market_price": float(event.market_price),
+                        "fill_price": float(event.fill_price),
+                        "quantity": float(event.quantity),
+                        "fee_usd": float(event.fee_usd),
+                        "slippage_usd": float(event.slippage_usd),
+                        "gross_pnl_usd": float(event.gross_pnl_usd),
+                        "net_pnl_usd": float(event.net_pnl_usd),
+                        "r_multiple": float(event.r_multiple),
+                        "state_before": event.state_before.value,
+                        "state_after": event.state_after.value,
+                        "metadata_json": json.dumps(event.metadata_json),
+                    }
+                )
+                await session.commit()
+                persisted = True
+        except Exception as e:
+            logger.warning("save_execution_event_failed", event_id=event.event_id, error=str(e)[:200])
+
+    # Local fallback
+    local_evs = restore_events_local()
+    local_evs.append(event)
+    save_events_local(local_evs[-200:])
+    return persisted
+
+
+async def save_execution_record(record: CryptoScalpExecutionRecord) -> bool:
+    """Upsert consolidated execution record to Supabase and local cache."""
+    factory = get_async_session_factory()
+    persisted = False
+    if factory is not None:
+        try:
+            async with factory() as session:
+                await session.execute(
+                    text("""
+                        INSERT INTO crypto_scalp_executions (
+                            trade_id, signal_id, symbol, asset, direction, strategy, strategy_name,
+                            execution_mode, position_state, signal_price, entry_fill_price,
+                            initial_stop_price, current_stop_price, target_1_price, target_2_price,
+                            exit_price, exit_reason, quantity_initial, quantity_closed_t1,
+                            quantity_closed_final, quantity_remaining, notional_usd, initial_risk_usd,
+                            gross_pnl_usd, fees_usd, slippage_usd, net_pnl_usd, net_return_pct,
+                            r_multiple, theoretical_r, execution_drag_r, t1_hit_at, t2_hit_at,
+                            stop_hit_at, duration_seconds, duration_str, created_at_utc, closed_at_utc
+                        ) VALUES (
+                            :trade_id, :signal_id, :symbol, :asset, :direction, :strategy, :strategy_name,
+                            :execution_mode, :position_state, :signal_price, :entry_fill_price,
+                            :initial_stop_price, :current_stop_price, :target_1_price, :target_2_price,
+                            :exit_price, :exit_reason, :quantity_initial, :quantity_closed_t1,
+                            :quantity_closed_final, :quantity_remaining, :notional_usd, :initial_risk_usd,
+                            :gross_pnl_usd, :fees_usd, :slippage_usd, :net_pnl_usd, :net_return_pct,
+                            :r_multiple, :theoretical_r, :execution_drag_r, :t1_hit_at, :t2_hit_at,
+                            :stop_hit_at, :duration_seconds, :duration_str, :created_at_utc, :closed_at_utc
+                        )
+                        ON CONFLICT (trade_id) DO UPDATE SET
+                            position_state = EXCLUDED.position_state,
+                            current_stop_price = EXCLUDED.current_stop_price,
+                            exit_price = EXCLUDED.exit_price,
+                            exit_reason = EXCLUDED.exit_reason,
+                            quantity_closed_t1 = EXCLUDED.quantity_closed_t1,
+                            quantity_closed_final = EXCLUDED.quantity_closed_final,
+                            quantity_remaining = EXCLUDED.quantity_remaining,
+                            gross_pnl_usd = EXCLUDED.gross_pnl_usd,
+                            fees_usd = EXCLUDED.fees_usd,
+                            slippage_usd = EXCLUDED.slippage_usd,
+                            net_pnl_usd = EXCLUDED.net_pnl_usd,
+                            net_return_pct = EXCLUDED.net_return_pct,
+                            r_multiple = EXCLUDED.r_multiple,
+                            theoretical_r = EXCLUDED.theoretical_r,
+                            execution_drag_r = EXCLUDED.execution_drag_r,
+                            t1_hit_at = EXCLUDED.t1_hit_at,
+                            t2_hit_at = EXCLUDED.t2_hit_at,
+                            stop_hit_at = EXCLUDED.stop_hit_at,
+                            duration_seconds = EXCLUDED.duration_seconds,
+                            duration_str = EXCLUDED.duration_str,
+                            closed_at_utc = EXCLUDED.closed_at_utc;
+                    """),
+                    {
+                        "trade_id": record.trade_id,
+                        "signal_id": record.signal_id,
+                        "symbol": record.symbol,
+                        "asset": record.asset,
+                        "direction": record.direction.value,
+                        "strategy": record.strategy,
+                        "strategy_name": record.strategy_name,
+                        "execution_mode": record.execution_mode.value,
+                        "position_state": record.position_state.value,
+                        "signal_price": float(record.signal_price),
+                        "entry_fill_price": float(record.entry_fill_price),
+                        "initial_stop_price": float(record.initial_stop_price),
+                        "current_stop_price": float(record.current_stop_price),
+                        "target_1_price": float(record.target_1_price),
+                        "target_2_price": float(record.target_2_price),
+                        "exit_price": float(record.exit_price) if record.exit_price is not None else None,
+                        "exit_reason": record.exit_reason.value if record.exit_reason is not None else None,
+                        "quantity_initial": float(record.quantity_initial),
+                        "quantity_closed_t1": float(record.quantity_closed_t1),
+                        "quantity_closed_final": float(record.quantity_closed_final),
+                        "quantity_remaining": float(record.quantity_remaining),
+                        "notional_usd": float(record.notional_usd),
+                        "initial_risk_usd": float(record.initial_risk_usd),
+                        "gross_pnl_usd": float(record.gross_pnl_usd),
+                        "fees_usd": float(record.fees_usd),
+                        "slippage_usd": float(record.slippage_usd),
+                        "net_pnl_usd": float(record.net_pnl_usd),
+                        "net_return_pct": float(record.net_return_pct),
+                        "r_multiple": float(record.r_multiple),
+                        "theoretical_r": float(record.theoretical_r),
+                        "execution_drag_r": float(record.execution_drag_r),
+                        "t1_hit_at": record.t1_hit_at,
+                        "t2_hit_at": record.t2_hit_at,
+                        "stop_hit_at": record.stop_hit_at,
+                        "duration_seconds": record.duration_seconds,
+                        "duration_str": record.duration_str,
+                        "created_at_utc": record.created_at_utc,
+                        "closed_at_utc": record.closed_at_utc,
+                    }
+                )
+                await session.commit()
+                persisted = True
+        except Exception as e:
+            logger.warning("save_execution_record_failed", trade_id=record.trade_id, error=str(e)[:200])
+
+    # Local cache
+    local_recs = restore_executions_local()
+    idx_found = -1
+    for idx, r in enumerate(local_recs):
+        if r.trade_id == record.trade_id:
+            idx_found = idx
+            break
+    if idx_found >= 0:
+        local_recs[idx_found] = record
+    else:
+        local_recs.insert(0, record)
+    save_executions_local(local_recs[:150])
+    return persisted
+
+
+async def fetch_execution_records(
+    limit: int = 100,
+    symbol: str | None = None,
+    state: CryptoScalpPositionState | None = None,
+) -> list[CryptoScalpExecutionRecord]:
+    """Fetch execution trade records from DB or local cache."""
+    factory = get_async_session_factory()
+    if factory is not None:
+        try:
+            query = "SELECT * FROM crypto_scalp_executions"
+            clauses = []
+            params: dict[str, Any] = {"limit": limit}
+            if symbol:
+                clauses.append("symbol = :symbol")
+                params["symbol"] = symbol.upper()
+            if state:
+                clauses.append("position_state = :state")
+                params["state"] = state.value
+
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY created_at_utc DESC LIMIT :limit"
+
+            async with factory() as session:
+                result = await session.execute(text(query), params)
+                rows = result.mappings().all()
+                records: list[CryptoScalpExecutionRecord] = []
+                for row in rows:
+                    rec = CryptoScalpExecutionRecord(
+                        trade_id=row["trade_id"],
+                        signal_id=row["signal_id"],
+                        symbol=row["symbol"],
+                        asset=row["asset"],
+                        direction=SignalDirection(row["direction"]),
+                        strategy=row["strategy"],
+                        strategy_name=row["strategy_name"],
+                        execution_mode=CryptoScalpExecutionMode(row.get("execution_mode", "PAPER")),
+                        position_state=CryptoScalpPositionState(row["position_state"]),
+                        signal_price=float(row["signal_price"]),
+                        entry_fill_price=float(row["entry_fill_price"]),
+                        initial_stop_price=float(row["initial_stop_price"]),
+                        current_stop_price=float(row["current_stop_price"]),
+                        target_1_price=float(row["target_1_price"]),
+                        target_2_price=float(row["target_2_price"]),
+                        exit_price=float(row["exit_price"]) if row.get("exit_price") is not None else None,
+                        exit_reason=CryptoScalpExitEventType(row["exit_reason"]) if row.get("exit_reason") else None,
+                        quantity_initial=float(row["quantity_initial"]),
+                        quantity_closed_t1=float(row.get("quantity_closed_t1", 0.0)),
+                        quantity_closed_final=float(row.get("quantity_closed_final", 0.0)),
+                        quantity_remaining=float(row["quantity_remaining"]),
+                        notional_usd=float(row.get("notional_usd", 0.0)),
+                        initial_risk_usd=float(row.get("initial_risk_usd", 0.0)),
+                        gross_pnl_usd=float(row.get("gross_pnl_usd", 0.0)),
+                        fees_usd=float(row.get("fees_usd", 0.0)),
+                        slippage_usd=float(row.get("slippage_usd", 0.0)),
+                        net_pnl_usd=float(row.get("net_pnl_usd", 0.0)),
+                        net_return_pct=float(row.get("net_return_pct", 0.0)),
+                        r_multiple=float(row.get("r_multiple", 0.0)),
+                        theoretical_r=float(row.get("theoretical_r", 0.0)),
+                        execution_drag_r=float(row.get("execution_drag_r", 0.0)),
+                        t1_hit_at=row.get("t1_hit_at"),
+                        t2_hit_at=row.get("t2_hit_at"),
+                        stop_hit_at=row.get("stop_hit_at"),
+                        duration_seconds=int(row.get("duration_seconds", 0)),
+                        duration_str=row.get("duration_str", "0s"),
+                        created_at_utc=int(row.get("created_at_utc", 0)),
+                        closed_at_utc=row.get("closed_at_utc"),
+                    )
+                    records.append(rec)
+                if records:
+                    return records
+        except Exception as e:
+            logger.warning("fetch_execution_records_failed", error=str(e)[:200])
+
+    # Fallback to local
+    local = restore_executions_local()
+    if symbol:
+        local = [r for r in local if r.symbol.upper() == symbol.upper()]
+    if state:
+        local = [r for r in local if r.position_state == state]
+    return local[:limit]
+
+
+async def fetch_execution_record_by_id(trade_id: str) -> CryptoScalpExecutionRecord | None:
+    """Fetch single trade execution record with its event trail."""
+    recs = await fetch_execution_records(limit=100)
+    for r in recs:
+        if r.trade_id == trade_id:
+            r.events = await fetch_events_for_trade(trade_id)
+            return r
+    return None
+
+
+async def fetch_events_for_trade(trade_id: str) -> list[CryptoScalpExecutionEvent]:
+    """Fetch all chronological audit events for a trade."""
+    factory = get_async_session_factory()
+    if factory is not None:
+        try:
+            async with factory() as session:
+                result = await session.execute(
+                    text("SELECT * FROM crypto_scalp_execution_events WHERE trade_id = :trade_id ORDER BY timestamp_ms ASC"),
+                    {"trade_id": trade_id},
+                )
+                rows = result.mappings().all()
+                events: list[CryptoScalpExecutionEvent] = []
+                for row in rows:
+                    meta = row.get("metadata_json")
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except Exception:
+                            meta = {}
+                    elif not isinstance(meta, dict):
+                        meta = {}
+
+                    ev = CryptoScalpExecutionEvent(
+                        event_id=row["event_id"],
+                        trade_id=row["trade_id"],
+                        signal_id=row["signal_id"],
+                        event_type=CryptoScalpExitEventType(row["event_type"]),
+                        symbol=row["symbol"],
+                        direction=SignalDirection(row["direction"]),
+                        strategy=row["strategy"],
+                        timestamp_ms=int(row["timestamp_ms"]),
+                        market_price=float(row["market_price"]),
+                        fill_price=float(row["fill_price"]),
+                        quantity=float(row["quantity"]),
+                        fee_usd=float(row.get("fee_usd", 0.0)),
+                        slippage_usd=float(row.get("slippage_usd", 0.0)),
+                        gross_pnl_usd=float(row.get("gross_pnl_usd", 0.0)),
+                        net_pnl_usd=float(row.get("net_pnl_usd", 0.0)),
+                        r_multiple=float(row.get("r_multiple", 0.0)),
+                        state_before=CryptoScalpPositionState(row["state_before"]),
+                        state_after=CryptoScalpPositionState(row["state_after"]),
+                        metadata_json=meta,
+                    )
+                    events.append(ev)
+                if events:
+                    return events
+        except Exception as e:
+            logger.warning("fetch_events_for_trade_failed", trade_id=trade_id, error=str(e)[:200])
+
+    # Fallback to local
+    local_evs = restore_events_local()
+    return [ev for ev in local_evs if ev.trade_id == trade_id]
+
+
+async def load_unclosed_execution_records() -> list[CryptoScalpExecutionRecord]:
+    """Retrieve all open/active/partially closed positions for restart recovery."""
+    all_recs = await fetch_execution_records(limit=200)
+    return [r for r in all_recs if r.position_state in (CryptoScalpPositionState.ACTIVE, CryptoScalpPositionState.PARTIALLY_CLOSED)]

@@ -61,15 +61,42 @@ class CryptoScalpWorker:
         logger.info("crypto_scalp_worker_stopped")
 
     async def _loop(self) -> None:
-        """Main execution loop for crypto scalp scanning."""
+        """Main execution loop for crypto scalp scanning and outcome tracking."""
         from app.crypto_scalp.scanner import crypto_scalp_scanner
+        from app.crypto_scalp.outcome_tracker import crypto_scalp_outcome_tracker
+        from app.services.binance_service import binance_service
 
-        # Initial delay on startup so Binance service and other systems initialize
+        # Initial delay on startup so Binance service and DB initialize
         await asyncio.sleep(3.0)
+
+        # Recover unclosed active positions after server restart
+        try:
+            await crypto_scalp_outcome_tracker.recover_active_positions()
+        except Exception as e:
+            logger.warning("worker_startup_recovery_failed", error=str(e)[:200])
 
         while self._running:
             try:
+                # 1. Scan for new high-conviction scalp setups
                 await crypto_scalp_scanner.scan_all(force_refresh=True)
+
+                # 2. Process real-time tick evaluation for paper positions
+                for sym in ["BTCUSDT", "ETHUSDT"]:
+                    try:
+                        candles = await binance_service.get_candles(sym, "1m", limit=2)
+                        ob = await binance_service.get_order_book(sym, limit=5)
+                        if candles:
+                            last_c = candles[-1]
+                            spread = (ob.best_ask - ob.best_bid) if ob and ob.best_ask and ob.best_bid else 0.0
+                            await crypto_scalp_outcome_tracker.process_tick(
+                                symbol=sym,
+                                current_price=last_c.close,
+                                high=last_c.high,
+                                low=last_c.low,
+                                spread=spread,
+                            )
+                    except Exception as tick_err:
+                        logger.debug("crypto_scalp_tick_eval_failed", symbol=sym, error=str(tick_err)[:150])
             except asyncio.CancelledError:
                 break
             except Exception as e:

@@ -246,6 +246,14 @@ class CryptoScalpScanner:
         self._last_signal_time[ctx.symbol] = now
         self._active_signals[signal_id] = new_signal
 
+        # Register with outcome tracker for deterministic paper execution & track record
+        spread_usd = (ctx.orderbook.best_ask - ctx.orderbook.best_bid) if ctx.orderbook and ctx.orderbook.best_ask and ctx.orderbook.best_bid else 0.0
+        try:
+            from app.crypto_scalp.outcome_tracker import crypto_scalp_outcome_tracker
+            asyncio.create_task(crypto_scalp_outcome_tracker.register_signal(new_signal, spread=spread_usd))
+        except Exception as reg_err:
+            logger.warning("register_signal_outcome_tracker_failed", error=str(reg_err)[:200])
+
         if settings.crypto_scalp_telegram_enabled:
             asyncio.create_task(dispatch_crypto_scalp_telegram(new_signal))
 
