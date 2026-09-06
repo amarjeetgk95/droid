@@ -334,7 +334,11 @@ class CryptoScalpScanner:
             funding_rate=best_cand.funding_rate,
             depth_imbalance=best_cand.depth_imbalance,
             is_scalp=is_scalp,
-            created_at_utc=int(time.time() * 1000),
+            fsm_state=fsm_instance.fsm_state,
+            created_at_utc=fsm_instance.created_at_utc,
+            created_at_str=fsm_instance.created_at_str,
+            ttl_seconds=fsm_instance.ttl_seconds,
+            time_stop_seconds=fsm_instance.time_stop_seconds or 900,
         )
 
         await persist_scalp_signal(new_signal)

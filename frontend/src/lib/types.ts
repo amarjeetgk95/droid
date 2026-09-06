@@ -913,6 +913,7 @@ export interface CryptoScalpSignal {
   confidence: number;
   timeframe: string;
   status: CryptoSignalStatus;
+  fsm_state?: 'DETECTED' | 'VALIDATED' | 'ARMED' | 'TRIGGERED' | 'CONFIRMED' | 'TARGET_1_HIT' | 'TARGET_2_HIT' | 'STOP_LOSS_HIT' | 'TIME_STOP_HIT' | 'RUNNER_TIME_STOP_HIT' | 'INVALIDATED' | 'EXPIRED' | 'CLOSED';
   confluence_factors: string[];
   rationale: string;
   atr_value?: number;
@@ -923,6 +924,9 @@ export interface CryptoScalpSignal {
   persisted_to_supabase: boolean;
   telegram_dispatched: boolean;
   created_at_utc: number;
+  created_at_str?: string;
+  ttl_seconds?: number;
+  time_stop_seconds?: number;
   timestamp: string;
 }
 

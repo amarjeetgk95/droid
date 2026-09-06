@@ -360,9 +360,11 @@ async def get_crypto_signal_deep_dive(signal_id: str):
 
 @router.delete("/{signal_id}")
 async def delete_crypto_signal(signal_id: str):
-    """Delete crypto signal from in-memory FSM and broadcast deletion event."""
-    deleted = crypto_signal_fsm.delete(signal_id)
-    if not deleted:
+    """Delete crypto signal from in-memory FSM and scanner cache, then broadcast deletion event."""
+    deleted_fsm = crypto_signal_fsm.delete(signal_id)
+    deleted_scanner = crypto_scalp_scanner._active_signals.pop(signal_id, None) is not None
+
+    if not deleted_fsm and not deleted_scanner:
         raise HTTPException(status_code=404, detail="Signal not found.")
 
     await crypto_sse_hub.broadcast("signal_deleted", {"signal_id": signal_id}, priority="P0")

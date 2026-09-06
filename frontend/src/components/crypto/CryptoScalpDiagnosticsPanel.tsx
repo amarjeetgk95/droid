@@ -62,7 +62,7 @@ export function CryptoScalpDiagnosticsPanel({
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 shadow-xs">
+    <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-4 shadow-xs">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Left: Engine Status & Telemetry */}
         <div className="flex flex-wrap items-center gap-4">
@@ -71,49 +71,49 @@ export function CryptoScalpDiagnosticsPanel({
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
-            <span className="text-xs font-bold text-foreground">24/7 Scalp Engine:</span>
-            <span className="text-xs font-mono text-emerald-400 font-semibold">
-              {diagnostics?.worker_running ? 'Autonomous Scanning Active' : 'Standby / Polling'}
+            <span className="text-xs font-semibold text-slate-200">24/7 Scalp Engine:</span>
+            <span className="text-xs font-mono text-emerald-400 font-medium">
+              {diagnostics?.worker_running ? 'Autonomous Active' : 'Standby / Polling'}
             </span>
           </div>
 
-          <div className="h-4 w-px bg-border hidden sm:block" />
+          <div className="h-4 w-px bg-slate-800 hidden sm:block" />
 
           {/* Supabase Persistence Indicator */}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-xs text-slate-400">
             <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Supabase Sync:</span>
-            <span className="font-mono text-foreground font-medium">
+            <span>Supabase:</span>
+            <span className="font-mono text-slate-200 font-medium">
               {diagnostics?.supabase_persisted_count ?? 0} persisted
             </span>
           </div>
 
-          <div className="h-4 w-px bg-border hidden sm:block" />
+          <div className="h-4 w-px bg-slate-800 hidden sm:block" />
 
           {/* Strategies Evaluated */}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Layers className="w-3.5 h-3.5 text-primary" />
+          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
             <span>Strategies:</span>
-            <span className="font-mono text-foreground font-medium">5 Strategies (VWAP, EMA, Squeeze, Vol, Depth)</span>
+            <span className="font-mono text-slate-200 font-medium">5 Strategies (VWAP, EMA, Squeeze, Vol, Depth)</span>
           </div>
         </div>
 
         {/* Right: Controls (Interval, Telegram Toggle, Manual Trigger) */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Configurable Scan Interval */}
-          <div className="flex items-center gap-1.5 bg-secondary/80 px-2.5 py-1 rounded-lg border border-border">
-            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-[11px] text-muted-foreground">Cadence:</span>
+          <div className="flex items-center gap-1.5 bg-[#070A10] px-2.5 py-1 rounded-lg border border-slate-800">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[11px] text-slate-400">Cadence:</span>
             <select
               value={currentInterval}
               onChange={(e) => handleIntervalChange(Number(e.target.value))}
               disabled={updatingConfig}
-              className="bg-transparent text-xs font-semibold text-foreground focus:outline-hidden cursor-pointer"
+              className="bg-transparent text-xs font-medium text-slate-200 focus:outline-hidden cursor-pointer"
             >
-              <option value={15} className="bg-card text-foreground">15s (Aggressive)</option>
-              <option value={30} className="bg-card text-foreground">30s (Default)</option>
-              <option value={60} className="bg-card text-foreground">60s (Balanced)</option>
-              <option value={120} className="bg-card text-foreground">120s (Conservative)</option>
+              <option value={15} className="bg-slate-900 text-slate-200">15s (Aggressive)</option>
+              <option value={30} className="bg-slate-900 text-slate-200">30s (Default)</option>
+              <option value={60} className="bg-slate-900 text-slate-200">60s (Balanced)</option>
+              <option value={120} className="bg-slate-900 text-slate-200">120s (Conservative)</option>
             </select>
           </div>
 
@@ -124,8 +124,8 @@ export function CryptoScalpDiagnosticsPanel({
             disabled={updatingConfig}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
               telegramOn
-                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20'
-                : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                ? 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'
+                : 'bg-[#070A10] text-slate-400 border-slate-800 hover:text-slate-200'
             }`}
           >
             <Send className="w-3 h-3" />
@@ -137,9 +137,9 @@ export function CryptoScalpDiagnosticsPanel({
             type="button"
             onClick={onRefresh}
             disabled={scanning}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg text-xs font-semibold border border-slate-700 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin text-cyan-400' : ''}`} />
             <span>{scanning ? 'Scanning...' : 'Scan Now'}</span>
           </button>
         </div>

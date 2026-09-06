@@ -688,6 +688,12 @@ class ApiClient {
     return this.request<import('./types').CryptoScalpExecutionRecord>(`/api/v1/crypto/scalp-signals/ledger/${tradeId}`);
   }
 
+  async deleteCryptoScalpSignal(signalId: string) {
+    return this.request<{ status: string; signal_id: string }>(`/api/v1/crypto/scalp-signals/${signalId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Auth
   async getProfile() {
     return this.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');

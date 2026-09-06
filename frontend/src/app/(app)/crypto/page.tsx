@@ -136,6 +136,16 @@ export default function CryptoPage() {
     }
   }, [fetchScalpPerformance]);
 
+  const handleDeleteScalpSignal = useCallback(async (signalId: string) => {
+    try {
+      setScalpSignals((prev) => prev.filter((s) => s.id !== signalId));
+      await api.deleteCryptoScalpSignal(signalId);
+    } catch (err) {
+      console.error('Failed to delete scalp signal:', err);
+      fetchScalpSignals();
+    }
+  }, [fetchScalpSignals]);
+
   useEffect(() => {
     fetchScalpSignals();
     fetchScalpPerformance();
@@ -657,6 +667,7 @@ export default function CryptoPage() {
                   signals={scalpSignals}
                   loading={loadingScalpSignals}
                   onRefresh={handleManualScalpScan}
+                  onDeleteSignal={handleDeleteScalpSignal}
                   selectedAssetFilter="ALL"
                   onSelectAssetFilter={(asset) => setSelectedSymbol(`${asset}USDT`)}
                 />

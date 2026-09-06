@@ -224,7 +224,11 @@ class CryptoScalpSignal(BaseModel):
     is_scalp: bool = True
     persisted_to_supabase: bool = False
     telegram_dispatched: bool = False
+    fsm_state: str = "ARMED"
     created_at_utc: int = Field(default_factory=lambda: int(__import__("time").time() * 1000))
+    created_at_str: str | None = None
+    ttl_seconds: int = 180
+    time_stop_seconds: int = 900
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
