@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -14,11 +14,14 @@ import {
   Trash2,
   Layers,
   ShieldCheck,
+  Hourglass,
+  History,
 } from 'lucide-react';
 import { CryptoScalpSignal } from '@/lib/types';
 
 interface CryptoScalpSignalsCardProps {
   signals: CryptoScalpSignal[];
+  historySignals?: CryptoScalpSignal[];
   loading: boolean;
   onRefresh: () => void;
   onDeleteSignal?: (signalId: string) => void;
@@ -44,6 +47,7 @@ function getStageIndex(state?: string): number {
   if (s === 'TRIGGERED') return 3;
   if (s === 'CONFIRMED') return 4;
   if (s.includes('TARGET') || s.includes('STOP') || s.includes('CLOSED')) return 5;
+  if (s === 'EXPIRED' || s === 'INVALIDATED') return 0;
   return 2;
 }
 
@@ -119,6 +123,7 @@ function getSpecialId(sig: CryptoScalpSignal): string {
 
 export function CryptoScalpSignalsCard({
   signals,
+  historySignals = [],
   loading,
   onRefresh,
   onDeleteSignal,
@@ -127,8 +132,16 @@ export function CryptoScalpSignalsCard({
 }: CryptoScalpSignalsCardProps) {
   const [assetFilter, setAssetFilter] = useState<string>(selectedAssetFilter);
   const [dirFilter, setDirFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
+  const [viewMode, setViewMode] = useState<'ACTIVE' | 'EXPIRED'>('ACTIVE');
+  const [nowTime, setNowTime] = useState<number>(Date.now());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Live 1-second ticker for accurate trigger TTL countdowns
+  useEffect(() => {
+    const timer = setInterval(() => setNowTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleAssetSelect = (asset: string) => {
     setAssetFilter(asset);
@@ -173,7 +186,14 @@ Rationale: ${sig.rationale}`;
     }
   };
 
-  const filteredSignals = signals.filter((s) => {
+  // Active vs Expired separation
+  const activeSignals = signals.filter((s) => s.fsm_state !== 'EXPIRED');
+  const activeIds = new Set(activeSignals.map((s) => s.id));
+  const expiredSignals = historySignals.filter(
+    (h) => h.fsm_state === 'EXPIRED' || !activeIds.has(h.id)
+  );
+
+  const displayList = (viewMode === 'ACTIVE' ? activeSignals : expiredSignals).filter((s) => {
     if (assetFilter !== 'ALL' && s.asset !== assetFilter && s.symbol !== assetFilter) return false;
     if (dirFilter !== 'ALL' && s.direction !== dirFilter) return false;
     return true;
@@ -192,16 +212,44 @@ Rationale: ${sig.rationale}`;
               Live Scalping Signals
             </h2>
             <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono bg-slate-100 text-slate-700 font-bold border border-slate-200">
-              {filteredSignals.length} Active
+              {activeSignals.length} Active
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            Multi-stage verified setups passing Trigger Integrity, Risk Envelopes, and Confluence Fusion.
+            Multi-stage verified setups passing Trigger Integrity, Risk Envelopes, and Confluence Fusion with Two-Clock TTL Guard.
           </p>
         </div>
 
-        {/* Filters */}
+        {/* Filters & View Mode */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Active vs Expired Window View */}
+          <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setViewMode('ACTIVE')}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                viewMode === 'ACTIVE'
+                  ? 'bg-white text-slate-900 font-semibold shadow-xs border border-slate-200'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-500" />
+              <span>Active ({activeSignals.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('EXPIRED')}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                viewMode === 'EXPIRED'
+                  ? 'bg-white text-slate-900 font-semibold shadow-xs border border-slate-200'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <History className="w-3.5 h-3.5 text-slate-400" />
+              <span>Expired ({expiredSignals.length})</span>
+            </button>
+          </div>
+
           {/* Asset Pills */}
           <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
             {['ALL', 'BTC', 'ETH'].map((sym) => (
@@ -244,6 +292,16 @@ Rationale: ${sig.rationale}`;
         </div>
       </div>
 
+      {/* Expired Window Info Notice */}
+      {viewMode === 'EXPIRED' && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-slate-600">
+          <History className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <strong className="text-slate-800">Two-Clock Institutional Guard Expirations:</strong> Scalp signals carry an active pre-entry trigger window (default 3 minutes / 180 seconds). If market price does not reach the breakout entry price before the window closes, the setup is retired as <span className="font-mono font-semibold text-slate-700">EXPIRED (TTL_EXCEEDED)</span> to prevent chasing stale orders.
+          </div>
+        </div>
+      )}
+
       {/* ── SIGNALS GRID ─────────────────────────────────────────────── */}
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -251,29 +309,35 @@ Rationale: ${sig.rationale}`;
             <div key={i} className="h-56 bg-slate-50 border border-slate-200 rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : filteredSignals.length === 0 ? (
+      ) : displayList.length === 0 ? (
         <div className="p-10 text-center border border-dashed border-slate-200 rounded-xl space-y-3 bg-slate-50/60">
           <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center mx-auto border border-slate-200 text-slate-400 shadow-2xs">
             <Filter className="w-5 h-5" />
           </div>
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-slate-900">No Scalp Signals Active Right Now</p>
+            <p className="text-sm font-semibold text-slate-900">
+              {viewMode === 'ACTIVE' ? 'No Scalp Signals Active Right Now' : 'No Expired Signals Found'}
+            </p>
             <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-              Institutional criteria require confirmed breakout momentum, 5M/15M MTF trend agreement, and favorable order book depth before a signal is armed.
+              {viewMode === 'ACTIVE'
+                ? 'Institutional criteria require confirmed breakout momentum, 5M/15M MTF trend agreement, and favorable order book depth before a signal is armed.'
+                : 'Signals that exceed their 3-minute pre-entry breakout window without triggering will be listed here.'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-300" />
-            <span>Scan Market Now</span>
-          </button>
+          {viewMode === 'ACTIVE' && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Scan Market Now</span>
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {filteredSignals.map((sig) => {
+          {displayList.map((sig) => {
             const isLong = sig.direction === 'LONG';
             const priceDecimals = sig.entry_price > 100 ? 2 : 4;
             const specialId = getSpecialId(sig);
@@ -281,10 +345,22 @@ Rationale: ${sig.rationale}`;
             const stageIndex = getStageIndex(sig.fsm_state);
             const currentState = sig.fsm_state || 'ARMED';
 
+            const ttlSec = sig.ttl_seconds || (sig.timeframe === '5m' ? 600 : 180);
+            const expiresAt = sig.created_at_utc + (ttlSec * 1000);
+            const secondsRemaining = Math.max(0, Math.floor((expiresAt - nowTime) / 1000));
+            const minsRemaining = Math.floor(secondsRemaining / 60);
+            const secsRemainingMod = secondsRemaining % 60;
+            const countdownStr = `${minsRemaining}m ${secsRemainingMod.toString().padStart(2, '0')}s`;
+            const isSignalExpired = sig.fsm_state === 'EXPIRED' || (currentState === 'ARMED' && secondsRemaining === 0);
+
             return (
               <div
                 key={sig.id}
-                className="relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all p-5 shadow-xs space-y-4"
+                className={`relative flex flex-col justify-between rounded-xl border bg-white transition-all p-5 shadow-xs space-y-4 ${
+                  isSignalExpired
+                    ? 'border-slate-300 opacity-80'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
               >
                 {/* 1. TOP BAR: Asset, Direction, Special ID, Time & Delete */}
                 <div className="flex items-start justify-between gap-3">
@@ -360,27 +436,48 @@ Rationale: ${sig.rationale}`;
                 <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-mono text-slate-500 font-medium">Signal Lifecycle:</span>
-                    <span
-                      className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded ${
-                        currentState === 'ARMED'
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : currentState === 'TRIGGERED'
-                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                          : currentState === 'CONFIRMED'
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : currentState.includes('TARGET_1')
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      {currentState === 'ARMED' && 'ARMED · Waiting Breakout'}
-                      {currentState === 'TRIGGERED' && 'TRIGGERED · Fill Pending'}
-                      {currentState === 'CONFIRMED' && 'CONFIRMED · Position Active'}
-                      {currentState === 'TARGET_1_HIT' && 'T1 HIT · 50% Booked'}
-                      {currentState === 'TARGET_2_HIT' && 'T2 HIT · Completed'}
-                      {currentState === 'STOP_LOSS_HIT' && 'STOP HIT · Exited'}
-                      {!['ARMED', 'TRIGGERED', 'CONFIRMED', 'TARGET_1_HIT', 'TARGET_2_HIT', 'STOP_LOSS_HIT'].includes(currentState) && currentState}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded ${
+                          isSignalExpired
+                            ? 'bg-slate-200 text-slate-700 border border-slate-300'
+                            : currentState === 'ARMED'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : currentState === 'TRIGGERED'
+                            ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                            : currentState === 'CONFIRMED'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : currentState.includes('TARGET_1')
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {isSignalExpired && 'EXPIRED · 3m Window Closed'}
+                        {!isSignalExpired && currentState === 'ARMED' && 'ARMED · Waiting Breakout'}
+                        {!isSignalExpired && currentState === 'TRIGGERED' && 'TRIGGERED · Fill Pending'}
+                        {!isSignalExpired && currentState === 'CONFIRMED' && 'CONFIRMED · Position Active'}
+                        {!isSignalExpired && currentState === 'TARGET_1_HIT' && 'T1 HIT · 50% Booked'}
+                        {!isSignalExpired && currentState === 'TARGET_2_HIT' && 'T2 HIT · Completed'}
+                        {!isSignalExpired && currentState === 'STOP_LOSS_HIT' && 'STOP HIT · Exited'}
+                        {!isSignalExpired && !['ARMED', 'TRIGGERED', 'CONFIRMED', 'TARGET_1_HIT', 'TARGET_2_HIT', 'STOP_LOSS_HIT'].includes(currentState) && currentState}
+                      </span>
+
+                      {currentState === 'ARMED' && !isSignalExpired && (
+                        <span
+                          className={`inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2 py-0.5 rounded border ${
+                            secondsRemaining > 60
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : secondsRemaining > 0
+                              ? 'bg-rose-50 text-rose-700 border-rose-300 animate-pulse'
+                              : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}
+                          title="Pre-entry trigger window remaining before auto-expiry"
+                        >
+                          <Hourglass className="w-2.5 h-2.5" />
+                          <span>{secondsRemaining > 0 ? `${countdownStr} left` : 'Window Expired'}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Horizontal Stage Progress Bar */}
@@ -518,6 +615,9 @@ Rationale: ${sig.rationale}`;
                     </span>
                     <span className="text-slate-400 font-mono">
                       Created: {fullLocalStr} ({utcStr})
+                    </span>
+                    <span className="text-slate-400 font-mono hidden sm:inline">
+                      · {ttlSec}s TTL
                     </span>
                   </div>
 

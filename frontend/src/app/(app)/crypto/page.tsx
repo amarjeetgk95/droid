@@ -66,6 +66,7 @@ export default function CryptoPage() {
   // --- Dedicated Navigation: Scalping Signals, P&L Ledger, Market Terminal ---
   const [topTab, setTopTab] = useState<'scalp' | 'ledger' | 'terminal'>('scalp');
   const [scalpSignals, setScalpSignals] = useState<CryptoScalpSignal[]>([]);
+  const [scalpHistory, setScalpHistory] = useState<CryptoScalpSignal[]>([]);
   const [scalpDiagnostics, setScalpDiagnostics] = useState<CryptoScalpDiagnostics | null>(null);
   const [scalpLedger, setScalpLedger] = useState<CryptoScalpExecutionRecord[]>([]);
   const [loadingScalpSignals, setLoadingScalpSignals] = useState<boolean>(false);
@@ -75,12 +76,16 @@ export default function CryptoPage() {
   const fetchScalpSignals = useCallback(async () => {
     try {
       setLoadingScalpSignals(true);
-      const [sRes, dRes] = await Promise.all([
+      const [sRes, dRes, hRes] = await Promise.all([
         api.getCryptoScalpSignals().catch(() => null),
         api.getCryptoScalpDiagnostics().catch(() => null),
+        api.getCryptoScalpHistory({ limit: 20 }).catch(() => null),
       ]);
       if (sRes?.signals) {
         setScalpSignals(sRes.signals);
+      }
+      if (hRes && Array.isArray(hRes)) {
+        setScalpHistory(hRes);
       }
       if (dRes) {
         setScalpDiagnostics(dRes);
@@ -521,6 +526,7 @@ export default function CryptoPage() {
           {/* Scalping Signals Cockpit */}
           <CryptoScalpSignalsCard
             signals={scalpSignals}
+            historySignals={scalpHistory}
             loading={loadingScalpSignals}
             onRefresh={handleManualScalpScan}
             onDeleteSignal={handleDeleteScalpSignal}
