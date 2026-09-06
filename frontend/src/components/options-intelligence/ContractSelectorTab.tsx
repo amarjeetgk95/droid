@@ -15,8 +15,34 @@ export const ContractSelectorTab: React.FC<ContractSelectorTabProps> = ({
   contractSelection,
   underlying,
 }) => {
-  const greeks = contractSelection?.selected_greeks;
-  const sim = contractSelection?.path_simulation;
+  if (!contractSelection || !contractSelection.selected_contract) {
+    return (
+      <div className="bg-card/80 border border-border/70 rounded-2xl p-8 text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-muted/60 border border-border flex items-center justify-center mx-auto text-muted-foreground">
+          <Layers className="w-6 h-6 text-muted-foreground/60" />
+        </div>
+        <div className="max-w-md mx-auto space-y-1.5">
+          <h3 className="text-base font-bold text-foreground">
+            No Active Contract Recommendations
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            <strong className="text-foreground">The Truth of Wall:</strong> All option strikes, Greeks, and path simulations are calculated strictly from authentic broker market data. When the broker connection is offline or unavailable, no synthetic or false strikes are fabricated.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          <a
+            href="/settings"
+            className="px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Connect Broker in Settings
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const greeks = contractSelection.selected_greeks;
+  const sim = contractSelection.path_simulation;
 
   const scenarios: {
     key: string;

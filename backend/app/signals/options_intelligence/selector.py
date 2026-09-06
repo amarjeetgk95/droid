@@ -85,7 +85,7 @@ class QuantitativeContractSelector:
         Runs full multi-strike evaluation and returns the best-fit contract.
         """
         cfg = INDEX_CONTRACT_CONFIGS.get(underlying)
-        if not cfg:
+        if not cfg or spot_price <= 0:
             return None
 
         # Resolve expected move points and horizon from projection if provided

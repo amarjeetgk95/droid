@@ -129,6 +129,8 @@ def solve_implied_volatility(req: SolveIVRequest):
 @router.post("/simulate-path", response_model=PathSimulationReport)
 def simulate_option_path(req: PathSimulateRequest):
     """Simulate 5 path-dependent scenarios with Indian regulatory and microstructure friction."""
+    if req.spot <= 0 or req.strike <= 0:
+        raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot and strike required.")
     return simulator.evaluate_candidate(
         underlying=req.underlying,
         spot=req.spot,
@@ -147,6 +149,8 @@ def simulate_option_path(req: PathSimulateRequest):
 @router.post("/select-contract")
 def select_optimal_option_contract(req: SelectContractRequest):
     """Rank ITM, ATM, OTM candidates and select the best risk-adjusted contract."""
+    if req.spot_price <= 0:
+        raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot price required.")
     res = quantitative_contract_selector.select_optimal_contract(
         underlying=req.underlying,
         spot_price=req.spot_price,
@@ -164,6 +168,8 @@ def select_optimal_option_contract(req: SelectContractRequest):
 @router.post("/expected-move", response_model=ExpectedMoveProjection)
 def project_expected_move(req: ExpectedMoveRequest):
     """Project underlying expected move magnitude, timing, and velocity vs option theta."""
+    if req.spot <= 0:
+        raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot price required.")
     return expected_move_engine.project_move(
         underlying=req.underlying,
         spot=req.spot,

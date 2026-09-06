@@ -201,6 +201,20 @@ class RegimeService:
         key_levels = await self.get_key_levels(underlying)
         vix_info = await self.get_vix_regime()
 
+        # THE TRUTH OF WALL: If broker market data is unavailable, do not generate fake regime analysis.
+        if spot_p <= 0.0:
+            return MarketRegimeOverview(
+                symbol=underlying,
+                spot_price=0.0,
+                regime_state="UNKNOWN",
+                confidence_score=0.0,
+                summary_headline="Broker Feed Disconnected / No Market Data",
+                institutional_rationale="Authentic market data is unavailable from the broker API. In accordance with The Truth of Wall, no synthetic or false regime analysis is generated.",
+                indicators=indicators,
+                key_levels=key_levels,
+                vix_regime=vix_info,
+            )
+
         # Classification rules
         is_bullish_trend = (
             indicators.adx_14 >= 22.0 and

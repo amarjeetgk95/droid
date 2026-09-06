@@ -54,7 +54,7 @@ export default function MarketsPage() {
     };
   }, [selectedSymbol]);
 
-  const spotPrice = overview?.spot_price || 25000;
+  const spotPrice = overview?.spot_price || 0;
 
   return (
     <div className="space-y-4">

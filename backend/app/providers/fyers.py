@@ -619,74 +619,13 @@ class FyersProvider(MarketDataProvider):
                             if quotes:
                                 return quotes
             except Exception as e:
-                logger.debug("fyers_option_chain_api_fallback", error=str(e))
+                logger.debug("fyers_option_chain_api_failed", error=str(e))
 
-        # Robust Mathematical Fallback Generation
-        # Ensures strikes & Greeks are populated with high fidelity when offline, weekend, or closed
-        from app.quant.black76 import black76_price
-        from app.quant.expiry_math import calculate_time_to_expiry, get_risk_free_rate
-
-        try:
-            underlying_quote = await self.get_quote(underlying)
-            spot = underlying_quote.ltp if underlying_quote.ltp > 0 else default_spot
-        except Exception:
-            spot = default_spot
-
-        all_expiries = await self.get_expiries(underlying)
-        target_expiry = expiry or (all_expiries[0] if all_expiries else datetime.now(timezone.utc))
-
-        now = datetime.now(timezone.utc)
-        target_date = target_expiry.date() if isinstance(target_expiry, datetime) else target_expiry
-        t = calculate_time_to_expiry(now, target_date)
-        r, _ = get_risk_free_rate()
-        futures_price = round(spot * math.exp(r * t), 2)
-
-        atm_strike = round(spot / strike_step) * strike_step
-        num_strikes = 15  # 31 strikes total
-
-        quotes = []
-        for i in range(-num_strikes, num_strikes + 1):
-            strike = float(atm_strike + (i * strike_step))
-            m = (strike - spot) / spot
-            iv_smile = 0.135 * (1.0 + 0.18 * (m ** 2))
-
-            for opt_type in ("CE", "PE"):
-                ltp_calc = black76_price(opt_type, futures_price, strike, t, r, iv_smile)
-                ltp = round(max(0.50, ltp_calc), 2)
-                prev_close = round(ltp * (1.0 - 0.015 * (1 if i % 2 == 0 else -1)), 2)
-                chg = round(ltp - prev_close, 2)
-                chg_pct = round((chg / prev_close) * 100.0, 2) if prev_close > 0 else 0.0
-
-                dist_factor = max(0.08, 1.0 - (abs(i) / (num_strikes + 2)) ** 1.3)
-                round_strike_boost = 1.6 if strike % (strike_step * 5) == 0 else 1.0
-                base_oi = int(120000 * dist_factor * round_strike_boost)
-                base_vol = int(45000 * dist_factor * round_strike_boost)
-                oi_change = int(3500 * (1 if (i + (1 if opt_type == "PE" else 0)) % 2 == 0 else -1) * dist_factor)
-
-                contract_id = f"{underlying}_{target_date.strftime('%y%b%d').upper()}_{int(strike)}_{opt_type}"
-                quotes.append(
-                    NormalizedOptionQuote(
-                        timestamp=now,
-                        provider=self.PROVIDER_ID,
-                        instrument=contract_id,
-                        contract_id=contract_id,
-                        underlying=underlying,
-                        expiry=target_expiry,
-                        strike=strike,
-                        option_type=opt_type,
-                        ltp=ltp,
-                        bid=round(max(0.05, ltp - 0.25), 2),
-                        ask=round(ltp + 0.25, 2),
-                        volume=base_vol,
-                        oi=base_oi,
-                        oi_change=oi_change,
-                        change=chg,
-                        change_percent=chg_pct,
-                        previous_close=prev_close,
-                    )
-                )
-
-        return quotes
+        # THE TRUTH OF WALL: All market data must come from broker API only.
+        # If the broker option chain API is unavailable, fails, or token is expired,
+        # return an empty list — NEVER fabricate synthetic strikes or fake open interest.
+        logger.warning("fyers_option_chain_unavailable", symbol=underlying)
+        return []
 
     def _get_start_lock(self) -> asyncio.Lock:
         if self._start_lock is None:

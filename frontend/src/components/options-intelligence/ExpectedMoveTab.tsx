@@ -11,11 +11,37 @@ interface ExpectedMoveTabProps {
 }
 
 export const ExpectedMoveTab: React.FC<ExpectedMoveTabProps> = ({ expectedMoveData }) => {
-  const isVelocityApproved = expectedMoveData?.is_fast_enough_for_option ?? true;
-  const spot = expectedMoveData?.spot ?? 25000;
-  const t1 = expectedMoveData?.conservative_target_t1 ?? spot + 80;
-  const t2 = expectedMoveData?.structural_target_t2 ?? spot + 160;
-  const t3 = expectedMoveData?.extended_target_t3 ?? spot + 240;
+  if (!expectedMoveData || (expectedMoveData.spot_price ?? 0) <= 0) {
+    return (
+      <div className="bg-card/80 border border-border/70 rounded-2xl p-8 text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-muted/60 border border-border flex items-center justify-center mx-auto text-muted-foreground">
+          <Gauge className="w-6 h-6 text-muted-foreground/60" />
+        </div>
+        <div className="max-w-md mx-auto space-y-1.5">
+          <h3 className="text-base font-bold text-foreground">
+            Expected Move Projection Unavailable
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            <strong className="text-foreground">The Truth of Wall:</strong> Velocity vs theta ratios and staged target ladders require authentic market data from your broker API. When the broker connection is offline, no false or fictitious target projections are generated.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          <a
+            href="/settings"
+            className="px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Connect Broker in Settings
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const isVelocityApproved = expectedMoveData.is_fast_enough_for_option ?? true;
+  const spot = expectedMoveData.spot_price;
+  const t1 = expectedMoveData.conservative_move_points ?? spot + 80;
+  const t2 = expectedMoveData.aggressive_move_points ?? spot + 160;
+  const t3 = spot + (expectedMoveData.expected_move_points || 100);
 
   return (
     <div className="space-y-5">

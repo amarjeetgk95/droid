@@ -136,13 +136,37 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
                 <X className="w-3.5 h-3.5" />
               </button>
             </form>
+          ) : spotPrice <= 0 ? (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span className="text-xs font-bold font-mono text-foreground">{underlying}:</span>
+              <span className="text-xs font-mono font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
+                NO DATA (BROKER OFFLINE)
+              </span>
+              {onUpdateSpot && (
+                <button
+                  type="button"
+                  onClick={() => setEditingSpot(true)}
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center gap-1 text-[11px]"
+                  title="Simulate a what-if price"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span className="hidden sm:inline">Simulate</span>
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className={`w-2 h-2 rounded-full ${isCustomSpot ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`} />
               <span className="text-xs font-bold font-mono text-foreground">{underlying} Spot:</span>
-              <span className="text-sm font-bold font-mono text-primary">
+              <span className={`text-sm font-bold font-mono ${isCustomSpot ? 'text-amber-400' : 'text-primary'}`}>
                 ₹{spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
+              {isCustomSpot && (
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 font-semibold">
+                  SIMULATION
+                </span>
+              )}
               {onUpdateSpot && (
                 <button
                   type="button"
@@ -158,7 +182,7 @@ export const OptionsCommandBar: React.FC<OptionsCommandBarProps> = ({
                   type="button"
                   onClick={onResetSpot}
                   className="p-1 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
-                  title="Reset to default baseline"
+                  title="Reset to live broker feed"
                 >
                   <RotateCcw className="w-3 h-3" />
                 </button>

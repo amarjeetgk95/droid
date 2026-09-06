@@ -121,7 +121,7 @@ export default function OptionsPage() {
     };
   }, [selectedSymbol, selectedExpiry]);
 
-  const spotPrice = chainData?.spot_price || 25000;
+  const spotPrice = chainData?.spot_price || 0;
 
   const tabs = [
     {
@@ -165,7 +165,7 @@ export default function OptionsPage() {
       content: (
         <IVSmileChart
           strikes={chainData?.strikes || []}
-          atmStrike={chainData?.analytics?.atm_strike || 25000}
+          atmStrike={chainData?.analytics?.atm_strike || 0}
         />
       ),
     },

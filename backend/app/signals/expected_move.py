@@ -202,6 +202,8 @@ class ExpectedMoveEngine:
         Generates comprehensive expected move projection for underlying instrument.
         """
         u = underlying.upper()
+        if spot <= 0:
+            raise ValueError("Spot price must be positive and non-zero")
         inst_configs = self.configs.get(u, self.configs["NIFTY"])
         params = inst_configs.get(horizon, inst_configs["INTRADAY"])
 

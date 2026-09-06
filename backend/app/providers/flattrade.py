@@ -164,30 +164,22 @@ class FlattradeProvider(MarketDataProvider):
         if sym_upper in self._last_known_quotes:
             return self._last_known_quotes[sym_upper]
 
-        # Default fallback values for Indian indices
-        defaults = {
-            "NIFTY 50": 25000.0,
-            "BANKNIFTY": 57800.0,
-            "FINNIFTY": 26500.0,
-            "SENSEX": 82000.0,
-            "INDIA VIX": 13.5,
-        }
-        base_ltp = defaults.get(sym_upper, 1000.0)
-        is_open = calendar_service.is_market_open_now()
+        # THE TRUTH OF WALL: Never fabricate or invent market prices.
+        # If broker API did not provide a live quote, return explicit OFFLINE with 0.0 LTP.
         return NormalizedQuote(
             symbol=symbol,
             display_name=symbol,
             timestamp=now,
-            ltp=base_ltp,
-            open=base_ltp,
-            high=base_ltp * 1.005,
-            low=base_ltp * 0.995,
-            previous_close=base_ltp,
+            ltp=0.0,
+            open=0.0,
+            high=0.0,
+            low=0.0,
+            previous_close=0.0,
             change=0.0,
             change_percent=0.0,
-            volume=100000,
-            open_interest=0 if "VIX" not in sym_upper else None,
-            status=DataStatus.LIVE if is_open else DataStatus.CLOSED,
+            volume=0,
+            open_interest=None,
+            status=DataStatus.OFFLINE,
             provider=self.provider_name,
         )
 
@@ -203,26 +195,10 @@ class FlattradeProvider(MarketDataProvider):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[NormalizedCandle]:
-        # Synthesize baseline candles if historical endpoint not active
-        end_time = end or datetime.now(timezone.utc)
-        quote = await self.get_quote(symbol)
-        candles = []
-        base_p = quote.ltp
-
-        for i in range(50, 0, -1):
-            t = end_time - timedelta(minutes=i * 5)
-            candles.append(
-                NormalizedCandle(
-                    timestamp=t,
-                    open=base_p,
-                    high=base_p * 1.002,
-                    low=base_p * 0.998,
-                    close=base_p,
-                    volume=5000.0,
-                    vwap=base_p,
-                )
-            )
-        return candles
+        # THE TRUTH OF WALL: Never synthesize fake candles.
+        # Flattrade historical requires an active broker subscription/session.
+        # When unavailable, return an empty list so callers know no data exists.
+        return []
 
     async def get_index_cards(self) -> list[IndexCard]:
         indices = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIA VIX"]
@@ -275,13 +251,14 @@ class FlattradeProvider(MarketDataProvider):
         )
 
     async def get_market_breadth(self) -> MarketBreadthData:
+        # THE TRUTH OF WALL: Never fabricate market breadth.
         return MarketBreadthData(
-            advances=32,
-            declines=18,
+            advances=0,
+            declines=0,
             unchanged=0,
-            advance_decline_ratio=1.77,
-            total_stocks=50,
-            status=DataStatus.LIVE,
+            advance_decline_ratio=0.0,
+            total_stocks=0,
+            status=DataStatus.OFFLINE,
         )
 
     async def get_expiries(self, symbol: str) -> list[datetime]:
@@ -298,39 +275,9 @@ class FlattradeProvider(MarketDataProvider):
         symbol: str,
         expiry: datetime | None = None,
     ) -> list[NormalizedOptionQuote]:
-        underlying = await self.get_quote(symbol)
-        spot = underlying.ltp
-        strike_step = 50 if "NIFTY" in symbol and "BANK" not in symbol else 100
-        atm_strike = round(spot / strike_step) * strike_step
-        exp = expiry or (await self.get_expiries(symbol))[0]
-
-        quotes = []
-        for i in range(-10, 11):
-            strike = float(atm_strike + (i * strike_step))
-            for opt_type in ["CE", "PE"]:
-                dist = (spot - strike) if opt_type == "CE" else (strike - spot)
-                intrinsic = max(0.0, dist)
-                time_val = max(10.0, 50.0 - abs(i) * 3)
-                ltp = round(intrinsic + time_val, 2)
-
-                quotes.append(
-                    NormalizedOptionQuote(
-                        timestamp=datetime.now(timezone.utc),
-                        provider=self.provider_name,
-                        instrument=f"{symbol}_{int(strike)}_{opt_type}",
-                        contract_id=f"NFO:{symbol}{exp.strftime('%y%b').upper()}{int(strike)}{opt_type}",
-                        underlying=symbol,
-                        expiry=exp,
-                        strike=strike,
-                        option_type=opt_type,
-                        ltp=ltp,
-                        bid=round(ltp * 0.99, 2),
-                        ask=round(ltp * 1.01, 2),
-                        volume=10000,
-                        oi=50000,
-                    )
-                )
-        return quotes
+        # THE TRUTH OF WALL: Never synthesize fake option strikes or fictitious prices.
+        # When Flattrade option chain feed is inactive or disconnected, return empty list.
+        return []
 
     async def start_stream(self) -> None:
         if self._stream_running:
