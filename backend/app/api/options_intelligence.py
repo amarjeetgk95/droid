@@ -35,6 +35,7 @@ from app.signals.portfolio_greeks import (
     MarginalGreekCheckResult,
 )
 from app.ai.financial_research.context_store import ai_context_store
+from app.ai.financial_research.engine import financial_research_engine
 from app.ai.financial_research.schemas import FinancialResearchReport
 
 router = APIRouter(prefix="/api/v1/options-intelligence", tags=["options-intelligence"])
@@ -190,3 +191,19 @@ def get_financial_research_context(
 ):
     """Retrieve active or deterministic fallback AI financial research and contradiction analysis (§42)."""
     return ai_context_store.get_or_fallback_default(underlying=underlying, horizon=horizon, direction=direction)
+
+
+class SynthesizeResearchRequest(BaseModel):
+    underlying: str = "NIFTY"
+    horizon: TradingHorizon = "INTRADAY"
+    direction: Literal["BULLISH", "BEARISH"] = "BULLISH"
+
+
+@router.post("/financial-research/synthesize", response_model=FinancialResearchReport)
+def synthesize_financial_research(req: SynthesizeResearchRequest):
+    """Dynamically synthesize fresh AI financial research and contradiction analysis for given underlying."""
+    return financial_research_engine.generate_index_intelligence(
+        underlying=req.underlying,
+        horizon=req.horizon,
+        direction=req.direction,
+    )

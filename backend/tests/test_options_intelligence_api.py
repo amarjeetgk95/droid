@@ -110,3 +110,18 @@ def test_api_financial_research_context(client):
     assert "contradiction_analysis" in data
     assert "research_assessment" in data
     assert "ai_impact" in data
+
+
+def test_api_financial_research_synthesize(client):
+    payload = {
+        "underlying": "BANKNIFTY",
+        "horizon": "INTRADAY",
+        "direction": "BULLISH",
+    }
+    resp = client.post("/api/v1/options-intelligence/financial-research/synthesize", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["underlying"] == "BANKNIFTY"
+    assert data["research_status"] == "COMPLETE"
+    assert len(data["supporting_evidence"]) > 0
+    assert data["contradiction_analysis"]["counter_weight_score"] >= 0.0

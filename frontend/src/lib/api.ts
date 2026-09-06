@@ -1281,6 +1281,13 @@ class ApiClient {
     return this.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
   }
 
+  async synthesizeFinancialResearch(params: { underlying: string; horizon?: string; direction?: string }) {
+    return this.request<any>('/api/v1/options-intelligence/financial-research/synthesize', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
   async calculateGreeks(params: { spot: number; strike: number; dte_days: number; volatility: number; option_type: 'CE' | 'PE' }) {
     return this.request<any>('/api/v1/options-intelligence/greeks', {
       method: 'POST',

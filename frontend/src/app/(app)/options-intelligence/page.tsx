@@ -26,6 +26,7 @@ import {
   XCircle,
   BarChart3,
   DollarSign,
+  Sparkles,
 } from 'lucide-react';
 
 export default function OptionsIntelligencePage() {
@@ -33,6 +34,7 @@ export default function OptionsIntelligencePage() {
   const [horizon, setHorizon] = useState<'SCALP' | 'INTRADAY' | 'SWING' | 'POSITIONAL'>('INTRADAY');
   const [direction, setDirection] = useState<'BULLISH' | 'BEARISH'>('BULLISH');
   const [loading, setLoading] = useState<boolean>(true);
+  const [synthesizing, setSynthesizing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   // Data states
@@ -40,6 +42,18 @@ export default function OptionsIntelligencePage() {
   const [expectedMoveData, setExpectedMoveData] = useState<any>(null);
   const [contractSelection, setContractSelection] = useState<any>(null);
   const [portfolioGreeks, setPortfolioGreeks] = useState<any>(null);
+
+  const handleSynthesizeAI = async () => {
+    setSynthesizing(true);
+    try {
+      const res = await api.synthesizeFinancialResearch({ underlying, horizon, direction });
+      setResearchData(res);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to synthesize AI financial research');
+    } finally {
+      setSynthesizing(false);
+    }
+  };
 
   const spotBaselines: Record<string, number> = {
     NIFTY: 24920.0,
@@ -139,6 +153,49 @@ export default function OptionsIntelligencePage() {
       icon: Brain,
       content: (
         <div className="space-y-6">
+          {/* AI Engine Status & Safeguard Verification Banner (§18, §20, §34) */}
+          <Card className={`border ${researchData?.research_status === 'COMPLETE' ? 'bg-emerald-950/20 border-emerald-500/40' : 'bg-amber-950/20 border-amber-500/40'}`}>
+            <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-start md:items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${researchData?.research_status === 'COMPLETE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                  <Brain className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-sm text-foreground">
+                      {researchData?.research_status === 'COMPLETE' ? 'AI Financial Research Engine: ACTIVE & COMPLETE' : 'Deterministic Fallback Active (§34 Safeguard)'}
+                    </span>
+                    <Badge className={researchData?.research_status === 'COMPLETE' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 text-xs font-mono' : 'bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs font-mono'}>
+                      {researchData?.research_status || 'IDLE'}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground">
+                      Model: {researchData?.model_version || 'financial-research-v1.0'}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground">
+                      Protection: 7-Tier Adversarial (§20)
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {researchData?.research_status === 'COMPLETE'
+                      ? `Live synthesis completed for ${underlying} (${horizon} ${direction}). Validated ${researchData?.supporting_evidence?.length || 0} supportive and ${researchData?.contradiction_analysis?.contradicting_evidence?.length || 0} contradictory institutional sources.`
+                      : 'Background intelligence context is cold or stale. Per §34, missing AI never fabricates approval; quantitative options math proceeds safely with neutral baseline.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  onClick={handleSynthesizeAI}
+                  disabled={synthesizing}
+                  size="sm"
+                  className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs h-8 shadow-sm font-semibold"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${synthesizing ? 'animate-spin text-amber-300' : 'text-amber-300'}`} />
+                  {synthesizing ? 'Synthesizing Live...' : 'Run Live AI Research'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Executive Assessment Header */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="bg-card/70 border-border">
