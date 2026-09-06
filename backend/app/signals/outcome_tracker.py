@@ -98,7 +98,9 @@ class SignalOutcomeTracker:
         events = []
 
         for sig in active:
-            if sig.outcome_status is not None:
+            # Runners (TARGET_1_HIT / WIN_T1) must keep evaluating until a terminal
+            # state; only settled outcomes skip the tick.
+            if sig.outcome_status is not None and sig.fsm_state != "TARGET_1_HIT":
                 continue
             st = sig.fsm_state
             if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
@@ -173,7 +175,9 @@ class SignalOutcomeTracker:
         processed_events: list[dict] = []
 
         for sig in active:
-            if sig.outcome_status is not None:
+            # Runners (TARGET_1_HIT / WIN_T1) must keep evaluating until a terminal
+            # state; only settled outcomes skip the tick.
+            if sig.outcome_status is not None and sig.fsm_state != "TARGET_1_HIT":
                 continue
             st = sig.fsm_state
             if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
@@ -190,7 +194,12 @@ class SignalOutcomeTracker:
 
                 if triggered:
                     # First transition to TRIGGERED
-                    signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
+                    ok, trans_err = signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
+                    if not ok:
+                        logger.warning("fsm_transition_to_triggered_failed", signal_id=sig.signal_id, error=trans_err)
+                        if trans_err == "FNO_DATA_DEGRADED_CANNOT_ARM":
+                            signal_fsm.transition(sig.signal_id, "INVALIDATED", market_price=d_price, reason=trans_err)
+                        continue
 
                     # Attempt paper execution
                     paper_res = None
@@ -387,12 +396,15 @@ class SignalOutcomeTracker:
                                 confidence=float(sig.confidence),
                                 option_contract=sig.option_contract,
                             )
+                        exit_price_to_record = float(est_opt_price) if sig.option_contract else float(d_price)
                         sq_rec = signal_audit_ledger.record_square_off(
                             signal_id=sig.signal_id,
-                            exit_price=float(d_price),
+                            exit_price=exit_price_to_record,
                             exit_reason=eval_action,
                             exit_time_ms=ts_now,
                         )
+                        if not sq_rec:
+                            sq_rec = signal_audit_ledger.get(sig.signal_id)
                         if sq_rec and recon:
                             sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
                             sq_rec.total_pnl_inr = recon.net_realized_pnl_inr

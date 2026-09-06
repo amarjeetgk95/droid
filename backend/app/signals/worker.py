@@ -58,6 +58,7 @@ class AutomatedSignalWorker:
         self._last_market_open: bool | None = None
         self._last_risk_closed_log_ts: float = 0.0
         self._last_scanner_closed_log_ts: float = 0.0
+        self._bg_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         if self._running:
@@ -81,6 +82,9 @@ class AutomatedSignalWorker:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+        for t in list(self._bg_tasks):
+            t.cancel()
+        self._bg_tasks.clear()
         self._risk_task = None
         self._scanner_task = None
         logger.info("automated_signal_worker_stopped")
@@ -162,7 +166,9 @@ class AutomatedSignalWorker:
                             except Exception as te_err:
                                 logger.debug("worker_bg_audit_telemetry_error", underlying=sym, error=str(te_err))
 
-                        asyncio.create_task(_bg_audit_and_sse(u, curr_p))
+                        bg_task = asyncio.create_task(_bg_audit_and_sse(u, curr_p))
+                        self._bg_tasks.add(bg_task)
+                        bg_task.add_done_callback(self._bg_tasks.discard)
                     except Exception as pe:
                         logger.debug("worker_risk_tick_err", underlying=u, error=str(pe))
 

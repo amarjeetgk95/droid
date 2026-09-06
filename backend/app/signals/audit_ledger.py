@@ -323,7 +323,19 @@ class SignalAuditLedger:
         rec.quantity = quantity
         rec.lots = lots
         rec.executed_at_utc = now_ms
-        rec.slippage_points = round(abs(fill_price - rec.trigger_price), 2)
+        if rec.option_strike and rec.option_type:
+            try:
+                from app.signals.fill_reconciler import option_fill_reconciler
+                est_trigger_prem = option_fill_reconciler.estimate_option_premium(
+                    spot=rec.trigger_price,
+                    strike=rec.option_strike,
+                    option_type=rec.option_type,
+                )
+                rec.slippage_points = round(abs(fill_price - est_trigger_prem), 2)
+            except Exception:
+                rec.slippage_points = 0.0
+        else:
+            rec.slippage_points = round(abs(fill_price - rec.trigger_price), 2)
         rec.margin_used = margin_used or (fill_price * quantity)
         rec.status = "EXECUTED"
         rec.updated_at_utc = now_ms
@@ -363,16 +375,53 @@ class SignalAuditLedger:
             return rec
 
         now_ms = exit_time_ms or int(time.time() * 1000)
-        entry_price = rec.actual_fill_price or rec.trigger_price
         qty = rec.quantity or (rec.lots * rec.lot_size)
         side = (rec.paper_side or "BUY").upper()
-
-        # Calculate actual PnL (Spot tracking)
         is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
-        if is_bullish:
-            points_diff = exit_price - entry_price
+        is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
+
+        # Domain-safe entry: option fills are premiums; spot trigger must never
+        # stand in for a missing premium (e.g. delete of an unfilled signal).
+        entry_price = rec.actual_fill_price
+        if entry_price is None and is_option and rec.option_strike:
+            try:
+                from app.signals.fill_reconciler import option_fill_reconciler
+                entry_price = option_fill_reconciler.estimate_option_premium(
+                    spot=rec.trigger_price,
+                    strike=rec.option_strike,
+                    option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                )
+            except Exception:
+                entry_price = None
+        if entry_price is None:
+            entry_price = rec.trigger_price
+
+        # Calculate actual PnL
+        if is_option:
+            # For option purchases, profit is exit premium minus entry premium
+            if side == "BUY":
+                points_diff = exit_price - entry_price
+            else:
+                points_diff = entry_price - exit_price
+
+            try:
+                from app.signals.fill_reconciler import option_fill_reconciler
+                est_entry = option_fill_reconciler.estimate_option_premium(
+                    spot=rec.trigger_price,
+                    strike=rec.option_strike or rec.trigger_price,
+                    option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                )
+                theo_diff = (exit_price - est_entry) if side == "BUY" else (est_entry - exit_price)
+            except Exception:
+                theo_diff = points_diff
         else:
-            points_diff = entry_price - exit_price
+            # Spot / Futures underlying tracking
+            if is_bullish:
+                points_diff = exit_price - entry_price
+                theo_diff = exit_price - rec.trigger_price
+            else:
+                points_diff = entry_price - exit_price
+                theo_diff = rec.trigger_price - exit_price
 
         actual_pnl_inr = round(points_diff * qty, 2)
         margin = rec.margin_used or (entry_price * qty)
@@ -385,8 +434,6 @@ class SignalAuditLedger:
         hrs, mins = divmod(mins, 60)
         duration_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s"
 
-        # Theoretical outcome for comparison
-        theo_diff = (exit_price - rec.trigger_price) if is_bullish else (rec.trigger_price - exit_price)
         theo_pnl_inr = round(theo_diff * qty, 2)
 
         # Winner classification
@@ -463,25 +510,46 @@ class SignalAuditLedger:
                 curr_p = round(float(current_price), 2)
                 rec.current_price = curr_p
 
-                # Entry reference: fill price if executed, else trigger price
-                entry_price = rec.actual_fill_price or rec.trigger_price
-                qty = rec.quantity or (rec.lots * rec.lot_size)
-                is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
-
-                if is_bullish:
-                    pts_diff = curr_p - entry_price
+                if rec.status == "ARMED":
+                    rec.unrealized_pnl_points = 0.0
+                    rec.unrealized_pnl_inr = 0.0
+                    rec.unrealized_pnl_pct = 0.0
+                    rec.total_pnl_inr = 0.0
+                    rec.is_winner = None
                 else:
-                    pts_diff = entry_price - curr_p
+                    # Entry reference: fill price if executed, else trigger price
+                    entry_price = rec.actual_fill_price or rec.trigger_price
+                    qty = rec.quantity or (rec.lots * rec.lot_size)
+                    side = (rec.paper_side or "BUY").upper()
+                    is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
+                    is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
 
-                unrealized_inr = round(pts_diff * qty, 2)
-                margin = rec.margin_used or (entry_price * qty)
-                unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
+                    if is_option:
+                        try:
+                            from app.signals.fill_reconciler import option_fill_reconciler
+                            opt_type = rec.option_type or ("CE" if is_bullish else "PE")
+                            strike = rec.option_strike or curr_p
+                            curr_opt_price = option_fill_reconciler.estimate_option_premium(
+                                spot=curr_p,
+                                strike=strike,
+                                option_type=opt_type,
+                            )
+                        except Exception:
+                            curr_opt_price = entry_price
 
-                rec.unrealized_pnl_points = round(pts_diff, 2)
-                rec.unrealized_pnl_inr = unrealized_inr
-                rec.unrealized_pnl_pct = unrealized_pct
-                rec.total_pnl_inr = unrealized_inr
-                rec.is_winner = unrealized_inr > 0
+                        pts_diff = (curr_opt_price - entry_price) if side == "BUY" else (entry_price - curr_opt_price)
+                    else:
+                        pts_diff = (curr_p - entry_price) if is_bullish else (entry_price - curr_p)
+
+                    unrealized_inr = round(pts_diff * qty, 2)
+                    margin = rec.margin_used or (entry_price * qty)
+                    unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
+
+                    rec.unrealized_pnl_points = round(pts_diff, 2)
+                    rec.unrealized_pnl_inr = unrealized_inr
+                    rec.unrealized_pnl_pct = unrealized_pct
+                    rec.total_pnl_inr = unrealized_inr
+                    rec.is_winner = unrealized_inr > 0
 
                 dur_s, dur_str = rec.compute_live_duration(now_ms)
                 rec.live_duration_seconds = dur_s
@@ -611,7 +679,7 @@ class SignalAuditLedger:
         """Compute aggregated portfolio PnL and accuracy statistics including live unrealized MTM."""
         all_t = list(self._trades.values())
         closed_t = [t for t in all_t if t.status in ("WON", "LOST", "CLOSED")]
-        open_t = [t for t in all_t if t.status in ("ARMED", "CONFIRMED", "EXECUTED")]
+        open_t = [t for t in all_t if t.status in ("ARMED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT")]
 
         total_closed = len(closed_t)
         winners = [t for t in closed_t if t.is_winner is True]

@@ -206,7 +206,7 @@ def sanitize_persisted_signals() -> int:
                 aid in demo_ids
                 or str(aid).startswith("SIG-TEST-")
                 or str(aid).startswith("test-")
-                or (rec.underlying == "BANKNIFTY" and (rec.spot_price_at_creation < 54000.0 or 52100.0 <= rec.spot_price_at_creation <= 52200.0))
+                or (rec.underlying == "BANKNIFTY" and rec.spot_price_at_creation < 40000.0)
                 or (rec.underlying == "NIFTY" and rec.spot_price_at_creation < 22000.0)
             )
             if is_ghost:
@@ -219,7 +219,7 @@ def sanitize_persisted_signals() -> int:
                 sid in demo_ids
                 or str(sid).startswith("SIG-TEST-")
                 or str(sid).startswith("test-")
-                or (inst.underlying == "BANKNIFTY" and (spot_flt < 54000.0 or 52100.0 <= spot_flt <= 52200.0))
+                or (inst.underlying == "BANKNIFTY" and spot_flt < 40000.0)
                 or (inst.underlying == "NIFTY" and spot_flt < 22000.0)
             )
             if is_ghost:
@@ -519,12 +519,12 @@ async def restore_signals_from_db() -> int:
 
             async with factory() as session:
                 try:
-                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%' OR signal_id LIKE 'test-%' OR (underlying = 'BANKNIFTY' AND spot_price_at_creation < 54000) OR (underlying = 'NIFTY' AND spot_price_at_creation < 22000)"))
+                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%' OR signal_id LIKE 'test-%' OR (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) OR (underlying = 'NIFTY' AND spot_price_at_creation < 22000)"))
                     await session.commit()
                 except Exception:
                     pass
 
-                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' AND signal_id NOT LIKE 'test-%' AND NOT (underlying = 'BANKNIFTY' AND spot_price_at_creation < 54000) AND NOT (underlying = 'NIFTY' AND spot_price_at_creation < 22000) ORDER BY created_at_utc ASC"))
+                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' AND signal_id NOT LIKE 'test-%' AND NOT (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) AND NOT (underlying = 'NIFTY' AND spot_price_at_creation < 22000) ORDER BY created_at_utc ASC"))
                 rows = res.mappings().all()
 
                 valid_fsm_states = {

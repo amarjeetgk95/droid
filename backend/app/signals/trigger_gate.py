@@ -43,8 +43,12 @@ def _dec(v: Any) -> Optional[Decimal]:
     return d
 
 
-def min_trigger_gap_pts(spot: Decimal, risk_points: Decimal) -> Decimal:
+def min_trigger_gap_pts(spot: Decimal, risk_points: Decimal, is_scalp: bool = False) -> Decimal:
     """Minimum trigger distance from spot for a signal to carry edge."""
+    if is_scalp:
+        pct_floor = abs(spot) * Decimal("0.0001")
+        risk_floor = abs(risk_points) * Decimal("0.05")
+        return max(pct_floor, risk_floor, TICK * 2)
     pct_floor = abs(spot) * MIN_GAP_PCT
     risk_floor = abs(risk_points) * MIN_GAP_RISK_FRACTION
     return max(pct_floor, risk_floor, TICK * 2)
@@ -65,6 +69,8 @@ def check_trigger_integrity(
     risk_points: Any,
     risk_reward_t1: Any = 1.5,
     risk_reward_t2: Any = 3.0,
+    is_scalp: bool = False,
+    timeframe: str = "5M",
 ) -> TriggerCheckResult:
     """Pure validator shared by the scanner pipeline and manual /generate."""
     spot = _dec(spot_price)
@@ -101,9 +107,11 @@ def check_trigger_integrity(
     if risk is None or risk <= 0:
         return TriggerCheckResult(False, "RISK_TOO_SMALL", "Risk points are zero — SL equals entry.")
 
+    is_scalp_effective = is_scalp or str(timeframe).upper() in ("1M", "3M", "SCALP")
+
     # 2. Minimum gap from spot (the no-edge killer).
     gap = abs(trig - spot)
-    min_gap = min_trigger_gap_pts(spot, risk)
+    min_gap = min_trigger_gap_pts(spot, risk, is_scalp=is_scalp_effective)
     if gap < min_gap:
         return TriggerCheckResult(
             False, "TRIGGER_TOO_CLOSE",
@@ -114,10 +122,11 @@ def check_trigger_integrity(
         )
 
     # 3. Dust-stop filter.
-    if risk < abs(spot) * MIN_RISK_PCT:
+    min_risk_floor = (abs(spot) * Decimal("0.00008")) if is_scalp_effective else (abs(spot) * MIN_RISK_PCT)
+    if risk < min_risk_floor:
         return TriggerCheckResult(
             False, "RISK_TOO_SMALL",
-            f"Risk {risk:.2f}pts is dust for ₹{spot} spot (min {abs(spot) * MIN_RISK_PCT:.2f}pts).",
+            f"Risk {risk:.2f}pts is dust for ₹{spot} spot (min {min_risk_floor:.2f}pts).",
             {"risk_pts": float(risk)},
         )
 

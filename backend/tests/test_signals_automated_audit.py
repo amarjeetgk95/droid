@@ -109,7 +109,7 @@ async def test_automated_paper_execution_on_signal_confirmation():
 
 @pytest.mark.asyncio
 async def test_automated_square_off_target_hit_with_actual_pnl():
-    # 1. Setup an active executed signal
+    # 1. Setup an active executed signal (2 lots so T1 is a genuine 50% partial)
     sig = SignalInstance(
         underlying="NIFTY",
         strategy="BREAKOUT",
@@ -126,6 +126,7 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
         risk_reward_t1=1.5,
         risk_reward_t2=3.0,
         confidence=85.0,
+        lots=2,
         option_contract={
             "broker_symbol": "NSE:NIFTY24DEC24850CE",
             "strike": 24850,
@@ -166,12 +167,23 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
     assert updated_sig.outcome_status == "WIN_T1"
 
     # Verify audit ledger recorded profit and loss
+    # T1 is a 50% partial: the audit record stays open as TARGET_1_HIT so the
+    # runner's final outcome is not discarded (staged-exit accounting).
+    audit_rec = signal_audit_ledger.get(sig.signal_id)
+    assert audit_rec.status == "TARGET_1_HIT"
+    assert signal_audit_ledger.get_summary_metrics()["open_trades"] == 1
+
+    # 4. Drive the runner to Target 2 -> full close as WON with option-domain PnL
+    final_events = await outcome_tracker.process_price_update_async("NIFTY", Decimal("25005.0"))
+    assert len(final_events) == 1
+    assert final_events[0]["event"] == "TARGET_2_HIT"
     audit_rec = signal_audit_ledger.get(sig.signal_id)
     assert audit_rec.status == "WON"
     assert audit_rec.is_winner is True
     assert audit_rec.actual_pnl_inr > 0
     assert audit_rec.actual_pnl_points > 0
     assert audit_rec.exit_price > 0
+    assert audit_rec.exit_price < 5000.0  # option premium domain, never spot index
     assert audit_rec.holding_time_str is not None
 
 
@@ -320,37 +332,43 @@ async def test_live_mark_to_market_pnl_updates_on_open_trade():
     signal_audit_ledger.record_paper_executed(
         signal_id=sig.signal_id,
         paper_order_id="ORD-TEST-001",
-        fill_price=24850.0,
+        fill_price=150.0,
         quantity=75,
         lots=1,
         side="BUY",
-        margin_used=24850.0 * 75 * 0.15,
+        margin_used=150.0 * 75,
     )
+    from app.signals.fill_reconciler import option_fill_reconciler
 
-    # 1. Simulate price rising by +30 points to 24880.0
+    # 1. Simulate spot rising by +30 points to 24880.0: MTM revalues the OPTION
+    # premium via Black76 (premium domain), never spot-minus-premium.
     updated = signal_audit_ledger.update_live_quote("NIFTY", 24880.0)
     assert len(updated) == 1
     rec = updated[0]
     assert rec.current_price == 24880.0
-    assert rec.unrealized_pnl_points == 30.0
-    assert rec.unrealized_pnl_inr == 30.0 * 75  # 2250.0
+    expected_prem = option_fill_reconciler.estimate_option_premium(
+        spot=24880.0, strike=24850, option_type="CE")
+    assert rec.unrealized_pnl_points == pytest.approx(expected_prem - 150.0)
+    assert rec.unrealized_pnl_inr == pytest.approx((expected_prem - 150.0) * 75)
     assert rec.is_winner is True
-    assert rec.total_pnl_inr == 2250.0
+    assert rec.total_pnl_inr == pytest.approx((expected_prem - 150.0) * 75)
     assert rec.live_duration_str is not None
 
-    # 2. Simulate price falling by -20 points to 24830.0
+    # 2. Simulate spot falling by -20 points to 24830.0 (below fill-domain value)
     signal_audit_ledger.update_live_quote("NIFTY", 24830.0)
     rec2 = signal_audit_ledger.get(sig.signal_id)
     assert rec2.current_price == 24830.0
-    assert rec2.unrealized_pnl_points == -20.0
-    assert rec2.unrealized_pnl_inr == -20.0 * 75  # -1500.0
+    expected_prem2 = option_fill_reconciler.estimate_option_premium(
+        spot=24830.0, strike=24850, option_type="CE")
+    assert rec2.unrealized_pnl_points == pytest.approx(expected_prem2 - 150.0)
+    assert rec2.unrealized_pnl_inr == pytest.approx((expected_prem2 - 150.0) * 75)
     assert rec2.is_winner is False
 
     # 3. Test summary metrics aggregation
     summary = signal_audit_ledger.get_summary_metrics()
     assert summary["open_trades"] == 1
-    assert summary["net_unrealized_pnl_inr"] == -1500.0
-    assert summary["total_pnl_inr"] == -1500.0
+    assert summary["net_unrealized_pnl_inr"] == pytest.approx((expected_prem2 - 150.0) * 75)
+    assert summary["total_pnl_inr"] == pytest.approx((expected_prem2 - 150.0) * 75)
     assert summary["live_losing_trades"] == 1
     assert summary["live_winning_trades"] == 0
 

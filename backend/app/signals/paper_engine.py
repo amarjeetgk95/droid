@@ -253,7 +253,7 @@ class SignalPaperEngine:
     async def close_signal_position(
         self,
         signal_id: str,
-        exit_price: float,
+        exit_price: Optional[float] = None,
         reason: str = "TARGET_HIT",
         quantity_to_close: Optional[int] = None,
         allow_closed_market: bool = False,
@@ -272,16 +272,44 @@ class SignalPaperEngine:
         if not broker_sym or not qty:
             return None
 
+        # Resolve exit price if missing
+        if exit_price is None:
+            pos_id = f"{broker_sym}_INTRADAY"
+            pos = paper_service._positions.get(pos_id)
+            if pos and pos.current_price and float(pos.current_price) > 0:
+                exit_price = float(pos.current_price)
+            elif sig.option_contract:
+                try:
+                    from app.signals.fill_reconciler import option_fill_reconciler
+                    opt = sig.option_contract
+                    strike = float(opt.get("strike", float(sig.trigger or 0.0)))
+                    opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
+                    spot = float(sig.spot_price or sig.trigger or 0.0)
+                    exit_price = option_fill_reconciler.estimate_option_premium(spot, strike, opt_type)
+                except Exception:
+                    exit_price = float(sig.actual_fill_price or sig.trigger or 0.0)
+            else:
+                exit_price = float(sig.actual_fill_price or sig.trigger or 0.0)
+
         # Allow closed market execution for square-off / cleanup reasons
         permit_closed = allow_closed_market or reason in (
             "MARKET_CLOSED", "EOD_SQUAREOFF", "DELETED_BY_USER", "TIME_STOP_EXCEEDED", "RUNNER_TTL_EXCEEDED"
         )
 
         pos_id = f"{broker_sym}_INTRADAY"
+        # Partial only when this close leaves residual quantity open (e.g. 50%
+        # staged T1 on a multi-lot position). A single-lot T1 closes everything
+        # and must settle via record_square_off, not linger as a runner.
+        # Reference quantity prefers the live paper position, else the audit record.
+        is_partial = False
         if pos_id in paper_service._positions and paper_service._positions[pos_id].is_open:
             pos = paper_service._positions[pos_id]
             exit_side = "SELL" if pos.side == "BUY" else "BUY"
+            pos_qty_before = pos.quantity
             final_close_qty = quantity_to_close if (quantity_to_close and quantity_to_close <= pos.quantity) else pos.quantity
+            if reason == "TARGET_1_HIT" and final_close_qty < pos_qty_before:
+                is_partial = True
+
             exit_payload = OrderPayload(
                 symbol=pos.symbol,
                 underlying=pos.underlying,
@@ -293,12 +321,25 @@ class SignalPaperEngine:
             )
             await paper_service.place_order(exit_payload, allow_closed_market=permit_closed)
             logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, qty=final_close_qty, reason=reason)
+        elif reason == "TARGET_1_HIT" and quantity_to_close:
+            audit_ref = signal_audit_ledger.get(signal_id)
+            ref_qty = (audit_ref.quantity or 0) if audit_ref else 0
+            if quantity_to_close < ref_qty:
+                is_partial = True
 
-        rec = signal_audit_ledger.record_square_off(
-            signal_id=signal_id,
-            exit_price=exit_price,
-            exit_reason=reason,
-        )
+        if is_partial:
+            rec = signal_audit_ledger.record_state_transition(
+                signal_id=signal_id,
+                to_state="TARGET_1_HIT",
+                market_price=exit_price,
+                reason=reason,
+            )
+        else:
+            rec = signal_audit_ledger.record_square_off(
+                signal_id=signal_id,
+                exit_price=exit_price,
+                exit_reason=reason,
+            )
         return rec
 
 

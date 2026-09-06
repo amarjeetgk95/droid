@@ -704,7 +704,7 @@ async def generate_signal(req: GenerateSignalRequest):
     # ── Spot Plausibility & Sanity Guard ──
     INDEX_PLAUSIBLE_RANGES = {
         "NIFTY": (Decimal("22000.0"), Decimal("35000.0")),
-        "BANKNIFTY": (Decimal("54000.0"), Decimal("75000.0")),
+        "BANKNIFTY": (Decimal("40000.0"), Decimal("75000.0")),
         "SENSEX": (Decimal("70000.0"), Decimal("120000.0")),
     }
     if u in INDEX_PLAUSIBLE_RANGES:
@@ -770,6 +770,8 @@ async def generate_signal(req: GenerateSignalRequest):
             detail=f"Unknown strategy '{req.strategy}'. Valid: {sorted(STRATEGY_REGISTRY.keys())}",
         )
 
+    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
+
     # ── Trigger integrity: reject born-triggered / no-edge manuals ──
     from app.signals.trigger_gate import check_trigger_integrity
     gate = check_trigger_integrity(
@@ -786,11 +788,12 @@ async def generate_signal(req: GenerateSignalRequest):
         risk_points=risk_pts,
         risk_reward_t1=rr_t1,
         risk_reward_t2=rr_t2,
+        is_scalp=is_scalp_setup,
+        timeframe=tf,
     )
     if not gate.passed:
         raise HTTPException(status_code=400, detail=f"{gate.reason_code}: {gate.message}")
 
-    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
     sig_type = "SCALP" if is_scalp_setup else (req.signal_type or "INTRADAY")
     ttl_s = req.time_stop_seconds or (180 if is_scalp_setup else 300)
 

@@ -587,6 +587,8 @@ class SignalScanner:
                 risk_points=cand.risk_points,
                 risk_reward_t1=cand.risk_reward_t1,
                 risk_reward_t2=cand.risk_reward_t2,
+                is_scalp=getattr(cand, "is_scalp", False),
+                timeframe=getattr(cand, "timeframe", "5M"),
             )
             if not gate.passed:
                 rejected_gates.append(f"{cand.strategy}:{gate.reason_code}")
