@@ -7,13 +7,9 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { SignalCard, type SignalDTO } from './SignalCard';
 import { SignalScannerTable } from './SignalScannerTable';
-import { SignalErrorBoundary } from './SignalErrorBoundary';
-import { CryptoSignalsCard } from '@/components/crypto/CryptoSignalsCard';
-import type { CryptoSignal } from '@/lib/types';
-import type { FilterInstrument, FilterDesk, FilterAssetClass, OppSource, FilterStrategy, ScanDiagnostics } from './useSignalEngine';
+import type { FilterInstrument, FilterDesk, OppSource, FilterStrategy, ScanDiagnostics } from './useSignalEngine';
 import {
   AlertTriangle,
-  Coins,
   Grid,
   Layers,
   List,
@@ -35,15 +31,10 @@ export interface SignalOpportunitiesTabProps {
   setFilterInstr: (v: FilterInstrument) => void;
   filterStrat: FilterStrategy;
   setFilterStrat: (v: FilterStrategy) => void;
-  assetClass: FilterAssetClass;
-  setAssetClass: (v: FilterAssetClass) => void;
   oppSource: OppSource;
   setOppSource: (v: OppSource) => void;
   viewMode: 'grid' | 'table';
   setViewMode: (v: 'grid' | 'table') => void;
-  cryptoSignals: CryptoSignal[];
-  cryptoLoading: boolean;
-  cryptoError: string | null;
   selectMode: boolean;
   setSelectMode: React.Dispatch<React.SetStateAction<boolean>>;
   selectedOppIds: Set<string>;
@@ -56,7 +47,6 @@ export interface SignalOpportunitiesTabProps {
   onInspectSignal: (id: string) => void;
   onRefreshActive: () => void;
   onRefreshScanner: () => void;
-  onRefreshCrypto: () => void;
 }
 
 export function SignalOpportunitiesTab({
@@ -73,15 +63,10 @@ export function SignalOpportunitiesTab({
   setFilterInstr,
   filterStrat,
   setFilterStrat,
-  assetClass,
-  setAssetClass,
   oppSource,
   setOppSource,
   viewMode,
   setViewMode,
-  cryptoSignals,
-  cryptoLoading,
-  cryptoError,
   selectMode,
   setSelectMode,
   selectedOppIds,
@@ -94,7 +79,6 @@ export function SignalOpportunitiesTab({
   onInspectSignal,
   onRefreshActive,
   onRefreshScanner,
-  onRefreshCrypto,
 }: SignalOpportunitiesTabProps) {
   const oppSignals = oppSource === 'live' ? active : scannerData.length > 0 ? scannerData : active;
   const isScannerMode = oppSource === 'scanner';
@@ -110,21 +94,19 @@ export function SignalOpportunitiesTab({
             <button
               onClick={() => {
                 setFilterDesk('ALL');
-                setAssetClass('ALL');
                 setFilterStrat('ALL');
               }}
               className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
-                filterDesk === 'ALL' && assetClass === 'ALL'
+                filterDesk === 'ALL'
                   ? 'bg-primary text-primary-foreground border-primary'
                   : 'bg-secondary/60 hover:bg-secondary border-transparent'
               }`}
             >
-              🌐 All Signals
+              🌐 All Desks
             </button>
             <button
               onClick={() => {
                 setFilterDesk('SCALP');
-                setAssetClass('INDEX');
                 setFilterStrat('ALL');
               }}
               className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 cursor-pointer ${
@@ -138,7 +120,6 @@ export function SignalOpportunitiesTab({
             <button
               onClick={() => {
                 setFilterDesk('INTRADAY');
-                setAssetClass('INDEX');
                 setFilterStrat('ALL');
               }}
               className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 cursor-pointer ${
@@ -148,18 +129,6 @@ export function SignalOpportunitiesTab({
               }`}
             >
               <Layers className="w-3.5 h-3.5" /> 📊 Core Intraday (5M/15M)
-            </button>
-            <button
-              onClick={() => {
-                setAssetClass('CRYPTO');
-              }}
-              className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 cursor-pointer ${
-                assetClass === 'CRYPTO'
-                  ? 'bg-cyan-600 text-white border-cyan-700'
-                  : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-600 border-cyan-500/30'
-              }`}
-            >
-              <Coins className="w-3.5 h-3.5" /> 🪙 Binance Crypto
             </button>
           </div>
 
@@ -178,103 +147,180 @@ export function SignalOpportunitiesTab({
               </button>
               <button
                 onClick={() => setOppSource('scanner')}
-                disabled={assetClass === 'CRYPTO'}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
                   oppSource === 'scanner'
                     ? 'bg-background text-foreground shadow-xs font-bold'
-                    : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
-                title={assetClass === 'CRYPTO' ? 'Scanner is index-only' : 'Full universe scanner'}
+                title="Full Indian indices universe scanner"
               >
                 Scanner Feed
               </button>
             </div>
 
             {/* View Mode */}
-            <div className="flex items-center border rounded-lg overflow-hidden bg-background">
-              <button
+            <div className="inline-flex bg-muted/50 p-0.5 rounded-lg border">
+              <Button
+                variant={viewMode === 'grid' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 px-2 text-xs cursor-pointer"
                 onClick={() => setViewMode('grid')}
-                className={`p-1.5 cursor-pointer ${viewMode === 'grid' ? 'bg-secondary text-primary' : 'text-muted-foreground'}`}
-                title="Grid Card View"
               >
                 <Grid className="w-3.5 h-3.5" />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant={viewMode === 'table' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 px-2 text-xs cursor-pointer"
                 onClick={() => setViewMode('table')}
-                className={`p-1.5 cursor-pointer ${viewMode === 'table' ? 'bg-secondary text-primary' : 'text-muted-foreground'}`}
-                title="Pro Table View"
               >
                 <List className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs cursor-pointer"
+              onClick={() => {
+                if (oppSource === 'live') onRefreshActive();
+                else onRefreshScanner();
+              }}
+              disabled={loading || scannerLoading}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${loading || scannerLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
         </div>
 
-        {/* Bottom Row: Instrument Chips & Strategy Pills */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-muted-foreground">Index:</span>
-              {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX'] as const).map((instr) => (
-                <button
-                  key={instr}
-                  onClick={() => setFilterInstr(instr)}
-                  className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
-                    filterInstr === instr
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-secondary/60 hover:bg-secondary border-transparent'
-                  }`}
-                >
-                  {instr}
-                </button>
-              ))}
+        {/* Second Row: Instrument + Strategy Filters */}
+        <div className="flex items-center justify-between gap-3 flex-wrap text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-muted-foreground">Instrument:</span>
+            {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY'] as FilterInstrument[]).map((inst) => (
+              <button
+                key={inst}
+                onClick={() => setFilterInstr(inst)}
+                className={`px-2 py-0.5 rounded text-xs transition-all cursor-pointer ${
+                  filterInstr === inst
+                    ? 'bg-primary text-primary-foreground font-bold shadow-xs'
+                    : 'bg-muted/70 hover:bg-muted text-muted-foreground'
+                }`}
+              >
+                {inst}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-muted-foreground">Strategy:</span>
+            <select
+              value={filterStrat}
+              onChange={(e) => setFilterStrat(e.target.value as FilterStrategy)}
+              className="bg-background border rounded px-2 py-1 text-xs text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="ALL">All Strategies</option>
+              <option value="ORB_5M">ORB (5M)</option>
+              <option value="VWAP_PULLBACK">VWAP Pullback</option>
+              <option value="EXPIRY_HERO_ZERO">Hero-Zero</option>
+              <option value="MOMENTUM_SPIKE">Momentum Spike</option>
+              <option value="MULTI_STRIKE_BREAKOUT">Multi-Strike Breakout</option>
+              <option value="SQUEEZE_RELEASE">Squeeze Release</option>
+              <option value="REVERSAL_EXHAUSTION">Reversal Exhaustion</option>
+            </select>
+
+            {oppSignals.length > 0 && !isScannerMode && (
+              <Button
+                variant={selectMode ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 text-xs cursor-pointer ml-1"
+                onClick={() => {
+                  setSelectMode(!selectMode);
+                  if (selectMode) setSelectedOppIds(new Set());
+                }}
+              >
+                {selectMode ? 'Cancel Select' : 'Select'}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Bulk Action Bar (When in Select Mode) */}
+        {selectMode && (
+          <div className="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-lg p-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-primary">
+                {selectedOppIds.size} of {oppSignals.length} selected
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-[11px] cursor-pointer"
+                onClick={() => {
+                  if (selectedOppIds.size === oppSignals.length) setSelectedOppIds(new Set());
+                  else setSelectedOppIds(new Set(oppSignals.map((s) => s.id)));
+                }}
+              >
+                {selectedOppIds.size === oppSignals.length ? 'Deselect All' : 'Select All'}
+              </Button>
             </div>
-
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-semibold text-muted-foreground ml-2">Strategy:</span>
-              {(() => {
-                const scalpStrats = ['ALL', 'VWAP_SCALP', 'MICRO_MOMENTUM', 'EMA_RIBBON', 'GAMMA_SPIKE'] as const;
-                const intradayStrats = ['ALL', 'BREAKOUT', 'MEAN_REVERSION', 'TREND_PULLBACK', 'GAMMA_SQUEEZE', 'ORB'] as const;
-                const allStrats = [
-                  'ALL',
-                  'VWAP_SCALP',
-                  'MICRO_MOMENTUM',
-                  'EMA_RIBBON',
-                  'GAMMA_SPIKE',
-                  'BREAKOUT',
-                  'MEAN_REVERSION',
-                  'TREND_PULLBACK',
-                  'GAMMA_SQUEEZE',
-                  'ORB',
-                ] as const;
-
-                const activeList =
-                  filterDesk === 'SCALP'
-                    ? scalpStrats
-                    : filterDesk === 'INTRADAY'
-                      ? intradayStrats
-                      : allStrats;
-
-                return activeList.map((strat) => (
-                  <button
-                    key={strat}
-                    onClick={() => setFilterStrat(strat as FilterStrategy)}
-                    className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-all cursor-pointer ${
-                      filterStrat === strat
-                        ? 'bg-primary text-primary-foreground border-primary font-bold'
-                        : 'bg-secondary/60 hover:bg-secondary border-transparent'
-                    }`}
-                  >
-                    {strat}
-                  </button>
-                ));
-              })()}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-6 text-[11px] cursor-pointer"
+                disabled={selectedOppIds.size === 0 || bulkDeletingOpp}
+                onClick={async () => {
+                  if (selectedOppIds.size === 0) return;
+                  try {
+                    setBulkDeletingOpp(true);
+                    await api.bulkDeleteSignals(Array.from(selectedOppIds));
+                    setActive((prev) => prev.filter((s) => !selectedOppIds.has(s.id)));
+                    setSelectedOppIds(new Set());
+                    setSelectMode(false);
+                  } catch (e: any) {
+                    console.error('Bulk delete failed:', e);
+                  } finally {
+                    setBulkDeletingOpp(false);
+                  }
+                }}
+              >
+                {bulkDeletingOpp ? 'Deleting...' : `Delete Selected (${selectedOppIds.size})`}
+              </Button>
             </div>
+          </div>
+        )}
+
+        {/* Signal Diagnostics Pill Bar */}
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <span>
+              Showing: <strong className="text-foreground">{oppSignals.length}</strong> {isScannerMode ? 'scanner' : 'live'} setups
+            </span>
+            {isScannerMode && (
+              <span className="text-muted-foreground/70">
+                Universe: {scanDiagnostics.reduce((acc, d) => acc + d.scanned, 0)} scanned
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 font-mono">
+            {(() => {
+              const counts: Record<string, number> = {};
+              oppSignals.forEach((s) => {
+                counts[s.instrument] = (counts[s.instrument] || 0) + 1;
+              });
+              return Object.entries(counts).map(([inst, cnt]) => (
+                <span key={inst} className="bg-muted px-1.5 py-0.5 rounded text-[10px]">
+                  {inst}: {cnt}
+                </span>
+              ));
+            })()}
           </div>
         </div>
       </Card>
 
-      {assetClass !== 'CRYPTO' && activeError && oppSource === 'live' && (
+      {activeError && oppSource === 'live' && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 flex-wrap">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {activeError}
           <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto cursor-pointer" onClick={onRefreshActive}>
@@ -283,7 +329,7 @@ export function SignalOpportunitiesTab({
         </div>
       )}
 
-      {(loading || scannerLoading) && active.length === 0 && scannerData.length === 0 && assetClass !== 'CRYPTO' && (
+      {(loading || scannerLoading) && active.length === 0 && scannerData.length === 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <Card key={i} className="p-4 space-y-3 animate-pulse">
@@ -294,7 +340,7 @@ export function SignalOpportunitiesTab({
         </div>
       )}
 
-      {assetClass !== 'CRYPTO' && (
+      {oppSignals.length > 0 ? (
         <>
           {isScannerMode && (
             <Card className="p-3">
@@ -305,160 +351,63 @@ export function SignalOpportunitiesTab({
                     {scanQuality}
                   </Badge>
                 </div>
-                <Button size="sm" onClick={onRefreshScanner} disabled={scannerLoading} className="h-7 text-xs gap-1 cursor-pointer">
-                  <RefreshCw className={`w-3 h-3 ${scannerLoading ? 'animate-spin' : ''}`} />
-                  {scannerLoading ? 'Scanning…' : 'Run Full Scan'}
-                </Button>
+                {scannerError && (
+                  <span className="text-[11px] text-destructive flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> {scannerError}
+                  </span>
+                )}
               </div>
-              {scannerError && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-700 flex items-center gap-2 mb-2">
-                  <AlertTriangle className="w-3.5 h-3.5" /> {scannerError}
-                </div>
-              )}
-              {scanDiagnostics.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {scanDiagnostics.slice(0, 3).map((d, i) => (
-                    <div key={i} className="text-[11px] font-mono border rounded-lg p-2 bg-secondary/30">
-                      <span className="font-bold">{d.underlying || '?'}</span>
-                      <span className={`ml-1.5 ${d.data_quality === 'LIVE' ? 'text-emerald-600' : 'text-amber-600'}`}>{d.data_quality || '?'}</span>
-                      <span className="text-muted-foreground ml-1.5">{d.candidates_found ?? 0} candidates</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <SignalScannerTable
+                signals={oppSignals}
+                loading={scannerLoading}
+                onInspectSignal={onInspectSignal}
+              />
             </Card>
           )}
 
-          {oppSignals.length > 0 ? (
-            <>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[11px] cursor-pointer"
-                  onClick={() => {
-                    setSelectMode(!selectMode);
-                    setSelectedOppIds(new Set());
+          {!isScannerMode && viewMode === 'grid' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {oppSignals.map((signal) => (
+                <SignalCard
+                  key={signal.id}
+                  signal={signal}
+                  cardsNowMs={cardsNowMs}
+                  onInspect={() => onInspectSignal(signal.id)}
+                  selectMode={selectMode}
+                  isSelected={selectedOppIds.has(signal.id)}
+                  onToggleSelect={(id) => {
+                    setSelectedOppIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    });
                   }}
-                >
-                  {selectMode ? 'Cancel select' : 'Select multiple'}
-                </Button>
-                {selectMode && viewMode === 'grid' && (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-[11px] cursor-pointer"
-                      onClick={() => setSelectedOppIds(new Set(oppSignals.map((s) => s.signal_id)))}
-                    >
-                      Select all ({oppSignals.length})
-                    </Button>
-                    {selectedOppIds.size > 0 && (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="h-7 text-[11px] cursor-pointer"
-                        disabled={bulkDeletingOpp}
-                        onClick={async () => {
-                          setBulkDeletingOpp(true);
-                          try {
-                            await api.bulkDeleteSignals({ signal_ids: Array.from(selectedOppIds) });
-                            setSelectedOppIds(new Set());
-                            setSelectMode(false);
-                            onRefreshActive();
-                          } catch (e: any) {
-                            alert(`Bulk delete failed: ${e?.message || 'Unknown error'}`);
-                          } finally {
-                            setBulkDeletingOpp(false);
-                          }
-                        }}
-                      >
-                        {bulkDeletingOpp ? 'Deleting…' : `Delete ${selectedOppIds.size} selected`}
-                      </Button>
-                    )}
-                  </>
-                )}
-              </div>
-              {viewMode === 'grid' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {oppSignals.map((sig) => (
-                    <SignalErrorBoundary key={sig.signal_id} label={sig.underlying || 'Signal'}>
-                      <div className="relative">
-                        {selectMode && (
-                          <input
-                            type="checkbox"
-                            checked={selectedOppIds.has(sig.signal_id)}
-                            onChange={() =>
-                              setSelectedOppIds((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(sig.signal_id)) next.delete(sig.signal_id);
-                                else next.add(sig.signal_id);
-                                return next;
-                              })
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute top-2 right-2 z-10 h-4 w-4 accent-destructive cursor-pointer"
-                            title="Select for bulk delete"
-                          />
-                        )}
-                        <SignalCard
-                          signal={sig}
-                          nowMs={cardsNowMs}
-                          onInspect={(id) => {
-                            if (!selectMode) onInspectSignal(id);
-                          }}
-                          onPaperExecuted={() => {
-                            onRefreshActive();
-                          }}
-                          onDeleted={(id) => {
-                            setActive((prev) => prev.filter((s) => s.signal_id !== id));
-                          }}
-                        />
-                      </div>
-                    </SignalErrorBoundary>
-                  ))}
-                </div>
-              ) : (
-                <SignalErrorBoundary label="Scanner table">
-                  <SignalScannerTable
-                    signals={oppSignals}
-                    onInspect={(id) => onInspectSignal(id)}
-                    onRefresh={() => (isScannerMode ? onRefreshScanner() : onRefreshActive())}
-                    loading={isScannerMode ? scannerLoading : loading}
-                  />
-                </SignalErrorBoundary>
-              )}
-            </>
-          ) : (
-            !loading && !scannerLoading && (
-              <Card className="p-8 text-center space-y-2">
-                <div className="text-sm font-semibold">No {isScannerMode ? 'scanner' : 'active'} index setups match criteria</div>
-                <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                  No strategy conditions on {filterInstr} with {filterStrat}. Empty is honest — only validated breakouts register.
-                </p>
-              </Card>
-            )
-          )}
-        </>
-      )}
-
-      {assetClass !== 'INDEX' && (
-        <div className="space-y-2">
-          {cryptoError && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-700 flex items-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5" /> Crypto feed degraded: {cryptoError}
-              <Button size="sm" variant="outline" className="h-6 text-[10px] ml-auto cursor-pointer" onClick={onRefreshCrypto}>
-                Retry
-              </Button>
+                  onDeleted={(deletedId) => {
+                    setActive((prev) => prev.filter((s) => s.id !== deletedId));
+                  }}
+                />
+              ))}
             </div>
           )}
-          <SignalErrorBoundary label="Crypto signals">
-            <CryptoSignalsCard signals={cryptoSignals} loading={cryptoLoading} selectedAsset="BTC" onSelectAsset={() => {}} />
-          </SignalErrorBoundary>
-          <p className="text-[11px] text-muted-foreground font-mono px-1">
-            Crypto signals are auto-derived from Binance order-book + funding (read-only, copy-plan). Paper execution + audit ledger remain index-only.
-          </p>
-        </div>
+
+          {!isScannerMode && viewMode === 'table' && (
+            <SignalScannerTable
+              signals={oppSignals}
+              loading={loading}
+              onInspectSignal={onInspectSignal}
+            />
+          )}
+        </>
+      ) : (
+        !loading && !scannerLoading && (
+          <Card className="p-8 text-center space-y-2">
+            <div className="text-sm font-semibold">No {isScannerMode ? 'scanner' : 'active'} index setups match criteria</div>
+            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+              No strategy conditions on {filterInstr} with {filterStrat}. Empty is honest — only validated breakouts register.
+            </p>
+          </Card>
+        )
       )}
     </div>
   );

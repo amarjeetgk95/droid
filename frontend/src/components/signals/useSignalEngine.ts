@@ -7,12 +7,11 @@ import { useSignalStream } from '@/hooks/useSignalStream';
 import { playAlertChime } from './SignalAudio';
 import type { SignalDTO } from './SignalCard';
 import type { AuditTradeRecord, AuditSummary } from './SignalAuditTable';
-import type { CryptoSignal } from '@/lib/types';
 import { deskCache } from '@/lib/useDeskCache';
 
 export type FilterInstrument = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
 export type FilterDesk = 'ALL' | 'SCALP' | 'INTRADAY';
-export type FilterAssetClass = 'ALL' | 'INDEX' | 'CRYPTO';
+export type FilterAssetClass = 'INDEX';
 export type OppSource = 'live' | 'scanner';
 export type TrackView = 'performance' | 'ledger';
 export type FilterStrategy =
@@ -61,9 +60,6 @@ export function useSignalEngine() {
   const [assetClass, setAssetClass] = useState<FilterAssetClass>('ALL');
   const [oppSource, setOppSource] = useState<OppSource>('live');
   const [trackView, setTrackView] = useState<TrackView>('ledger');
-  const [cryptoSignals, setCryptoSignals] = useState<CryptoSignal[]>([]);
-  const [cryptoLoading, setCryptoLoading] = useState(false);
-  const [cryptoError, setCryptoError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [selectMode, setSelectMode] = useState(false);
@@ -91,7 +87,6 @@ export function useSignalEngine() {
   const activeInFlight = useRef(false);
   const auditInFlight = useRef(false);
   const scannerInFlight = useRef(false);
-  const cryptoInFlight = useRef(false);
   const sseRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchActive = useCallback(
@@ -179,23 +174,6 @@ export function useSignalEngine() {
     }
   }, []);
 
-  const fetchCrypto = useCallback(async (showLoading = true) => {
-    if (cryptoInFlight.current) return;
-    cryptoInFlight.current = true;
-    if (showLoading) setCryptoLoading(true);
-    setCryptoError(null);
-    try {
-      const res: any = await api.getCryptoSignals();
-      const list: CryptoSignal[] = res?.data?.signals || res?.signals || [];
-      setCryptoSignals(Array.isArray(list) ? list : []);
-    } catch (e: any) {
-      setCryptoError(e.message || 'Crypto signals unavailable');
-    } finally {
-      if (showLoading) setCryptoLoading(false);
-      cryptoInFlight.current = false;
-    }
-  }, []);
-
   const fetchAudit = useCallback(async (showLoading = false) => {
     if (auditInFlight.current) return;
     auditInFlight.current = true;
@@ -271,7 +249,6 @@ export function useSignalEngine() {
     void fetchActive(true);
     void fetchScanner(true);
     void fetchAudit(true);
-    void fetchCrypto(true);
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
@@ -281,7 +258,6 @@ export function useSignalEngine() {
         if (!document.hidden) {
           void fetchActive(false);
           void fetchAudit(false);
-          void fetchCrypto(false);
         }
         loop();
       }, withJitter(18000));
@@ -304,7 +280,7 @@ export function useSignalEngine() {
       if (scanTimeout) clearTimeout(scanTimeout);
       if (sseRefreshTimer.current) clearTimeout(sseRefreshTimer.current);
     };
-  }, [fetchActive, fetchScanner, fetchAudit, fetchCrypto]);
+  }, [fetchActive, fetchScanner, fetchAudit]);
 
   return {
     active,
@@ -327,9 +303,6 @@ export function useSignalEngine() {
     setOppSource,
     trackView,
     setTrackView,
-    cryptoSignals,
-    cryptoLoading,
-    cryptoError,
     viewMode,
     setViewMode,
     soundEnabled,
@@ -353,7 +326,6 @@ export function useSignalEngine() {
     streamState,
     fetchActive,
     fetchScanner,
-    fetchCrypto,
     fetchAudit,
   };
 }

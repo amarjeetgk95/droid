@@ -61,15 +61,10 @@ export default function SignalsPage() {
           setFilterInstr={engine.setFilterInstr}
           filterStrat={engine.filterStrat}
           setFilterStrat={engine.setFilterStrat}
-          assetClass={engine.assetClass}
-          setAssetClass={engine.setAssetClass}
           oppSource={engine.oppSource}
           setOppSource={engine.setOppSource}
           viewMode={engine.viewMode}
           setViewMode={engine.setViewMode}
-          cryptoSignals={engine.cryptoSignals}
-          cryptoLoading={engine.cryptoLoading}
-          cryptoError={engine.cryptoError}
           selectMode={engine.selectMode}
           setSelectMode={engine.setSelectMode}
           selectedOppIds={engine.selectedOppIds}
@@ -82,7 +77,6 @@ export default function SignalsPage() {
           onInspectSignal={(id) => engine.setInspectSignalId(id)}
           onRefreshActive={() => void engine.fetchActive(true)}
           onRefreshScanner={() => void engine.fetchScanner(true)}
-          onRefreshCrypto={() => void engine.fetchCrypto(true)}
         />
       ),
     },
@@ -99,7 +93,7 @@ export default function SignalsPage() {
             }}
           />
           <p className="text-[11px] text-muted-foreground font-mono px-1">
-            Manual creation is index-only (NIFTY/BANKNIFTY/SENSEX). Crypto setups are fully automated — see Opportunities → Crypto.
+            Manual creation supports Indian major indices (NIFTY / BANKNIFTY / SENSEX / FINNIFTY).
           </p>
         </div>
       ),

@@ -61,7 +61,7 @@ export function SignalTrackRecordTab({
           <Award className="w-3.5 h-3.5" /> Performance
         </button>
         <span className="text-[11px] text-muted-foreground font-mono ml-2 hidden sm:inline">
-          Index paper trades only • crypto is read-only
+          Indian index paper execution &amp; audit ledger
         </span>
       </div>
 
