@@ -66,8 +66,7 @@ export default function CryptoPage() {
   const [aiInsight, setAiInsight] = useState<{ bias: string; confidence: number; summary: string } | null>(null);
 
   // --- Dedicated Scalp Signals & Performance Track Record State ---
-  const [topTab, setTopTab] = useState<'terminal' | 'scalp'>('terminal');
-  const [scalpSubTab, setScalpSubTab] = useState<'live' | 'performance'>('live');
+  const [topTab, setTopTab] = useState<'terminal' | 'scalp' | 'track-record'>('terminal');
   const [scalpSignals, setScalpSignals] = useState<CryptoScalpSignal[]>([]);
   const [scalpDiagnostics, setScalpDiagnostics] = useState<CryptoScalpDiagnostics | null>(null);
   const [scalpMetrics, setScalpMetrics] = useState<CryptoScalpPerformanceMetrics | null>(null);
@@ -646,115 +645,84 @@ export default function CryptoPage() {
             badgeClassName: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
             content: (
               <div className="space-y-6">
-                {/* Scalp Sub-Tab Navigation Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 bg-slate-900/80 border border-slate-800 rounded-xl">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setScalpSubTab('live')}
-                      className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
-                        scalpSubTab === 'live'
-                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
-                      }`}
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>Live Opportunities</span>
-                      {scalpSignals.length > 0 && (
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-cyan-500/20 text-cyan-300 font-mono">
-                          {scalpSignals.length}
-                        </span>
-                      )}
-                    </button>
+                {/* 1. Scalp Engine Diagnostics & Config Panel */}
+                <CryptoScalpDiagnosticsPanel
+                  diagnostics={scalpDiagnostics}
+                  onRefresh={handleManualScalpScan}
+                  scanning={scanningScalp}
+                />
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setScalpSubTab('performance');
-                        fetchScalpPerformance();
-                      }}
-                      className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
-                        scalpSubTab === 'performance'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
-                      }`}
-                    >
-                      <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Track Record & Performance</span>
-                      {scalpMetrics && (
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono">
-                          {scalpMetrics.completed_trades > 0
-                            ? `${scalpMetrics.win_rate_pct.toFixed(0)}% Win`
-                            : `${scalpMetrics.active_positions} Active`}
-                        </span>
-                      )}
-                    </button>
+                {/* 2. Dedicated Scalping Signals Cockpit */}
+                <CryptoScalpSignalsCard
+                  signals={scalpSignals}
+                  loading={loadingScalpSignals}
+                  onRefresh={handleManualScalpScan}
+                  selectedAssetFilter="ALL"
+                  onSelectAssetFilter={(asset) => setSelectedSymbol(`${asset}USDT`)}
+                />
+              </div>
+            ),
+          },
+          {
+            id: 'track-record',
+            label: 'Track Record & Performance',
+            icon: TrendingUp,
+            badge:
+              scalpMetrics && scalpMetrics.completed_trades > 0
+                ? `${scalpMetrics.win_rate_pct.toFixed(0)}% Win`
+                : scalpMetrics && scalpMetrics.active_positions > 0
+                ? `${scalpMetrics.active_positions} Active`
+                : 'Paper FSM',
+            badgeClassName: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
+            content: (
+              <div className="space-y-6">
+                {/* Track Record Cockpit Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-900/60 border border-slate-800 rounded-xl">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-5 h-5 text-emerald-400" />
+                      <h2 className="text-base font-bold text-slate-100">Crypto Scalp Track Record & Paper Execution Engine</h2>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Deterministic FSM
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Real-time empirical winning percentage, profit factor, R-expectancy, and fee/slippage execution drag across BTC & ETH.
+                    </p>
                   </div>
 
-                  <div className="flex items-center gap-2 px-2">
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (scalpSubTab === 'live') {
-                          handleManualScalpScan();
-                        } else {
-                          fetchScalpPerformance();
-                        }
-                      }}
-                      disabled={scanningScalp || loadingPerformance}
-                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-md bg-slate-800/60 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                      onClick={fetchScalpPerformance}
+                      disabled={loadingPerformance}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 border border-slate-700 shadow-xs"
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${scanningScalp || loadingPerformance ? 'animate-spin text-cyan-400' : ''}`} />
-                      <span>{scanningScalp || loadingPerformance ? 'Refreshing...' : 'Refresh'}</span>
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingPerformance ? 'animate-spin text-cyan-400' : ''}`} />
+                      <span>{loadingPerformance ? 'Reconciling...' : 'Refresh Track Record'}</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Sub-View 1: Live Opportunities */}
-                {scalpSubTab === 'live' && (
-                  <div className="space-y-6">
-                    {/* 1. Scalp Engine Diagnostics & Config Panel */}
-                    <CryptoScalpDiagnosticsPanel
-                      diagnostics={scalpDiagnostics}
-                      onRefresh={handleManualScalpScan}
-                      scanning={scanningScalp}
-                    />
+                {/* 1. Quantitative Performance Overview & Strategy Attribution */}
+                <CryptoScalpPerformanceView
+                  metrics={scalpMetrics}
+                  loading={loadingPerformance}
+                />
 
-                    {/* 2. Dedicated Scalping Signals Cockpit */}
-                    <CryptoScalpSignalsCard
-                      signals={scalpSignals}
-                      loading={loadingScalpSignals}
-                      onRefresh={handleManualScalpScan}
-                      selectedAssetFilter="ALL"
-                      onSelectAssetFilter={(asset) => setSelectedSymbol(`${asset}USDT`)}
-                    />
-                  </div>
-                )}
-
-                {/* Sub-View 2: Track Record & Performance Engine */}
-                {scalpSubTab === 'performance' && (
-                  <div className="space-y-6">
-                    {/* 1. Performance Overview & Strategy Stats */}
-                    <CryptoScalpPerformanceView
-                      metrics={scalpMetrics}
-                      loading={loadingPerformance}
-                    />
-
-                    {/* 2. Chronological Execution Ledger & Audit Timeline */}
-                    <CryptoScalpLedgerTable
-                      records={scalpLedger}
-                      loading={loadingPerformance}
-                      onRefresh={fetchScalpPerformance}
-                    />
-                  </div>
-                )}
+                {/* 2. Chronological Execution Ledger & Audit Timeline */}
+                <CryptoScalpLedgerTable
+                  records={scalpLedger}
+                  loading={loadingPerformance}
+                  onRefresh={fetchScalpPerformance}
+                />
               </div>
             ),
           },
         ]}
         defaultTab="terminal"
         activeTab={topTab}
-        onTabChange={(tabId) => setTopTab(tabId as 'terminal' | 'scalp')}
+        onTabChange={(tabId) => setTopTab(tabId as 'terminal' | 'scalp' | 'track-record')}
         syncWithUrl
       />
     </div>
