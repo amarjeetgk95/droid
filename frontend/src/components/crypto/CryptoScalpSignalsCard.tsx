@@ -109,16 +109,18 @@ function parseAndFormatTimestamp(timestampUtc?: number, timestampStr?: string): 
 }
 
 function getSpecialId(sig: CryptoScalpSignal): string {
-  if (sig.id.startsWith('SCALP-')) {
-    const parts = sig.id.split('-');
-    if (parts.length >= 5) {
-      const symShort = parts[1].replace('USDT', '');
-      const stratShort = parts[2].substring(0, 3);
-      const tail = parts[4].slice(-4);
-      return `#${symShort}-${stratShort}-${tail}`;
+  if (sig.id) {
+    let hash = 0;
+    for (let i = 0; i < sig.id.length; i++) {
+      hash = ((hash << 5) - hash) + sig.id.charCodeAt(i);
+      hash |= 0;
     }
+    const hashHex = Math.abs(hash).toString(16).toUpperCase().padStart(4, '0').slice(-4);
+    const symShort = (sig.symbol || 'CRYPTO').replace('USDT', '');
+    const stratShort = (sig.strategy || 'SIG').replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+    return `#${symShort}-${stratShort}-${hashHex}`;
   }
-  return `#SIG-${sig.id.slice(-6).toUpperCase()}`;
+  return `#SIG-0001`;
 }
 
 export function CryptoScalpSignalsCard({
@@ -540,6 +542,38 @@ Rationale: ${sig.rationale}`;
                     </span>
                   </div>
                 </div>
+
+                {/* 3b. LIVE MARKET SPOT & BREAKOUT GAP */}
+                {(() => {
+                  const spotPrice = sig.current_price || sig.entry_price;
+                  const diffToTrigger = isLong ? (sig.entry_price - spotPrice) : (spotPrice - sig.entry_price);
+                  const isAtOrBeyondTrigger = diffToTrigger <= 0;
+                  const diffPct = ((Math.abs(diffToTrigger) / (spotPrice || 1)) * 100).toFixed(2);
+
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 border border-slate-200/80 rounded-lg text-xs font-mono">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500 font-sans text-[11px]">Live Market Price:</span>
+                        <span className="font-bold text-slate-900 font-mono">${spotPrice.toFixed(priceDecimals)}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        {isAtOrBeyondTrigger ? (
+                          <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            <span>Trigger Reached (${Math.abs(diffToTrigger).toFixed(priceDecimals)} in breakout)</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 flex items-center gap-1">
+                            <span>Breakout Gap:</span>
+                            <strong className="text-amber-700">${diffToTrigger.toFixed(priceDecimals)}</strong>
+                            <span className="text-slate-400 font-normal">({diffPct}% to trigger)</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 4. CLEAN PRICING MATRIX GRID (SOBER LIGHT TONE) */}
                 <div className="grid grid-cols-4 gap-2 bg-slate-50 border border-slate-200/80 rounded-lg p-3 text-center">
