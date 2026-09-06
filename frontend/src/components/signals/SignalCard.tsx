@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -11,11 +11,13 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
   Crosshair,
   ExternalLink,
   Flame,
+  Hourglass,
   Radio,
   Target,
   TrendingDown,
@@ -23,6 +25,27 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
+
+const STAGES = [
+  { id: 'DETECTED', label: 'Detected' },
+  { id: 'VALIDATED', label: 'Validated' },
+  { id: 'ARMED', label: 'Armed' },
+  { id: 'TRIGGERED', label: 'Triggered' },
+  { id: 'CONFIRMED', label: 'Confirmed' },
+] as const;
+
+function getStageIndex(state?: string): number {
+  if (!state) return 2;
+  const s = state.toUpperCase();
+  if (s === 'DETECTED') return 0;
+  if (s === 'VALIDATED') return 1;
+  if (s === 'ARMED') return 2;
+  if (s === 'TRIGGERED') return 3;
+  if (s === 'CONFIRMED') return 4;
+  if (s.includes('TARGET') || s.includes('STOP') || s.includes('TIME_STOP') || s.includes('CLOSED')) return 5;
+  if (s === 'EXPIRED' || s === 'INVALIDATED') return 0;
+  return 2;
+}
 
 export type SignalDTO = {
   signal_id: string;
@@ -185,6 +208,162 @@ export function SignalCard({
   const lotSize = signal.option_contract?.lot_size || 75;
   const estimatedRiskRupees = Math.round(riskPts * lotSize * 2);
 
+  // ── Lifecycle & Temporal calculations ──
+  const stageIndex = getStageIndex(fsm);
+
+  const ttlSec = signal.ttl_seconds || (signal.is_scalp ? 180 : 300);
+  const expiresAt = signal.expires_at_utc || (signal.created_at_utc ? signal.created_at_utc + (ttlSec * 1000) : 0);
+  const preEntrySecRemaining = expiresAt > 0 ? Math.max(0, Math.floor((expiresAt - currentNowMs) / 1000)) : null;
+  const isPreEntryExpired = preEntrySecRemaining === 0;
+
+  const timeStopSecRemaining =
+    typeof signal.time_stop_at_utc === 'number' && signal.time_stop_at_utc > 0
+      ? Math.max(0, Math.floor((signal.time_stop_at_utc - currentNowMs) / 1000))
+      : null;
+
+  const runnerSecRemaining =
+    typeof signal.runner_time_stop_at_utc === 'number' && signal.runner_time_stop_at_utc > 0
+      ? Math.max(0, Math.floor((signal.runner_time_stop_at_utc - currentNowMs) / 1000))
+      : null;
+
+  const formatSec = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}m ${s.toString().padStart(2, '0')}s`;
+  };
+
+  let stateLabelText = fsm;
+  let stateLabelStyle = 'bg-secondary text-secondary-foreground border-border';
+
+  if (isMarketClosed && ['DETECTED', 'VALIDATED', 'ARMED', 'CONFIRMED'].includes(fsm)) {
+    stateLabelText = 'MARKET CLOSED';
+    stateLabelStyle = 'bg-muted text-muted-foreground border-border/80';
+  } else if (fsm === 'ARMED') {
+    if (isPreEntryExpired) {
+      stateLabelText = 'ARMED · Window Expired';
+      stateLabelStyle = 'bg-muted text-muted-foreground border-border';
+    } else {
+      stateLabelText = 'ARMED · Waiting Breakout';
+      stateLabelStyle = 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30';
+    }
+  } else if (fsm === 'VALIDATED') {
+    stateLabelText = 'VALIDATED · Filters Passed';
+    stateLabelStyle = 'bg-secondary text-secondary-foreground border-border';
+  } else if (fsm === 'DETECTED') {
+    stateLabelText = 'DETECTED · Scanning';
+    stateLabelStyle = 'bg-secondary text-muted-foreground border-border';
+  } else if (fsm === 'TRIGGERED') {
+    stateLabelText = 'TRIGGERED · Fill Pending';
+    stateLabelStyle = 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30';
+  } else if (fsm === 'CONFIRMED') {
+    stateLabelText = 'CONFIRMED · Position Active';
+    stateLabelStyle = 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30';
+  } else if (fsm === 'TARGET_1_HIT') {
+    stateLabelText = 'T1 HIT · 50% Booked (Runner)';
+    stateLabelStyle = 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40';
+  } else if (fsm === 'TARGET_2_HIT') {
+    stateLabelText = 'T2 HIT · Completed (+3.0R)';
+    stateLabelStyle = 'bg-emerald-600 text-white border-emerald-600';
+  } else if (fsm === 'STOP_LOSS_HIT') {
+    stateLabelText = 'STOP HIT · Exited';
+    stateLabelStyle = 'bg-destructive/15 text-destructive border-destructive/30';
+  } else if (fsm === 'TIME_STOP_HIT') {
+    stateLabelText = 'TIME STOP · Exit Triggered';
+    stateLabelStyle = 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30';
+  } else if (fsm === 'RUNNER_TIME_STOP_HIT') {
+    stateLabelText = 'RUNNER STOP · Exited';
+    stateLabelStyle = 'bg-amber-600/15 text-amber-800 dark:text-amber-400 border-amber-600/30';
+  } else if (fsm === 'EXPIRED') {
+    stateLabelText = 'EXPIRED · TTL Exceeded';
+    stateLabelStyle = 'bg-muted text-muted-foreground border-border';
+  } else if (fsm === 'INVALIDATED') {
+    stateLabelText = 'INVALIDATED · Setup Void';
+    stateLabelStyle = 'bg-destructive/15 text-destructive border-destructive/30';
+  }
+
+  let temporalTimerBadge = null;
+  if (isMarketClosed) {
+    temporalTimerBadge = (
+      <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+        <Clock className="w-3 h-3 text-muted-foreground" />
+        <span>Next: 09:15 IST</span>
+      </span>
+    );
+  } else if (['ARMED', 'VALIDATED'].includes(fsm)) {
+    if (preEntrySecRemaining !== null) {
+      if (preEntrySecRemaining > 60) {
+        temporalTimerBadge = (
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
+            title="Pre-entry trigger window remaining before auto-expiry"
+          >
+            <Hourglass className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+            <span>{formatSec(preEntrySecRemaining)} left</span>
+          </span>
+        );
+      } else if (preEntrySecRemaining > 0) {
+        temporalTimerBadge = (
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded border bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 animate-pulse"
+            title="Trigger window closing soon!"
+          >
+            <Hourglass className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+            <span>{preEntrySecRemaining}s left!</span>
+          </span>
+        );
+      } else {
+        temporalTimerBadge = (
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2 py-0.5 rounded border bg-muted text-muted-foreground border-border">
+            <Hourglass className="w-3 h-3 text-muted-foreground" />
+            <span>Window Expired</span>
+          </span>
+        );
+      }
+    }
+  } else if (fsm === 'CONFIRMED') {
+    if (timeStopSecRemaining !== null) {
+      if (timeStopSecRemaining > 60) {
+        temporalTimerBadge = (
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2 py-0.5 rounded border bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+            title="In-trade maximum holding time before time-stop"
+          >
+            <Clock className="w-3 h-3 text-amber-600" />
+            <span>{formatSec(timeStopSecRemaining)} Time-Stop</span>
+          </span>
+        );
+      } else if (timeStopSecRemaining > 0) {
+        temporalTimerBadge = (
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded border bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 animate-pulse"
+            title="Time-stop approaching"
+          >
+            <Clock className="w-3 h-3 text-rose-600" />
+            <span>{timeStopSecRemaining}s Time-Stop</span>
+          </span>
+        );
+      } else {
+        temporalTimerBadge = (
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded border bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30">
+            Time-Stop Hit
+          </span>
+        );
+      }
+    }
+  } else if (fsm === 'TARGET_1_HIT') {
+    if (runnerSecRemaining !== null && runnerSecRemaining > 0) {
+      temporalTimerBadge = (
+        <span
+          className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2 py-0.5 rounded border bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+          title="Runner trailing window remaining"
+        >
+          <Clock className="w-3 h-3 text-emerald-600" />
+          <span>{formatSec(runnerSecRemaining)} Runner TTL</span>
+        </span>
+      );
+    }
+  }
+
   return (
     <Card
       className="p-4 space-y-3.5 cursor-pointer hover:shadow-md hover:border-primary/40 transition-all rounded-2xl border bg-card/70"
@@ -225,13 +404,76 @@ export function SignalCard({
           <StatusBadge status={fsm} isMarketClosed={isMarketClosed} />
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
             {signal.created_at_utc ? (
-              <span title="Generated Date & Time (IST)">
+              <span title="Generated Date & Time (IST)" className="flex items-center gap-1">
+                <Clock className="w-3 h-3 text-muted-foreground/80" />
                 {formatDateTime(signal.created_at_utc)}
               </span>
             ) : null}
-            {signal.created_at_utc ? <span>•</span> : null}
-            <span>TTL: {ttlLabel(signal, currentNowMs)}</span>
           </div>
+        </div>
+      </div>
+
+      {/* ── FSM LIFECYCLE PROGRESSION & TEMPORAL AWARENESS ── */}
+      <div className="bg-muted/30 border border-border/70 rounded-xl p-2.5 space-y-2">
+        <div className="flex items-center justify-between text-[11px] flex-wrap gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-muted-foreground text-[10px] uppercase tracking-wider font-semibold">
+              Lifecycle:
+            </span>
+            <span className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border ${stateLabelStyle}`}>
+              {stateLabelText}
+            </span>
+          </div>
+
+          {temporalTimerBadge}
+        </div>
+
+        {/* 5-Stage Stepper */}
+        <div className="flex items-center justify-between gap-1 pt-0.5">
+          {STAGES.map((st, idx) => {
+            const isPast = idx < stageIndex;
+            const isCurrent = idx === stageIndex;
+
+            return (
+              <React.Fragment key={st.id}>
+                <div className="flex flex-col items-center gap-0.5 flex-1">
+                  <div
+                    className={`w-4.5 h-4.5 rounded-full flex items-center justify-center text-[9px] font-mono font-bold transition-all ${
+                      isPast
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : isCurrent
+                        ? isPreEntryExpired
+                          ? 'bg-muted-foreground/60 text-white ring-2 ring-border'
+                          : 'bg-amber-500 text-white ring-2 ring-amber-400/40 animate-pulse'
+                        : 'bg-muted text-muted-foreground border border-border'
+                    }`}
+                  >
+                    {isPast ? <Check className="w-2.5 h-2.5 text-white" /> : idx + 1}
+                  </div>
+                  <span
+                    className={`text-[9px] font-mono tracking-tight ${
+                      isCurrent
+                        ? isPreEntryExpired
+                          ? 'text-muted-foreground font-semibold'
+                          : 'text-amber-600 dark:text-amber-400 font-bold'
+                        : isPast
+                        ? 'text-foreground/80 font-medium'
+                        : 'text-muted-foreground/60'
+                    }`}
+                  >
+                    {st.label}
+                  </span>
+                </div>
+                {idx < STAGES.length - 1 && (
+                  <div
+                    className={`h-[2px] flex-1 mb-2.5 transition-all ${
+                      idx < stageIndex ? 'bg-emerald-500' : 'bg-border'
+                    }`}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
         </div>
       </div>
 
