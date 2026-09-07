@@ -139,10 +139,43 @@ class SignalCenterService:
         )
 
         # Map breakout status to SignalCallStatus
-        # NO_SETUP when breakout REJECTED and both horizons REJECTED
+        # NO_SETUP when breakout REJECTED and both horizons REJECTED — still
+        # return a FULL card payload (pressures, price, session, evidence) so the
+        # UI never renders null "/ 100" rows; only genuinely missing data is None.
         if sig.status == "REJECTED" and short_out.status == "REJECTED" and cont_out.status == "REJECTED":
-            status: SignalCallStatus = "NO_SETUP"
-            return None  # No setup to populate
+            try:
+                _px = float(spot) if spot is not None else None
+            except Exception:
+                _px = None
+            return {
+                "signal_id": f"no-setup-{iid.lower()}",
+                "instrument_id": iid,
+                "display_name": prof.display_name,
+                "status": "NO_SETUP",
+                "direction": "NEUTRAL",
+                "trigger_level": format(breakout_level, 'f') if breakout_level else None,
+                "breakout_pressure": ctx.scores.get("breakout_pressure", 50),
+                "false_breakout_risk": sig.false_breakout_risk,
+                "breakout_quality": max(0, 100 - int(sig.false_breakout_risk or 0)),
+                "short_horizon": short_out.to_dict(),
+                "continuation": cont_out.to_dict(),
+                "options_confirmation": "NEUTRAL",
+                "ai_decision": "UNAVAILABLE",
+                "ai_confidence": None,
+                "ai_status": "UNAVAILABLE",
+                "risk_status": "NO_SETUP",
+                "risk_reason": getattr(sig, "reason", "") or "no breakout — multi-factor not satisfied",
+                "ttl_ms": None,
+                "created_at_utc": None,
+                "expires_at_utc": None,
+                "price": format(spot, 'f') if spot is not None else None,
+                "price_formatted": f"{_px:,.2f}" if _px is not None else None,
+                "session": session_state,
+                "data_health": data_health,
+                "supporting": [e.signal for e in ctx.supporting_evidence][:3],
+                "conflicting": [e.signal for e in ctx.conflicting_evidence][:2],
+                "backend_authoritative": True,
+            }
         elif sig.status in ("POSSIBLE", "WATCH"):
             status = "POSSIBLE_BREAKOUT" if sig.direction == "BULLISH" else "POSSIBLE_BREAKDOWN"
         elif sig.status == "CONFIRMED":
@@ -321,9 +354,35 @@ class SignalCenterService:
                         continue
                 results.append(ev)
             else:
-                # No setup — honest NO_SETUP with null metrics (no synthetic quality scores)
+                # No setup — honest NO_SETUP. Pressures stay null (no synthetic
+                # quality scores) but session / health / last-known price are filled
+                # synchronously so cards never render blank rows.
                 if not status or status == "NO_SETUP":
+                    from app.institutional import mi_service as _mi
+
                     prof = asset_registry.get(iid)
+                    _now = int(time.time() * 1000)
+                    try:
+                        _sess = get_session_clock(iid).current_state(now_ms=_now)
+                    except Exception:
+                        _sess = "UNKNOWN"
+                    _px_s, _px_f, _sess_h = None, None, "DISCONNECTED"
+                    try:
+                        _cspot, _cts, _cage = _mi.get_last_good(iid, _now)
+                        if _cspot is not None:
+                            _px_s = format(_cspot, 'f')
+                            _px_f = f"{float(_cspot):,.2f}"
+                            _sess_h = "STALE"
+                    except Exception:
+                        pass
+                    if _sess_h == "DISCONNECTED":
+                        try:
+                            if prof and prof.pipeline == "INDIAN_EQUITY" and _sess == "CLOSED":
+                                _sess_h = "CLOSED"
+                            elif feed_circuit.is_degraded(iid):
+                                _sess_h = "FEED_DEGRADED"
+                        except Exception:
+                            pass
                     results.append({
                         "signal_id": f"no-setup-{iid.lower()}",
                         "instrument_id": iid,
@@ -334,13 +393,21 @@ class SignalCenterService:
                         "breakout_pressure": None,
                         "false_breakout_risk": None,
                         "breakout_quality": None,
-                        "short_horizon": {"status":"REJECTED","confidence":0},
-                        "continuation": {"status":"REJECTED","confidence":0},
+                        "short_horizon": {"status":"REJECTED","confidence":0,"direction":"NEUTRAL"},
+                        "continuation": {"status":"REJECTED","confidence":0,"direction":"NEUTRAL"},
                         "options_confirmation": "NEUTRAL",
                         "ai_decision": "UNAVAILABLE",
                         "ai_confidence": None,
+                        "ai_status": "UNAVAILABLE",
                         "risk_status": "NO_SETUP",
-                        "price": None,
+                        "risk_reason": "no live price — feed disconnected" if _px_s is None else "no setup at current price",
+                        "ttl_ms": None,
+                        "created_at_utc": None,
+                        "expires_at_utc": None,
+                        "price": _px_s,
+                        "price_formatted": _px_f,
+                        "session": _sess,
+                        "data_health": _sess_h,
                         "supporting": [],
                         "conflicting": [],
                         "backend_authoritative": True,

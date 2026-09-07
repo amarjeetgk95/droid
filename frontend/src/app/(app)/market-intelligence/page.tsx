@@ -28,6 +28,21 @@ interface FullMiResponse {
   data_health: { feed: string; feed_reason: string | null; data_health: string; clock_sync: string; sequence: string; contract: string; snapshot: string; synchronization: string; last_event_age_ms: number | null };
   capabilities: string[];
   instrument_specific: { is_crypto: boolean; fields: string[] };
+  details?: {
+    spot: { price: number | null; source: string; age_ms: number | null; used_cache: boolean; status: string };
+    vwap: { value: number | null; relation: string; source: string | null; status: string; reason: string | null };
+    volume: { volume_change: number | null; state: string; quote_volume: number | null; status: string; reason: string | null };
+    options: { pcr: number | null; status: string; reason: string | null };
+    volatility: { volatility_change: number | null; regime: string; status: string; reason: string | null };
+    futures: { status: string; reason: string | null };
+    liquidity: { state: string };
+    atr: number | null;
+    multi_timeframe: Record<string, string> | null;
+    funding: { rate: number } | null;
+    levels_source: string | null;
+    breadth: string;
+    cross_market: { status: string; detail: any };
+  };
 }
 
 const SECONDARY_TABS: { id: SecondaryTab; label: string }[] = [
@@ -361,8 +376,15 @@ export default function MarketIntelligencePage() {
                 {data.header.display_name} <span className="text-xs font-mono text-muted-foreground">{data.header.instrument}</span>
               </h2>
               <div className="flex items-center gap-2 mt-1">
-                <span className={`w-2 h-2 rounded-full ${data.header.live_status === 'LIVE' ? 'bg-emerald-500 animate-pulse' : data.header.live_status === 'FEED_DEGRADED' ? 'bg-destructive' : 'bg-amber-400'}`} />
-                <span className="text-xs font-mono font-bold text-foreground">{data.header.live_status}</span>
+                {(() => {
+                  const feed = data.header.live_status;
+                  const q = data.header.data_quality;
+                  const ok = (feed === 'HEALTHY' || feed === 'LIVE') && (q === 'LIVE' || q === 'RECENT');
+                  const degraded = feed === 'FEED_DEGRADED' || q === 'FEED_DEGRADED';
+                  const dot = degraded ? 'bg-destructive' : ok ? (q === 'LIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500') : 'bg-amber-400';
+                  const label = degraded ? 'FEED DEGRADED' : q === 'RECENT' ? 'RECENT' : feed === 'HEALTHY' ? 'HEALTHY' : feed;
+                  return (<><span className={`w-2 h-2 rounded-full ${dot}`} /><span className="text-xs font-mono font-bold text-foreground">{label}</span></>);
+                })()}
                 <span className="text-xs text-muted-foreground">Price: <span className="font-mono font-bold text-foreground">{data.header.price_formatted}</span></span>
                 <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium text-foreground">{data.header.session_label}</span></span>
               </div>
@@ -647,22 +669,66 @@ export default function MarketIntelligencePage() {
             </div>
           )}
 
-          {/* Instrument-specific content hint (§18) */}
+          {/* Module detail tabs — real backend values, honest unavailable states (§18) */}
           {(secondary === 'futures' || secondary === 'options' || secondary === 'volume' || secondary === 'volatility' || secondary === 'cross-market') && (
             <div className="bg-card border rounded-lg p-4">
               <h3 className="font-bold text-xs tracking-widest uppercase">{secondary.replace('-', ' ').toUpperCase()} — {data.instrument_id}</h3>
-              {data.instrument_specific.is_crypto ? (
-                <div className="mt-2 text-xs space-y-1">
-                  <p>Available for BTCUSD: {data.instrument_specific.fields.join(' • ')}</p>
-                  <p className="text-muted-foreground">Spot 24/7 • Perp/Futures via Binance • Funding {data.evidence.supporting.find(e=>e.dimension==='POSITIONING') ? 'active' : '—'} • No PCR/breadth (NOT_APPLICABLE)</p>
-                  <p className="text-[11px] text-muted-foreground">Cross-market sync: BTCUSD continuous — no Indian EOD reset.</p>
-                </div>
-              ) : (
-                <div className="mt-2 text-xs space-y-1">
-                  <p>Available: {data.instrument_specific.fields.join(' • ')}</p>
-                  <p className="text-muted-foreground">Price Action • VWAP • Futures (OI, basis) • Options (PCR, OI chain) • Breadth • Cross NIFTY↔BANKNIFTY Δt&lt;500ms</p>
-                </div>
-              )}
+              {(() => {
+                const d = data.details;
+                const tile = (label: string, value: string, sub?: string) => (
+                  <div key={label} className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="font-mono font-bold mt-1">{value}</div>{sub ? <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div> : null}</div>
+                );
+                const unavail = (reason: string | null | undefined) => (
+                  <p className="text-[11px] text-amber-600 mt-2">Unavailable this poll — {reason || 'no reading from broker feed'}. Retries automatically; no values are fabricated.</p>
+                );
+                if (!d) return (<div className="mt-2 text-xs text-muted-foreground">Detail feed loading — switch tabs or refresh. Backend authoritative, frontend never recreates trading logic.</div>);
+                if (secondary === 'options') {
+                  const pcr = d.options.pcr;
+                  const interp = pcr == null ? '—' : pcr > 1.2 ? 'Bullish positioning' : pcr < 0.85 ? 'Bearish positioning' : 'Neutral positioning';
+                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {tile('PCR (OI)', pcr != null ? pcr.toFixed(2) : '—', interp)}
+                    {tile('Status', d.options.status)}
+                    {tile('Spot ref', data.header.price_formatted)}
+                    {d.options.status !== 'AVAILABLE' ? unavail(d.options.reason) : null}
+                    {data.instrument_specific.is_crypto ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD has no options chain — funding/perp positioning applies (NOT_APPLICABLE for PCR).</p> : null}
+                  </div>);
+                }
+                if (secondary === 'volume') {
+                  const chg = d.volume.volume_change;
+                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {tile('Volume change', chg != null ? `${(chg * 100).toFixed(0)}%` : '—', `State: ${d.volume.state}`)}
+                    {tile('Quote volume', d.volume.quote_volume != null ? d.volume.quote_volume.toLocaleString('en-IN') : '—')}
+                    {tile('VWAP', data.details?.vwap.value != null ? Number(data.details.vwap.value).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—', `${data.price_action.vwap}${data.details?.vwap.source ? ` • ${data.details.vwap.source}` : ''}`)}
+                    {d.volume.status !== 'AVAILABLE' ? unavail(d.volume.reason) : null}
+                  </div>);
+                }
+                if (secondary === 'volatility') {
+                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {tile('Regime', d.volatility.regime)}
+                    {tile('Change', d.volatility.volatility_change != null ? `${(d.volatility.volatility_change * 100).toFixed(0)}%` : '—')}
+                    {tile('ATR(14)', d.atr != null ? d.atr.toFixed(2) : '—')}
+                    {d.volatility.status !== 'AVAILABLE' ? unavail(d.volatility.reason) : null}
+                  </div>);
+                }
+                if (secondary === 'futures') {
+                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {tile('Status', d.futures.status)}
+                    {tile('Spot ref', data.header.price_formatted)}
+                    {tile('Funding', d.funding ? String(d.funding.rate) : data.instrument_specific.is_crypto ? '—' : 'N/A (equity)')}
+                    {unavail(d.futures.reason)}
+                  </div>);
+                }
+                // cross-market
+                const cm: any = d.cross_market?.detail || {};
+                return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {tile('Sync status', d.cross_market?.status || 'UNKNOWN')}
+                  {tile('Delta ms', cm.delta_ms != null ? String(cm.delta_ms) : '—', 'Threshold 500ms')}
+                  {tile('Breadth', d.breadth || '—')}
+                  {data.instrument_specific.is_crypto
+                    ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD trades 24/7 — no peer sync, no Indian EOD reset.</p>
+                    : <p className="text-[11px] text-muted-foreground col-span-full">NIFTY↔BANKNIFTY peer sync Δt&lt;500ms. UNKNOWN means the peer snapshot has not arrived yet — not an error.</p>}
+                </div>);
+              })()}
               <p className="text-[11px] text-muted-foreground mt-2">Backend authoritative — frontend never recreates trading logic.</p>
             </div>
           )}
@@ -751,20 +817,20 @@ export default function MarketIntelligencePage() {
                 {breakoutSignals.filter(s => breakoutFilter === 'ALL' || s.instrument_id === breakoutFilter).map(sig => (
                   <div key={sig.signal_id} className={`border-2 rounded-lg p-4 space-y-2 ${sig.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : sig.status === 'TRIGGERED' ? 'border-amber-400 bg-amber-50' : sig.status.includes('POSSIBLE') ? 'border-sky-500 bg-sky-50' : sig.status === 'NO_SETUP' ? 'border-border bg-muted/30 opacity-75' : 'bg-card border-border'}`}>
                     <div className="flex justify-between items-start">
-                      <div><div className="font-bold text-sm">{sig.display_name} <span className="font-mono text-xs text-muted-foreground">{sig.instrument_id}</span></div><div className="text-xs font-mono">{sig.price_formatted ? `Price ${sig.price_formatted}` : ''} • Session {sig.session} • {sig.data_health}</div></div>
+                      <div><div className="font-bold text-sm">{sig.display_name} <span className="font-mono text-xs text-muted-foreground">{sig.instrument_id}</span></div><div className="text-xs font-mono">{sig.price_formatted ? `Price ${sig.price_formatted}` : 'Price —'} • Session {sig.session || '—'} • {sig.data_health || '—'}</div></div>
                       <Badge status={sig.status} />
                     </div>
                     <div className="text-xs space-y-1">
                       <div className="flex justify-between"><span className="text-muted-foreground">Direction</span><span className={`font-bold ${sig.direction === 'BULLISH' ? 'text-emerald-600' : sig.direction === 'BEARISH' ? 'text-red-600' : ''}`}>{sig.direction}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Trigger Level</span><span className="font-mono font-bold">{sig.trigger_level || '—'}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono">{sig.breakout_pressure} / 100</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">False-Breakout Risk</span><span className={`font-mono ${sig.false_breakout_risk > 60 ? 'text-red-600' : ''}`}>{sig.false_breakout_risk} / 100</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono">{sig.breakout_pressure != null ? `${sig.breakout_pressure} / 100` : '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">False-Breakout Risk</span><span className={`font-mono ${(sig.false_breakout_risk ?? 0) > 60 ? 'text-red-600' : ''}`}>{sig.false_breakout_risk != null ? `${sig.false_breakout_risk} / 100` : '—'}</span></div>
                       <div className="border-t pt-2 mt-2 grid grid-cols-2 gap-2">
                         <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">10-Minute</div><div className="flex justify-between text-xs mt-1"><span>{sig.short_horizon.direction}</span><Badge status={sig.short_horizon.status} /></div><div className="text-[11px] font-mono">{sig.short_horizon.confidence}% • {sig.short_horizon.entry_zone?.length ? sig.short_horizon.entry_zone.join('–') : '—'} → {sig.short_horizon.target_zone?.length ? sig.short_horizon.target_zone.join('–') : '—'}</div></div>
                         <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">Continuation (&lt;2h)</div><div className="flex justify-between text-xs mt-1"><span>{sig.continuation.direction}</span><Badge status={sig.continuation.status} /></div><div className="text-[11px] font-mono">{sig.continuation.confidence}% • 119 min max • {sig.continuation.reason?.slice(0,30) || '—'}</div></div>
                       </div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Options Confirmation</span><span className="font-medium text-xs">{sig.options_confirmation}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">AI Confirmation</span><span className="font-medium text-xs">{sig.ai_decision} {sig.ai_confidence}%</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">AI Confirmation</span><span className="font-medium text-xs">{sig.ai_decision}{sig.ai_confidence != null ? ` ${sig.ai_confidence}%` : ''}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Risk</span><span className={`font-bold text-xs ${sig.risk_status === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{sig.risk_status}</span></div>
                       <div className="text-[11px] text-muted-foreground">TTL {sig.ttl_ms ? `${sig.ttl_ms/1000}s` : '—'} • Created {sig.created_at_utc ? new Date(sig.created_at_utc).toISOString().substring(11,19) + ' UTC' : '—'} • Expires {sig.expires_at_utc ? new Date(sig.expires_at_utc).toISOString().substring(11,19) + ' UTC' : '—'}</div>
                       <div className="text-[11px]"><span className="text-emerald-600">✓ {sig.supporting?.join(' • ') || '—'}</span><br /><span className="text-amber-600">! {sig.conflicting?.join(' • ') || '—'}</span></div>

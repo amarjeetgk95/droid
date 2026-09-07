@@ -511,6 +511,7 @@ async def dashboard_market_intelligence(instrument_id: str = "NIFTY"):
         volatility=mi.volatility,
         liquidity=mi.liquidity,
         funding=mi.funding,
+        synchronized_snapshot=mi.synchronized_snapshot,
         data_health=mi.data_health,
         feed_health=mi.feed_health,
         market_session=mi.market_session,
@@ -678,6 +679,7 @@ async def get_full_mi(instrument_id: str):
         volatility=mi.volatility,
         liquidity=mi.liquidity,
         funding=mi.funding,
+        synchronized_snapshot=mi.synchronized_snapshot,
         data_health=mi.data_health,
         feed_health=mi.feed_health,
         market_session=mi.market_session,
@@ -751,11 +753,77 @@ async def get_full_mi(instrument_id: str):
     except Exception:
         brk_lvl = None
     feed_label = feed.get("health", "STALE")
-    data_quality = "LIVE" if feed_label in ("HEALTHY",) and not feed.get("is_stale") else (
-        "STALE" if spot is not None else ("CLOSED" if mi.data_health == "CLOSED" else "STALE")
-    )
+    # Freshness band from actual knowledge age (widened for REST-poll cadence):
+    # LIVE ≤5s, RECENT ≤15s, STALE beyond. RECENT is healthy — it must not flap
+    # the header badge or alarm the user on every poll.
     if feed_label == "FEED_DEGRADED":
         data_quality = "FEED_DEGRADED"
+    elif spot is None:
+        data_quality = "CLOSED" if mi.data_health == "CLOSED" else "STALE"
+    else:
+        data_quality = _mi.health_band(feed.get("staleness_ms"))
+    # Per-module detail blocks for the workspace tabs. Every block carries an
+    # explicit status — the UI renders real numbers where available and an
+    # honest "unavailable + reason" otherwise (never placeholders, never fake).
+    try:
+        _vol_chg = float((mi.volumes or {}).get("volume_change")) if mi.volumes else None
+    except Exception:
+        _vol_chg = None
+    try:
+        _pcr = float((mi.options_data or {}).get("pcr")) if mi.options_data else None
+    except Exception:
+        _pcr = None
+    try:
+        _volat_chg = float((mi.volatility or {}).get("volatility_change")) if mi.volatility else None
+    except Exception:
+        _volat_chg = None
+    _prov = mi.provenance or {}
+    details = {
+        "spot": {
+            "price": spot_f, "source": mi.spot_source,
+            "age_ms": feed.get("staleness_ms"), "used_cache": mi.used_cache,
+            "status": "AVAILABLE" if spot_f is not None else "UNAVAILABLE",
+        },
+        "vwap": {
+            "value": float(mi.vwap) if mi.vwap is not None else None,
+            "relation": (ctx.technical or {}).get("vwap", "UNKNOWN"),
+            "source": mi.vwap_source,
+            "status": "AVAILABLE" if mi.vwap is not None else "UNAVAILABLE",
+            "reason": None if mi.vwap is not None else "session VWAP not derivable from available candles",
+        },
+        "volume": {
+            "volume_change": _vol_chg,
+            "state": (ctx.participation or {}).get("volume", "UNKNOWN"),
+            "quote_volume": mi.quote_volume,
+            "status": "AVAILABLE" if _vol_chg is not None else "UNAVAILABLE",
+            "reason": None if _vol_chg is not None else "no candle volume in this poll — retry",
+        },
+        "options": {
+            "pcr": _pcr,
+            "status": "AVAILABLE" if _pcr is not None else "UNAVAILABLE",
+            "reason": None if _pcr is not None else (_prov.get("options_status") or "option chain unavailable"),
+        },
+        "volatility": {
+            "volatility_change": _volat_chg,
+            "regime": (ctx.technical or {}).get("volatility", "UNKNOWN"),
+            "status": "AVAILABLE" if _volat_chg is not None else "UNAVAILABLE",
+            "reason": None if _volat_chg is not None else "volatility engine gave no reading this poll",
+        },
+        "futures": {
+            "status": "UNAVAILABLE",
+            "reason": "index spot feed carries no futures basis/OI; futures depth appears when broker futures symbols are enabled",
+        },
+        "liquidity": {"state": (mi.liquidity or {}).get("state", "UNKNOWN")},
+        "atr": float(mi.atr) if mi.atr is not None else None,
+        "multi_timeframe": mi.multi_timeframe,
+        "funding": mi.funding,
+        "levels_source": mi.levels_source,
+        "breadth": (ctx.participation or {}).get("breadth", "UNKNOWN"),
+        "cross_market": {
+            "status": ctx.synchronization_status,
+            "detail": ctx.cross_market,
+        },
+    }
 
     # Flattened shape (backward-compat) + rich shape (frontend FullMiResponse).
     # Frontend adapter prefers rich `header/market_state` when present.
@@ -809,6 +877,7 @@ async def get_full_mi(instrument_id: str):
         "short_horizon": short_d,
         "continuation": cont_d,
         "generated_at_ms": now_ms,
+        "details": details,
         # ── Rich shape for the MI workspace (matches frontend FullMiResponse) ──
         "instrument_id": iid,
         "asset_class": prof.asset_class,
