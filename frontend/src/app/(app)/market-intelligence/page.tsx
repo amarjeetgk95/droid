@@ -75,12 +75,21 @@ export default function MarketIntelligencePage() {
     inFlightRef.current.add(iid);
     if (showLoading) setLoading(prev => ({ ...prev, [iid]: true }));
     try {
-      const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
+      // Same base-URL resolution as lib/api.ts: local backend on localhost, hosted fallback otherwise.
+      const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const base = (process.env.NEXT_PUBLIC_API_URL || (isLocal ? 'http://localhost:8000' : 'https://droid-backend-emeq.onrender.com')).replace(/\/+$/, '');
       const url = `${base}/api/v1/institutional/market-intelligence/${iid}/full`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60000);
+      let res: Response;
+      try {
+        res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
-        throw new Error(`${res.status} ${res.statusText}${txt ? ` — ${txt.slice(0,120)}` : ''}`);
+        throw new Error(`${res.status} ${res.statusText}${txt ? ` — ${txt.slice(0,200)}` : ''}`);
       }
       const json = await res.json();
       const raw = (json.data ?? json) as any;
@@ -216,9 +225,17 @@ export default function MarketIntelligencePage() {
   const fetchBreakoutSetups = useCallback(async (showLoading = true) => {
     if (showLoading) setBreakoutLoading(true);
     try {
-      const base = (process.env.NEXT_PUBLIC_API_URL || 'https://droid-backend-emeq.onrender.com').replace(/\/+$/, '');
+      const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const base = (process.env.NEXT_PUBLIC_API_URL || (isLocal ? 'http://localhost:8000' : 'https://droid-backend-emeq.onrender.com')).replace(/\/+$/, '');
       const url = `${base}/api/v1/institutional/signals/active`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60000);
+      let res: Response;
+      try {
+        res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       const payload = json.data ?? json;

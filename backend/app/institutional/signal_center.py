@@ -50,150 +50,80 @@ class SignalCenterService:
         # Check feed degraded — cannot generate new signals
         if feed_circuit.is_degraded(iid):
             return None
-        # Get spot price — try buffer, else Binance live for BTC, else demo
-        latest = synchronized_buffer.get_latest(iid)
-        spot: Decimal | None = None
-        last_update_ms = now_ms
-        if latest:
-            try:
-                spot = D(latest.event.price) if latest.event.price else None
-                last_update_ms = latest.event.canonical_timestamp_utc
-            except:
-                spot = None
-        if spot is None:
-            # Live fallback — MarketService, then Binance for BTC, no demo
-            try:
-                from app.services.market_service import MarketService
-                from app.models.market import DataStatus
-                svc = MarketService()
-                q = await svc.get_quote(iid)
-                if q and getattr(q, 'ltp', None) is not None and getattr(q, 'status', None) != DataStatus.OFFLINE and getattr(q, 'provider', '') != 'fallback':
-                    spot = D(str(q.ltp))
-                    try:
-                        last_update_ms = int(q.timestamp.timestamp()*1000) if getattr(q, 'timestamp', None) else now_ms
-                    except Exception:
-                        pass
-                elif iid == "BTCUSD":
-                    try:
-                        from app.services.binance_service import binance_service
-                        ticker = await binance_service.get_ticker("BTCUSDT")
-                        if ticker and getattr(ticker, 'price', None) and ticker.price > 0:
-                            spot = D(str(ticker.price))
-                            try:
-                                last_update_ms = int(ticker.last_updated.timestamp()*1000) if getattr(ticker, 'last_updated', None) else now_ms
-                            except Exception:
-                                pass
-                            try:
-                                from app.institutional.events import InstrumentEvent
-                                synth = InstrumentEvent.create(instrument_id=iid, asset_class="CRYPTO", canonical_timestamp_utc=last_update_ms, sequence_id=int(time.time()*1000)%1000000, price=str(spot), source_id="binance_live")
-                                synchronized_buffer.ingest_sync(synth)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        # Unified reader — spot + enrichment with honest provenance (no thin duplication)
+        from app.institutional import mi_service as _mi
+
+        mi = await _mi.gather_inputs(iid, now_ms=now_ms)
+        spot = mi.spot
+        last_update_ms = mi.last_update_ms
+        session_state = mi.market_session
+        data_health = mi.data_health
 
         if spot is None:
             return None
-
-        session_clock = get_session_clock(iid)
-        session_state = session_clock.current_state(now_ms=now_ms)
         if session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY":
             logger.debug("signal_center_generation_blocked_market_closed", instrument_id=iid, session=session_state)
             return None
-
-        snap_health = synchronized_buffer.health().get(iid, {})
-        age_ms = snap_health.get("age_ms")
-        feed_state = feed_circuit.snapshot(iid)
-        if feed_state.health == "FEED_DEGRADED":
-            data_health = "FEED_DEGRADED"
-        elif age_ms is None and session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY":
-            data_health = "CLOSED"
-        elif age_ms is None:
-            data_health = "STALE"  # no snapshot → unknown freshness, never assume LIVE
-        elif age_ms > 5000:
-            data_health = "STALE"
-        else:
-            data_health = "LIVE"
-        mi_data_health = "LIVE" if data_health not in ("FEED_DEGRADED","STALE") else data_health
-        mi_feed_health = "HEALTHY" if feed_state.health == "HEALTHY" else "FEED_DEGRADED"
-
-        vwap: Decimal | None = None
-        breakout_level: Decimal | None = None
-        atr: Decimal | None = None
-        options_data: dict[str, Any] | None = None
-
-        if iid == "BTCUSD":
-            deriv_funding = None
+        # STALE without a usable cache edge → no new setups (avoid trading on old prints)
+        if data_health in ("STALE", "DISCONNECTED", "FEED_DEGRADED") and mi.used_cache:
             try:
-                from app.services.binance_service import binance_service
-                deriv = await binance_service.get_derivatives_data("BTCUSDT")
-                if deriv and deriv.funding_rate is not None:
-                    deriv_funding = {"rate": float(deriv.funding_rate)}
+                age = max(0, now_ms - int(last_update_ms))
             except Exception:
-                pass
+                age = 999999
+            if age > 60000:
+                logger.debug("signal_center_generation_blocked_stale", instrument_id=iid, age_ms=age)
+                return None
 
-            ctx = market_intelligence_engine.evaluate(
-                instrument_id=iid,
-                canonical_ts_ms=last_update_ms,
-                spot_price=spot,
-                funding=deriv_funding,
-                data_health=mi_data_health,
-                feed_health=mi_feed_health,
-                market_session=session_state,
+        breakout_level = mi.breakout_level
+        atr = mi.atr
+
+        ctx = market_intelligence_engine.evaluate(
+            instrument_id=iid,
+            canonical_ts_ms=last_update_ms,
+            spot_price=spot,
+            vwap=mi.vwap,
+            volumes=mi.volumes,
+            options_data=mi.options_data,
+            support_resistance=mi.support_resistance,
+            multi_timeframe=mi.multi_timeframe,
+            volatility=mi.volatility,
+            liquidity=mi.liquidity,
+            funding=mi.funding,
+            data_health=mi.data_health,
+            feed_health=mi.feed_health,
+            market_session=session_state,
+        )
+
+        # Evaluate breakout with real microstructure flags derived from enriched inputs
+        try:
+            vol_exp = bool(mi.volumes and float(mi.volumes.get("volume_change", 0)) > 0.3)
+        except Exception:
+            vol_exp = False
+        try:
+            mtf = mi.multi_timeframe or {}
+            _bull = sum(1 for v in mtf.values() if "BULL" in str(v).upper())
+            _bear = sum(1 for v in mtf.values() if "BEAR" in str(v).upper())
+            mom_accel = (_bull >= 2 and ctx.price_action.get("trend") == "BULLISH") or (
+                _bear >= 2 and ctx.price_action.get("trend") == "BEARISH"
             )
-        else:
-            supp_res = None
-            try:
-                from app.services.options_service import options_service
-                chain = await options_service.get_option_chain_matrix(iid)
-                if chain and chain.analytics and chain.analytics.pcr_oi is not None:
-                    options_data = {"pcr": float(chain.analytics.pcr_oi)}
-            except Exception:
-                pass
-
-            try:
-                from app.services.regime_service import regime_service
-                kl = await regime_service.get_key_levels(iid)
-                if kl and kl.r1 > 0 and kl.s1 > 0:
-                    supp_res = {
-                        "support": [str(kl.s1), str(kl.s2)],
-                        "resistance": [str(kl.r1), str(kl.r2)],
-                    }
-                    breakout_level = Decimal(str(kl.r1))
-                ind = await regime_service.get_technical_indicators(iid)
-                if ind and ind.atr_14 > 0:
-                    atr = Decimal(str(ind.atr_14))
-            except Exception:
-                pass
-
-            ctx = market_intelligence_engine.evaluate(
-                instrument_id=iid,
-                canonical_ts_ms=last_update_ms,
-                spot_price=spot,
-                options_data=options_data,
-                support_resistance=supp_res,
-                data_health=mi_data_health,
-                feed_health=mi_feed_health,
-                market_session=session_state,
-            )
-
-        # Evaluate breakout with real indicators
+        except Exception:
+            mom_accel = False
+        # close_confirmed stays False here (no candle-close feed in this reader);
+        # breakout_engine still yields honest WATCH/POSSIBLE instead of forced CONFIRMED.
         sig = breakout_engine.evaluate(
             ctx,
             breakout_level=breakout_level,
             current_price=spot,
             close_confirmed=False,
-            volume_expansion=False,
+            volume_expansion=vol_exp,
         )
         short_out = short_horizon_strategy.evaluate(
             ctx,
             breakout_level=breakout_level,
             current_price=spot,
             atr=atr,
-            momentum_accel=False,
-            volume_expansion=False,
+            momentum_accel=mom_accel,
+            volume_expansion=vol_exp,
             close_confirmed=False,
         )
         cont_out = continuation_strategy.evaluate(
@@ -241,8 +171,9 @@ class SignalCenterService:
         # Options confirmation from genuine options intelligence if available
         options_confirm = "NEUTRAL"
         try:
-            if prof.has_options and options_data and "pcr" in options_data:
-                pcr = options_data["pcr"]
+            _od = mi.options_data or {}
+            if prof.has_options and "pcr" in _od:
+                pcr = _od["pcr"]
                 if pcr > 1.2:
                     options_confirm = "BULLISH_CONFIRMING"
                 elif pcr < 0.85:

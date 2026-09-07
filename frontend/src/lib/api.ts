@@ -904,12 +904,9 @@ class ApiClient {
     return this.request<any>('/api/v1/institutional/dashboard/data-health');
   }
   async institutionalPipelineIngest(event: any, mockAi?: any) {
-    const body: any = { ...event };
-    if (mockAi) body.mock_ai_response = mockAi;
-    // Actually endpoint is POST /pipeline/ingest with event body + query mock_ai_response
+    // Backend takes the raw tick as the JSON body; mock_ai_response is a query param.
     const qs = mockAi ? `?mock_ai_response=${encodeURIComponent(JSON.stringify(mockAi))}` : '';
-    // Use direct fetch to handle async; we fake via JSON body inclusion
-    return this.request<any>('/api/v1/institutional/pipeline/ingest', { method: 'POST', body: JSON.stringify(event) });
+    return this.request<any>(`/api/v1/institutional/pipeline/ingest${qs}`, { method: 'POST', body: JSON.stringify(event) });
   }
   async institutionalIngestDirect(event: any) {
     return this.request<any>('/api/v1/institutional/pipeline/ingest', { method: 'POST', body: JSON.stringify(event) });
