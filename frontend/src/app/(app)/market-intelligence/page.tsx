@@ -1,7 +1,23 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, Shield, Clock, Database, BarChart3, Layers, Zap, Eye, ChevronDown, RefreshCw } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertTriangle, Shield, Clock, Database, Layers, Zap, Eye, ChevronDown, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { ErrorCard } from '@/components/ui/ErrorCard';
+import { PageTabs } from '@/components/ui/PageTabs';
+import {
+  EvidenceList,
+  FeedHealthBadge,
+  MetricTile,
+  MiSection,
+  MiUnavailable,
+  MiWorkspaceSkeleton,
+  ScoreMeter,
+  SignalStatusBadge as Badge,
+  formatClock,
+  timeAgo,
+} from '@/components/institutional/mi-ui';
 
 // Types mirroring backend authoritative objects
 type InstrumentId = 'NIFTY' | 'BANKNIFTY' | 'SENSEX' | 'BTCUSD' | 'BREAKOUT_SETUPS';
@@ -25,7 +41,7 @@ interface FullMiResponse {
   ai: { status: string; short_horizon: {decision:string; confidence:number; reasoning:string[]; conflicts:string[]; invalidation_conditions:string[]}; continuation: {decision:string; confidence:number; reasoning:string[]; conflicts:string[]; invalidation_conditions:string[]}; overall: any };
   risk: { strategy: string; portfolio: string; exposure: string; margin: string; correlation: string; reason: string | null };
   signal: any;
-  data_health: { feed: string; feed_reason: string | null; data_health: string; clock_sync: string; sequence: string; contract: string; snapshot: string; synchronization: string; last_event_age_ms: number | null };
+  data_health: { feed: string; feed_reason: string | null; data_health: string; clock_sync: string; sequence: string; contract: string; snapshot: string; synchronization: string; last_event_age_ms: number | null; spot_source?: string; used_cache?: boolean };
   capabilities: string[];
   instrument_specific: { is_crypto: boolean; fields: string[] };
   details?: {
@@ -61,11 +77,6 @@ const SECONDARY_TABS: { id: SecondaryTab; label: string }[] = [
   { id: 'risk', label: 'Risk' },
   { id: 'data-health', label: 'Data Health' },
 ];
-
-function Badge({ status }: { status: string }) {
-  const cls = status === 'CONFIRMED' ? 'bg-emerald-500 text-white' : status === 'WATCH' ? 'bg-amber-400 text-black' : status === 'POSSIBLE' ? 'bg-sky-500 text-white' : status === 'REJECTED' ? 'bg-muted text-muted-foreground border' : 'bg-secondary text-muted-foreground';
-  return <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-widest ${cls}`}>{status}</span>;
-}
 
 export default function MarketIntelligencePage() {
   const [selected, setSelected] = useState<InstrumentId>('NIFTY');
@@ -310,96 +321,69 @@ export default function MarketIntelligencePage() {
           <Activity className="w-5 h-5 text-primary" /> Market Intelligence
           <span className="text-xs font-normal text-muted-foreground ml-2 hidden sm:inline">Professional trading workspace — authoritative backend state</span>
         </h1>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => fetchFor(selected, true)}
           disabled={selected !== 'BREAKOUT_SETUPS' && !!loading[selected]}
-          className="text-xs flex items-center gap-1 px-2 py-1 border rounded hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <RefreshCw className={`w-3 h-3 ${selected !== 'BREAKOUT_SETUPS' && loading[selected] ? 'animate-spin' : ''}`} /> Refresh
-        </button>
+          <RefreshCw className={selected !== 'BREAKOUT_SETUPS' && loading[selected] ? 'animate-spin' : ''} /> Refresh
+        </Button>
       </div>
 
       {/* Top instrument tabs — 5 tabs NOT in global sidebar */}
-      <div className="border-b border-border">
-        <div className="flex gap-1.5 sm:gap-2 overflow-x-auto pb-2 scrollbar-none" role="tablist">
-          {INSTRUMENTS.map(iid => {
-            const isActive = selected === iid;
-            const label = INSTRUMENT_LABELS[iid];
-            const isBreakout = iid === 'BREAKOUT_SETUPS';
-            return (
-              <button
-                key={iid}
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => { setSelected(iid); if (!isBreakout) setSecondary('overview'); }}
-                className={`px-3.5 sm:px-4 py-2 text-xs font-bold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-primary text-primary-foreground shadow-2xs'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/70'
-                } ${isBreakout ? 'flex items-center gap-1.5' : ''}`}
-              >
-                {isBreakout && <Zap className="w-3.5 h-3.5" />}{label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <PageTabs
+        tabs={INSTRUMENTS.map(iid => ({
+          id: iid,
+          label: INSTRUMENT_LABELS[iid],
+          icon: iid === 'BREAKOUT_SETUPS' ? Zap : undefined,
+        }))}
+        activeTab={selected}
+        onTabChange={(id) => { setSelected(id as InstrumentId); if (id !== 'BREAKOUT_SETUPS') setSecondary('overview'); }}
+      />
 
       {/* Selected Instrument Workspace */}
-      {isLoading && (
-        <div className="bg-card border border-border rounded-xl p-8 animate-pulse space-y-3">
-          <div className="h-6 bg-muted rounded w-32" /> <div className="h-4 bg-muted rounded w-48" /> <div className="h-40 bg-muted rounded" />
-        </div>
-      )}
+      {isLoading && <MiWorkspaceSkeleton />}
 
       {err && !data && (
-        <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-xl text-sm space-y-2">
-          <p className="font-semibold text-destructive flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" /> Failed to load {selected}
-          </p>
-          <p className="text-muted-foreground text-xs">{err}</p>
-          <button
-            onClick={() => fetchFor(selected, true)}
-            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Retry
-          </button>
-        </div>
+        <ErrorCard
+          mode="full-page"
+          title={`Failed to load ${selected}`}
+          message={err}
+          onRetry={() => fetchFor(selected, true)}
+          isRetrying={!!loading[selected]}
+        />
       )}
 
       {data && (
         <div className="space-y-4">
           {/* Instrument Header (§5) */}
-          <div className="bg-card border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-            <div>
-              <h2 className="text-lg font-bold tracking-tight text-foreground">
-                {data.header.display_name} <span className="text-xs font-mono text-muted-foreground">{data.header.instrument}</span>
-              </h2>
-              <div className="flex items-center gap-2 mt-1">
-                {(() => {
-                  const feed = data.header.live_status;
-                  const q = data.header.data_quality;
-                  const ok = (feed === 'HEALTHY' || feed === 'LIVE') && (q === 'LIVE' || q === 'RECENT');
-                  const degraded = feed === 'FEED_DEGRADED' || q === 'FEED_DEGRADED';
-                  const dot = degraded ? 'bg-destructive' : ok ? (q === 'LIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500') : 'bg-amber-400';
-                  const label = degraded ? 'FEED DEGRADED' : q === 'RECENT' ? 'RECENT' : feed === 'HEALTHY' ? 'HEALTHY' : feed;
-                  return (<><span className={`w-2 h-2 rounded-full ${dot}`} /><span className="text-xs font-mono font-bold text-foreground">{label}</span></>);
-                })()}
-                <span className="text-xs text-muted-foreground">Price: <span className="font-mono font-bold text-foreground">{data.header.price_formatted}</span></span>
-                <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium text-foreground">{data.header.session_label}</span></span>
+          <Card className="py-4">
+            <CardContent className="px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold tracking-tight text-foreground truncate">
+                  {data.header.display_name} <span className="text-xs font-mono font-normal text-muted-foreground">{data.header.instrument}</span>
+                </h2>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <FeedHealthBadge feed={data.header.live_status} quality={data.header.data_quality} />
+                  <span className="text-xs text-muted-foreground">Price: <span className="font-mono font-bold tabular-nums text-foreground">{data.header.price_formatted}</span></span>
+                  <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium text-foreground">{data.header.session_label}</span></span>
+                </div>
               </div>
-            </div>
-            <div className="text-right">
-              <div className="text-[11px] text-muted-foreground">Last Update</div>
-              <div className="text-xs font-mono font-medium text-foreground">{data.header.last_update_iso}</div>
-              <div className="text-[10px] text-muted-foreground">{data.header.data_quality} • {data.header.feed_health} • {data.asset_class} {data.pipeline}</div>
-            </div>
-          </div>
+              <div className="sm:text-right shrink-0">
+                <div className="text-[11px] text-muted-foreground">Last Update</div>
+                <div className="text-xs font-mono font-medium tabular-nums text-foreground" title={data.header.last_update_iso}>
+                  {formatClock(data.header.last_update_utc)} <span className="text-muted-foreground">({timeAgo(data.header.last_update_utc)})</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">{data.header.data_quality} • {data.header.feed_health} • {data.asset_class} {data.pipeline}</div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* FE-degraded prominent banner (§25/§17) */}
           {isDegraded && (
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs">
-              <p className="font-bold text-sm flex items-center gap-2 text-amber-700 dark:text-amber-400">
+            <div className="bg-warning/10 border border-warning/30 rounded-xl p-4 text-xs">
+              <p className="font-bold text-sm flex items-center gap-2 text-warning">
                 <AlertTriangle className="w-4 h-4 shrink-0" /> FEED DEGRADED
               </p>
               <p className="text-muted-foreground mt-1">Sequence integrity failure detected.</p>
@@ -414,79 +398,57 @@ export default function MarketIntelligencePage() {
           )}
 
           {/* Secondary detail navigation — below primary tabs (§19) */}
-          <div className="bg-secondary/40 border border-border rounded-xl p-1.5 overflow-x-auto">
-            <div className="flex gap-1 flex-wrap sm:flex-nowrap sm:overflow-x-auto">
-              {SECONDARY_TABS.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setSecondary(t.id)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all cursor-pointer ${
-                    secondary === t.id
-                      ? 'bg-card text-foreground shadow-xs'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur py-1">
+            <PageTabs
+              tabs={SECONDARY_TABS.map(t => ({ id: t.id, label: t.label }))}
+              activeTab={secondary}
+              onTabChange={(id) => setSecondary(id as SecondaryTab)}
+            />
           </div>
 
           {/* Content per secondary tab — shared structure, instrument-specific rendering (§18) */}
           {(secondary === 'overview' || secondary === 'price-action') && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Market State Summary (§6) */}
-              <div className="lg:col-span-4 bg-card border rounded-lg p-4 space-y-3">
-                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Layers className="w-4 h-4" /> Market State</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Regime</span><span className="font-bold text-emerald-600">{data.market_state.regime || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Price Action</span><span className="font-mono text-xs">{data.market_state.price_action?.structure} / {data.market_state.price_action?.trend}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Momentum</span><span className="font-medium text-xs">{data.market_state.momentum || data.price_action.momentum || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Participation</span><span className="font-medium text-xs">{data.market_state.participation?.volume || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Volatility</span><span className="font-medium text-xs">{data.market_state.volatility || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">VWAP</span><span className="font-medium text-xs">{data.market_state.vwap || '—'}</span></div>
+              <MiSection icon={Layers} title="Market State" className="lg:col-span-4">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                  <div><div className="text-muted-foreground text-[11px]">Regime</div><div className="font-bold">{data.market_state.regime || '—'}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Trend</div><div className="font-mono">{data.market_state.price_action?.structure} / {data.market_state.price_action?.trend}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Momentum</div><div className="font-medium">{data.market_state.momentum || data.price_action.momentum || '—'}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Participation</div><div className="font-medium">{data.market_state.participation?.volume || '—'}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Volatility</div><div className="font-medium">{data.market_state.volatility || '—'}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">VWAP</div><div className="font-medium">{data.market_state.vwap || '—'}</div></div>
                 </div>
-                <div className="border-t pt-3 space-y-1.5">
-                  <div className="flex justify-between text-xs"><span>Bullish Pressure</span><span className="font-mono font-bold">{data.market_state.scores.bullish_score} / 100</span></div>
-                  <div className="w-full h-1.5 bg-muted rounded overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${data.market_state.scores.bullish_score}%` }} /></div>
-                  <div className="flex justify-between text-xs"><span>Bearish Pressure</span><span className="font-mono">{data.market_state.scores.bearish_score} / 100</span></div>
-                  <div className="w-full h-1.5 bg-muted rounded overflow-hidden"><div className="h-full bg-red-500" style={{ width: `${data.market_state.scores.bearish_score}%` }} /></div>
-                  <div className="flex justify-between text-xs"><span>Breakout Pressure</span><span className="font-mono font-bold text-sky-600">{data.market_state.scores.breakout_pressure} / 100</span></div>
-                  <div className="flex justify-between text-xs"><span>False Breakout Risk</span><span className={`font-mono ${data.market_state.scores.false_breakout_risk > 60 ? 'text-red-600' : ''}`}>{data.market_state.scores.false_breakout_risk} / 100</span></div>
+                <div className="border-t border-border pt-3 mt-3 space-y-2.5">
+                  <ScoreMeter label="Bullish pressure" value={data.market_state.scores.bullish_score} tone="emerald" />
+                  <ScoreMeter label="Bearish pressure" value={data.market_state.scores.bearish_score} tone="red" />
+                  <ScoreMeter label="Breakout pressure" value={data.market_state.scores.breakout_pressure} tone="sky" />
+                  <ScoreMeter label="False-breakout risk" value={data.market_state.scores.false_breakout_risk} tone="amber" />
                 </div>
-              </div>
+              </MiSection>
 
               {/* Price Action (§7) */}
-              <div className="lg:col-span-4 bg-card border rounded-lg p-4 space-y-3">
-                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Price Action</h3>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">Structure</div><div className="font-medium mt-1">{data.price_action.structure || '—'}</div></div>
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">Trend</div><div className="font-bold mt-1 flex items-center gap-1">{data.price_action.trend === 'BULLISH' ? <TrendingUp className="w-3 h-3 text-emerald-500" /> : data.price_action.trend === 'BEARISH' ? <TrendingDown className="w-3 h-3 text-red-500" /> : null}{data.price_action.trend || '—'}</div></div>
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">Momentum</div><div className="font-medium mt-1">{data.price_action.momentum || '—'}</div></div>
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">Location</div><div className="font-medium mt-1">{data.price_action.location || '—'}</div></div>
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">VWAP</div><div className="font-medium mt-1">{data.price_action.vwap || '—'}</div></div>
-                  <div className="bg-secondary/50 rounded p-2"><div className="text-muted-foreground">Volume</div><div className="font-medium mt-1">{data.price_action.volume || '—'}</div></div>
+              <MiSection icon={TrendingUp} title="Price Action" className="lg:col-span-4">
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <MetricTile label="Structure" value={data.price_action.structure || '—'} />
+                  <MetricTile label="Trend" value={<span className="inline-flex items-center gap-1">{data.price_action.trend === 'BULLISH' ? <TrendingUp className="w-3 h-3 text-emerald-500" /> : data.price_action.trend === 'BEARISH' ? <TrendingDown className="w-3 h-3 text-destructive" /> : null}{data.price_action.trend || '—'}</span>} />
+                  <MetricTile label="Momentum" value={data.price_action.momentum || '—'} />
+                  <MetricTile label="Location" value={data.price_action.location || '—'} />
+                  <MetricTile label="VWAP" value={data.price_action.vwap || '—'} />
+                  <MetricTile label="Volume" value={data.price_action.volume || '—'} />
                 </div>
                 {data.instrument_specific.is_crypto ? (
-                  <div className="text-[11px] text-muted-foreground border-t pt-2">Crypto: Spot • Perp • Funding {data.evidence.supporting.find(e=>e.signal.includes('funding')) ? '• Funding elevated' : ''} • No equity breadth</div>
+                  <div className="text-[11px] text-muted-foreground border-t border-border pt-2 mt-3">Crypto: Spot • Perp • Funding {data.evidence.supporting.find(e=>e.signal.includes('funding')) ? '• Funding elevated' : ''} • No equity breadth</div>
                 ) : (
-                  <div className="text-[11px] text-muted-foreground border-t pt-2">Equity: Futures • Options • PCR • Breadth {data.evidence.supporting.find(e=>e.signal.includes('breadth')) ? '• Supportive' : ''}</div>
+                  <div className="text-[11px] text-muted-foreground border-t border-border pt-2 mt-3">Equity: Futures • Options • PCR • Breadth {data.evidence.supporting.find(e=>e.signal.includes('breadth')) ? '• Supportive' : ''}</div>
                 )}
-              </div>
+              </MiSection>
 
               {/* Market Pressure cards */}
-              <div className="lg:col-span-4 grid grid-cols-3 lg:grid-cols-1 gap-3">
-                {[
-                  { label: 'REGIME', value: data.market_state.regime || '—', sub: data.price_action.trend || '' },
-                  { label: 'PRESSURE', value: `${data.market_state.scores.bullish_score} / ${data.market_state.scores.bearish_score}`, sub: 'Bull / Bear' },
-                  { label: 'BREAKOUT', value: `${data.market_state.scores.breakout_pressure} / 100`, sub: `Risk ${data.market_state.scores.false_breakout_risk}` },
-                ].map(c => (
-                  <div key={c.label} className="bg-card border rounded-lg p-4 flex flex-col justify-center">
-                    <div className="text-[11px] tracking-widest text-muted-foreground">{c.label}</div>
-                    <div className="font-bold text-sm mt-1">{c.value}</div>
-                    <div className="text-xs text-muted-foreground">{c.sub}</div>
-                  </div>
-                ))}
+              <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3">
+                <MetricTile label="REGIME" value={data.market_state.regime || '—'} sub={data.price_action.trend || ''} />
+                <MetricTile label="PRESSURE" value={`${data.market_state.scores.bullish_score} / ${data.market_state.scores.bearish_score}`} sub="Bull / Bear" />
+                <MetricTile label="BREAKOUT" value={`${data.market_state.scores.breakout_pressure} / 100`} sub={`Risk ${data.market_state.scores.false_breakout_risk}`} />
               </div>
             </div>
           )}
@@ -494,122 +456,115 @@ export default function MarketIntelligencePage() {
           {/* Evidence (§8) */}
           {(secondary === 'overview' || secondary === 'price-action') && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-card border rounded-lg p-4">
-                <h3 className="font-bold text-xs tracking-widest uppercase text-emerald-700">Supporting Evidence</h3>
-                <ul className="mt-2 space-y-1.5">
-                  {(data.evidence.supporting.length ? data.evidence.supporting : [{ signal: 'No strong supporting evidence', detail: '' } as any]).map((e, idx) => (
-                    <li key={idx} className="text-xs flex gap-2"><span className="text-emerald-500">✓</span><span><span className="font-medium">{e.signal}</span>{e.detail ? <span className="text-muted-foreground"> — {e.detail}</span> : null}</span></li>
-                  ))}
-                </ul>
+              <MiSection title="Supporting Evidence">
+                <EvidenceList items={data.evidence.supporting} tone="support" emptyText="No strong supporting evidence in this poll." />
                 {data.evidence.missing.length > 0 && <p className="text-[11px] text-muted-foreground mt-2">Missing: {data.evidence.missing.join(', ')}</p>}
-              </div>
-              <div className="bg-card border rounded-lg p-4">
-                <h3 className="font-bold text-xs tracking-widest uppercase text-amber-700">Conflicting Evidence</h3>
-                <ul className="mt-2 space-y-1.5">
-                  {(data.evidence.conflicting.length ? data.evidence.conflicting : [{ signal: 'No major conflicts', detail: '' } as any]).map((e, idx) => (
-                    <li key={idx} className="text-xs flex gap-2"><span className="text-amber-500">!</span><span><span className="font-medium">{e.signal}</span>{e.detail ? <span className="text-muted-foreground"> — {e.detail}</span> : null}</span></li>
-                  ))}
-                </ul>
-                {data.evidence.stale.length > 0 && <p className="text-[11px] text-red-600 mt-2">Stale: {data.evidence.stale.join(', ')}</p>}
-              </div>
+              </MiSection>
+              <MiSection title="Conflicting Evidence">
+                <EvidenceList items={data.evidence.conflicting} tone="conflict" emptyText="No major conflicts in this poll." />
+                {data.evidence.stale.length > 0 && <p className="text-[11px] text-destructive mt-2">Stale: {data.evidence.stale.join(', ')}</p>}
+              </MiSection>
             </div>
           )}
 
           {/* Key Levels (§9) */}
           {(secondary === 'overview' || secondary === 'levels') && (
-            <div className="bg-card border rounded-lg p-4">
-              <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Layers className="w-4 h-4" /> Key Levels</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                <div className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">Resistance</div><div className="font-mono font-bold mt-1">{data.levels.nearest_resistance || data.levels.resistance[0] || '—'}</div></div>
-                <div className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">Next Resistance</div><div className="font-mono mt-1">{data.levels.resistance[1] || '—'}</div></div>
-                <div className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">Support</div><div className="font-mono font-bold mt-1">{data.levels.nearest_support || data.levels.support[0] || '—'}</div></div>
-                <div className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">Next Support</div><div className="font-mono mt-1">{data.levels.support[1] || '—'}</div></div>
+            <MiSection icon={Layers} title={`Key Levels${data.details?.levels_source ? ` • ${data.details.levels_source}` : ''}`}>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <MetricTile label="Resistance" value={data.levels.nearest_resistance || data.levels.resistance[0] || '—'} />
+                <MetricTile label="Next resistance" value={data.levels.resistance[1] || '—'} />
+                <MetricTile label="Support" value={data.levels.nearest_support || data.levels.support[0] || '—'} />
+                <MetricTile label="Next support" value={data.levels.support[1] || '—'} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 text-xs">
-                <div className="border rounded p-2"><span className="text-muted-foreground">Breakout trigger</span><span className="font-mono font-bold ml-2">{data.levels.breakout_trigger || '—'}</span></div>
-                <div className="border rounded p-2"><span className="text-muted-foreground">Breakdown trigger</span><span className="font-mono ml-2">{data.levels.breakdown_trigger || '—'}</span></div>
-                <div className="border rounded p-2"><span className="text-muted-foreground">Invalidation</span><span className="font-mono ml-2">{data.levels.invalidation || '—'}</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-3 text-xs">
+                <MetricTile label="Breakout trigger" value={data.levels.breakout_trigger || '—'} />
+                <MetricTile label="Breakdown trigger" value={data.levels.breakdown_trigger || '—'} />
+                <MetricTile label="Invalidation" value={data.levels.invalidation || '—'} />
               </div>
               <p className="text-[11px] text-muted-foreground mt-2">Decimal precision preserved exactly via backend Decimal.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Breakout Analysis (§10) */}
           {(secondary === 'overview' || secondary === 'breakout') && (
-            <div className={`border rounded-lg p-4 ${isDegraded ? 'bg-muted/50 opacity-60' : 'bg-card'}`}>
-              <h3 className="font-bold text-xs tracking-widest uppercase">{data.breakout.direction === 'BEARISH' ? 'Breakdown Analysis' : 'Breakout Analysis'}</h3>
-              <div className="mt-2 flex flex-wrap gap-2 items-center">
-                <span className="text-sm font-bold">{data.breakout.status} {data.breakout.direction !== 'NEUTRAL' ? `${data.breakout.direction}` : ''} {data.breakout.direction === 'BULLISH' ? 'BREAKOUT' : data.breakout.direction === 'BEARISH' ? 'BREAKDOWN' : ''}</span>
-                <Badge status={data.breakout.status} />
-                {isDegraded && <span className="text-xs text-red-600">— DISABLED (feed degraded)</span>}
+            <MiSection
+              title={data.breakout.direction === 'BEARISH' ? 'Breakdown Analysis' : 'Breakout Analysis'}
+              tone={isDegraded ? 'muted' : undefined}
+              action={<Badge status={data.breakout.status} />}
+            >
+              <div className="mt-0 flex flex-wrap gap-2 items-center">
+                <span className="text-sm font-bold tabular-nums">{data.breakout.status} {data.breakout.direction !== 'NEUTRAL' ? `${data.breakout.direction}` : ''} {data.breakout.direction === 'BULLISH' ? 'BREAKOUT' : data.breakout.direction === 'BEARISH' ? 'BREAKDOWN' : ''}</span>
+                {isDegraded && <span className="text-xs text-destructive">— DISABLED (feed degraded)</span>}
               </div>
-              <div className="grid grid-cols-3 gap-3 mt-3">
-                <div><div className="text-[11px] text-muted-foreground">{data.breakout.direction === 'BEARISH' ? 'Breakdown' : 'Breakout'} Pressure</div><div className="font-mono font-bold">{(data.breakout.direction === 'BEARISH' ? data.breakout.breakdown_pressure : data.breakout.breakout_pressure) ?? data.market_state.scores.breakout_pressure} / 100</div></div>
-                <div><div className="text-[11px] text-muted-foreground">Breakout Quality</div><div className="font-mono font-bold">{data.breakout.breakout_quality} / 100</div></div>
-                <div><div className="text-[11px] text-muted-foreground">False Breakout Risk</div><div className={`font-mono font-bold ${data.breakout.false_breakout_risk > 60 ? 'text-red-600' : ''}`}>{data.breakout.false_breakout_risk} / 100</div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-3">
+                <MetricTile label={`${data.breakout.direction === 'BEARISH' ? 'Breakdown' : 'Breakout'} pressure`} value={`${(data.breakout.direction === 'BEARISH' ? data.breakout.breakdown_pressure : data.breakout.breakout_pressure) ?? data.market_state.scores.breakout_pressure} / 100`} />
+                <MetricTile label="Breakout quality" value={`${data.breakout.breakout_quality} / 100`} />
+                <MetricTile label="False-breakout risk" value={`${data.breakout.false_breakout_risk} / 100`} />
               </div>
-              <div className="text-xs mt-2">Trigger: <span className="font-mono font-bold">{data.breakout.breakout_level || '—'}</span> <span className="text-muted-foreground">• Status: {isDegraded ? 'WAITING (degraded)' : (data.breakout.reason || data.breakout.status)}</span></div>
+              <div className="mt-3"><ScoreMeter label="Breakout pressure" value={data.breakout.direction === 'BEARISH' ? data.breakout.breakdown_pressure : data.breakout.breakout_pressure} tone="sky" /></div>
+              <div className="text-xs mt-2">Trigger: <span className="font-mono font-bold tabular-nums">{data.breakout.breakout_level || '—'}</span> <span className="text-muted-foreground">• Status: {isDegraded ? 'WAITING (degraded)' : (data.breakout.reason || data.breakout.status)}</span></div>
               {data.instrument_specific.is_crypto && <p className="text-[11px] text-muted-foreground mt-2">BTCUSD: evaluated on spot/perp/funding/liquidations — no PCR/breadth.</p>}
-            </div>
+            </MiSection>
           )}
 
           {/* 10-Minute + Continuation (§11, §12) */}
           {(secondary === 'overview' || secondary === '10-min' || secondary === 'continuation') && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className={`border-2 rounded-lg p-4 ${data.short_horizon.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : data.short_horizon.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
-                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Zap className="w-4 h-4" /> 10-Minute Trade</h3>
-                <div className="mt-2 space-y-1 text-sm">
+              <MiSection
+                icon={Zap}
+                title="10-Minute Trade"
+                tone={data.short_horizon.status === 'CONFIRMED' ? 'success' : data.short_horizon.status === 'REJECTED' ? 'muted' : undefined}
+                action={<Badge status={data.short_horizon.status} />}
+              >
+                <div className="space-y-1.5 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Direction</span><span className="font-bold">{data.short_horizon.direction}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Status</span><Badge status={data.short_horizon.status} /></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Confidence</span><span className="font-mono font-bold">{data.short_horizon.confidence}%</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Entry</span><span className="font-mono text-xs">{data.short_horizon.entry_zone.length ? `${data.short_horizon.entry_zone[0]}–${data.short_horizon.entry_zone[1]}` : '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Stop</span><span className="font-mono text-xs">{data.short_horizon.stop_loss !== '0' ? data.short_horizon.stop_loss : '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Target</span><span className="font-mono text-xs">{data.short_horizon.target_zone.length ? `${data.short_horizon.target_zone[0]}–${data.short_horizon.target_zone[1]}` : '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Holding Horizon</span><span className="font-medium text-xs">~10 minutes</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Confidence</span><span className="font-mono font-bold tabular-nums">{data.short_horizon.confidence}%</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground text-xs shrink-0">Entry</span><span className="font-mono text-xs tabular-nums text-right break-all">{data.short_horizon.entry_zone.length ? `${data.short_horizon.entry_zone[0]} – ${data.short_horizon.entry_zone[1]}` : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Stop</span><span className="font-mono text-xs tabular-nums">{data.short_horizon.stop_loss !== '0' ? data.short_horizon.stop_loss : '—'}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground text-xs shrink-0">Target</span><span className="font-mono text-xs tabular-nums text-right break-all">{data.short_horizon.target_zone.length ? `${data.short_horizon.target_zone[0]} – ${data.short_horizon.target_zone[1]}` : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Holding horizon</span><span className="font-medium text-xs">~10 minutes</span></div>
                   {data.short_horizon.status === 'REJECTED' && <p className="text-xs text-muted-foreground mt-2">Not actionable — {data.short_horizon.reason}</p>}
                 </div>
-              </div>
-              <div className={`border-2 rounded-lg p-4 ${data.continuation.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : data.continuation.status === 'REJECTED' ? 'border-border bg-muted/30 opacity-75' : 'border-border bg-card'}`}>
-                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Clock className="w-4 h-4" /> Intraday Continuation</h3>
-                <div className="mt-2 space-y-1 text-sm">
+              </MiSection>
+              <MiSection
+                icon={Clock}
+                title="Intraday Continuation"
+                tone={data.continuation.status === 'CONFIRMED' ? 'success' : data.continuation.status === 'REJECTED' ? 'muted' : undefined}
+                action={<Badge status={data.continuation.status} />}
+              >
+                <div className="space-y-1.5 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground text-xs">Direction</span><span className="font-bold">{data.continuation.direction}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Status</span><Badge status={data.continuation.status} /></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Confidence</span><span className="font-mono font-bold">{data.continuation.confidence}%</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Trigger</span><span className="font-mono text-xs">{data.levels.breakout_trigger || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Invalidation</span><span className="font-mono text-xs">{data.continuation.invalidation || data.levels.invalidation || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Maximum Holding</span><span className="font-bold text-xs">&lt; 2 Hours ({data.continuation.max_holding_minutes} min)</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Confidence</span><span className="font-mono font-bold tabular-nums">{data.continuation.confidence}%</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Trigger</span><span className="font-mono text-xs tabular-nums">{data.levels.breakout_trigger || '—'}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted-foreground text-xs shrink-0">Invalidation</span><span className="font-mono text-xs text-right break-all">{data.continuation.invalidation || data.levels.invalidation || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground text-xs">Maximum holding</span><span className="font-bold text-xs">&lt; 2 Hours ({data.continuation.max_holding_minutes} min)</span></div>
                   {data.continuation.status === 'REJECTED' && <p className="text-xs text-muted-foreground mt-2">Not actionable</p>}
                 </div>
-              </div>
+              </MiSection>
             </div>
           )}
 
           {/* AI Confirmation (§13) + Signal Conflict (§14) */}
           {(secondary === 'overview' || secondary === 'ai') && (
-            <div className="bg-card border rounded-lg p-4 space-y-3">
-              <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Eye className="w-4 h-4" /> AI Confirmation</h3>
+            <MiSection icon={Eye} title="AI Confirmation">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="border rounded p-3">
+                <div className="border border-border rounded-lg p-3">
                   <div className="text-xs font-bold">10-Minute Setup</div>
-                  <div className="text-xs mt-1">AI Decision: <span className="font-bold">{data.ai.short_horizon.decision}</span> <span className="font-mono text-xs">({data.ai.short_horizon.confidence}%)</span> {data.ai.status === 'UNAVAILABLE' && <span className="text-[11px] text-muted-foreground">(AI unavailable — deterministic)</span>}</div>
-                  <ul className="text-xs mt-2 space-y-1">
-                    {data.ai.short_horizon.reasoning.map((r, i) => <li key={i} className="flex gap-1"><span className="text-emerald-500">✓</span>{r}</li>)}
-                    {data.ai.short_horizon.conflicts.map((c, i) => <li key={i} className="text-xs flex gap-1"><span className="text-amber-500">!</span>{c}</li>)}
-                  </ul>
+                  <div className="text-xs mt-1">AI Decision: <span className="font-bold">{data.ai.short_horizon.decision}</span> <span className="font-mono text-xs tabular-nums">({data.ai.short_horizon.confidence}%)</span> {data.ai.status === 'UNAVAILABLE' && <span className="text-[11px] text-muted-foreground">(AI unavailable — deterministic)</span>}</div>
+                  <EvidenceList items={data.ai.short_horizon.reasoning.map(r => ({ signal: r }))} tone="support" emptyText="No AI reasoning in this poll." />
+                  <EvidenceList items={data.ai.short_horizon.conflicts.map(c => ({ signal: c }))} tone="conflict" emptyText="" />
                   <div className="text-[11px] text-muted-foreground mt-2">Invalidation: {data.ai.short_horizon.invalidation_conditions.join(', ') || '—'}</div>
                 </div>
-                <div className="border rounded p-3">
+                <div className="border border-border rounded-lg p-3">
                   <div className="text-xs font-bold">Continuation</div>
-                  <div className="text-xs mt-1">AI Decision: <span className="font-bold">{data.ai.continuation.decision}</span> <span className="font-mono text-xs">({data.ai.continuation.confidence}%)</span></div>
-                  <ul className="text-xs mt-2 space-y-1">
-                    {data.ai.continuation.reasoning.map((r, i) => <li key={i} className="flex gap-1"><span className="text-emerald-500">✓</span>{r}</li>)}
-                  </ul>
+                  <div className="text-xs mt-1">AI Decision: <span className="font-bold">{data.ai.continuation.decision}</span> <span className="font-mono text-xs tabular-nums">({data.ai.continuation.confidence}%)</span></div>
+                  <EvidenceList items={data.ai.continuation.reasoning.map(r => ({ signal: r }))} tone="support" emptyText="No AI reasoning in this poll." />
                 </div>
               </div>
               {/* Conflict state */}
               {data.breakout.confidence > 75 && data.ai.short_horizon.decision === 'REJECT' && (
-                <div className="bg-amber-50 border border-amber-300 rounded p-3">
-                  <p className="text-xs font-bold flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> ⚠ SIGNAL CONFLICT</p>
+                <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 mt-3">
+                  <p className="text-xs font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> SIGNAL CONFLICT</p>
                   <p className="text-xs mt-1">Quantitative: {data.breakout.direction} — {data.breakout.confidence} <span className="text-muted-foreground">vs</span> AI: REJECT</p>
                   <p className="text-xs font-bold">Final: NO TRADE</p>
                 </div>
@@ -622,161 +577,155 @@ export default function MarketIntelligencePage() {
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground">AI never overrides deterministic safety; risk remains final authority. Frontend never edits AI conclusions.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Risk Status (§15) */}
           {(secondary === 'overview' || secondary === 'risk') && (
-            <div className={`border rounded-lg p-4 ${data.risk.portfolio === 'REJECTED' ? 'bg-red-50 border-red-300' : 'bg-card'}`}>
-              <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Shield className="w-4 h-4" /> Risk Status</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 text-xs">
-                <div className="border rounded p-2">Strategy <div className={`font-bold ${data.risk.strategy === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{data.risk.strategy}</div></div>
-                <div className="border rounded p-2">Portfolio <div className={`font-bold ${data.risk.portfolio === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{data.risk.portfolio}</div></div>
-                <div className="border rounded p-2">Exposure <div className="font-medium">{data.risk.exposure}</div></div>
-                <div className="border rounded p-2">Margin <div className="font-medium">{data.risk.margin}</div></div>
-                <div className="border rounded p-2">Correlation <div className="font-medium">{data.risk.correlation}</div></div>
+            <MiSection icon={Shield} title="Risk Status" tone={data.risk.portfolio === 'REJECTED' ? 'destructive' : undefined}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
+                <MetricTile label="Strategy" value={data.risk.strategy} />
+                <MetricTile label="Portfolio" value={data.risk.portfolio} />
+                <MetricTile label="Exposure" value={data.risk.exposure} />
+                <MetricTile label="Margin" value={data.risk.margin} />
+                <MetricTile label="Correlation" value={data.risk.correlation} />
               </div>
-              {data.risk.portfolio === 'REJECTED' && <p className="text-xs text-red-700 mt-2">RISK REJECTED — Reason: {data.risk.reason}</p>}
+              {data.risk.portfolio === 'REJECTED' && <p className="text-xs text-destructive font-semibold mt-2">RISK REJECTED — Reason: {data.risk.reason}</p>}
               <p className="text-[11px] text-muted-foreground mt-2">Risk status from backend Risk Engine — final authority before execution.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Signal TTL / Execution Status (§16) */}
           {(secondary === 'overview' || secondary === 'risk') && (
-            <div className="bg-card border rounded-lg p-4">
-              <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Clock className="w-4 h-4" /> Signal TTL / Execution Status</h3>
+            <MiSection icon={Clock} title="Signal TTL / Execution Status">
               {data.signal ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs font-mono">
-                  <div>Created: {new Date(data.signal.created_at_utc).toISOString().substring(11, 23)} UTC</div>
-                  <div>TTL: {data.signal.ttl_ms / 1000}s</div>
-                  <div>Expires: {new Date(data.signal.expires_at_utc).toISOString().substring(11, 23)} UTC</div>
-                  <div>AI: {data.signal.ai?.status || data.ai.status}</div>
-                  <div>Validation: {data.signal.validation_status}</div>
-                  <div>Risk: {data.signal.risk_status}</div>
-                  <div>Execution: {data.signal.fsm_state}</div>
-                  <div>Freshness: {data.signal.is_expired ? 'EXPIRED' : 'VALID'}</div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <MetricTile label="Created" value={`${formatClock(data.signal.created_at_utc)} UTC`} />
+                  <MetricTile label="TTL" value={data.signal.ttl_ms != null ? `${data.signal.ttl_ms / 1000}s` : '—'} />
+                  <MetricTile label="Expires" value={`${formatClock(data.signal.expires_at_utc)} UTC`} />
+                  <MetricTile label="AI" value={data.signal.ai?.status || data.ai.status} />
+                  <MetricTile label="Validation" value={data.signal.validation_status} />
+                  <MetricTile label="Risk" value={data.signal.risk_status} />
+                  <MetricTile label="Execution" value={data.signal.fsm_state} />
+                  <MetricTile label="Freshness" value={data.signal.is_expired ? 'EXPIRED' : 'VALID'} />
                 </div>
               ) : data.short_horizon.status === 'CONFIRMED' ? (
-                <p className="text-xs text-muted-foreground mt-2">Executable signal — TTL 5 sec • Expires {new Date(Date.now() + 5000).toISOString().substring(11,23)} UTC • AI: {data.ai.status} • Validation: PASS • Risk: {data.risk.portfolio} • Execution: PENDING • Freshness: VALID</p>
+                <p className="text-xs text-muted-foreground mt-2">Executable signal — TTL 5 sec • Expires {formatClock(Date.now() + 5000)} UTC • AI: {data.ai.status} • Validation: PASS • Risk: {data.risk.portfolio} • Execution: PENDING • Freshness: VALID</p>
               ) : (
-                <div className="border border-amber-200 rounded p-3 mt-2">
+                <div className="border border-warning/30 bg-warning/5 dark:bg-warning/10 rounded-lg p-3 mt-2">
                   <p className="text-xs font-bold">No executable signal — {data.short_horizon.status} / {data.continuation.status}</p>
                   {data.short_horizon.status === 'EXPIRED' && <p className="text-xs mt-1">SIGNAL EXPIRED — TTL exceeded before execution. Order Submitted: NO</p>}
                   <p className="text-[11px] text-muted-foreground mt-1">Non-actionable — TTL N/A until CONFIRMED</p>
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground mt-2">Expired signals visually and semantically non-actionable — order never submitted.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Module detail tabs — real backend values, honest unavailable states (§18) */}
           {(secondary === 'futures' || secondary === 'options' || secondary === 'volume' || secondary === 'volatility' || secondary === 'cross-market') && (
-            <div className="bg-card border rounded-lg p-4">
-              <h3 className="font-bold text-xs tracking-widest uppercase">{secondary.replace('-', ' ').toUpperCase()} — {data.instrument_id}</h3>
+            <MiSection title={`${secondary.replace('-', ' ').toUpperCase()} — ${data.instrument_id}`}>
               {(() => {
                 const d = data.details;
-                const tile = (label: string, value: string, sub?: string) => (
-                  <div key={label} className="bg-secondary/40 rounded p-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="font-mono font-bold mt-1">{value}</div>{sub ? <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div> : null}</div>
-                );
-                const unavail = (reason: string | null | undefined) => (
-                  <p className="text-[11px] text-amber-600 mt-2">Unavailable this poll — {reason || 'no reading from broker feed'}. Retries automatically; no values are fabricated.</p>
-                );
                 if (!d) return (<div className="mt-2 text-xs text-muted-foreground">Detail feed loading — switch tabs or refresh. Backend authoritative, frontend never recreates trading logic.</div>);
                 if (secondary === 'options') {
                   const pcr = d.options.pcr;
                   const interp = pcr == null ? '—' : pcr > 1.2 ? 'Bullish positioning' : pcr < 0.85 ? 'Bearish positioning' : 'Neutral positioning';
-                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {tile('PCR (OI)', pcr != null ? pcr.toFixed(2) : '—', interp)}
-                    {tile('Status', d.options.status)}
-                    {tile('Spot ref', data.header.price_formatted)}
-                    {d.options.status !== 'AVAILABLE' ? unavail(d.options.reason) : null}
+                  return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    <MetricTile label="PCR (OI)" value={pcr != null ? pcr.toFixed(2) : '—'} sub={interp} />
+                    <MetricTile label="Status" value={d.options.status} />
+                    <MetricTile label="Spot ref" value={data.header.price_formatted} />
+                    {d.options.status !== 'AVAILABLE' ? <div className="col-span-full"><MiUnavailable reason={d.options.reason} /></div> : null}
                     {data.instrument_specific.is_crypto ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD has no options chain — funding/perp positioning applies (NOT_APPLICABLE for PCR).</p> : null}
                   </div>);
                 }
                 if (secondary === 'volume') {
                   const chg = d.volume.volume_change;
-                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {tile('Volume change', chg != null ? `${(chg * 100).toFixed(0)}%` : '—', `State: ${d.volume.state}`)}
-                    {tile('Quote volume', d.volume.quote_volume != null ? d.volume.quote_volume.toLocaleString('en-IN') : '—')}
-                    {tile('VWAP', data.details?.vwap.value != null ? Number(data.details.vwap.value).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—', `${data.price_action.vwap}${data.details?.vwap.source ? ` • ${data.details.vwap.source}` : ''}`)}
-                    {d.volume.status !== 'AVAILABLE' ? unavail(d.volume.reason) : null}
+                  return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    <MetricTile label="Volume change" value={chg != null ? `${(chg * 100).toFixed(0)}%` : '—'} sub={`State: ${d.volume.state}`} />
+                    <MetricTile label="Quote volume" value={d.volume.quote_volume != null ? d.volume.quote_volume.toLocaleString('en-IN') : '—'} />
+                    <MetricTile label="VWAP" value={data.details?.vwap.value != null ? Number(data.details.vwap.value).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—'} sub={`${data.price_action.vwap}${data.details?.vwap.source ? ` • ${data.details.vwap.source}` : ''}`} />
+                    {d.volume.status !== 'AVAILABLE' ? <div className="col-span-full"><MiUnavailable reason={d.volume.reason} /></div> : null}
                   </div>);
                 }
                 if (secondary === 'volatility') {
-                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {tile('Regime', d.volatility.regime)}
-                    {tile('Change', d.volatility.volatility_change != null ? `${(d.volatility.volatility_change * 100).toFixed(0)}%` : '—')}
-                    {tile('ATR(14)', d.atr != null ? d.atr.toFixed(2) : '—')}
-                    {d.volatility.status !== 'AVAILABLE' ? unavail(d.volatility.reason) : null}
+                  return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    <MetricTile label="Regime" value={d.volatility.regime} />
+                    <MetricTile label="Change" value={d.volatility.volatility_change != null ? `${(d.volatility.volatility_change * 100).toFixed(0)}%` : '—'} />
+                    <MetricTile label="ATR(14)" value={d.atr != null ? d.atr.toFixed(2) : '—'} />
+                    {d.volatility.status !== 'AVAILABLE' ? <div className="col-span-full"><MiUnavailable reason={d.volatility.reason} /></div> : null}
                   </div>);
                 }
                 if (secondary === 'futures') {
-                  return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {tile('Status', d.futures.status)}
-                    {tile('Spot ref', data.header.price_formatted)}
-                    {tile('Funding', d.funding ? String(d.funding.rate) : data.instrument_specific.is_crypto ? '—' : 'N/A (equity)')}
-                    {unavail(d.futures.reason)}
+                  return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    <MetricTile label="Status" value={d.futures.status} />
+                    <MetricTile label="Spot ref" value={data.header.price_formatted} />
+                    <MetricTile label="Funding" value={d.funding ? String(d.funding.rate) : data.instrument_specific.is_crypto ? '—' : 'N/A (equity)'} />
+                    <div className="col-span-full"><MiUnavailable reason={d.futures.reason} /></div>
                   </div>);
                 }
                 // cross-market
                 const cm: any = d.cross_market?.detail || {};
-                return (<div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {tile('Sync status', d.cross_market?.status || 'UNKNOWN')}
-                  {tile('Delta ms', cm.delta_ms != null ? String(cm.delta_ms) : '—', 'Threshold 500ms')}
-                  {tile('Breadth', d.breadth || '—')}
+                return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  <MetricTile label="Sync status" value={d.cross_market?.status || 'UNKNOWN'} />
+                  <MetricTile label="Delta ms" value={cm.delta_ms != null ? String(cm.delta_ms) : '—'} sub="Threshold 500ms" />
+                  <MetricTile label="Breadth" value={d.breadth || '—'} />
                   {data.instrument_specific.is_crypto
                     ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD trades 24/7 — no peer sync, no Indian EOD reset.</p>
                     : <p className="text-[11px] text-muted-foreground col-span-full">NIFTY↔BANKNIFTY peer sync Δt&lt;500ms. UNKNOWN means the peer snapshot has not arrived yet — not an error.</p>}
                 </div>);
               })()}
               <p className="text-[11px] text-muted-foreground mt-2">Backend authoritative — frontend never recreates trading logic.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Data Health (§17) */}
           {(secondary === 'overview' || secondary === 'data-health') && (
-            <div className={`border rounded-lg p-4 ${isDegraded ? 'bg-red-50 border-red-300' : 'bg-card'}`}>
-              <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Database className="w-4 h-4" /> Data Health</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3 text-xs">
-                <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.feed === 'HEALTHY' ? 'bg-emerald-500' : 'bg-red-500'}`} /> Market Feed: {data.data_health.feed}</div>
-                <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Timestamp: VALID</div>
-                <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Sequence: VALID</div>
-                <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.contract === 'VALID' ? 'bg-emerald-500' : 'bg-red-500'}`} /> Contract Spec: {data.data_health.contract}</div>
-                <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.snapshot !== 'MISSING' ? 'bg-emerald-500' : 'bg-amber-400'}`} /> Snapshot: {data.data_health.snapshot}</div>
-                <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${data.data_health.synchronization === 'VALID' || data.data_health.synchronization === 'UNKNOWN' ? 'bg-emerald-500' : 'bg-red-500'}`} /> Synchronization: {data.data_health.synchronization}</div>
+            <MiSection icon={Database} title="Data Health" tone={isDegraded ? 'destructive' : undefined}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                <MetricTile label="Market feed" value={data.data_health.feed} />
+                <MetricTile label="Timestamp" value="VALID" />
+                <MetricTile label="Sequence" value={data.data_health.sequence} />
+                <MetricTile label="Contract spec" value={data.data_health.contract} />
+                <MetricTile label="Snapshot" value={data.data_health.snapshot} />
+                <MetricTile label="Synchronization" value={data.data_health.synchronization} />
               </div>
+              {data.data_health.last_event_age_ms != null && (
+                <p className="text-[11px] text-muted-foreground mt-2 tabular-nums">Last event age: {(data.data_health.last_event_age_ms / 1000).toFixed(1)}s{data.data_health.spot_source ? ` • source: ${data.data_health.spot_source}` : ''}{data.data_health.used_cache ? ' • cached' : ''}</p>
+              )}
               {isDegraded && (
-                <div className="mt-3 p-3 bg-amber-100 rounded text-xs">
-                  <p className="font-bold">⚠ FEED DEGRADED</p>
-                  <p>Breakout candidates: DISABLED • AI: DISABLED • Execution: DISABLED — Waiting for clean resynchronization.</p>
+                <div className="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg text-xs">
+                  <p className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> FEED DEGRADED</p>
+                  <p className="mt-1">Breakout candidates: DISABLED • AI: DISABLED • Execution: DISABLED — Waiting for clean resynchronization.</p>
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground mt-2">Driven by backend infrastructure — Market Feed LIVE, Sequence VALID, Contract Spec VALID, Snapshot VALID.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Audit / Details (§29) */}
           {(secondary === 'audit' || secondary === 'overview') && (
-            <div className="bg-card border rounded-lg p-4">
-              <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-xs font-bold tracking-widest uppercase">
-                <Eye className="w-4 h-4" /> Audit / Details <ChevronDown className={`w-3 h-3 transition ${expanded ? 'rotate-180' : ''}`} />
-              </button>
+            <MiSection
+              icon={Eye}
+              title="Audit / Details"
+              action={<Button variant="ghost" size="xs" onClick={() => setExpanded(!expanded)}>Details <ChevronDown className={`w-3 h-3 transition ${expanded ? 'rotate-180' : ''}`} /></Button>}
+            >
               {expanded && (
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
-                  <div>Signal ID: {data.signal?.signal_id || '— (no executable signal)'}</div>
-                  <div>Timestamp: {data.header.last_update_iso}</div>
-                  <div>Market Context: Regime {data.market_state.regime} • {data.price_action.structure}</div>
-                  <div>Supporting: {data.evidence.supporting.slice(0,2).map(e=>e.signal).join(', ') || '—'}</div>
-                  <div>Conflicting: {data.evidence.conflicting.slice(0,2).map(e=>e.signal).join(', ') || '—'}</div>
-                  <div>AI Decision: {data.ai.short_horizon.decision} ({data.ai.short_horizon.confidence}%) / {data.ai.continuation.decision} ({data.ai.continuation.confidence}%)</div>
-                  <div>Validation: {data.risk.strategy}</div>
-                  <div>Risk: {data.risk.portfolio} {data.risk.reason ? `— ${data.risk.reason}` : ''}</div>
-                  <div>TTL: {data.signal ? `${data.signal.ttl_ms}ms` : 'N/A'}</div>
-                  <div>Execution: {data.signal?.fsm_state || 'NOT_EXECUTED'}</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <MetricTile label="Signal ID" value={data.signal?.signal_id || '— (no executable signal)'} />
+                  <MetricTile label="Timestamp" value={`${formatClock(data.header.last_update_utc)} (${timeAgo(data.header.last_update_utc)})`} />
+                  <MetricTile label="Market context" value={`Regime ${data.market_state.regime} • ${data.price_action.structure}`} />
+                  <MetricTile label="Supporting" value={data.evidence.supporting.slice(0,2).map(e=>e.signal).join(', ') || '—'} />
+                  <MetricTile label="Conflicting" value={data.evidence.conflicting.slice(0,2).map(e=>e.signal).join(', ') || '—'} />
+                  <MetricTile label="AI decision" value={`${data.ai.short_horizon.decision} (${data.ai.short_horizon.confidence}%) / ${data.ai.continuation.decision} (${data.ai.continuation.confidence}%)`} />
+                  <MetricTile label="Validation" value={data.risk.strategy} />
+                  <MetricTile label="Risk" value={`${data.risk.portfolio}${data.risk.reason ? ` — ${data.risk.reason}` : ''}`} />
+                  <MetricTile label="TTL" value={data.signal ? `${data.signal.ttl_ms}ms` : 'N/A'} />
+                  <MetricTile label="Execution" value={data.signal?.fsm_state || 'NOT_EXECUTED'} />
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground mt-2">Exactly why the system reached its conclusion — reconstructible via Audit Trail.</p>
-            </div>
+            </MiSection>
           )}
 
           {/* Error states (§28) */}
@@ -798,56 +747,60 @@ export default function MarketIntelligencePage() {
       {selected === 'BREAKOUT_SETUPS' && (
         <div className="space-y-4">
               {/* Signal Center header — explicit breakout center */}
-              <div className="bg-card border rounded-lg p-4">
-                <h3 className="font-bold text-xs tracking-widest uppercase flex items-center gap-2"><Zap className="w-4 h-4" /> Breakout Signals — Generated by Market Intelligence</h3>
-                <p className="text-[11px] text-muted-foreground mt-1">Market State → Breakout Developing? → Trigger → Pressure → False-Risk → 10m → Continuation → Options Confirm → AI → Risk — The Signals tab answers: <span className="font-bold text-foreground">Is there a breakout trade right now?</span></p>
-                <div className="flex gap-2 mt-3 flex-wrap">
+              <MiSection icon={Zap} title="Breakout Signals — Generated by Market Intelligence">
+                <p className="text-[11px] text-muted-foreground mt-0">Market State → Breakout Developing? → Trigger → Pressure → False-Risk → 10m → Continuation → Options Confirm → AI → Risk — The Signals tab answers: <span className="font-bold text-foreground">Is there a breakout trade right now?</span></p>
+                <div className="flex gap-1.5 mt-3 flex-wrap items-center">
                   {(['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD'] as const).map(f => (
-                    <button key={f} onClick={() => setBreakoutFilter(f as any)} className={`px-3 py-1 text-xs font-bold rounded border ${breakoutFilter === f ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary border-transparent'}`}>{f}</button>
+                    <Button key={f} size="xs" variant={breakoutFilter === f ? 'default' : 'secondary'} onClick={() => setBreakoutFilter(f as any)}>{f}</Button>
                   ))}
-                  <button onClick={() => fetchBreakoutSetups(true)} className="ml-auto text-xs flex items-center gap-1 px-2 py-1 border rounded hover:bg-secondary"><RefreshCw className="w-3 h-3" /> Refresh</button>
+                  <Button size="xs" variant="outline" onClick={() => fetchBreakoutSetups(true)} className="ml-auto"><RefreshCw className={breakoutLoading ? 'animate-spin' : ''} /> Refresh</Button>
                 </div>
-              </div>
+              </MiSection>
 
-              {breakoutLoading && breakoutSignals.length === 0 && <div className="bg-card border rounded-lg p-8 animate-pulse"><div className="h-4 bg-muted rounded w-32 mb-2" /><div className="h-20 bg-muted rounded" /></div>}
+              {breakoutLoading && breakoutSignals.length === 0 && <MiWorkspaceSkeleton />}
 
-              {breakoutSignals.length === 0 && !breakoutLoading && <div className="bg-secondary border rounded-lg p-6 text-sm text-muted-foreground">No breakout setups right now — Market Intelligence sees NO_SETUP across all instruments. Supporting/conflicting evidence still available in instrument tabs.</div>}
+              {breakoutSignals.length === 0 && !breakoutLoading && <MiSection title="No setups"><p className="text-sm text-muted-foreground">No breakout setups right now — Market Intelligence sees NO_SETUP across all instruments. Supporting/conflicting evidence still available in instrument tabs.</p></MiSection>}
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {breakoutSignals.filter(s => breakoutFilter === 'ALL' || s.instrument_id === breakoutFilter).map(sig => (
-                  <div key={sig.signal_id} className={`border-2 rounded-lg p-4 space-y-2 ${sig.status === 'CONFIRMED' ? 'border-emerald-500 bg-emerald-50' : sig.status === 'TRIGGERED' ? 'border-amber-400 bg-amber-50' : sig.status.includes('POSSIBLE') ? 'border-sky-500 bg-sky-50' : sig.status === 'NO_SETUP' ? 'border-border bg-muted/30 opacity-75' : 'bg-card border-border'}`}>
-                    <div className="flex justify-between items-start">
-                      <div><div className="font-bold text-sm">{sig.display_name} <span className="font-mono text-xs text-muted-foreground">{sig.instrument_id}</span></div><div className="text-xs font-mono">{sig.price_formatted ? `Price ${sig.price_formatted}` : 'Price —'} • Session {sig.session || '—'} • {sig.data_health || '—'}</div></div>
-                      <Badge status={sig.status} />
-                    </div>
-                    <div className="text-xs space-y-1">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Direction</span><span className={`font-bold ${sig.direction === 'BULLISH' ? 'text-emerald-600' : sig.direction === 'BEARISH' ? 'text-red-600' : ''}`}>{sig.direction}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Trigger Level</span><span className="font-mono font-bold">{sig.trigger_level || '—'}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono">{sig.breakout_pressure != null ? `${sig.breakout_pressure} / 100` : '—'}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">False-Breakout Risk</span><span className={`font-mono ${(sig.false_breakout_risk ?? 0) > 60 ? 'text-red-600' : ''}`}>{sig.false_breakout_risk != null ? `${sig.false_breakout_risk} / 100` : '—'}</span></div>
-                      <div className="border-t pt-2 mt-2 grid grid-cols-2 gap-2">
-                        <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">10-Minute</div><div className="flex justify-between text-xs mt-1"><span>{sig.short_horizon.direction}</span><Badge status={sig.short_horizon.status} /></div><div className="text-[11px] font-mono">{sig.short_horizon.confidence}% • {sig.short_horizon.entry_zone?.length ? sig.short_horizon.entry_zone.join('–') : '—'} → {sig.short_horizon.target_zone?.length ? sig.short_horizon.target_zone.join('–') : '—'}</div></div>
-                        <div className="border rounded p-2 bg-card"><div className="text-[11px] font-bold">Continuation (&lt;2h)</div><div className="flex justify-between text-xs mt-1"><span>{sig.continuation.direction}</span><Badge status={sig.continuation.status} /></div><div className="text-[11px] font-mono">{sig.continuation.confidence}% • 119 min max • {sig.continuation.reason?.slice(0,30) || '—'}</div></div>
+                  <MiSection
+                    key={sig.signal_id}
+                    title={`${sig.display_name} • ${sig.instrument_id}`}
+                    action={<Badge status={sig.status} />}
+                    tone={sig.status === 'CONFIRMED' ? 'success' : sig.status === 'TRIGGERED' ? 'warning' : sig.status === 'NO_SETUP' ? 'muted' : undefined}
+                  >
+                    <div className="text-xs font-mono tabular-nums text-muted-foreground -mt-2">{sig.price_formatted ? `Price ${sig.price_formatted}` : 'Price —'} • Session {sig.session || '—'} • {sig.data_health || '—'}</div>
+                    <div className="text-xs space-y-1.5 mt-2">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Direction</span><span className="font-bold">{sig.direction}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Trigger Level</span><span className="font-mono font-bold tabular-nums">{sig.trigger_level || '—'}</span></div>
+                      <ScoreMeter label="Breakout pressure" value={sig.breakout_pressure} tone="sky" />
+                      <ScoreMeter label="False-breakout risk" value={sig.false_breakout_risk} tone="amber" />
+                      <div className="border-t border-border pt-2 mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="border border-border rounded-lg p-2 bg-card"><div className="text-[11px] font-bold">10-Minute</div><div className="flex justify-between items-center text-xs mt-1"><span>{sig.short_horizon.direction || '—'}</span><Badge status={sig.short_horizon.status} /></div><div className="text-[11px] font-mono tabular-nums mt-1 break-all">{sig.short_horizon.confidence ?? 0}% • {sig.short_horizon.entry_zone?.length ? sig.short_horizon.entry_zone.join(' – ') : '—'} → {sig.short_horizon.target_zone?.length ? sig.short_horizon.target_zone.join(' – ') : '—'}</div></div>
+                        <div className="border border-border rounded-lg p-2 bg-card"><div className="text-[11px] font-bold">Continuation (&lt;2h)</div><div className="flex justify-between items-center text-xs mt-1"><span>{sig.continuation.direction || '—'}</span><Badge status={sig.continuation.status} /></div><div className="text-[11px] font-mono tabular-nums mt-1">{sig.continuation.confidence ?? 0}% • 119 min max • {sig.continuation.reason?.slice(0,30) || '—'}</div></div>
                       </div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Options Confirmation</span><span className="font-medium text-xs">{sig.options_confirmation}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">AI Confirmation</span><span className="font-medium text-xs">{sig.ai_decision}{sig.ai_confidence != null ? ` ${sig.ai_confidence}%` : ''}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Risk</span><span className={`font-bold text-xs ${sig.risk_status === 'APPROVED' ? 'text-emerald-600' : 'text-red-600'}`}>{sig.risk_status}</span></div>
-                      <div className="text-[11px] text-muted-foreground">TTL {sig.ttl_ms ? `${sig.ttl_ms/1000}s` : '—'} • Created {sig.created_at_utc ? new Date(sig.created_at_utc).toISOString().substring(11,19) + ' UTC' : '—'} • Expires {sig.expires_at_utc ? new Date(sig.expires_at_utc).toISOString().substring(11,19) + ' UTC' : '—'}</div>
-                      <div className="text-[11px]"><span className="text-emerald-600">✓ {sig.supporting?.join(' • ') || '—'}</span><br /><span className="text-amber-600">! {sig.conflicting?.join(' • ') || '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Options Confirmation</span><span className="font-medium text-xs">{sig.options_confirmation || '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">AI Confirmation</span><span className="font-medium text-xs">{sig.ai_decision || '—'}{sig.ai_confidence != null ? ` ${sig.ai_confidence}%` : ''}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Risk</span><span className="font-bold text-xs">{sig.risk_status || '—'}</span></div>
+                      {sig.risk_reason && <div className="text-[11px] text-muted-foreground">{sig.risk_reason}</div>}
+                      <div className="text-[11px] text-muted-foreground tabular-nums">TTL {sig.ttl_ms ? `${sig.ttl_ms/1000}s` : '—'} • Created {sig.created_at_utc ? `${formatClock(sig.created_at_utc)} UTC` : '—'} • Expires {sig.expires_at_utc ? `${formatClock(sig.expires_at_utc)} UTC` : '—'}</div>
+                      <EvidenceList items={(sig.supporting || []).map((s: string) => ({ signal: s }))} tone="support" emptyText="" />
+                      <EvidenceList items={(sig.conflicting || []).map((s: string) => ({ signal: s }))} tone="conflict" emptyText="" />
+                      {(!sig.supporting?.length && !sig.conflicting?.length) && <div className="text-[11px] text-muted-foreground">No supporting/conflicting evidence in this poll.</div>}
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('breakout'); window.scrollTo({top:0, behavior:'smooth'}); }} className="text-xs px-2 py-1 border rounded hover:bg-secondary">View in MI → {sig.instrument_id}</button>
-                      <button onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('ai'); }} className="text-xs px-2 py-1 border rounded hover:bg-secondary">AI Details</button>
+                    <div className="flex gap-2 mt-3">
+                      <Button size="xs" variant="outline" onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('breakout'); window.scrollTo({top:0, behavior:'smooth'}); }}>View in MI → {sig.instrument_id}</Button>
+                      <Button size="xs" variant="outline" onClick={() => { setSelected(sig.instrument_id as InstrumentId); setSecondary('ai'); }}>AI Details</Button>
                     </div>
-                    {sig.status === 'NO_SETUP' && <p className="text-[11px] text-muted-foreground">No setup — not actionable. Check Levels/Volatility/Cross-Market for why.</p>}
-                    {sig.status === 'EXPIRED' && <p className="text-[11px] text-red-600">Signal expired — TTL exceeded before execution. Order NOT submitted.</p>}
-                  </div>
+                    {sig.status === 'NO_SETUP' && <p className="text-[11px] text-muted-foreground mt-2">No setup — not actionable. Check Levels/Volatility/Cross-Market for why.</p>}
+                    {sig.status === 'EXPIRED' && <p className="text-[11px] text-destructive mt-2">Signal expired — TTL exceeded before execution. Order NOT submitted.</p>}
+                  </MiSection>
                 ))}
               </div>
-              <p className="text-[11px] text-muted-foreground text-center border-t pt-2">Populated exclusively by Market Intelligence → Breakout Engine → SignalCenter. Not a mesh — single writer, breakout calls are authoritative SignalEvents.</p>
-              <div className="bg-card border rounded-lg p-3 text-xs">
-                <span className="font-bold">CALLS & PUTS live data</span> still available via <span className="font-mono">GET /api/v1/institutional/calls-puts/NIFTY/full</span> and linked from each breakout card’s Options Confirmation. Full chain viewer at existing Options page — breakout tab shows confirming summary, not raw chain mesh.
-              </div>
+              <p className="text-[11px] text-muted-foreground text-center border-t border-border pt-2">Populated exclusively by Market Intelligence → Breakout Engine → SignalCenter. Not a mesh — single writer, breakout calls are authoritative SignalEvents.</p>
+              <MiSection title="Calls & puts live data">
+                <p className="text-xs text-muted-foreground">Still available via <span className="font-mono">GET /api/v1/institutional/calls-puts/NIFTY/full</span> and linked from each breakout card's Options Confirmation. Full chain viewer at existing Options page — breakout tab shows confirming summary, not raw chain mesh.</p>
+              </MiSection>
             </div>
           )}
     </div>

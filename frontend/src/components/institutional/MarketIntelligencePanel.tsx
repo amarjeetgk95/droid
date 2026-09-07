@@ -1,6 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ErrorCard } from '@/components/ui/ErrorCard';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  FeedHealthBadge,
+  ScoreMeter,
+  SignalStatusBadge,
+  timeAgo,
+} from '@/components/institutional/mi-ui';
 
 type MiPanelProps = { instrument?: string };
 
@@ -11,6 +22,7 @@ interface MiData {
   bullish_score: number;
   bearish_score: number;
   breakout_pressure: number;
+  breakdown_pressure?: number;
   false_breakout_risk: number;
   short_horizon: { direction: string; status: string; confidence: number };
   continuation: { direction: string; status: string; confidence: number; max_holding_minutes: number };
@@ -23,9 +35,12 @@ interface MiData {
   used_cache?: boolean;
 }
 
+const INSTRUMENTS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD'] as const;
+
 export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: MiPanelProps & { refreshKey?: number }) {
   const [data, setData] = useState<MiData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState(instrument);
 
@@ -34,7 +49,8 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: Mi
   useEffect(() => {
     let cancelled = false;
     let failures = 0;
-    async function fetchMi() {
+    async function fetchMi(isManual = false) {
+      if (isManual) setRefreshing(true);
       try {
         const res = await api.getInstitutionalMIDashboard(selected);
         const payload = (res?.data ?? res) as MiData | null;
@@ -51,11 +67,12 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: Mi
           setData(prev => prev);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     }
-    const retry = () => { setLoading(true); setError(null); void fetchMi(); };
-    (fetchMi as unknown as { retry?: () => void }).retry = retry;
     setLoading(true);
     setError(null);
     void fetchMi();
@@ -76,82 +93,93 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: Mi
     return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener('visibilitychange', onVis); };
   }, [selected, refreshKey]);
 
-  if (loading && !data) return <div className="bg-card border rounded p-4 h-80 animate-pulse">Loading Market Intelligence…</div>;
-  if (!data && error) {
+  if (loading && !data) {
     return (
-      <div className="bg-card border rounded p-4 text-sm space-y-2" data-testid="mi-panel-error">
-        <p className="font-semibold">Market Intelligence unavailable</p>
-        <p className="text-xs text-muted-foreground break-words">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="text-xs px-2 py-1 border rounded hover:bg-secondary cursor-pointer"
-        >
-          Retry
-        </button>
-      </div>
+      <Card className="gap-3 py-4" data-testid="mi-panel-loading">
+        <CardContent className="px-4 space-y-2">
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-2/3" />
+        </CardContent>
+      </Card>
     );
   }
-  if (!data) return <div className="bg-card border rounded p-4 text-sm text-muted-foreground">Market Intelligence unavailable</div>;
+  if (!data && error) {
+    return <ErrorCard title="Market Intelligence unavailable" message={error} onRetry={() => window.location.reload()} data-testid="mi-panel-error" />;
+  }
+  if (!data) return <ErrorCard title="Market Intelligence unavailable" />;
 
-  const feedLabel = typeof data.feed_health === 'string' ? data.feed_health : (data.feed_health?.health ?? data.data_health ?? 'UNKNOWN');
-  const isStale = typeof data.feed_health === 'object' ? !!data.feed_health?.is_stale : (data.data_health === 'STALE' || data.data_health === 'DISCONNECTED');
-  const staleAgeSec = typeof data.feed_health === 'object' && data.feed_health?.staleness_ms != null
-    ? Math.max(0, Math.round(data.feed_health.staleness_ms / 1000))
-    : null;
-
-  const badgeColor = (status?: string) => {
-    if (status === 'CONFIRMED') return 'bg-emerald-500 text-white';
-    if (status === 'WATCH') return 'bg-amber-400 text-black';
-    if (status === 'POSSIBLE') return 'bg-sky-500 text-white';
-    return 'bg-muted text-muted-foreground';
-  };
+  const feed = typeof data.feed_health === 'string' ? data.feed_health : (data.feed_health?.health ?? data.data_health ?? 'UNKNOWN');
+  const ageMs = typeof data.feed_health === 'object' && data.feed_health?.staleness_ms != null ? data.feed_health.staleness_ms : null;
 
   return (
-    <div className="bg-card border border-border rounded-lg p-4 space-y-3" data-testid="mi-panel">
-      <div className="flex items-center justify-between">
-        <h3 className="font-bold text-sm tracking-widest uppercase">Market Intelligence</h3>
-        <select value={selected} onChange={e => setSelected(e.target.value)} className="text-xs bg-secondary rounded px-2 py-1 border">
-          <option value="NIFTY">NIFTY</option>
-          <option value="BANKNIFTY">BANKNIFTY</option>
-          <option value="SENSEX">SENSEX</option>
-          <option value="BTCUSD">BTCUSD</option>
-        </select>
-      </div>
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className={`w-2 h-2 rounded-full ${feedLabel === 'HEALTHY' || data.data_health === 'LIVE' ? 'bg-emerald-500' : feedLabel === 'FEED_DEGRADED' ? 'bg-red-500' : 'bg-amber-400'}`} />
-        <span className="font-mono font-bold">{feedLabel}{data.data_health && data.data_health !== feedLabel ? ` • ${data.data_health}` : ''}</span>
-        {data.spot_price != null && <span className="font-mono text-muted-foreground">{Number(data.spot_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>}
-        {data.used_cache && <span className="text-amber-600 font-medium">cached{staleAgeSec != null ? ` ${staleAgeSec}s old` : ''}</span>}
-        {!data.used_cache && staleAgeSec != null && isStale && <span className="text-amber-600">{staleAgeSec}s old</span>}
-        {error && <span className="text-red-600 truncate" title={error}>refresh failed — showing last good</span>}
-      </div>
-      <div className="text-xs space-y-1">
-        <div className="flex justify-between"><span className="text-muted-foreground">Regime</span><span className="font-medium">{data.regime || '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Price Action</span><span className="font-medium">{data.price_action?.structure || '—'} / {data.price_action?.trend || '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Bullish Score</span><span className="font-mono font-bold">{data.bullish_score ?? '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Bearish Score</span><span className="font-mono">{data.bearish_score ?? '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Breakout Pressure</span><span className="font-mono text-emerald-600">{data.breakout_pressure ?? '—'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">False Breakout Risk</span><span className={`font-mono ${(data.false_breakout_risk ?? 0) > 60 ? 'text-red-600' : ''}`}>{data.false_breakout_risk ?? '—'}</span></div>
-      </div>
-      <div className="border-t pt-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold">10-MINUTE SETUP</span>
-          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.short_horizon?.status)}`}>
-            {data.short_horizon?.direction || 'NEUTRAL'} — {data.short_horizon?.status || 'WATCH'}
-          </span>
+    <Card className="gap-4 py-4" data-testid="mi-panel">
+      <CardHeader className="px-4 flex-row items-center justify-between gap-2">
+        <CardTitle className="text-sm tracking-widest uppercase">Market Intelligence</CardTitle>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={selected}
+            onChange={e => setSelected(e.target.value)}
+            aria-label="Instrument"
+            className="text-xs bg-secondary text-secondary-foreground rounded-md px-2 py-1 border border-border cursor-pointer"
+          >
+            {INSTRUMENTS.map(i => <option key={i} value={i}>{i}</option>)}
+          </select>
+          <Button variant="ghost" size="icon-xs" onClick={() => { setLoading(true); setError(null); api.getInstitutionalMIDashboard(selected).then(r => setData(r?.data ?? r)).catch((e: unknown) => setError(e instanceof Error ? e.message : 'Refresh failed')).finally(() => setLoading(false)); }} disabled={refreshing} aria-label="Refresh">
+            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
+          </Button>
         </div>
-        <div className="text-xs text-muted-foreground">Confidence: {data.short_horizon?.confidence ?? 0}%</div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold">LONG CONTINUATION</span>
-          <span className={`text-xs px-2 py-0.5 rounded font-bold ${badgeColor(data.continuation?.status)}`}>
-            {data.continuation?.direction || 'NEUTRAL'} — {data.continuation?.status || 'WATCH'}
-          </span>
+      </CardHeader>
+      <CardContent className="px-4 space-y-3">
+        <div className="flex items-center gap-2 text-[11px] flex-wrap">
+          <FeedHealthBadge feed={feed} quality={data.data_health} />
+          {data.spot_price != null && (
+            <span className="font-mono tabular-nums text-muted-foreground">
+              {Number(data.spot_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+            </span>
+          )}
+          {data.last_update_ms != null && (
+            <span className="text-muted-foreground" title={new Date(data.last_update_ms).toLocaleString()}>{timeAgo(data.last_update_ms)}</span>
+          )}
+          {data.used_cache && <span className="text-amber-600 font-medium">cached</span>}
+          {error && <span className="text-destructive truncate" title={error}>refresh failed — showing last good</span>}
         </div>
-        <div className="text-xs text-muted-foreground">Confidence: {data.continuation?.confidence ?? 0}%</div>
-        <div className="text-[11px] text-muted-foreground mt-2">
-          Maximum Holding: {data.max_holding || '< 2 Hours'} {data.continuation?.max_holding_minutes ? `(${data.continuation.max_holding_minutes} min)` : ''}
+
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div><div className="text-muted-foreground text-[11px]">Regime</div><div className="font-bold">{data.regime || '—'}</div></div>
+          <div><div className="text-muted-foreground text-[11px]">Trend</div><div className="font-bold">{data.price_action?.trend || '—'}</div></div>
         </div>
-      </div>
-    </div>
+
+        <div className="space-y-2.5">
+          <ScoreMeter label="Bullish" value={data.bullish_score} tone="emerald" />
+          <ScoreMeter label="Bearish" value={data.bearish_score} tone="red" />
+          <ScoreMeter label="Breakout pressure" value={data.breakout_pressure} tone="sky" />
+          <ScoreMeter label="False-breakout risk" value={data.false_breakout_risk} tone="amber" />
+        </div>
+
+        <div className="border-t border-border pt-3 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold">10-Minute Setup</span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="font-bold text-foreground">{data.short_horizon?.direction || 'NEUTRAL'}</span>
+              <SignalStatusBadge status={data.short_horizon?.status} />
+            </span>
+          </div>
+          <div className="text-xs text-muted-foreground tabular-nums">Confidence: {data.short_horizon?.confidence ?? 0}%</div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold">Intraday Continuation</span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="font-bold text-foreground">{data.continuation?.direction || 'NEUTRAL'}</span>
+              <SignalStatusBadge status={data.continuation?.status} />
+            </span>
+          </div>
+          <div className="text-xs text-muted-foreground tabular-nums">Confidence: {data.continuation?.confidence ?? 0}%</div>
+          <div className="text-[11px] text-muted-foreground">
+            Max holding: {data.continuation?.max_holding_minutes ? `${data.continuation.max_holding_minutes} min` : (data.max_holding || '< 2 Hours')}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
