@@ -133,9 +133,9 @@ class CryptoSignalInstance(BaseModel):
     @property
     def created_at_str(self) -> str:
         try:
-            from datetime import datetime, timezone
-            dt = datetime.fromtimestamp(self.created_at_utc / 1000.0, tz=timezone.utc)
-            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            from app.crypto_scalp.time_utils import format_ms_ist
+
+            return format_ms_ist(self.created_at_utc)
         except Exception:
             return ""
 

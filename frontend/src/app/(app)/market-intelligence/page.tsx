@@ -19,48 +19,21 @@ import {
   timeAgo,
 } from '@/components/institutional/mi-ui';
 
-// Types mirroring backend authoritative objects
-type InstrumentId = 'NIFTY' | 'BANKNIFTY' | 'SENSEX' | 'BTCUSD' | 'BREAKOUT_SETUPS';
+import { api } from '@/lib/api';
+import { getQueryParam, setQueryParams } from '@/lib/url-state';
+import type { FullMiResponse, InstrumentId, SecondaryTab } from '@/lib/mi-types';
+
 const INSTRUMENTS: InstrumentId[] = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD', 'BREAKOUT_SETUPS'];
 const INSTRUMENT_LABELS: Record<InstrumentId, string> = { NIFTY: 'NIFTY', BANKNIFTY: 'BANKNIFTY', SENSEX: 'SENSEX', BTCUSD: 'BTCUSD', BREAKOUT_SETUPS: 'BREAKOUT SETUPS' };
 
-type SecondaryTab = 'overview' | 'price-action' | 'futures' | 'options' | 'volume' | 'levels' | 'volatility' | 'cross-market' | 'breakout' | '10-min' | 'continuation' | 'ai' | 'risk' | 'data-health' | 'audit';
+function normalizeInstrument(v: string | null | undefined): InstrumentId {
+  if (v === 'BANKNIFTY' || v === 'SENSEX' || v === 'BTCUSD' || v === 'BREAKOUT_SETUPS' || v === 'NIFTY') return v;
+  return 'NIFTY';
+}
 
-interface FullMiResponse {
-  instrument_id: string;
-  asset_class: string;
-  pipeline: string;
-  header: { instrument: string; display_name: string; live_status: string; price: string | null; price_formatted: string; session: string; session_label: string; last_update_utc: number; last_update_iso: string; data_quality: string; feed_health: string; spot_source?: string; used_cache?: boolean };
-  market_state: { regime: string; price_action: any; momentum: string; participation: any; volatility: string; vwap: string; scores: { bullish_score: number; bearish_score: number; breakout_pressure: number; breakdown_pressure: number; false_breakout_risk: number } };
-  price_action: { structure: string; trend: string; momentum: string; location: string; vwap: string; volume: string; breadth: string };
-  evidence: { supporting: {dimension:string; signal:string; detail:string; state:string}[]; conflicting: {dimension:string; signal:string; detail:string; state:string}[]; missing: string[]; stale: string[]; invalid: string[] };
-  levels: { support: string[]; resistance: string[]; breakout_trigger: string | null; breakdown_trigger: string | null; invalidation: string; nearest_support: string | null; nearest_resistance: string | null };
-  breakout: { direction: string; status: string; confidence: number; breakout_level: string | null; breakout_pressure: number; breakdown_pressure: number; false_breakout_risk: number; breakout_quality: number; supporting: string[]; conflicts: string[]; reason: string };
-  short_horizon: { strategy: string; instrument: string; direction: string; status: string; confidence: number; horizon_minutes: number; entry_zone: string[]; stop_loss: string; target_zone: string[]; false_breakout_risk: number; reason: string };
-  continuation: { strategy: string; instrument: string; direction: string; status: string; confidence: number; max_holding_minutes: number; reason: string; invalidation: string };
-  ai: { status: string; short_horizon: {decision:string; confidence:number; reasoning:string[]; conflicts:string[]; invalidation_conditions:string[]}; continuation: {decision:string; confidence:number; reasoning:string[]; conflicts:string[]; invalidation_conditions:string[]}; overall: any };
-  risk: { strategy: string; portfolio: string; exposure: string; margin: string; correlation: string; reason: string | null };
-  signal: any;
-  data_health: { feed: string; feed_reason: string | null; data_health: string; clock_sync: string; sequence: string; contract: string; snapshot: string; synchronization: string; last_event_age_ms: number | null; spot_source?: string; used_cache?: boolean };
-  capabilities: string[];
-  instrument_specific: { is_crypto: boolean; fields: string[] };
-  details?: {
-    spot: { price: number | null; source: string; age_ms: number | null; used_cache: boolean; status: string };
-    vwap: { value: number | null; relation: string; source: string | null; status: string; reason: string | null };
-    volume: { volume_change: number | null; state: string; quote_volume: number | null; status: string; reason: string | null };
-    options: { pcr: number | null; total_call_oi: number | null; total_put_oi: number | null; pcr_volume: number | null; status: string; reason: string | null };
-    volatility: { volatility_change: number | null; regime: string; status: string; reason: string | null };
-    futures: { status: string; reason: string | null };
-    liquidity: { state: string };
-    atr: number | null;
-    multi_timeframe: Record<string, string> | null;
-    funding: { rate: number } | null;
-    levels_source: string | null;
-    breadth: string;
-    cross_market: { status: string; detail: any };
-    breadth_detail?: { advancing: number | null; declining: number | null; unchanged: number | null; advance_decline_ratio: number | null; sentiment: string | null; sentiment_score: number | null; status: string; reason: string | null };
-    provenance?: { errors?: Record<string, string>; cache_hits?: string[]; vwap_source?: string | null; levels_source?: string | null; options_status?: string; meta_fresh?: boolean; spot_source?: string };
-  };
+function normalizeSecondary(v: string | null | undefined): SecondaryTab {
+  const allowed: SecondaryTab[] = ['overview','price-action','futures','options','volume','levels','volatility','cross-market','breakout','10-min','continuation','ai','risk','data-health','audit'];
+  return (allowed as string[]).includes(v || '') ? (v as SecondaryTab) : 'overview';
 }
 
 const SECONDARY_TABS: { id: SecondaryTab; label: string }[] = [
@@ -78,14 +51,181 @@ const SECONDARY_TABS: { id: SecondaryTab; label: string }[] = [
   { id: 'ai', label: 'AI Confirmation' },
   { id: 'risk', label: 'Risk' },
   { id: 'data-health', label: 'Data Health' },
+  { id: 'audit', label: 'Audit' },
 ];
 
+/**
+ * Map flattened backend payload to the workspace shape.
+ * Backend stays authoritative — this only fills display-safe fallbacks.
+ */
+function adaptRawToFullMi(iid: InstrumentId, raw: Record<string, unknown>): FullMiResponse {
+  const r = raw as unknown as {
+    header?: FullMiResponse['header'];
+    market_state?: FullMiResponse['market_state'];
+    market_intelligence?: {
+      spot_price?: number | null;
+      regime?: string;
+      price_action?: Record<string, unknown>;
+      bullish_score?: number;
+      bearish_score?: number;
+      breakout_pressure?: number;
+      false_breakout_risk?: number;
+      last_update_ms?: number;
+      synchronization_status?: string;
+    };
+    spot_price?: number | null;
+    feed_health?: { health?: string; is_stale?: boolean; is_synthetic_fallback?: boolean; staleness_ms?: number | null };
+    session?: { session_type?: string } | string;
+    generated_at_ms?: number;
+    instrument?: { id?: string; instrument_id?: string; name?: string; display_name?: string; asset_class?: string; pipeline?: string; contract_spec?: unknown; capabilities?: Record<string, unknown> };
+    breakout_candidate?: { direction?: string; status?: string; candidate?: string; confidence?: number; trigger_level?: string | number | null; reasons?: string[] };
+    breakout?: { direction?: string; status?: string; candidate?: string; confidence?: number; trigger_level?: string | number | null; reasons?: string[] };
+    short_horizon?: Partial<FullMiResponse['short_horizon']>;
+    continuation?: Partial<FullMiResponse['continuation']>;
+    ai?: FullMiResponse['ai'];
+    risk?: FullMiResponse['risk'];
+    signal?: FullMiResponse['signal'];
+    evidence?: FullMiResponse['evidence'];
+    levels?: FullMiResponse['levels'];
+    sequence?: { gap_detected?: boolean };
+  };
+  if (r.header && r.market_state) return raw as unknown as FullMiResponse;
+  const spot = r.market_intelligence?.spot_price ?? r.spot_price ?? null;
+  const spotStr = spot != null ? String(spot) : null;
+  const spotFmt = spot != null ? Number(spot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+  const feedHealthRaw = r.feed_health;
+  const feedHealth = typeof feedHealthRaw === 'string' ? feedHealthRaw : (feedHealthRaw?.health ?? 'HEALTHY');
+  const dataQuality = typeof feedHealthRaw === 'object' && feedHealthRaw?.is_stale ? 'STALE' : 'LIVE';
+  const sess = typeof r.session === 'string' ? r.session : (r.session?.session_type ?? 'UNKNOWN');
+  const lastMs = r.market_intelligence?.last_update_ms ?? r.generated_at_ms ?? Date.now();
+  const instId = r.instrument?.id ?? r.instrument?.instrument_id ?? iid;
+  const displayName = r.instrument?.name ?? r.instrument?.display_name ?? iid;
+  const regime = r.market_intelligence?.regime ?? 'NEUTRAL';
+  const priceAction: Record<string, unknown> = r.market_intelligence?.price_action ?? {};
+  const paStr = (k: string, fb = '—'): string => {
+    const v = priceAction[k];
+    return typeof v === 'string' ? v : fb;
+  };
+  const paObj = (k: string): Record<string, unknown> => {
+    const v = priceAction[k];
+    return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  };
+  const bullish = r.market_intelligence?.bullish_score ?? 50;
+  const bearish = r.market_intelligence?.bearish_score ?? 50;
+  const breakoutPressure = r.market_intelligence?.breakout_pressure ?? 50;
+  const falseRisk = r.market_intelligence?.false_breakout_risk ?? 20;
+  const bc = r.breakout_candidate ?? r.breakout ?? {};
+  const sh = r.short_horizon ?? {};
+  const cont = r.continuation ?? {};
+  return {
+    instrument_id: instId,
+    asset_class: r.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX'),
+    pipeline: r.instrument?.pipeline ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDIAN_EQUITY'),
+    header: {
+      instrument: instId,
+      display_name: displayName,
+      live_status: feedHealth,
+      price: spotStr,
+      price_formatted: spotFmt,
+      session: sess,
+      session_label: sess,
+      last_update_utc: lastMs,
+      last_update_iso: new Date(lastMs).toISOString(),
+      data_quality: dataQuality,
+      feed_health: feedHealth,
+    },
+    market_state: {
+      regime,
+      price_action: priceAction,
+      momentum: paStr('momentum', 'NEUTRAL'),
+      participation: paObj('participation'),
+      volatility: paStr('volatility'),
+      vwap: paStr('vwap'),
+      scores: { bullish_score: bullish, bearish_score: bearish, breakout_pressure: breakoutPressure, breakdown_pressure: bearish, false_breakout_risk: falseRisk },
+    },
+    price_action: {
+      structure: paStr('structure'),
+      trend: paStr('trend', 'NEUTRAL'),
+      momentum: paStr('momentum', 'NEUTRAL'),
+      location: paStr('location'),
+      vwap: paStr('vwap'),
+      volume: paStr('volume'),
+      breadth: paStr('breadth'),
+    },
+    evidence: r.evidence ?? { supporting: [], conflicting: [], missing: [], stale: [], invalid: [] },
+    levels: r.levels ?? { support: [], resistance: [], breakout_trigger: bc.trigger_level != null ? String(bc.trigger_level) : null, breakdown_trigger: null, invalidation: '—', nearest_support: null, nearest_resistance: null },
+    breakout: {
+      direction: bc.direction ?? 'NEUTRAL',
+      status: bc.status ?? bc.candidate ?? 'WATCH',
+      confidence: bc.confidence ?? 50,
+      breakout_level: bc.trigger_level != null ? String(bc.trigger_level) : null,
+      breakout_pressure: breakoutPressure,
+      breakdown_pressure: bearish,
+      false_breakout_risk: falseRisk,
+      breakout_quality: bc.confidence ?? 50,
+      supporting: bc.reasons ?? [],
+      conflicts: [],
+      reason: (bc.reasons ?? []).join(', ') || '',
+    },
+    short_horizon: {
+      strategy: sh.strategy ?? 'BREAKOUT',
+      instrument: sh.instrument ?? instId,
+      direction: sh.direction ?? 'NEUTRAL',
+      status: sh.status ?? 'WATCH',
+      confidence: sh.confidence ?? 50,
+      horizon_minutes: sh.horizon_minutes ?? 10,
+      entry_zone: sh.entry_zone ?? [],
+      stop_loss: sh.stop_loss ?? '0',
+      target_zone: sh.target_zone ?? [],
+      false_breakout_risk: sh.false_breakout_risk ?? falseRisk,
+      reason: sh.reason ?? '',
+    },
+    continuation: {
+      strategy: cont.strategy ?? 'CONTINUATION',
+      instrument: cont.instrument ?? instId,
+      direction: cont.direction ?? 'NEUTRAL',
+      status: cont.status ?? 'WATCH',
+      confidence: cont.confidence ?? 50,
+      max_holding_minutes: cont.max_holding_minutes ?? 120,
+      reason: cont.reason ?? '',
+      invalidation: cont.invalidation ?? '—',
+    },
+    ai: r.ai ?? { status: 'UNAVAILABLE', short_horizon: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, continuation: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, overall: {} },
+    risk: r.risk ?? { strategy: 'APPROVED', portfolio: 'APPROVED', exposure: '—', margin: '—', correlation: '—', reason: null },
+    signal: r.signal ?? null,
+    data_health: {
+      feed: feedHealth,
+      feed_reason: typeof feedHealthRaw === 'object' && feedHealthRaw?.is_synthetic_fallback ? 'synthetic' : null,
+      data_health: dataQuality,
+      clock_sync: 'VALID',
+      sequence: r.sequence?.gap_detected ? 'GAP' : 'VALID',
+      contract: r.instrument?.contract_spec ? 'VALID' : 'UNKNOWN',
+      snapshot: r.instrument ? 'VALID' : 'MISSING',
+      synchronization: r.market_intelligence?.synchronization_status ?? 'UNKNOWN',
+      last_event_age_ms: typeof feedHealthRaw === 'object' ? (feedHealthRaw?.staleness_ms ?? null) : null,
+    },
+    capabilities: r.instrument?.capabilities ? Object.keys(r.instrument.capabilities).filter((k: string) => (r.instrument?.capabilities as Record<string, unknown>)[k]) : [],
+    instrument_specific: {
+      is_crypto: (r.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX')) === 'CRYPTO',
+      fields: r.instrument?.capabilities ? Object.keys(r.instrument.capabilities) : [],
+    },
+  };
+}
+
 export default function MarketIntelligencePage() {
-  const [selected, setSelected] = useState<InstrumentId>('NIFTY');
-  const [secondary, setSecondary] = useState<SecondaryTab>('overview');
+  const [selected, setSelected] = useState<InstrumentId>(() =>
+    typeof window !== 'undefined' ? normalizeInstrument(getQueryParam('instrument')) : 'NIFTY',
+  );
+  const [secondary, setSecondary] = useState<SecondaryTab>(() =>
+    typeof window !== 'undefined' ? normalizeSecondary(getQueryParam('tab')) : 'overview',
+  );
   const [breakoutSignals, setBreakoutSignals] = useState<any[]>([]);
   const [breakoutLoading, setBreakoutLoading] = useState(false);
-  const [breakoutFilter, setBreakoutFilter] = useState<'ALL' | InstrumentId>('ALL' as any);
+  const [breakoutFilter, setBreakoutFilter] = useState<'ALL' | InstrumentId>(() => {
+    if (typeof window === 'undefined') return 'ALL';
+    const f = getQueryParam('filter');
+    return f === 'ALL' || f === 'NIFTY' || f === 'BANKNIFTY' || f === 'SENSEX' || f === 'BTCUSD' ? (f as 'ALL' | InstrumentId) : 'ALL';
+  });
   const [dataByInstrument, setDataByInstrument] = useState<Partial<Record<InstrumentId, FullMiResponse>>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [errorByInstrument, setErrorByInstrument] = useState<Partial<Record<InstrumentId, string>>>({});
@@ -95,184 +235,77 @@ export default function MarketIntelligencePage() {
   const cacheRef = useRef<Map<InstrumentId, FullMiResponse>>(new Map());
 
   const inFlightRef = useRef<Set<string>>(new Set());
+  const abortRef = useRef<Map<string, AbortController>>(new Map());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current.forEach((c) => { try { c.abort(); } catch { /* noop */ } });
+      abortRef.current.clear();
+    };
+  }, []);
+
+  // Persist workspace selection for deep-linking.
+  useEffect(() => {
+    setQueryParams({
+      instrument: selected === 'NIFTY' ? null : selected,
+      tab: secondary === 'overview' ? null : secondary,
+      filter: selected === 'BREAKOUT_SETUPS' && breakoutFilter !== 'ALL' ? breakoutFilter : null,
+    });
+  }, [selected, secondary, breakoutFilter]);
 
   const fetchFor = useCallback(async (iid: InstrumentId, showLoading = false) => {
     if (iid === 'BREAKOUT_SETUPS') return;
     // Single-flight per instrument: never stack a refresh while one is active.
     if (inFlightRef.current.has(iid)) return;
+    // Abort any stale controller for this instrument before starting a new one.
+    abortRef.current.get(iid)?.abort();
+    const ctrl = new AbortController();
+    abortRef.current.set(iid, ctrl);
     inFlightRef.current.add(iid);
     if (showLoading) setLoading(prev => ({ ...prev, [iid]: true }));
     try {
-      // Same base-URL resolution as lib/api.ts: local backend on localhost, hosted fallback otherwise.
-      const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-      const base = (process.env.NEXT_PUBLIC_API_URL || (isLocal ? 'http://localhost:8000' : 'https://droid-backend-emeq.onrender.com')).replace(/\/+$/, '');
-      const url = `${base}/api/v1/institutional/market-intelligence/${iid}/full`;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 60000);
-      let res: Response;
-      try {
-        res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`${res.status} ${res.statusText}${txt ? ` — ${txt.slice(0,200)}` : ''}`);
-      }
-      const json = await res.json();
-      const raw = (json.data ?? json) as any;
-      // Adapter: new backend returns flattened {instrument,session,feed_health,market_intelligence,breakout_candidate,short_horizon,continuation}
-      // Old frontend expects header/market_state etc — map with safe fallbacks so UI never crashes
-      let payload: FullMiResponse;
-      if (raw.header && raw.market_state) {
-        payload = raw as FullMiResponse;
-      } else {
-        const spot = raw.market_intelligence?.spot_price ?? raw.spot_price ?? null;
-        const spotStr = spot != null ? String(spot) : null;
-        const spotFmt = spot != null ? Number(spot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
-        const feedHealth = raw.feed_health?.health ?? raw.feed_health ?? 'HEALTHY';
-        const dataQuality = raw.feed_health?.is_stale ? 'STALE' : 'LIVE';
-        const sess = raw.session?.session_type ?? raw.session ?? 'UNKNOWN';
-        const lastMs = raw.market_intelligence?.last_update_ms ?? raw.generated_at_ms ?? Date.now();
-        const instId = raw.instrument?.id ?? raw.instrument?.instrument_id ?? iid;
-        const displayName = raw.instrument?.name ?? raw.instrument?.display_name ?? iid;
-        const regime = raw.market_intelligence?.regime ?? 'NEUTRAL';
-        const priceAction = raw.market_intelligence?.price_action ?? {};
-        const bullish = raw.market_intelligence?.bullish_score ?? 50;
-        const bearish = raw.market_intelligence?.bearish_score ?? 50;
-        const breakoutPressure = raw.market_intelligence?.breakout_pressure ?? 50;
-        const falseRisk = raw.market_intelligence?.false_breakout_risk ?? 20;
-        const bc = raw.breakout_candidate ?? raw.breakout ?? {};
-        const sh = raw.short_horizon ?? {};
-        const cont = raw.continuation ?? {};
-        payload = {
-          instrument_id: instId,
-          asset_class: raw.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX'),
-          pipeline: raw.instrument?.pipeline ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDIAN_EQUITY'),
-          header: {
-            instrument: instId,
-            display_name: displayName,
-            live_status: feedHealth,
-            price: spotStr,
-            price_formatted: spotFmt,
-            session: sess,
-            session_label: sess,
-            last_update_utc: lastMs,
-            last_update_iso: new Date(lastMs).toISOString(),
-            data_quality: dataQuality,
-            feed_health: feedHealth,
-          },
-          market_state: {
-            regime,
-            price_action: priceAction,
-            momentum: priceAction?.momentum ?? 'NEUTRAL',
-            participation: priceAction?.participation ?? {},
-            volatility: priceAction?.volatility ?? '—',
-            vwap: priceAction?.vwap ?? '—',
-            scores: { bullish_score: bullish, bearish_score: bearish, breakout_pressure: breakoutPressure, breakdown_pressure: bearish, false_breakout_risk: falseRisk },
-          },
-          price_action: {
-            structure: priceAction?.structure ?? '—',
-            trend: priceAction?.trend ?? 'NEUTRAL',
-            momentum: priceAction?.momentum ?? 'NEUTRAL',
-            location: priceAction?.location ?? '—',
-            vwap: priceAction?.vwap ?? '—',
-            volume: priceAction?.volume ?? '—',
-            breadth: priceAction?.breadth ?? '—',
-          },
-          evidence: raw.evidence ?? { supporting: [], conflicting: [], missing: [], stale: [], invalid: [] },
-          levels: raw.levels ?? { support: [], resistance: [], breakout_trigger: bc.trigger_level ? String(bc.trigger_level) : null, breakdown_trigger: null, invalidation: '—', nearest_support: null, nearest_resistance: null },
-          breakout: {
-            direction: bc.direction ?? 'NEUTRAL',
-            status: bc.status ?? bc.candidate ?? 'WATCH',
-            confidence: bc.confidence ?? 50,
-            breakout_level: bc.trigger_level ? String(bc.trigger_level) : null,
-            breakout_pressure: breakoutPressure,
-            breakdown_pressure: bearish,
-            false_breakout_risk: falseRisk,
-            breakout_quality: bc.confidence ?? 50,
-            supporting: bc.reasons ?? [],
-            conflicts: [],
-            reason: (bc.reasons ?? []).join(', ') || '',
-          },
-          short_horizon: {
-            strategy: sh.strategy ?? 'BREAKOUT',
-            instrument: sh.instrument ?? instId,
-            direction: sh.direction ?? 'NEUTRAL',
-            status: sh.status ?? 'WATCH',
-            confidence: sh.confidence ?? 50,
-            horizon_minutes: sh.horizon_minutes ?? 10,
-            entry_zone: sh.entry_zone ?? [],
-            stop_loss: sh.stop_loss ?? '0',
-            target_zone: sh.target_zone ?? [],
-            false_breakout_risk: sh.false_breakout_risk ?? falseRisk,
-            reason: sh.reason ?? '',
-          },
-          continuation: {
-            strategy: cont.strategy ?? 'CONTINUATION',
-            instrument: cont.instrument ?? instId,
-            direction: cont.direction ?? 'NEUTRAL',
-            status: cont.status ?? 'WATCH',
-            confidence: cont.confidence ?? 50,
-            max_holding_minutes: cont.max_holding_minutes ?? 120,
-            reason: cont.reason ?? '',
-            invalidation: cont.invalidation ?? '—',
-          },
-          ai: raw.ai ?? { status: 'UNAVAILABLE', short_horizon: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, continuation: { decision: 'WATCH', confidence: 50, reasoning: [], conflicts: [], invalidation_conditions: [] }, overall: {} },
-          risk: raw.risk ?? { strategy: 'APPROVED', portfolio: 'APPROVED', exposure: '—', margin: '—', correlation: '—', reason: null },
-          signal: raw.signal ?? null,
-          data_health: {
-            feed: feedHealth,
-            feed_reason: raw.feed_health?.is_synthetic_fallback ? 'synthetic' : null,
-            data_health: dataQuality,
-            clock_sync: 'VALID',
-            sequence: raw.sequence?.gap_detected ? 'GAP' : 'VALID',
-            contract: raw.instrument?.contract_spec ? 'VALID' : 'UNKNOWN',
-            snapshot: raw.instrument ? 'VALID' : 'MISSING',
-            synchronization: raw.market_intelligence?.synchronization_status ?? 'UNKNOWN',
-            last_event_age_ms: raw.feed_health?.staleness_ms ?? null,
-          },
-          capabilities: raw.instrument?.capabilities ? Object.keys(raw.instrument.capabilities).filter((k: string) => (raw.instrument.capabilities as Record<string, unknown>)[k]) : [],
-          instrument_specific: {
-            is_crypto: (raw.instrument?.asset_class ?? (iid === 'BTCUSD' ? 'CRYPTO' : 'INDEX')) === 'CRYPTO',
-            fields: raw.instrument?.capabilities ? Object.keys(raw.instrument.capabilities) : [],
-          },
-        } as FullMiResponse;
-      }
+      const json = await api.getMIFull(iid, { signal: ctrl.signal });
+      if (!mountedRef.current || ctrl.signal.aborted) return;
+      const raw = (json.data ?? json) as unknown as Record<string, unknown>;
+      const payload = adaptRawToFullMi(iid, raw);
       cacheRef.current.set(iid, payload);
       setDataByInstrument(prev => ({ ...prev, [iid]: payload }));
       setErrorByInstrument(prev => ({ ...prev, [iid]: undefined }));
-    } catch (e: any) {
-      setErrorByInstrument(prev => ({ ...prev, [iid]: e?.message || 'Failed to load' }));
+    } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      if (ctrl.signal.aborted) return;
+      if (!mountedRef.current) return;
+      const msg = e instanceof Error ? e.message : 'Failed to load';
+      setErrorByInstrument(prev => ({ ...prev, [iid]: msg }));
     } finally {
+      abortRef.current.delete(iid);
       inFlightRef.current.delete(iid);
-      setLoading(prev => ({ ...prev, [iid]: false }));
+      if (mountedRef.current) setLoading(prev => ({ ...prev, [iid]: false }));
     }
   }, []);
 
   const fetchBreakoutSetups = useCallback(async (showLoading = true) => {
+    if (inFlightRef.current.has('BREAKOUT_SETUPS')) return;
+    abortRef.current.get('BREAKOUT_SETUPS')?.abort();
+    const ctrl = new AbortController();
+    abortRef.current.set('BREAKOUT_SETUPS', ctrl);
+    inFlightRef.current.add('BREAKOUT_SETUPS');
     if (showLoading) setBreakoutLoading(true);
     try {
-      const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-      const base = (process.env.NEXT_PUBLIC_API_URL || (isLocal ? 'http://localhost:8000' : 'https://droid-backend-emeq.onrender.com')).replace(/\/+$/, '');
-      const url = `${base}/api/v1/institutional/signals/active`;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 60000);
-      let res: Response;
-      try {
-        res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = await res.json();
-      const payload = json.data ?? json;
-      const signals = payload.signals || payload || [];
-      setBreakoutSignals(signals);
+      const json = await api.getInstitutionalSignalsActive({ signal: ctrl.signal });
+      if (!mountedRef.current || ctrl.signal.aborted) return;
+      const payload = (json as { data?: unknown }).data ?? json;
+      const signals = (payload as { signals?: unknown[] }).signals || (Array.isArray(payload) ? payload : []);
+      setBreakoutSignals(Array.isArray(signals) ? signals : []);
     } catch {
-      // keep previous
+      // keep previous — a failed poll must not blank the workspace
     } finally {
-      setBreakoutLoading(false);
+      abortRef.current.delete('BREAKOUT_SETUPS');
+      inFlightRef.current.delete('BREAKOUT_SETUPS');
+      if (mountedRef.current) setBreakoutLoading(false);
     }
   }, []);
 
@@ -282,9 +315,11 @@ export default function MarketIntelligencePage() {
   // may never view; each tab loads on selection via cacheRef instead).
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
     const schedule = (fn: () => void) => {
       const jittered = 15000 * (0.8 + Math.random() * 0.4);
       timeout = setTimeout(() => {
+        if (stopped) return;
         if (!document.hidden) fn();
         schedule(fn);
       }, jittered);
@@ -303,8 +338,13 @@ export default function MarketIntelligencePage() {
       schedule(() => void fetchFor(selected, false));
     }
     return () => {
+      stopped = true;
       if (timeout) clearTimeout(timeout);
       document.removeEventListener('visibilitychange', onVis);
+      // Abort in-flight poll for the outgoing instrument so a late response
+      // can never overwrite the newly selected tab.
+      abortRef.current.get(selected)?.abort();
+      abortRef.current.get('BREAKOUT_SETUPS')?.abort();
     };
   }, [selected, fetchFor, fetchBreakoutSetups]);
 
@@ -406,8 +446,8 @@ export default function MarketIntelligencePage() {
             </div>
           )}
 
-          {/* Secondary detail navigation — below primary tabs (§19) */}
-          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur py-1">
+          {/* Secondary detail navigation — below sticky app header (h-14) */}
+          <div className="sticky top-14 z-10 bg-background/95 backdrop-blur py-1 scroll-mt-16">
             <PageTabs
               tabs={SECONDARY_TABS.map(t => ({ id: t.id, label: t.label }))}
               activeTab={secondary}
@@ -422,9 +462,9 @@ export default function MarketIntelligencePage() {
               <MiSection icon={Layers} title="Market State" className="lg:col-span-4">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                   <div><div className="text-muted-foreground text-[11px]">Regime</div><div className="font-bold">{data.market_state.regime || '—'}</div></div>
-                  <div><div className="text-muted-foreground text-[11px]">Trend</div><div className="font-mono">{data.market_state.price_action?.structure} / {data.market_state.price_action?.trend}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Trend</div><div className="font-mono">{String(data.market_state.price_action?.structure ?? '—')} / {String(data.market_state.price_action?.trend ?? '—')}</div></div>
                   <div><div className="text-muted-foreground text-[11px]">Momentum</div><div className="font-medium">{data.market_state.momentum || data.price_action.momentum || '—'}</div></div>
-                  <div><div className="text-muted-foreground text-[11px]">Participation</div><div className="font-medium">{data.market_state.participation?.volume || '—'}</div></div>
+                  <div><div className="text-muted-foreground text-[11px]">Participation</div><div className="font-medium">{typeof data.market_state.participation === 'object' && data.market_state.participation !== null ? String((data.market_state.participation as Record<string, unknown>).volume ?? '—') : '—'}</div></div>
                   <div><div className="text-muted-foreground text-[11px]">Volatility</div><div className="font-medium">{data.market_state.volatility || '—'}</div></div>
                   <div><div className="text-muted-foreground text-[11px]">VWAP</div><div className="font-medium">{data.market_state.vwap || '—'}</div></div>
                 </div>

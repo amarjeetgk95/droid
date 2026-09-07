@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface HeaderQuickActionsProps {
@@ -54,23 +54,27 @@ export function HeaderQuickActions({
   }, []);
 
   return (
-    <div className="flex items-center gap-1">
-      {/* Ticker Marquee Toggle */}
+    <div className="flex items-center gap-0.5">
+      {/* Ticker Ribbon Toggle */}
       {onToggleTicker && (
         <button
           type="button"
           onClick={onToggleTicker}
           className={cn(
-            'inline-flex items-center justify-center h-8 w-8 rounded-lg border transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs select-none',
+            'inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring select-none',
             tickerVisible
-              ? 'border-border/80 bg-card text-foreground hover:bg-secondary'
-              : 'border-dashed border-border bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground',
+              ? 'text-foreground hover:bg-secondary/80'
+              : 'text-muted-foreground/60 hover:text-foreground hover:bg-secondary/80',
           )}
           title={tickerVisible ? `Hide market marquee (${tickerShortcut})` : `Show market marquee (${tickerShortcut})`}
           aria-label={tickerVisible ? 'Hide market ticker' : 'Show market ticker'}
           aria-pressed={tickerVisible}
         >
-          {tickerVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+          {tickerVisible ? (
+            <PanelBottomClose className="w-3.5 h-3.5 text-foreground/80" />
+          ) : (
+            <PanelBottomOpen className="w-3.5 h-3.5 text-muted-foreground" />
+          )}
         </button>
       )}
 
@@ -79,7 +83,7 @@ export function HeaderQuickActions({
         type="button"
         onClick={handleManualRefresh}
         disabled={isRefreshing}
-        className="hidden xl:inline-flex items-center justify-center h-8 w-8 rounded-lg border border-border/80 bg-card hover:bg-secondary text-muted-foreground hover:text-foreground transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs select-none disabled:opacity-60"
+        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring select-none disabled:opacity-60"
         title="Refresh live market data feed"
         aria-label="Refresh market data feed"
       >
@@ -90,7 +94,7 @@ export function HeaderQuickActions({
       <button
         type="button"
         onClick={toggleFullscreen}
-        className="hidden lg:inline-flex items-center justify-center h-8 w-8 rounded-lg border border-border/80 bg-card hover:bg-secondary text-muted-foreground hover:text-foreground transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs select-none"
+        className="hidden sm:inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring select-none"
         title={isFullscreen ? 'Exit Zen / Fullscreen' : 'Enter Zen / Fullscreen'}
         aria-label="Toggle fullscreen mode"
       >

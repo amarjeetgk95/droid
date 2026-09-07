@@ -1,10 +1,11 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Tuple
 from app.models.crypto import (
     CryptoDerivatives,
     BasisStatus,
     ALLOWED_CRYPTO_SYMBOLS,
+    IST,
 )
 from app.models.market import DataStatus
 
@@ -66,7 +67,7 @@ class DerivativesEngine:
         ann_funding = self.calculate_annualized_funding(funding_rate)
         countdown = self.calculate_countdown(next_funding_time_ms)
         oi_usd = round(open_interest_coins * mark_price, 2)
-        next_dt = datetime.fromtimestamp(next_funding_time_ms / 1000.0, tz=timezone.utc)
+        next_dt = datetime.fromtimestamp(next_funding_time_ms / 1000.0, tz=IST)
 
         return CryptoDerivatives(
             symbol=sym,
@@ -89,7 +90,7 @@ class DerivativesEngine:
             top_traders_long_short_ratio=round(top_trader_ratio, 2) if top_trader_ratio else None,
             status=data_status,
             provider="binance_futures",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(IST),
         )
 
 

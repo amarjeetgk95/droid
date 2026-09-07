@@ -148,13 +148,13 @@ export function HeaderNotifications() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="relative inline-flex items-center justify-center h-8 w-8 rounded-lg border border-border/80 bg-card hover:bg-secondary text-muted-foreground hover:text-foreground transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs"
+          className="relative inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring select-none"
           title={signalCount > 0 ? `${signalCount} active signals detected` : 'Active signals & notifications'}
           aria-label="Signals and notifications"
         >
-          <Bell className="w-4 h-4" />
+          <Bell className="w-3.5 h-3.5" />
           {signalCount > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold leading-[17px] text-center tabular-nums ring-2 ring-card shadow-2xs animate-in zoom-in-75 duration-150">
+            <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-[15px] text-center tabular-nums ring-2 ring-card shadow-2xs animate-in zoom-in-75 duration-150">
               {signalCount > 99 ? '99+' : signalCount}
             </span>
           )}

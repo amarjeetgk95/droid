@@ -203,8 +203,8 @@ function MarketTickerInner({ cards: cardsProp, loading: loadingProp }: { cards?:
   return (
     <div className="group relative h-8 border-b border-border bg-card overflow-hidden flex items-center">
       {/* edge fades */}
-      <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-card to-transparent z-10" />
-      <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-card to-transparent z-10" />
+      <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-card to-transparent z-10" />
+      <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-card to-transparent z-10" />
 
       <div className="flex items-center gap-8 whitespace-nowrap animate-marquee group-hover:[animation-play-state:paused] will-change-transform">
         {loopCards.map((card, idx) => {
@@ -220,23 +220,23 @@ function MarketTickerInner({ cards: cardsProp, loading: loadingProp }: { cards?:
           const sessionLabel = crypto ? 'LIVE 24/7' : closed ? 'Closed' : (card.status || '—');
           return (
             <div key={`${card.symbol}-${idx}`} className="flex items-center gap-8 shrink-0">
-              {showDivider && <span aria-hidden className="h-4 w-px bg-border" />}
+              {showDivider && <span aria-hidden className="h-4 w-px bg-border/80" />}
               <div
                 className={`flex items-center gap-2 text-xs shrink-0 ${closed && !crypto ? 'opacity-70' : ''}`}
                 title={`${card.display_name || card.symbol}${crypto ? ' / USDT' : ''} • ${basisLabel} • ${sessionLabel} • Vol ${safeInt(card.volume)}${!crypto ? ` • OI ${card.open_interest != null ? safeInt(card.open_interest) : '—'}` : ''}`}
               >
-                <span className="font-semibold text-foreground tracking-tight">
+                <span className="font-bold text-foreground tracking-tight">
                   {card.display_name || card.symbol}
                   {crypto && <span className="ml-0.5 font-normal text-muted-foreground">/USDT</span>}
                 </span>
-                <span className="tabular-nums font-medium text-foreground">{formatLtp(card)}</span>
+                <span className="tabular-nums font-semibold text-foreground">{formatLtp(card)}</span>
                 <span
                   className={`tabular-nums inline-flex items-center gap-0.5 font-semibold px-1.5 py-0.5 rounded text-[11px] leading-none border ${
                     isNeutral
                       ? 'text-muted-foreground bg-secondary border-border'
                       : isPos
-                        ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/25'
-                        : 'text-rose-700 bg-rose-500/10 border-rose-500/25'
+                        ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                        : 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20'
                   }`}
                 >
                   <span className="text-[9px] leading-none">{isNeutral ? '—' : isPos ? '▲' : '▼'}</span>

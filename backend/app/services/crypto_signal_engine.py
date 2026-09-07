@@ -18,6 +18,7 @@ from app.models.crypto import (
     CryptoSignal,
     CryptoSignalsResponse,
     SignalDirection,
+    IST,
     CryptoSignalStatus,
 )
 
@@ -45,7 +46,7 @@ class CryptoSignalEngine:
                 return 9999.0
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
-            return (datetime.now(timezone.utc) - ts).total_seconds()
+            return (datetime.now(IST) - ts).total_seconds()
         except Exception:
             return 9999.0
 
@@ -459,7 +460,7 @@ class CryptoSignalEngine:
             total_active=len(signals),
             btc_signals=btc_count,
             eth_signals=eth_count,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(IST),
         )
 
 

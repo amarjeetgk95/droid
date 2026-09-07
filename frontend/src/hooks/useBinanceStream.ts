@@ -4,10 +4,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   BinanceMarket,
   buildTickerStreams,
-  buildKlineStreams,
   buildDepthStreams,
+  buildKlineStreams,
   buildMarkPriceStreams,
-  getBinanceWsUrl,
   buildBinanceCombinedUrl,
 } from '@/lib/binanceLive';
 import type { CryptoTicker, CryptoOrderBook, CryptoDerivatives, NormalizedCandle } from '@/lib/types';
@@ -18,18 +17,53 @@ const PAIR_DISPLAY_NAMES: Record<string, [string, string, string]> = {
   ETHBTC: ['Ethereum / Bitcoin', 'ETH', 'BTC'],
 };
 
-function normalizeTickerData(data: Record<string, any>): Partial<CryptoTicker> & { symbol: string } {
-  const symbol = (data.s || data.symbol || '').toUpperCase();
-  const price = parseFloat(data.c ?? data.lastPrice ?? '0');
-  const change = parseFloat(data.P ?? data.priceChange ?? '0'); // futures uses different field? fallback
+type BinanceTickerPayload = Record<string, unknown>;
+
+function numField(data: BinanceTickerPayload, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = data[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v !== '') {
+      const n = parseFloat(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return 0;
+}
+
+function strField(data: BinanceTickerPayload, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = data[k];
+    if (typeof v === 'string' && v !== '') return v;
+  }
+  return '';
+}
+
+function asPairArray(v: unknown): Array<[string, string]> {
+  if (!Array.isArray(v)) return [];
+  const out: Array<[string, string]> = [];
+  for (const item of v) {
+    if (Array.isArray(item) && item.length >= 2) out.push([String(item[0]), String(item[1])]);
+  }
+  return out;
+}
+
+function normalizeTickerData(data: BinanceTickerPayload): Partial<CryptoTicker> & { symbol: string } {
+  const symbol = strField(data, 's', 'symbol').toUpperCase();
+  const price = numField(data, 'c', 'lastPrice');
   // Binance ticker: c=lastPrice, P=priceChangePercent, p=priceChange, h=high, l=low, v=volume, q=quoteVolume, w=weightedAvg
-  const priceChange = parseFloat(data.p ?? data.priceChange ?? '0');
-  const priceChangePercent = parseFloat(data.P ?? data.priceChangePercent ?? '0');
-  const high = parseFloat(data.h ?? data.highPrice ?? (price * 1.02).toString());
-  const low = parseFloat(data.l ?? data.lowPrice ?? (price * 0.98).toString());
-  const volQuote = parseFloat(data.q ?? data.quoteVolume ?? '0');
-  const volBase = parseFloat(data.v ?? data.volume ?? '0');
-  const wavg = parseFloat(data.w ?? data.weightedAvgPrice ?? price.toString());
+  const priceChange = numField(data, 'p', 'priceChange');
+  const priceChangePercent = numField(data, 'P', 'priceChangePercent');
+  const fallbackHigh = price > 0 ? price * 1.02 : 0;
+  const fallbackLow = price > 0 ? price * 0.98 : 0;
+  const highRaw = numField(data, 'h', 'highPrice');
+  const lowRaw = numField(data, 'l', 'lowPrice');
+  const high = highRaw !== 0 ? highRaw : fallbackHigh;
+  const low = lowRaw !== 0 ? lowRaw : fallbackLow;
+  const volQuote = numField(data, 'q', 'quoteVolume');
+  const volBase = numField(data, 'v', 'volume');
+  const wavgRaw = numField(data, 'w', 'weightedAvgPrice');
+  const wavg = wavgRaw !== 0 ? wavgRaw : price;
 
   return {
     symbol,
@@ -75,7 +109,7 @@ export function useBinanceTickerStream(
     symbolsRef.current = symbols;
   }, [enabled, market, symbols]);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(function connectFn() {
     if (!enabledRef.current || typeof window === 'undefined') return;
     if (symbolsRef.current.length === 0) return;
 
@@ -84,15 +118,17 @@ export function useBinanceTickerStream(
 
     const streams = buildTickerStreams(syms);
     const url = buildBinanceCombinedUrl(m, streams);
-    const fallbackUrl = m === 'spot'
-      ? `wss://stream.binance.com:9443/stream?streams=${streams.map(s => s.toLowerCase()).join('/')}`
-      : url;
-
-    // Verify correct stream per market (logged for audit)
-    const verifiedBase = getBinanceWsUrl(m, true);
-    // console.debug(`[BinanceLive] Connecting ${m} tickers via ${verifiedBase}`, { url });
 
     let isUnmounted = false;
+
+    const scheduleReconnect = () => {
+      if (isUnmounted || !enabledRef.current) return;
+      setStreamState('RECONNECTING');
+      setReconnectCount((c) => c + 1);
+      const delay = Math.min(30000, backoffRef.current * 1.5 + Math.random() * 500);
+      backoffRef.current = delay;
+      reconnectTimeoutRef.current = setTimeout(() => connectFn(), delay);
+    };
 
     try {
       const ws = new WebSocket(url);
@@ -107,16 +143,21 @@ export function useBinanceTickerStream(
       ws.onmessage = (event) => {
         if (isUnmounted) return;
         try {
-          const payload = JSON.parse(event.data);
+          const payload = JSON.parse(event.data) as {
+            stream?: string;
+            data?: BinanceTickerPayload;
+            e?: string;
+            s?: string;
+          } & BinanceTickerPayload;
           // Combined stream envelope: {stream:"btcusdt@ticker", data:{...}}
-          let data: Record<string, any> | null = null;
+          let data: BinanceTickerPayload | null = null;
           if (payload.stream && payload.data) {
             data = payload.data;
           } else if (payload.e === '24hrTicker' || payload.s) {
             data = payload;
           } else if (Array.isArray(payload)) {
             // !ticker@arr batch
-            payload.forEach((item: Record<string, any>) => {
+            (payload as BinanceTickerPayload[]).forEach((item) => {
               const parsed = normalizeTickerData(item);
               const sym = parsed.symbol;
               if (!sym) return;
@@ -149,7 +190,7 @@ export function useBinanceTickerStream(
             return;
           }
 
-          if (!data || !data.s) return;
+          if (!data || !strField(data, 's')) return;
           const parsed = normalizeTickerData(data);
           const sym = parsed.symbol;
           if (!sym) return;
@@ -195,19 +236,10 @@ export function useBinanceTickerStream(
       };
 
       ws.onclose = () => {
-        if (isUnmounted || !enabledRef.current) return;
-        setStreamState('RECONNECTING');
-        setReconnectCount((c) => c + 1);
-        const delay = Math.min(30000, backoffRef.current * 1.5 + Math.random() * 500);
-        backoffRef.current = delay;
-        reconnectTimeoutRef.current = setTimeout(() => connect(), delay);
+        scheduleReconnect();
       };
     } catch {
-      if (!isUnmounted) {
-        const delay = Math.min(30000, backoffRef.current * 1.5 + Math.random() * 500);
-        backoffRef.current = delay;
-        reconnectTimeoutRef.current = setTimeout(() => connect(), delay);
-      }
+      scheduleReconnect();
     }
 
     return () => {
@@ -219,6 +251,8 @@ export function useBinanceTickerStream(
     };
   }, []);
 
+  const symbolsKey = [...symbols].sort().join(',');
+
   useEffect(() => {
     const cleanup = connect();
     return () => {
@@ -229,7 +263,8 @@ export function useBinanceTickerStream(
         wsRef.current = null;
       }
     };
-  }, [connect, market, JSON.stringify(symbols), enabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connect, market, enabled, symbolsKey]);
 
   return { tickers, streamState, reconnectCount };
 }
@@ -256,22 +291,24 @@ export function useBinanceSymbolStream(
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(1000);
 
-  // Seed live orderbook from REST snapshot so diffs can be merged realtime
+  // Seed live orderbook from REST snapshot so diffs can be merged realtime.
+  // External REST → WS state sync — intentional, not derived render state.
   useEffect(() => {
     if (initialOrderBook && symbol && initialOrderBook.symbol.toUpperCase() === symbol.toUpperCase()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setOrderBook(initialOrderBook);
-    } else if (!initialOrderBook) {
-      // keep existing if switching timeframe; only clear on symbol change handled by Ws effect
     }
   }, [initialOrderBook, symbol]);
 
-  // Reset orderbook when symbol/market changes to avoid stale book
+  // Reset derivatives overlay when symbol/market changes to avoid stale funding display.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDerivativesLive(null);
   }, [symbol, market]);
 
   useEffect(() => {
     if (!enabled || !symbol || typeof window === 'undefined') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStreamState('DISCONNECTED');
       return;
     }
@@ -304,9 +341,13 @@ export function useBinanceSymbolStream(
         ws.onmessage = (event) => {
           if (isUnmounted) return;
           try {
-            const payload = JSON.parse(event.data);
-            let stream: string = '';
-            let data: Record<string, any> | null = null;
+            const payload = JSON.parse(event.data) as {
+              stream?: string;
+              data?: BinanceTickerPayload;
+              e?: string;
+            } & BinanceTickerPayload;
+            let stream: string = typeof payload.stream === 'string' ? payload.stream : '';
+            let data: BinanceTickerPayload | null = null;
             if (payload.stream && payload.data) {
               stream = payload.stream;
               data = payload.data;
@@ -315,9 +356,10 @@ export function useBinanceSymbolStream(
             }
             if (!data) return;
 
-            if (data.e === 'depthUpdate' || stream.includes('@depth')) {
-              const bidsRaw: Array<[string, string]> = data.b || data.bids || data.B || [];
-              const asksRaw: Array<[string, string]> = data.a || data.asks || data.A || [];
+            const evt = typeof data.e === 'string' ? data.e : '';
+            if (evt === 'depthUpdate' || stream.includes('@depth')) {
+              const bidsRaw = asPairArray(data.b ?? data.bids ?? data.B);
+              const asksRaw = asPairArray(data.a ?? data.asks ?? data.A);
               if (bidsRaw.length === 0 && asksRaw.length === 0) return;
               setOrderBook((prev) => {
                 if (!prev) return prev;
@@ -415,30 +457,31 @@ export function useBinanceSymbolStream(
                   provider: `binance_${market}_ws`,
                 };
               });
-            } else if (data.e === 'kline' || stream.includes('@kline')) {
-              const k = data.k || data;
-              if (!k) return;
+            } else if (evt === 'kline' || stream.includes('@kline')) {
+              const kRaw = data.k;
+              const k: BinanceTickerPayload = typeof kRaw === 'object' && kRaw !== null ? (kRaw as BinanceTickerPayload) : data;
+              const tsRaw = numField(k, 't', 'T');
               const candle: NormalizedCandle = {
-                timestamp: new Date(k.t ?? k.T ?? Date.now()).toISOString(),
-                open: parseFloat(k.o ?? k.open ?? '0'),
-                high: parseFloat(k.h ?? k.high ?? '0'),
-                low: parseFloat(k.l ?? k.low ?? '0'),
-                close: parseFloat(k.c ?? k.close ?? '0'),
-                volume: parseFloat(k.v ?? k.volume ?? '0'),
+                timestamp: new Date(tsRaw > 0 ? tsRaw : Date.now()).toISOString(),
+                open: numField(k, 'o', 'open'),
+                high: numField(k, 'h', 'high'),
+                low: numField(k, 'l', 'low'),
+                close: numField(k, 'c', 'close'),
+                volume: numField(k, 'v', 'volume'),
                 vwap: null,
               };
               setLatestCandle(candle);
-            } else if (data.e === 'markPriceUpdate' || stream.includes('@markPrice')) {
-              const markPrice = parseFloat(data.p ?? data.markPrice ?? '0');
-              const indexPrice = parseFloat(data.i ?? data.indexPrice ?? data.P ?? '0');
-              const fundingRate = parseFloat(data.r ?? data.lastFundingRate ?? '0');
-              const nextFundingMs: number = Number(data.T ?? data.nextFundingTime ?? 0);
+            } else if (evt === 'markPriceUpdate' || stream.includes('@markPrice')) {
+              const markPrice = numField(data, 'p', 'markPrice');
+              const indexPrice = numField(data, 'i', 'indexPrice', 'P');
+              const fundingRate = numField(data, 'r', 'lastFundingRate');
+              const nextFundingMs: number = numField(data, 'T', 'nextFundingTime');
               if (!Number.isFinite(fundingRate)) return;
               const nowMs = Date.now();
               const countdown = nextFundingMs > 0 ? Math.max(0, Math.floor((nextFundingMs - nowMs) / 1000)) : 0;
               const nextFundingIso = nextFundingMs > 0 ? new Date(nextFundingMs).toISOString() : new Date(nowMs + 8 * 3600 * 1000).toISOString();
               setDerivativesLive({
-                symbol: (data.s || symbol || '').toUpperCase(),
+                symbol: (strField(data, 's') || symbol || '').toUpperCase(),
                 mark_price: markPrice || undefined,
                 index_price: indexPrice || undefined,
                 funding_rate: fundingRate,

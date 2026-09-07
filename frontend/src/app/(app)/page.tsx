@@ -5,19 +5,21 @@ import dynamic from 'next/dynamic';
 import { useMarketDataContext } from '@/context/MarketDataContext';
 import { useLiveMarketContext } from '@/context/LiveMarketContext';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { ErrorCard } from '@/components/ui/ErrorCard';
+import { safeNum } from '@/lib/utils';
+import { getQueryParam, setQueryParams } from '@/lib/url-state';
+import type { DashboardSymbol } from '@/lib/symbols';
+import { normalizeDashboardSymbol, resolveCardSymbol } from '@/lib/symbols';
 import { MarketCard } from '@/components/dashboard/MarketCard';
 import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
 import { api } from '@/lib/api';
 import type { MarketRegimeOverview } from '@/lib/types';
 import {
-  Activity,
   RefreshCw,
   Clock,
   Compass,
   TrendingUp,
-  ShieldCheck,
   Layers,
-  Sparkles,
   ArrowUpRight,
   BarChart2,
 } from 'lucide-react';
@@ -63,15 +65,6 @@ const DataHealthPanel = dynamic(
   }
 );
 
-function SectionError({ message }: { message: string }) {
-  return (
-    <div className="bg-card rounded-xl border border-destructive/30 p-6 flex flex-col items-center justify-center gap-2 min-h-32">
-      <p className="text-sm font-semibold text-destructive">Failed to load this section</p>
-      <p className="text-xs opacity-70 text-center">{message}</p>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   // Tier A live prices from LiveMarketContext (isolated re-renders);
   // Tiers B/C/D analytical data from Dashboard (MarketData) context.
@@ -84,27 +77,28 @@ export default function DashboardPage() {
     loading: dashboardLoading,
     error,
     errors,
-    lastFetch,
     refetch,
   } = useMarketDataContext({ useSummaryEndpoint: true });
   const loading = liveLoading && dashboardLoading && cards.length === 0;
 
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
-  const [viewMode, setViewMode] = useState<'intelligence' | 'chart'>('intelligence');
+  const [selectedSymbol, setSelectedSymbol] = useState<DashboardSymbol>(() =>
+    normalizeDashboardSymbol(typeof window !== 'undefined' ? getQueryParam('symbol') : null),
+  );
+  const [viewMode, setViewMode] = useState<'intelligence' | 'chart'>(() =>
+    typeof window !== 'undefined' && getQueryParam('view') === 'chart' ? 'chart' : 'intelligence',
+  );
   const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
   const [regimeLoading, setRegimeLoading] = useState(true);
+  const [regimeError, setRegimeError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
-  // Sync selected symbol with valid card if needed
-  const activeSymbol =
-    selectedSymbol.toUpperCase().includes('BANK')
-      ? 'BANKNIFTY'
-      : selectedSymbol.toUpperCase().includes('SENSEX')
-      ? 'SENSEX'
-      : selectedSymbol.toUpperCase().includes('BTC')
-      ? 'BTCUSD'
-      : 'NIFTY';
+  const activeSymbol: DashboardSymbol = normalizeDashboardSymbol(selectedSymbol);
+
+  // Persist selection to URL for deep-linking (best-effort, no navigation).
+  useEffect(() => {
+    setQueryParams({ symbol: activeSymbol === 'NIFTY' ? null : activeSymbol, view: viewMode === 'chart' ? 'chart' : null });
+  }, [activeSymbol, viewMode]);
 
   // Sync context regime when activeSymbol is NIFTY
   useEffect(() => {
@@ -132,10 +126,7 @@ export default function DashboardPage() {
   }, [refetch, activeSymbol]);
 
   const handleSelectCard = useCallback((symbol: string) => {
-    if (symbol.includes('BANKNIFTY')) setSelectedSymbol('BANKNIFTY');
-    else if (symbol.includes('SENSEX')) setSelectedSymbol('SENSEX');
-    else if (symbol.includes('BTC')) setSelectedSymbol('BTCUSD');
-    else setSelectedSymbol('NIFTY');
+    setSelectedSymbol(resolveCardSymbol(symbol));
   }, []);
 
   // Regime: NIFTY comes straight from shared context (no independent poll).
@@ -146,19 +137,22 @@ export default function DashboardPage() {
       if (contextRegime) {
         setRegimeOverview(contextRegime);
         setRegimeLoading(false);
+        setRegimeError(null);
       }
       return;
     }
 
     let isMounted = true;
     setRegimeLoading(true);
+    setRegimeError(null);
     const fetchRegime = async () => {
       try {
         const res = await api.getRegimeOverview(activeSymbol);
         if (!isMounted) return;
         setRegimeOverview(res.data);
-      } catch {
+      } catch (err) {
         if (!isMounted) return;
+        setRegimeError(err instanceof Error ? err.message : 'Regime unavailable');
       } finally {
         if (isMounted) setRegimeLoading(false);
       }
@@ -171,21 +165,13 @@ export default function DashboardPage() {
 
   if (error && !cards.length && !breadth && !health && !marketStatus) {
     return (
-      <div className="flex items-center justify-center h-80 text-destructive bg-card rounded-2xl border border-destructive/20 p-8 shadow-xs">
-        <div className="text-center max-w-md space-y-3">
-          <div className="w-12 h-12 rounded-full bg-destructive/10 text-destructive flex items-center justify-center mx-auto">
-            <Activity className="w-6 h-6" />
-          </div>
-          <p className="text-lg font-bold text-foreground">Market Feed Disconnected</p>
-          <p className="text-xs text-muted-foreground">{error}</p>
-          <button
-            onClick={() => void handleManualRefresh()}
-            className="mt-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all cursor-pointer shadow-xs"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
+      <ErrorCard
+        mode="full-page"
+        title="Market Feed Disconnected"
+        message={error}
+        onRetry={() => void handleManualRefresh()}
+        isRetrying={isRefreshing}
+      />
     );
   }
 
@@ -224,9 +210,23 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          {/* Realtime Status Pill */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs">
+          {/* Realtime Status Pill — text + role, never color-only */}
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label={
+              isMarketClosed
+                ? 'Market session closed'
+                : isStreamLive
+                  ? 'Live market feed connected'
+                  : isStreamWaiting
+                    ? 'Market feed stale, retrying'
+                    : 'Market feed down'
+            }
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs"
+          >
             <span
+              aria-hidden="true"
               className={`w-2 h-2 rounded-full ${
                 isMarketClosed
                   ? 'bg-slate-400'
@@ -248,7 +248,7 @@ export default function DashboardPage() {
             </span>
             {health?.latency_ms !== null && health?.latency_ms !== undefined && (
               <span className="text-[10px] text-muted-foreground font-mono">
-                · {health.latency_ms.toFixed(0)}ms
+                · {safeNum(health.latency_ms, '—', 0)}ms
               </span>
             )}
           </div>
@@ -329,16 +329,7 @@ export default function DashboardPage() {
             ))
           ) : cards.length ? (
             cards.map((card) => {
-              const isSelected =
-                activeSymbol === 'NIFTY' && card.symbol.includes('NIFTY 50')
-                  ? true
-                  : activeSymbol === 'BANKNIFTY' && card.symbol.includes('BANKNIFTY')
-                  ? true
-                  : activeSymbol === 'SENSEX' && card.symbol.includes('SENSEX')
-                  ? true
-                  : activeSymbol === 'BTCUSD' && card.symbol.includes('BTC')
-                  ? true
-                  : false;
+              const isSelected = resolveCardSymbol(card.symbol) === activeSymbol;
 
               return (
                 <ErrorBoundary key={card.symbol} label={`MarketCard:${card.symbol}`}>
@@ -351,7 +342,12 @@ export default function DashboardPage() {
               );
             })
           ) : (
-            <SectionError message={errors.cards ?? 'Market cards unavailable'} />
+            <ErrorCard
+              title="Market cards unavailable"
+              message={errors.cards ?? 'No index data in this poll'}
+              onRetry={() => void handleManualRefresh()}
+              isRetrying={isRefreshing}
+            />
           )}
         </div>
       </div>
@@ -442,7 +438,7 @@ export default function DashboardPage() {
                     </p>
                     <div className="flex items-center gap-3 pt-2 border-t border-border/40 text-[11px]">
                       <span className="text-muted-foreground">
-                        Confidence: <strong className="text-foreground">{regimeOverview.confidence_score.toFixed(0)}%</strong>
+                        Confidence: <strong className="text-foreground">{safeNum(regimeOverview.confidence_score, '—', 0)}%</strong>
                       </span>
                       <span className="text-muted-foreground">
                         Provider: <strong className="text-foreground">{health?.provider || '—'}</strong>
@@ -450,7 +446,12 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">Regime classification unavailable</p>
+                  <ErrorCard
+                    title="Regime classification unavailable"
+                    message={regimeError ?? errors.cards ?? 'No regime snapshot in this poll'}
+                    onRetry={() => void handleManualRefresh()}
+                    isRetrying={isRefreshing}
+                  />
                 )}
               </div>
 
@@ -475,7 +476,7 @@ export default function DashboardPage() {
                 <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
                   <span className="text-muted-foreground text-[10px] block">Feed Latency</span>
                   <span className="font-mono font-bold text-foreground block mt-0.5">
-                    {health?.latency_ms != null ? `${health.latency_ms.toFixed(0)}ms` : '—'}
+                    {health?.latency_ms != null ? `${safeNum(health.latency_ms, '—', 0)}ms` : '—'}
                   </span>
                 </div>
               </div>

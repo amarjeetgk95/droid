@@ -21,6 +21,13 @@ def format_crypto_scalp_telegram_message(signal: CryptoScalpSignal) -> str:
 
     price_fmt = "{:,.2f}" if "USDT" in signal.symbol and signal.entry_price > 100 else "{:,.4f}"
 
+    try:
+        from app.crypto_scalp.time_utils import format_ms_ist
+
+        ist_time = format_ms_ist(signal.created_at_utc) or signal.created_at_str or ""
+    except Exception:
+        ist_time = signal.created_at_str or ""
+
     lines = [
         f"⚡ *CRYPTO SCALP SIGNAL* ⚡",
         "━━━━━━━━━━━━━━━━━━━━━━",
@@ -43,6 +50,10 @@ def format_crypto_scalp_telegram_message(signal: CryptoScalpSignal) -> str:
 
     if signal.rationale:
         lines.append(f"💡 _{signal.rationale}_")
+        lines.append("")
+
+    if ist_time:
+        lines.append(f"🕒 _{ist_time}_")
         lines.append("")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")

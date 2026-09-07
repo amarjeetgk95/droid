@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Any
 import structlog
+
+from app.crypto_scalp.time_utils import now_ist
 
 from app.core.config import settings
 from app.crypto_scalp.base import (
@@ -504,7 +506,7 @@ class CryptoScalpScanner:
                     deduped_signals.append(s)
 
             duration_ms = round((time.perf_counter() - start_t) * 1000, 2)
-            self._last_scan_time = datetime.now(timezone.utc)
+            self._last_scan_time = now_ist()
             self._last_scan_duration_ms = duration_ms
 
             btc_count = sum(1 for s in deduped_signals if "BTC" in s.symbol)
@@ -533,7 +535,7 @@ class CryptoScalpScanner:
                 btc_signals=btc_count,
                 eth_signals=eth_count,
                 diagnostics=diagnostics,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=now_ist(),
             )
 
             self._cached_responses[cache_key] = resp

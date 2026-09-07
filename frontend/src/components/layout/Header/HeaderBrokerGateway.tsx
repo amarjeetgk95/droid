@@ -49,7 +49,7 @@ function resolveSystemStatus(
       label: 'OFFLINE',
       mobileLabel: 'OFFLINE',
       dot: 'bg-rose-500',
-      badge: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+      badge: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25 hover:bg-rose-500/20',
       animate: false,
     };
   }
@@ -61,40 +61,40 @@ function resolveSystemStatus(
       label: 'SYNCING…',
       mobileLabel: 'SYNC',
       dot: 'bg-amber-500',
-      badge: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
+      badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20',
       animate: true,
     };
   }
 
-  // 3. Broker is Authenticated & Connected -> GREEN!
+  // 3. Broker is Authenticated & Connected -> Clean Institutional Pill
   if (isBrokerConnected) {
     if (session === 'OPEN') {
       return {
         tone: 'live',
-        label: `${brokerName} • LIVE`,
+        label: `${brokerName} LIVE`,
         mobileLabel: brokerName,
         dot: 'bg-emerald-500',
-        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+        badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
         animate: true,
       };
     }
     if (session === 'PRE_OPEN') {
       return {
         tone: 'live',
-        label: `${brokerName} • PRE-OPEN`,
-        mobileLabel: 'PRE-OPEN',
+        label: `${brokerName} PRE-OPEN`,
+        mobileLabel: brokerName,
         dot: 'bg-emerald-500',
-        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+        badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
         animate: false,
       };
     }
-    // Connected outside trading hours (after market / holiday) -> Solid Green Connected
+    // Connected outside trading hours (after market / holiday) -> Clean broker label
     return {
       tone: 'live',
-      label: `${brokerName} • CONNECTED`,
+      label: brokerName,
       mobileLabel: brokerName,
       dot: 'bg-emerald-500',
-      badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+      badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
       animate: false,
     };
   }
@@ -104,10 +104,10 @@ function resolveSystemStatus(
     if (session === 'CLOSED' || session === 'POST_CLOSE' || marketStatus?.is_trading_day === false) {
       return {
         tone: 'closed',
-        label: marketStatus?.is_trading_day === false ? `${brokerName} • HOLIDAY` : `${brokerName} • CLOSED`,
+        label: marketStatus?.is_trading_day === false ? `${brokerName} HOLIDAY` : `${brokerName} CLOSED`,
         mobileLabel: marketStatus?.is_trading_day === false ? 'HOLIDAY' : 'CLOSED',
         dot: 'bg-amber-500',
-        badge: 'bg-secondary text-slate-700 border-border hover:bg-secondary/80',
+        badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
         animate: false,
       };
     }
@@ -117,7 +117,7 @@ function resolveSystemStatus(
       label: `AUTH ${brokerName}`,
       mobileLabel: 'AUTH',
       dot: 'bg-amber-500',
-      badge: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 ring-1 ring-amber-400/20',
+      badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20',
       animate: true,
     };
   }
@@ -126,10 +126,10 @@ function resolveSystemStatus(
   if (mode === 'OFFLINE' && !isHealthyStatus) {
     return {
       tone: 'demo',
-      label: session === 'OPEN' ? `${brokerName} • DEMO` : 'DEMO',
+      label: session === 'OPEN' ? `${brokerName} DEMO` : 'DEMO',
       mobileLabel: 'DEMO',
       dot: 'bg-amber-500',
-      badge: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
+      badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
       animate: false,
     };
   }
@@ -137,10 +137,10 @@ function resolveSystemStatus(
   // Fallback Closed
   return {
     tone: 'closed',
-    label: `${brokerName} • CLOSED`,
+    label: `${brokerName} CLOSED`,
     mobileLabel: 'CLOSED',
     dot: 'bg-slate-400',
-    badge: 'bg-secondary text-slate-700 border-border hover:bg-secondary/80',
+    badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
     animate: false,
   };
 }
@@ -239,17 +239,22 @@ export function HeaderBrokerGateway({
           title={`Broker: ${activeBroker.toUpperCase()} • Session: ${marketStatus?.session ?? '—'} • Stream: ${streamState}`}
           aria-label={`Broker Gateway: ${status.label}`}
         >
-          <span className={cn('w-2 h-2 rounded-full shrink-0', status.dot, (status.animate || isAuthorizing) && 'animate-live')} />
-          <span className="hidden sm:inline font-semibold">{isAuthorizing ? `SYNCING…` : status.label}</span>
+          <span className="relative flex h-2 w-2 shrink-0">
+            {(status.animate || isAuthorizing) && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            )}
+            <span className={cn('relative inline-flex rounded-full h-2 w-2', status.dot)} />
+          </span>
+          <span className="hidden sm:inline font-semibold tracking-tight">{isAuthorizing ? `SYNCING…` : status.label}</span>
           <span className="sm:hidden font-semibold">{isAuthorizing ? `SYNC` : status.mobileLabel}</span>
 
           {health?.latency_ms != null && (
-            <span className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-black/5 text-foreground/80 tabular-nums">
+            <span className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-secondary text-muted-foreground border border-border/50 tabular-nums">
               {health.latency_ms}ms
             </span>
           )}
 
-          <ChevronDown className="w-3 h-3 opacity-60 ml-0.5" />
+          <ChevronDown className="w-3 h-3 text-muted-foreground/60 ml-0.5 shrink-0" />
         </button>
       </DropdownMenuTrigger>
 

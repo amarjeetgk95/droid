@@ -68,21 +68,21 @@ export function HeaderBreadcrumb() {
   const Icon = breadcrumb.icon;
 
   return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs select-none min-w-0">
+    <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs select-none min-w-0">
       {breadcrumb.group && (
         <>
-          <span className="hidden xl:inline text-muted-foreground font-medium truncate max-w-[130px]">
+          <span className="hidden md:inline text-muted-foreground font-medium truncate max-w-[140px]">
             {breadcrumb.group}
           </span>
-          <ChevronRight className="hidden xl:inline w-3 h-3 text-muted-foreground/50 shrink-0" />
+          <ChevronRight className="hidden md:inline w-3 h-3 text-muted-foreground/40 shrink-0" />
         </>
       )}
 
-      <div className="flex items-center gap-1.5 min-w-0">
-        <div className="hidden sm:flex h-5 w-5 rounded items-center justify-center bg-secondary/80 text-foreground shrink-0 border border-border/60">
-          <Icon className="w-3 h-3 text-primary" />
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="flex h-6 w-6 rounded-md items-center justify-center bg-secondary/80 text-foreground shrink-0 border border-border/70 shadow-2xs">
+          <Icon className="w-3.5 h-3.5 text-primary" />
         </div>
-        <span className="font-semibold text-foreground truncate tracking-tight text-xs sm:text-[13px]">
+        <span className="font-bold text-foreground truncate tracking-tight text-xs sm:text-[13px]">
           {breadcrumb.label}
         </span>
       </div>

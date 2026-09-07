@@ -1,7 +1,14 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pydantic import BaseModel, Field
 from app.models.market import DataStatus
+
+try:
+    from zoneinfo import ZoneInfo
+
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:  # Windows hosts without tzdata: IST has no DST so fixed offset is exact
+    IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 
 # Strict symbol whitelist: Only Bitcoin (BTC) and Ethereum (ETH) pairs allowed
 ALLOWED_CRYPTO_SYMBOLS: set[str] = {"BTCUSDT", "ETHUSDT", "ETHBTC"}
@@ -51,11 +58,11 @@ class CryptoTicker(BaseModel):
     high_low_spread_pct: float | None = None
     sparkline: list[float] = Field(default_factory=list)
     source_timestamp: datetime | None = None
-    received_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    received_timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
     data_age_ms: int = 0
     status: DataStatus = DataStatus.LIVE
     provider: str = "binance"
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoOrderBookLevel(BaseModel):
@@ -83,12 +90,12 @@ class CryptoOrderBook(BaseModel):
     snapshot_id: int | None = None
     last_update_id: int | None = None
     event_timestamp: datetime | None = None
-    received_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    received_timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
     data_age_ms: int = 0
     sequence_status: OrderBookSequenceStatus = OrderBookSequenceStatus.ACTIVE
     status: DataStatus = DataStatus.LIVE
     provider: str = "binance"
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoDerivatives(BaseModel):
@@ -112,7 +119,7 @@ class CryptoDerivatives(BaseModel):
     top_traders_long_short_ratio: float | None = None
     status: DataStatus = DataStatus.LIVE
     provider: str = "binance_futures"
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoPairComparison(BaseModel):
@@ -127,7 +134,7 @@ class CryptoPairComparison(BaseModel):
     relative_strength: RelativeStrengthStatus
     relative_volume_ratio: float
     status: DataStatus = DataStatus.LIVE
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoMarketOverview(BaseModel):
@@ -143,7 +150,7 @@ class CryptoMarketOverview(BaseModel):
     top_gainers: list[CryptoTicker] = Field(default_factory=list)
     top_losers: list[CryptoTicker] = Field(default_factory=list)
     status: DataStatus = DataStatus.LIVE
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
     provider: str = "binance"
 
 
@@ -186,7 +193,7 @@ class CryptoSignal(BaseModel):
     status: CryptoSignalStatus = CryptoSignalStatus.ACTIVE
     confluence_factors: list[str] = Field(default_factory=list)
     rationale: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoSignalsResponse(BaseModel):
@@ -194,7 +201,7 @@ class CryptoSignalsResponse(BaseModel):
     total_active: int
     btc_signals: int
     eth_signals: int
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoScalpSignal(BaseModel):
@@ -229,7 +236,7 @@ class CryptoScalpSignal(BaseModel):
     created_at_str: str | None = None
     ttl_seconds: int = 180
     time_stop_seconds: int = 900
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoScalpDiagnostics(BaseModel):
@@ -252,7 +259,7 @@ class CryptoScalpSignalsResponse(BaseModel):
     btc_signals: int
     eth_signals: int
     diagnostics: CryptoScalpDiagnostics | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(IST))
 
 
 class CryptoScalpConfig(BaseModel):

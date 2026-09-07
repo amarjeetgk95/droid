@@ -153,7 +153,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <Clock />
           </div>
 
-          <span className="text-border/80 text-[10px]">•</span>
+          <span className="h-3 w-px bg-border/80 shrink-0" aria-hidden="true" />
 
           {/* Session Pill */}
           <div className="flex items-center gap-1.5">
@@ -168,8 +168,8 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <span
               className={cn(
                 'font-semibold text-xs',
-                countdownInfo.badgeTone === 'live' && 'text-emerald-700',
-                countdownInfo.badgeTone === 'amber' && 'text-amber-700',
+                countdownInfo.badgeTone === 'live' && 'text-emerald-600 dark:text-emerald-400',
+                countdownInfo.badgeTone === 'amber' && 'text-amber-600 dark:text-amber-400',
                 countdownInfo.badgeTone === 'closed' && 'text-muted-foreground',
               )}
             >

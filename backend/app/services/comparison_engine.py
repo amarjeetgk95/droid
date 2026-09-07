@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from app.models.crypto import (
     CryptoPairComparison,
     RelativeStrengthStatus,
+    IST,
 )
 from app.models.market import DataStatus
 
@@ -48,7 +49,7 @@ class ComparisonEngine:
             relative_strength=rel_strength,
             relative_volume_ratio=vol_ratio,
             status=data_status,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(IST),
         )
 
 

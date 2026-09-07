@@ -206,13 +206,11 @@ Plus: enforce gamma/vega ceilings symmetric to delta/theta; persist snapshots (t
 
 ### P2-3. Selector details
 - `selector.py:104` — `atm_strike = round(spot_price / step) * step` in float while the resolver uses `Decimal` (`resolve_atm_strike`) — use the resolver to avoid float-grid drift.
-.
 - `selector.py:144` — `strike_val in option_chain_quotes` float-equality lookup; quantize quote keys (`round(k, 2)`) or key by `Decimal`.
 - Docstring promises expiry evaluation (§26 current-vs-next weekly) but only the current expiry is ever resolved — either implementthe next-weekly comparison or fix the docstring and the §-reference in the API docs.
 
 ### P2-4. Frontend page issues (`options-intelligence/page.tsx`)
 - **Hardcoded IV** (`INSTRUMENT_IV`, lines 25-29) contradicts the page's own "no false or simulated data is fabricated" banner. Fetch ATM IV from the backend (e.g. reuse an options snapshot/chain context endpoint)and degrade explicitly when unavailable.
-.
 - **All-or-nothing loading** — `Promise.all` over 4 requests; one failure blanks the whole page. Use `Promise.allSettled` and render partial data with per-section error chips%.
 - **Stale-response race** — no `AbortController`; rapid underlying/horizon flips can let an older response overwrite newer state. Abort in the `useEffect` cleanup.
 - **NEUTRAL direction bug** — `direction === 'BULLISH' ? 'LONG_CALL' : 'LONG_PUT'` maps `NEUTRAL` (a valid `DirectionalBias`) silently to LONG_PUT. Disable the selector/calls for NEUTRAL or request both directions.
@@ -226,9 +224,8 @@ Plus: enforce gamma/vega ceilings symmetric to delta/theta; persist snapshots (t
 ## P3 — Hygiene / calibration
 
 1. **Cost model staleness** — `exchange_turnover_rate = 0.000505` vs NSE's revised 0.03503% (Oct 2024); spread/slippage defaults (₹1.0/₹0.5) are one-size-fits-all; make `IndianOptionCosts` load per-instrument config with an `as_of` stamp.
-2. **Magic numbers** — spread-acceptability 5.0%, OI liquidity floor 50000, ATM band  erved 0.5%, `major_delta_oi` threshold 5000 — extract to named constants/config.
+2. **Magic numbers** — spread-acceptability 5.0%, OI liquidity floor 50000, ATM band ~0.5%, `major_delta_oi` threshold 5000 — extract to named constants/config.
 3. **`solve_iv` iterations** — cap Newton steps at ~30 and deduplicate the bisection tolerance; expose `max_iterations/tolerance` in the API DTO for ops tuning.
-.
 4. **Round-tripping** — `theta_pct_day` guard `theo_price > 0.05` is arbitrary; document or make it relative (`< 1% of spot * 0.001`).
 
 ---
@@ -242,13 +239,14 @@ def test_greeks_reject_nonpositive_spot():        # P0-1
         BlackScholesGreeks.calculate_greeks(-1.0, 24500.0, 0.01, 0.15, "CE")
 
 def test_solve_iv_returns_none_for_overpriced():  # P0-2
-    assert BlackScholesGreeks.solve_iv(17746.23, 24900, 24000,, 0.02,,"CE")is None
+    assert BlackScholesGreeks.solve_iv(17746.23, 24900, 24000, 0.02, "CE") is None
 
 def test_selector_flags_all_rejected():           # P0-3
     res = quantitative_contract_selector.select_optimal_contract(
         "NIFTY", 24900.0, "LONG_CALL", expected_move_points=5.0,
         stop_loss_points=5.0, target_horizon_hours=4.0, current_iv=0.40)
-    assert res.is_viableis Falseand res.non_viability_reasons
+    assert res.is_viable is False
+    assert res.non_viability_reasons
 
 def test_iv_unit_normalization():                 # P1-1
     assert normalize_iv(14.5) == pytest.approx(0.145)
@@ -257,7 +255,7 @@ def test_iv_unit_normalization():                 # P1-1
 
 def test_live_context_never_valid_in_fallback():  # P0-4
     ctx = ...  # force options_service failure via stub
-    assert ctx.market_data_validis False
+    assert ctx.market_data_valid is False
 
 def test_api_rejects_bad_greeks_payload():        # P2-2
     r = client.post("/api/v1/options-intelligence/greeks",

@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from app.services.binance_service import binance_service
 from app.services.market_data_health import market_health_tracker
 from app.services.crypto_signal_engine import crypto_signal_engine
-from app.models.crypto import ALLOWED_CRYPTO_SYMBOLS
+from app.models.crypto import ALLOWED_CRYPTO_SYMBOLS, IST
 from app.models.market import ApiMeta, DataStatus
 
 router = APIRouter(prefix="/api/v1/crypto", tags=["crypto"])
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/crypto", tags=["crypto"])
 def _make_meta(provider: str = "binance", status: DataStatus = DataStatus.LIVE) -> ApiMeta:
     return ApiMeta(
         provider=provider,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(IST),
         status=status,
     )
 

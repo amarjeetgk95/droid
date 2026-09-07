@@ -38,15 +38,50 @@ const StreamHealthContext = createContext<StreamHealth>({ streamState: 'CONNECTI
 /** Batch WS tick state updates to at most one React render per 100ms. */
 const TICK_BATCH_MS = 100;
 
-function deepCardsEqual(a: IndexCard, b: IndexCard): boolean {
-  return (
-    a.ltp === b.ltp &&
-    a.change === b.change &&
-    a.change_percent === b.change_percent &&
-    a.volume === b.volume &&
-    a.status === b.status &&
-    a.sparkline === b.sparkline
-  );
+const EMPTY_CARDS: IndexCard[] = [];
+
+function isCryptoCard(c: Pick<IndexCard, 'symbol' | 'provider'>): boolean {
+  const sym = (c.symbol || '').toUpperCase();
+  const prov = (c.provider || '').toLowerCase();
+  return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
+}
+
+function applyClosedStatus(list: IndexCard[], isMarketClosed: boolean): IndexCard[] {
+  if (!isMarketClosed) return list;
+  let changed = false;
+  const next = list.map((c) => {
+    if (isCryptoCard(c)) return c.status === 'LIVE' ? c : { ...c, status: 'LIVE' as DataStatus };
+    return c.status === 'CLOSED' ? c : { ...c, status: 'CLOSED' as DataStatus };
+  });
+  // Preserve referential stability when nothing changed.
+  for (let i = 0; i < next.length; i++) if (next[i] !== list[i]) { changed = true; break; }
+  return changed ? next : list;
+}
+
+function mergeTickIntoCard(card: IndexCard, tick: TimestampedTick | undefined, targetStatus: DataStatus): IndexCard {
+  if (!tick) return card.status !== targetStatus ? { ...card, status: targetStatus } : card;
+  const newLtp = Number(tick.ltp);
+  if (!Number.isFinite(newLtp) || newLtp <= 0) {
+    return card.status !== targetStatus ? { ...card, status: targetStatus } : card;
+  }
+  const change = newLtp - card.previous_close;
+  const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
+  // Cap sparkline growth — tick batches arrive at 10/sec, never let the array drift.
+  let sparkline = card.sparkline;
+  if (sparkline.length > 0 && sparkline[sparkline.length - 1] !== newLtp) {
+    sparkline = sparkline.length >= 120 ? [...sparkline.slice(1), newLtp] : [...sparkline.slice(0, -1), newLtp];
+  }
+  return {
+    ...card,
+    ltp: newLtp,
+    change: Number(change.toFixed(2)),
+    change_percent: Number(changePercent.toFixed(2)),
+    sparkline,
+    volume: tick.volume ?? card.volume,
+    open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
+    status: targetStatus,
+    provider: tick.provider || card.provider,
+  };
 }
 
 export function LiveMarketProvider({ children }: { children: ReactNode }) {
@@ -55,7 +90,7 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
   // REST snapshot cards with shared WS ticks (batched) — no fetch, no socket.
   const market = useOptionalMarketDataContext();
   const { ticks: rawTicks, lastTickAt } = useMarketTicks();
-  const baseCards = market?.cards ?? [];
+  const baseCards = market?.cards ?? EMPTY_CARDS;
   const loading = market?.loading ?? true;
   const streamState: StreamConnectionState = market?.streamState ?? 'CONNECTING';
   const ticksFresh = market?.ticksFresh ?? false;
@@ -77,6 +112,7 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
       batchTimerRef.current = null;
       const pending = pendingTicksRef.current;
       pendingTicksRef.current = {};
+      if (Object.keys(pending).length === 0) return;
       // requestAnimationFrame-aligned commit when available.
       const commit = () => setBatchedTicks((prev) => ({ ...prev, ...pending }));
       if (typeof requestAnimationFrame !== 'undefined') {
@@ -85,98 +121,35 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
         commit();
       }
     }, TICK_BATCH_MS);
-    return () => {};
   }, [rawTicks]);
 
   useEffect(() => {
-    // If the feed goes stale, drop batched ticks so cards fall back to REST snapshot.
-    if (!ticksFresh) setBatchedTicks({});
+    return () => {
+      if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
+    };
+  }, []);
+
+  // External sync: WS health → local batch. Clearing stale ticks when the feed
+  // drops is intentional (not derived render state), so the set-state-in-effect
+  // warning does not apply here.
+  useEffect(() => {
+    if (!ticksFresh) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBatchedTicks((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    }
   }, [ticksFresh]);
 
-  const prevDisplayedRef = useRef<Map<string, IndexCard>>(new Map());
+  // Pure derivation — no refs, no side effects. 5 cards at ≤10 renders/sec is
+  // cheap; referential stability comes from memo deps, not a manual cache.
   const displayedCards = useMemo(() => {
-    // Crypto trades 24/7 — NSE closed must never force BTC/ETH to CLOSED.
-    const isCryptoCard = (c: IndexCard) => {
-      const sym = (c.symbol || '').toUpperCase();
-      const prov = (c.provider || '').toLowerCase();
-      return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
-    };
-    const applyClosedStatus = (list: IndexCard[]) =>
-      isMarketClosed
-        ? list.map((c) => {
-            if (isCryptoCard(c)) return c.status === 'LIVE' ? c : { ...c, status: 'LIVE' as DataStatus };
-            return c.status === 'CLOSED' ? c : { ...c, status: 'CLOSED' as DataStatus };
-          })
-        : list;
-
-    if (!batchedTicks || Object.keys(batchedTicks).length === 0) {
-      prevDisplayedRef.current.clear();
-      const adjusted = applyClosedStatus(baseCards);
-      adjusted.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return adjusted;
-    }
-    if (streamState !== 'CONNECTED' || !ticksFresh) {
-      prevDisplayedRef.current.clear();
-      const adjusted = applyClosedStatus(baseCards);
-      adjusted.forEach((c) => prevDisplayedRef.current.set(c.symbol, c));
-      return adjusted;
-    }
-    const next: IndexCard[] = [];
-    for (const card of baseCards) {
+    const hasTicks = batchedTicks && Object.keys(batchedTicks).length > 0;
+    const live = streamState === 'CONNECTED' && ticksFresh && hasTicks;
+    if (!live) return applyClosedStatus(baseCards, isMarketClosed);
+    return baseCards.map((card) => {
       const crypto = isCryptoCard(card);
-      const targetStatus: DataStatus = crypto ? 'LIVE' : (card.status === 'CLOSED' || isMarketClosed) ? 'CLOSED' : 'LIVE';
-      const tick: TimestampedTick | undefined = batchedTicks[card.symbol];
-      if (!tick) {
-        const currentCard = card.status !== targetStatus ? { ...card, status: targetStatus } : card;
-        const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev === currentCard) {
-          next.push(currentCard);
-        } else if (prev && deepCardsEqual(prev, currentCard)) {
-          next.push(prev);
-        } else {
-          prevDisplayedRef.current.set(card.symbol, currentCard);
-          next.push(currentCard);
-        }
-        continue;
-      }
-      const newLtp = Number(tick.ltp);
-      if (!Number.isFinite(newLtp) || newLtp <= 0) {
-        const currentCard = card.status !== targetStatus ? { ...card, status: targetStatus } : card;
-        const prev = prevDisplayedRef.current.get(card.symbol);
-        if (prev && prev.ltp === currentCard.ltp && prev.status === targetStatus) next.push(prev);
-        else {
-          prevDisplayedRef.current.set(card.symbol, currentCard);
-          next.push(currentCard);
-        }
-        continue;
-      }
-      const prev = prevDisplayedRef.current.get(card.symbol);
-      if (prev && prev.ltp === newLtp && prev.volume === (tick.volume ?? card.volume) && prev.status === targetStatus) {
-        next.push(prev);
-        continue;
-      }
-      const change = newLtp - card.previous_close;
-      const changePercent = card.previous_close > 0 ? (change / card.previous_close) * 100 : 0;
-      let sparkline = card.sparkline;
-      if (card.sparkline.length > 0 && card.sparkline[card.sparkline.length - 1] !== newLtp) {
-        sparkline = card.sparkline.slice();
-        sparkline[sparkline.length - 1] = newLtp;
-      }
-      const merged: IndexCard = {
-        ...card,
-        ltp: newLtp,
-        change: Number(change.toFixed(2)),
-        change_percent: Number(changePercent.toFixed(2)),
-        sparkline,
-        volume: tick.volume ?? card.volume,
-        open_interest: tick.open_interest !== undefined ? tick.open_interest : card.open_interest,
-        status: targetStatus,
-        provider: tick.provider || card.provider,
-      };
-      prevDisplayedRef.current.set(card.symbol, merged);
-      next.push(merged);
-    }
-    return next;
+      const targetStatus: DataStatus = crypto ? 'LIVE' : card.status === 'CLOSED' || isMarketClosed ? 'CLOSED' : 'LIVE';
+      return mergeTickIntoCard(card, batchedTicks[card.symbol], targetStatus);
+    });
   }, [baseCards, batchedTicks, streamState, ticksFresh, isMarketClosed]);
 
   const healthValue = useMemo<StreamHealth>(

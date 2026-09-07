@@ -27,7 +27,8 @@ export function HeaderUserProfile() {
   };
 
   const emailDisplay = user?.email || 'Active Trader';
-  const initial = emailDisplay.charAt(0).toUpperCase();
+  const traderName = user?.displayName || (user?.email ? user.email.split('@')[0] : 'Trader');
+  const initial = (user?.displayName || emailDisplay).charAt(0).toUpperCase();
 
   return (
     <DropdownMenu>
@@ -35,7 +36,7 @@ export function HeaderUserProfile() {
         <button
           type="button"
           className="flex items-center gap-1.5 h-8 px-2 rounded-lg hover:bg-secondary border border-border/80 bg-card transition-all text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring select-none shadow-2xs"
-          title="User Account & Terminal Session"
+          title={`User Account: ${emailDisplay}`}
           aria-label="User account and profile menu"
         >
           {/* Avatar initial with active green indicator */}
@@ -44,11 +45,11 @@ export function HeaderUserProfile() {
             <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-card" />
           </div>
 
-          <span className="hidden xl:inline text-xs font-medium max-w-[110px] truncate text-foreground">
-            {emailDisplay}
+          <span className="hidden xl:inline text-xs font-medium max-w-[85px] truncate text-foreground tracking-tight">
+            {traderName}
           </span>
 
-          <span className="hidden sm:inline text-[9px] font-bold uppercase tracking-wider px-1 py-0.2 rounded bg-primary/10 text-primary border border-primary/20">
+          <span className="text-[9px] font-bold uppercase tracking-wider px-1 py-0.2 rounded bg-primary/10 text-primary border border-primary/20">
             PRO
           </span>
 

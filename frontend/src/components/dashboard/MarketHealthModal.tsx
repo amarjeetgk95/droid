@@ -14,6 +14,24 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
+interface CacheStatsInfo {
+  hit_ratio_percent?: number;
+  items_count?: number;
+}
+
+interface PipelineStatsInfo {
+  timeseries_store?: Record<string, unknown>;
+  write_pipeline?: { queue_depth?: number; total_flushed?: number } & Record<string, unknown>;
+}
+
+interface TokenStatusInfo {
+  is_token_valid?: boolean;
+  provider?: string;
+  state?: string;
+  uptime_seconds?: number;
+  reconnect_count?: number;
+}
+
 export function MarketHealthModal({
   isOpen,
   onClose,
@@ -25,9 +43,10 @@ export function MarketHealthModal({
   health: MarketHealthStatus | null;
   streamState: StreamConnectionState;
 }) {
-  const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
-  const [pipelineStats, setPipelineStats] = useState<{ timeseries_store: Record<string, unknown>; write_pipeline: Record<string, unknown> } | null>(null);
-  const [tokenStatus, setTokenStatus] = useState<Record<string, unknown> | null>(null);
+  const [cacheStats, setCacheStats] = useState<CacheStatsInfo | null>(null);
+  const [pipelineStats, setPipelineStats] = useState<PipelineStatsInfo | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<TokenStatusInfo | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [activeBroker, setActiveBroker] = useState<string>('fyers');
 
@@ -44,31 +63,45 @@ export function MarketHealthModal({
     let isMounted = true;
     let delay = 3000;
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    const ctrl = new AbortController();
 
     const fetchTelemetry = async () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (isMounted) timeout = setTimeout(fetchTelemetry, 3000);
+        return;
+      }
       try {
         const [cRes, pRes, tRes] = await Promise.all([
           api.getCacheStats(),
           api.getPipelineStats(),
           api.getTokenStatus(),
         ]);
-        if (!isMounted) return;
-        setCacheStats(cRes.data);
-        setPipelineStats(pRes.data);
-        setTokenStatus(tRes.data);
+        if (!isMounted || ctrl.signal.aborted) return;
+        setCacheStats(cRes.data as unknown as CacheStatsInfo);
+        setPipelineStats(pRes.data as unknown as PipelineStatsInfo);
+        setTokenStatus(tRes.data as unknown as TokenStatusInfo);
+        setTelemetryError(null);
         delay = 3000;
-      } catch {
+      } catch (err) {
+        if (!isMounted || ctrl.signal.aborted) return;
         delay = Math.min(30000, delay * 2);
+        setTelemetryError(err instanceof Error ? err.message : 'Telemetry unavailable');
       } finally {
-        if (!isMounted) return;
+        if (!isMounted || ctrl.signal.aborted) return;
         timeout = setTimeout(fetchTelemetry, delay + Math.random() * 500);
       }
     };
 
     fetchTelemetry();
+    const onVis = () => {
+      if (!document.hidden && isMounted) void fetchTelemetry();
+    };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       isMounted = false;
+      ctrl.abort();
       if (timeout) clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [isOpen]);
 
@@ -111,6 +144,11 @@ export function MarketHealthModal({
 
         {/* Content */}
         <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+          {telemetryError && (
+            <div role="status" className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-muted-foreground">
+              Telemetry degraded — showing last known values. {telemetryError}
+            </div>
+          )}
           {/* Main Status Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
             <div className="bg-secondary/50 p-2.5 rounded-lg border border-border">
@@ -119,7 +157,7 @@ export function MarketHealthModal({
               </span>
               <p className="font-bold text-foreground capitalize">{safeStr(health?.provider, '—')}</p>
               <span className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.2 rounded font-mono">
-                {health?.mode || 'OFFLINE'}
+                {health?.mode || '—'}
               </span>
             </div>
 
@@ -151,20 +189,20 @@ export function MarketHealthModal({
             <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1">
               <KeyRound className="w-3.5 h-3.5 text-primary" /> Broker Auth
             </span>
-            <p className={`font-bold ${(tokenStatus as any)?.is_token_valid ? 'text-success' : 'text-warning'}`}>
-              {(tokenStatus as any)?.is_token_valid ? 'VALID' : 'EXPIRED / NONE'}
+            <p className={`font-bold ${tokenStatus?.is_token_valid ? 'text-success' : 'text-warning'}`}>
+              {tokenStatus?.is_token_valid ? 'VALID' : 'EXPIRED / NONE'}
             </p>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-[10px] text-muted-foreground capitalize">{safeStr(String((tokenStatus as any)?.provider || activeBroker), '—')}</span>
-              {Boolean((tokenStatus as any)?.state) && (
+              <span className="text-[10px] text-muted-foreground capitalize">{safeStr(String(tokenStatus?.provider || activeBroker), '—')}</span>
+              {Boolean(tokenStatus?.state) && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-primary/10 text-primary">
-                  {String((tokenStatus as any)?.state)}
+                  {String(tokenStatus?.state)}
                 </span>
               )}
             </div>
-            {!(tokenStatus as any)?.is_token_valid && (
+            {!tokenStatus?.is_token_valid && (
               <a
-                href={`https://droid-backend-emeq.onrender.com/api/v1/tokens/${activeBroker}/login`}
+                href={`${api.getBaseUrl()}/api/v1/tokens/${activeBroker}/login`}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 hover:underline"
@@ -257,15 +295,15 @@ export function MarketHealthModal({
             <div>
               <span className="text-muted-foreground">Provider Uptime:</span>
               <span className="font-mono font-medium ml-1.5 text-foreground">
-                {(tokenStatus as any)?.uptime_seconds !== undefined
-                  ? `${Math.round(Number((tokenStatus as any)?.uptime_seconds))}s`
+                {tokenStatus?.uptime_seconds !== undefined
+                  ? `${Math.round(Number(tokenStatus?.uptime_seconds))}s`
                   : '—'}
               </span>
             </div>
             <div className="text-right">
               <span className="text-muted-foreground">Broker Reconnects:</span>
               <span className="font-mono font-medium ml-1.5 text-foreground">
-                {String((tokenStatus as any)?.reconnect_count ?? 0)}
+                {String(tokenStatus?.reconnect_count ?? 0)}
               </span>
             </div>
           </div>

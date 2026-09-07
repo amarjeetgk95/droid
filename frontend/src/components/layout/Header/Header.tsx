@@ -5,7 +5,6 @@ import { MarketHealthStatus, MarketStatusResponse } from '@/lib/types';
 import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { Menu } from 'lucide-react';
 import { HeaderBreadcrumb } from './HeaderBreadcrumb';
-import { HeaderSearch } from './HeaderSearch';
 import { CommandPalette } from './CommandPalette';
 import { HeaderMarketSession } from './HeaderMarketSession';
 import { HeaderBrokerGateway } from './HeaderBrokerGateway';
@@ -73,7 +72,7 @@ function HeaderInner({
         style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
       >
         {/* ================================================================= */}
-        {/* LEFT ZONE: Navigation Toggle, Breadcrumb & Spotlight Search       */}
+        {/* LEFT ZONE: Navigation Toggle & Breadcrumb                         */}
         {/* ================================================================= */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {onMenuClick && (
@@ -88,12 +87,9 @@ function HeaderInner({
           )}
 
           {/* Dynamic Breadcrumbs / Spatial Context */}
-          <div className="min-w-0 pr-1">
+          <div className="min-w-0">
             <HeaderBreadcrumb />
           </div>
-
-          {/* Global Spotlight Search Bar */}
-          <HeaderSearch onOpen={() => setPaletteOpen(true)} />
         </div>
 
         {/* ================================================================= */}
@@ -106,7 +102,7 @@ function HeaderInner({
         {/* ================================================================= */}
         {/* RIGHT ZONE: Gateway Health, Quick Actions, Alerts & User Profile  */}
         {/* ================================================================= */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Consolidated Broker & System Status Pill */}
           <HeaderBrokerGateway
             health={health}
@@ -115,14 +111,14 @@ function HeaderInner({
             onOpenDiagnostics={openDiagnostics}
           />
 
-          {/* Terminal Workspace Controls (Ticker Marquee, Refresh, Zen Mode) */}
-          <HeaderQuickActions
-            tickerVisible={tickerVisible}
-            onToggleTicker={onToggleTicker}
-          />
-
-          {/* Active Alpha Signals & Live Notifications Drawer */}
-          <HeaderNotifications />
+          {/* Unified Toolset Pod: Ticker Toggle, Refresh, Zen Mode, Signals Bell */}
+          <div className="flex items-center gap-0.5 p-0.5 rounded-lg border border-border/70 bg-card/70 shadow-2xs">
+            <HeaderQuickActions
+              tickerVisible={tickerVisible}
+              onToggleTicker={onToggleTicker}
+            />
+            <HeaderNotifications />
+          </div>
 
           {/* Clean Visual Divider */}
           <div className="h-5 w-px bg-border/80 mx-0.5 hidden sm:block" />

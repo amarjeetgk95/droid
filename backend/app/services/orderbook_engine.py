@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 import structlog
 from app.models.crypto import (
@@ -7,6 +7,7 @@ from app.models.crypto import (
     CryptoOrderBookLevel,
     OrderBookSequenceStatus,
     ALLOWED_CRYPTO_SYMBOLS,
+    IST,
 )
 from app.models.market import DataStatus
 
@@ -151,7 +152,7 @@ class OrderBookState:
     def to_model(self, limit: int = 20) -> CryptoOrderBook:
         """Convert in-memory depth to validated CryptoOrderBook model."""
         self.check_health()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(IST)
 
         sorted_bids = sorted(self.bids.items(), key=lambda x: x[0], reverse=True)[:limit]
         sorted_asks = sorted(self.asks.items(), key=lambda x: x[0])[:limit]

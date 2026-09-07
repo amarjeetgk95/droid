@@ -1,6 +1,6 @@
 import time
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 import structlog
 from app.models.crypto import (
@@ -10,6 +10,7 @@ from app.models.crypto import (
     CryptoPairComparison,
     CryptoMarketOverview,
     ALLOWED_CRYPTO_SYMBOLS,
+    IST,
 )
 from app.models.market import NormalizedCandle, DataStatus
 from app.services.orderbook_engine import orderbook_engine
@@ -109,7 +110,7 @@ class BinanceService:
                         range_spread_pct = round(((high - low) / low * 100), 2) if low > 0 else 0.0
 
                         sparkline: list[float] = []
-                        now = datetime.now(timezone.utc)
+                        now = datetime.now(IST)
 
                         asset_key = "btc_ticker" if "BTC" in sym and quote == "USDT" else ("eth_ticker" if "ETH" in sym and quote == "USDT" else "btc_ticker")
                         market_health_tracker.record_event(asset_key)
@@ -172,7 +173,7 @@ class BinanceService:
                 range_spread_pct = round(((high - low) / low * 100), 2) if low > 0 else 0.0
 
                 sparkline: list[float] = []
-                now = datetime.now(timezone.utc)
+                now = datetime.now(IST)
 
                 asset_key = "btc_ticker" if base == "BTC" else "eth_ticker"
                 market_health_tracker.record_event(asset_key)
@@ -227,7 +228,7 @@ class BinanceService:
                     v = float(item[5])
                     q_vol = float(item[7])
                     vwap = (q_vol / v) if v > 0 else c
-                    ts_iso = datetime.fromtimestamp(open_time_ms / 1000.0, tz=timezone.utc).isoformat()
+                    ts_iso = datetime.fromtimestamp(open_time_ms / 1000.0, tz=IST).isoformat()
                     candles.append(
                         NormalizedCandle(
                             timestamp=ts_iso,
@@ -409,7 +410,7 @@ class BinanceService:
                 top_gainers=[],
                 top_losers=[],
                 status=DataStatus.OFFLINE,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(IST),
                 provider="binance",
             )
 
@@ -447,7 +448,7 @@ class BinanceService:
             top_gainers=[t for t in active_tickers if t.change_percent_24h >= 0],
             top_losers=[t for t in active_tickers if t.change_percent_24h < 0],
             status=btc.status if btc else DataStatus.OFFLINE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(IST),
             provider="binance",
         )
 
