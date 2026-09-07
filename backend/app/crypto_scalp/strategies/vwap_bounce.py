@@ -12,6 +12,7 @@ from app.models.crypto import SignalDirection
 class VWAPBounceStrategy:
     strategy_code = "VWAP_BOUNCE"
     name = "VWAP Rejection Bounce"
+    entry_style = "MARKET"  # Mean-reversion market entry at spot, not a breakout trigger
 
     def detect(self, ctx: CryptoScalpContext) -> CryptoScalpCandidate | None:
         if not ctx.candles_1m or len(ctx.candles_1m) < 5 or ctx.vwap_session <= 0:

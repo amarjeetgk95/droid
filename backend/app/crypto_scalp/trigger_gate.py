@@ -11,13 +11,18 @@ from typing import Any, Optional
 
 
 TICK = Decimal("0.01")  # Standard crypto price tick (for BTC/ETH on Binance)
-# Minimum trigger distance from spot: larger of 0.05% of spot or 0.10R.
+# Minimum trigger distance from spot: larger of 0.02% of spot or 0.05R (scalp).
 MIN_GAP_PCT = Decimal("0.0005")
 MIN_GAP_RISK_FRACTION = Decimal("0.10")
 # Minimum risk size: 0.03% of spot (filters dust stops that inflate R:R).
 MIN_RISK_PCT = Decimal("0.0003")
 MIN_RR_T1 = 1.15
 MIN_RR_T2 = 1.35
+
+# Entry styles:
+#   BREAKOUT — pending trigger order that must sit beyond spot with real breakout edge.
+#   MARKET   — mean-reversion / momentum market entry executed at (or near) spot.
+MARKET_ENTRY_STYLES = {"MARKET", "REVERSION"}
 
 
 @dataclass
@@ -68,6 +73,7 @@ def check_crypto_trigger_integrity(
     risk_reward_t2: Any = 2.5,
     is_scalp: bool = True,
     timeframe: str = "1m",
+    entry_style: str = "BREAKOUT",
 ) -> CryptoTriggerCheckResult:
     """Pure validator ensuring crypto signals carry legitimate breakout edge and clean geometry."""
     spot = _dec(spot_price)
@@ -78,22 +84,24 @@ def check_crypto_trigger_integrity(
         return CryptoTriggerCheckResult(False, "NO_SPOT", "Spot price is missing; trigger cannot be validated.")
 
     is_short = "SHORT" in str(direction).upper() or "BEARISH" in str(direction).upper() or "SELL" in str(direction).upper()
+    is_market_entry = str(entry_style).upper() in MARKET_ENTRY_STYLES
 
-    # 1. Trigger orientation relative to spot (breakout side)
-    if not is_short and trig <= spot:
-        return CryptoTriggerCheckResult(
-            False,
-            "TRIGGER_WRONG_SIDE",
-            f"LONG trigger ${trig} must be above spot ${spot} (else born-triggered without edge).",
-            {"trigger": float(trig), "spot": float(spot), "symbol": symbol},
-        )
-    if is_short and trig >= spot:
-        return CryptoTriggerCheckResult(
-            False,
-            "TRIGGER_WRONG_SIDE",
-            f"SHORT trigger ${trig} must be below spot ${spot} (else born-triggered without edge).",
-            {"trigger": float(trig), "spot": float(spot), "symbol": symbol},
-        )
+    # 1. Trigger orientation relative to spot (breakout side) — breakout entries only.
+    if not is_market_entry:
+        if not is_short and trig <= spot:
+            return CryptoTriggerCheckResult(
+                False,
+                "TRIGGER_WRONG_SIDE",
+                f"LONG trigger ${trig} must be above spot ${spot} (else born-triggered without edge).",
+                {"trigger": float(trig), "spot": float(spot), "symbol": symbol},
+            )
+        if is_short and trig >= spot:
+            return CryptoTriggerCheckResult(
+                False,
+                "TRIGGER_WRONG_SIDE",
+                f"SHORT trigger ${trig} must be below spot ${spot} (else born-triggered without edge).",
+                {"trigger": float(trig), "spot": float(spot), "symbol": symbol},
+            )
 
     risk = _dec(risk_points)
     sl = _dec(stop_loss)
@@ -102,18 +110,19 @@ def check_crypto_trigger_integrity(
             risk = abs(trig - sl)
 
     if risk is None or risk <= Decimal("0"):
-        return CryptoTriggerCheckResult(False, "RISK_TOO_SMALL", "Risk points are zero — stop loss equals trigger entry.")
+        return CryptoTriggerCheckResult(False, "RISK_TOO_SMALL", "Risk points are zero - stop loss equals trigger entry.")
 
-    # 2. Minimum gap from spot (prevents instant fills with zero edge)
+    # 2. Minimum gap from spot (prevents instant fills with zero edge) — breakout entries only
     gap = abs(trig - spot)
-    min_gap = min_crypto_trigger_gap_pts(spot, risk, is_scalp=is_scalp)
-    if gap < min_gap:
-        return CryptoTriggerCheckResult(
-            False,
-            "TRIGGER_TOO_CLOSE",
-            f"Trigger ${trig:.2f} is only ${gap:.2f} away from spot ${spot:.2f} (needs >= ${min_gap:.2f}). No breakout edge.",
-            {"gap": float(gap), "min_gap": float(min_gap), "gap_pct": float(gap / spot * Decimal("100")), "symbol": symbol},
-        )
+    if not is_market_entry:
+        min_gap = min_crypto_trigger_gap_pts(spot, risk, is_scalp=is_scalp)
+        if gap < min_gap:
+            return CryptoTriggerCheckResult(
+                False,
+                "TRIGGER_TOO_CLOSE",
+                f"Trigger ${trig:.2f} is only ${gap:.2f} away from spot ${spot:.2f} (needs >= ${min_gap:.2f}). No breakout edge.",
+                {"gap": float(gap), "min_gap": float(min_gap), "gap_pct": float(gap / spot * Decimal("100")), "symbol": symbol},
+            )
 
     # 3. Dust stop filter
     min_risk_floor = (abs(spot) * Decimal("0.0001")) if is_scalp else (abs(spot) * MIN_RISK_PCT)

@@ -133,9 +133,9 @@ class CryptoConfluenceEngine:
             ob = getattr(ctx, "orderbook", None)
             derivs = getattr(ctx, "derivatives", None)
 
-            # Order book depth imbalance
-            if ob and hasattr(ob, "depth_imbalance"):
-                imb = float(ob.depth_imbalance or 0.0)
+            # Order book depth imbalance (normalized -1..+1 from depth_imbalance_pct)
+            if ob and hasattr(ob, "depth_imbalance_pct"):
+                imb = float(getattr(ob, "depth_imbalance_pct", 0.0) or 0.0) / 100.0
                 # Positive imbalance = more bids (bullish); Negative = more asks (bearish)
                 if is_long and imb > 0.15:
                     score += 12.0

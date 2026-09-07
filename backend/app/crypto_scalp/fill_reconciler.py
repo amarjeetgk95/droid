@@ -101,7 +101,7 @@ class CryptoFillReconciler:
         fee_entry = round(notional_entry * TAKER_FEE_RATE, 4)
         slip_entry = round(notional_entry * SLIPPAGE_BPS_RATE, 4)
 
-        risk_pts = float(abs(sig.trigger - sig.stop_loss)) if sig.trigger and sig.stop_loss else 100.0
+        risk_pts = float(abs(sig.trigger - sig.stop_loss)) if sig.trigger and sig.stop_loss else 0.0
         initial_risk_usd = round(quantity * risk_pts, 2)
 
         rec = CryptoFillReconciliationRecord(
@@ -113,7 +113,7 @@ class CryptoFillReconciler:
             initial_qty=quantity,
             t1_qty=t1_qty,
             remaining_qty=quantity,
-            initial_risk_usd=max(10.0, initial_risk_usd),
+            initial_risk_usd=initial_risk_usd,
             total_fees_usd=fee_entry,
             total_slippage_usd=slip_entry,
             total_net_pnl_usd=-fee_entry,
@@ -172,7 +172,7 @@ class CryptoFillReconciler:
         notional_exit = round(exit_fill_price * close_qty, 2)
         fee_exit = round(notional_exit * TAKER_FEE_RATE, 4)
         slip_exit = round(notional_exit * SLIPPAGE_BPS_RATE, 4)
-        net_pnl = round(gross_pnl - fee_exit, 4)
+        net_pnl = round(gross_pnl - fee_exit - slip_exit, 4)
 
         rec.t1_fill_price = exit_fill_price
         rec.t1_gross_pnl_usd = round(gross_pnl, 2)
@@ -240,7 +240,7 @@ class CryptoFillReconciler:
             notional_exit = round(exit_fill_price * close_qty, 2)
             fee_exit = round(notional_exit * TAKER_FEE_RATE, 4)
             slip_exit = round(notional_exit * SLIPPAGE_BPS_RATE, 4)
-            net_pnl = round(gross_pnl - fee_exit, 4)
+            net_pnl = round(gross_pnl - fee_exit - slip_exit, 4)
 
             rec.final_fill_price = exit_fill_price
             rec.final_gross_pnl_usd = round(gross_pnl, 2)
@@ -270,7 +270,12 @@ class CryptoFillReconciler:
         rec.exit_reason = exit_reason
 
         # Calculate True Blended R-Multiples
-        risk_ref = rec.initial_risk_usd if rec.initial_risk_usd > 0 else 100.0
+        # (no arbitrary floor: guard only against division by zero with a
+        # 0.1%-of-notional fallback so R stays meaningful for tiny risk budgets)
+        if rec.initial_risk_usd > 0:
+            risk_ref = rec.initial_risk_usd
+        else:
+            risk_ref = max(1.0, abs(rec.entry_fill_price) * rec.initial_qty * 0.001)
         rec.realized_rr_gross = round(rec.total_gross_pnl_usd / risk_ref, 2)
         rec.realized_rr_net = round(rec.total_net_pnl_usd / risk_ref, 2)
 

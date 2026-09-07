@@ -12,6 +12,7 @@ from app.models.crypto import SignalDirection
 class BreakoutVolumeStrategy:
     strategy_code = "BREAKOUT_VOLUME"
     name = "Volume Breakout Scalp"
+    entry_style = "BREAKOUT"  # Pending stop-entry beyond the breakout level
 
     def detect(self, ctx: CryptoScalpContext) -> CryptoScalpCandidate | None:
         if not ctx.candles_1m or len(ctx.candles_1m) < 15:

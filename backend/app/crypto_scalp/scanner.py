@@ -54,6 +54,22 @@ class CryptoScalpScanner:
     SYMBOL_COOLDOWN_SECONDS: float = 180.0
     GLOBAL_MAX_ACTIVE_SIGNALS: int = 4
 
+    @staticmethod
+    def _infer_regime(ctx: CryptoScalpContext) -> str:
+        """Infer market regime from actual candles so confluence scoring is direction-neutral."""
+        candles = ctx.candles_15m or ctx.candles_5m or ctx.candles_1m
+        if candles and len(candles) >= 5:
+            closes = [c.close for c in candles[-10:]]
+            first = closes[0]
+            last = closes[-1]
+            if first > 0:
+                move_pct = (last - first) / first * 100.0
+                if move_pct >= 0.15:
+                    return "TREND_UP"
+                if move_pct <= -0.15:
+                    return "TREND_DOWN"
+        return "RANGE"
+
     def __init__(self):
         self._active_signals: dict[str, CryptoScalpSignal] = {}
         self._last_signal_time: dict[str, float] = {}
@@ -62,7 +78,9 @@ class CryptoScalpScanner:
         self._last_diagnostics: CryptoScalpDiagnostics | None = None
         self._cache_ttl_seconds: float = 5.0
         self._last_cache_time: float = 0.0
-        self._cached_response: CryptoScalpSignalsResponse | None = None
+        # Response cache keyed by (timeframe, desk) so the 1m scalp and 5m intraday
+        # cadences never clobber each other's responses.
+        self._cached_responses: dict[tuple[str, str], CryptoScalpSignalsResponse] = {}
         self._lock = asyncio.Lock()
         self._total_persisted_count: int = 0
 
@@ -153,10 +171,12 @@ class CryptoScalpScanner:
         if not ctx:
             return []
 
-        # Check existing active trades in FSM
+        # Check existing non-terminal FSM signals for this symbol first: never
+        # double-scan while a signal is already armed/confirmed/open for the symbol.
         in_flight = crypto_signal_fsm.list_active(symbol=ctx.symbol)
-        open_trades = [s for s in in_flight if s.fsm_state in ("CONFIRMED", "TARGET_1_HIT")]
-        if open_trades:
+        terminal_states = {"TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"}
+        non_terminal = [s for s in in_flight if s.fsm_state not in terminal_states]
+        if non_terminal:
             # Update current price on active FSM instances
             for s in in_flight:
                 s.spot_price = Decimal(str(ctx.current_price))
@@ -183,22 +203,35 @@ class CryptoScalpScanner:
                 if not cand:
                     continue
 
-                # ── 1. Calculate realistic breakout trigger level if not already displaced ──
+                # ── 1. Pre-risk sanity filter (SL %, R:R, confidence) ──
+                filter_ok, filter_reason = crypto_scalp_risk_filter.validate(cand)
+                if not filter_ok:
+                    logger.debug("crypto_candidate_rejected_risk_filter", strategy=strat_code, reason=filter_reason)
+                    continue
+
+                # ── 2. Trigger level resolution ──
                 raw_trig = cand.entry_price
                 dir_str = cand.direction.value.upper()
                 is_short = "SHORT" in dir_str
+                entry_style = str(getattr(strategy, "entry_style", "BREAKOUT")).upper()
 
-                # Ensure trigger sits on breakout side
-                gap_floor = float(spot_d * Decimal("0.0004"))  # 0.04% breakout gap
-                if not is_short and raw_trig <= ctx.current_price:
-                    raw_trig = ctx.current_price + max(gap_floor, float(cand.risk_points or 20.0) * 0.1)
-                elif is_short and raw_trig >= ctx.current_price:
-                    raw_trig = ctx.current_price - max(gap_floor, float(cand.risk_points or 20.0) * 0.1)
+                if entry_style in ("MARKET", "REVERSION"):
+                    # Mean-reversion / momentum strategies execute at spot — do NOT
+                    # displace the trigger onto the breakout side (that turned every
+                    # VWAP bounce into a breakout chase).
+                    raw_trig = ctx.current_price
+                else:
+                    # Breakout entries: ensure trigger sits on breakout side
+                    gap_floor = float(spot_d * Decimal("0.0004"))  # 0.04% breakout gap
+                    if not is_short and raw_trig <= ctx.current_price:
+                        raw_trig = ctx.current_price + max(gap_floor, float(cand.risk_points or 20.0) * 0.1)
+                    elif is_short and raw_trig >= ctx.current_price:
+                        raw_trig = ctx.current_price - max(gap_floor, float(cand.risk_points or 20.0) * 0.1)
 
                 trig_d = Decimal(str(round(raw_trig, 2)))
                 sl_d = Decimal(str(round(cand.stop_loss, 2)))
 
-                # Project targets cleanly from the breakout trigger level (1.5R and 2.5R)
+                # Project targets cleanly from the trigger level (1.5R and 2.5R)
                 risk_pts_val = max(Decimal("1.0"), abs(trig_d - sl_d))
                 if not is_short:
                     t1_d = trig_d + (risk_pts_val * Decimal("1.5"))
@@ -207,7 +240,7 @@ class CryptoScalpScanner:
                     t1_d = trig_d - (risk_pts_val * Decimal("1.5"))
                     t2_d = trig_d - (risk_pts_val * Decimal("2.5"))
 
-                # ── 2. Trigger Integrity Gate ──
+                # ── 3. Trigger Integrity Gate ──
                 gate_res = check_crypto_trigger_integrity(
                     symbol=ctx.symbol,
                     strategy=strat_code,
@@ -219,12 +252,13 @@ class CryptoScalpScanner:
                     target_2=t2_d,
                     is_scalp=is_scalp,
                     timeframe=timeframe,
+                    entry_style=entry_style,
                 )
                 if not gate_res.passed:
                     logger.debug("crypto_candidate_rejected_trigger_gate", strategy=strat_code, reason=gate_res.reason_code)
                     continue
 
-                # ── 3. Central Risk Engine Validation & Envelopes ──
+                # ── 4. Central Risk Engine Validation & Envelopes ──
                 setup = CryptoStrategySetup(
                     strategy_name=strat_code,
                     symbol=ctx.symbol,
@@ -243,12 +277,13 @@ class CryptoScalpScanner:
                     logger.debug("crypto_candidate_rejected_risk_engine", strategy=strat_code, reason=risk_decision.rejection_reason)
                     continue
 
-                # ── 4. Multi-Domain Confluence Fusion ──
+                # ── 5. Multi-Domain Confluence Fusion (direction-neutral regime) ──
                 fused_conf, conf_breakdown = crypto_confluence_engine.fuse(
                     symbol=ctx.symbol,
                     direction="SHORT" if is_short else "LONG",
                     strategy=strat_code,
                     ctx=ctx,
+                    regime=self._infer_regime(ctx),
                 )
 
                 if fused_conf < 70.0:
@@ -272,10 +307,11 @@ class CryptoScalpScanner:
         # Select highest-confidence candidate
         best_cand, best_risk, best_breakdown = max(valid_candidates, key=lambda x: x[0].confidence)
 
-        # Generate deterministic Signal ID
+        # Generate deterministic Signal ID (includes desk timeframe so 1m scalp and
+        # 5m intraday desks can never collide on the same candle timestamp)
         last_candle = ctx.candles_1m[-1]
         candle_ts = int(last_candle.timestamp.timestamp()) if hasattr(last_candle.timestamp, "timestamp") else int(time.time())
-        signal_id = f"SCALP-{ctx.symbol}-{best_cand.strategy}-{best_cand.direction.value}-{candle_ts}"
+        signal_id = f"SCALP-{ctx.symbol}-{best_cand.strategy}-{best_cand.direction.value}-{timeframe}-{candle_ts}"
 
         # ── 5. Register with Deterministic Crypto FSM ──
         fsm_instance = CryptoSignalInstance(
@@ -385,12 +421,15 @@ class CryptoScalpScanner:
     ) -> CryptoScalpSignalsResponse:
         """Scan all monitored crypto pairs across requested desk."""
         now = time.time()
-        if not force_refresh and self._cached_response and (now - self._last_cache_time) < self._cache_ttl_seconds:
-            return self._cached_response
+        cache_key = (timeframe, desk)
+        cached = self._cached_responses.get(cache_key)
+        if not force_refresh and cached and (now - self._last_cache_time) < self._cache_ttl_seconds:
+            return cached
 
         async with self._lock:
-            if not force_refresh and self._cached_response and (time.time() - self._last_cache_time) < self._cache_ttl_seconds:
-                return self._cached_response
+            cached = self._cached_responses.get(cache_key)
+            if not force_refresh and cached and (time.time() - self._last_cache_time) < self._cache_ttl_seconds:
+                return cached
 
             start_t = time.perf_counter()
             all_signals: list[CryptoScalpSignal] = []
@@ -497,7 +536,7 @@ class CryptoScalpScanner:
                 timestamp=datetime.now(timezone.utc),
             )
 
-            self._cached_response = resp
+            self._cached_responses[cache_key] = resp
             self._last_cache_time = time.time()
             return resp
 

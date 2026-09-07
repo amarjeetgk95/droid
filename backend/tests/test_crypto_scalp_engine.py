@@ -356,6 +356,39 @@ async def test_scanner_anti_spam_and_cooldown():
         price=3015.0, open_p=2995.0, high=3020.0, low=2990.0, vol=50.0,
     )
     candles.append(breakout_candle)
+
+    # Realistic market context: in production build_context always supplies
+    # VWAP, an L2 order book and derivatives; without them the confluence
+    # engine applies data-degradation haircuts and rejects the candidate.
+    orderbook = CryptoOrderBook(
+        symbol="ETHUSDT",
+        bids=[CryptoOrderBookLevel(price=3014.0, quantity=5.0, notional=15070.0, cumulative_notional=15070.0)],
+        asks=[CryptoOrderBookLevel(price=3016.0, quantity=2.0, notional=6032.0, cumulative_notional=6032.0)],
+        spread=2.0,
+        spread_percent=0.02,
+        mid_price=3015.0,
+        best_bid=3014.0,
+        best_ask=3016.0,
+        bid_depth_total=15070.0,
+        ask_depth_total=6032.0,
+        depth_imbalance=9038.0,
+        depth_imbalance_pct=40.0,
+    )
+    derivatives = CryptoDerivatives(
+        symbol="ETHUSDT",
+        mark_price=3015.0,
+        index_price=3015.0,
+        funding_rate=0.0001,
+        funding_rate_percent=0.01,
+        annualized_funding_rate=10.95,
+        next_funding_time="2026-09-07T16:00:00Z",
+        countdown_seconds=3600,
+        open_interest_usd=500_000_000.0,
+        open_interest_coins=165_837.0,
+        long_short_ratio=1.1,
+        long_percentage=52.0,
+        short_percentage=48.0,
+    )
     ctx = CryptoScalpContext(
         symbol="ETHUSDT",
         asset="ETH",
@@ -365,6 +398,9 @@ async def test_scanner_anti_spam_and_cooldown():
         low_15m=2900.0,
         atr_14_1m=15.0,
         volume_surge_ratio=2.5,
+        vwap_session=2990.0,
+        orderbook=orderbook,
+        derivatives=derivatives,
     )
 
     with patch.object(scanner, "build_context", new_callable=AsyncMock) as mock_ctx:

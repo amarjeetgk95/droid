@@ -141,7 +141,9 @@ class CryptoSignalInstance(BaseModel):
 
     def is_expired(self, now_ms: Optional[int] = None) -> bool:
         ts = now_ms or int(time.time() * 1000)
-        return ts > self.expires_at_utc and self.fsm_state in ("DETECTED", "VALIDATED", "ARMED")
+        # TRIGGERED included: a triggered signal that never confirms must still
+        # expire at TTL instead of leaking forever with allocated open risk.
+        return ts > self.expires_at_utc and self.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED")
 
     def ttl_remaining_seconds(self) -> int:
         now_ms = int(time.time() * 1000)
@@ -223,7 +225,8 @@ class CryptoSignalFSMManager:
         with self._lock:
             if signal_id in self._signals:
                 del self._signals[signal_id]
-                self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
+                # NOTE: audit log is append-only — deleting a signal must never
+                # purge its transition history (immutable ledger invariant).
                 try:
                     from app.crypto_scalp.persistence import save_crypto_signals_state_local
                     save_crypto_signals_state_local()
@@ -358,13 +361,6 @@ class CryptoSignalFSMManager:
                 sig.t1_fill_timestamp = sig.last_updated_utc
                 sig.exit_price = market_price
                 sig.terminal_outcome = "PARTIAL_WIN"
-                gross_r = float(sig.risk_reward_t1)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-
-                # Deduct taker fees + slippage (~0.06% each side) normalized to R
-                friction_r = 0.08
-                sig.realized_rr_net = round(gross_r - friction_r, 4)
 
                 # Start Runner Clock (300s / 900s)
                 runner_sec = sig.runner_ttl_seconds or 300
@@ -379,46 +375,65 @@ class CryptoSignalFSMManager:
                     else:
                         sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
 
+                # R so far (50% booked at T1). The fill reconciler owns the authoritative
+                # blended R once it runs; only set a fallback here if it hasn't.
+                if sig.realized_rr is None:
+                    gross_r = 0.5 * float(sig.risk_reward_t1)
+                    friction_r = 0.08
+                    sig.realized_rr = gross_r
+                    sig.realized_rr_gross = gross_r
+                    sig.realized_rr_net = round(gross_r - friction_r, 4)
+
             elif to_state == "TARGET_2_HIT":
                 sig.t2_hit = True
                 sig.exit_price = market_price
                 sig.terminal_outcome = "FULL_WIN"
-                gross_r = float(sig.risk_reward_t2)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                friction_r = 0.08
-                sig.realized_rr_net = round(gross_r - friction_r, 4)
+                # Blended: 50% booked at T1 (1.5R) + 50% runner at T2 (2.5R) = 2.0R
+                if sig.realized_rr is None:
+                    gross_r = 0.5 * float(sig.risk_reward_t1) + 0.5 * float(sig.risk_reward_t2)
+                    friction_r = 0.08
+                    sig.realized_rr = gross_r
+                    sig.realized_rr_gross = gross_r
+                    sig.realized_rr_net = round(gross_r - friction_r, 4)
 
             elif to_state == "STOP_LOSS_HIT":
                 sig.exit_price = market_price
-                if sig.breakeven_activated:
+                if sig.t1_hit:
+                    # Runner stopped at breakeven: blended = 0.5 * T1 profit
+                    sig.terminal_outcome = "PARTIAL_WIN"
+                    gross_r = 0.5 * float(sig.risk_reward_t1)
+                elif sig.breakeven_activated:
                     sig.terminal_outcome = "BREAKEVEN"
                     gross_r = 0.0
                 else:
                     sig.terminal_outcome = "STOP_LOSS_HIT"
                     gross_r = -1.0
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                friction_r = 0.08
-                sig.realized_rr_net = round(gross_r - friction_r, 4)
+                if sig.realized_rr is None:
+                    friction_r = 0.08
+                    sig.realized_rr = gross_r
+                    sig.realized_rr_gross = gross_r
+                    sig.realized_rr_net = round(gross_r - friction_r, 4)
 
             elif to_state == "TIME_STOP_HIT":
                 sig.exit_price = market_price
                 sig.terminal_outcome = "TIME_STOP_LOSS"
-                gross_r = 0.0
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                friction_r = 0.08
-                sig.realized_rr_net = round(gross_r - friction_r, 4)
+                if sig.realized_rr is None:
+                    gross_r = 0.5 * float(sig.risk_reward_t1) if sig.t1_hit else 0.0
+                    friction_r = 0.08
+                    sig.realized_rr = gross_r
+                    sig.realized_rr_gross = gross_r
+                    sig.realized_rr_net = round(gross_r - friction_r, 4)
 
             elif to_state == "RUNNER_TIME_STOP_HIT":
                 sig.exit_price = market_price
                 sig.terminal_outcome = "PARTIAL_WIN"
-                gross_r = float(sig.risk_reward_t1)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                friction_r = 0.08
-                sig.realized_rr_net = round(gross_r - friction_r, 4)
+                # Runner was auto-ratcheted to breakeven: blended = 0.5 * T1 profit
+                if sig.realized_rr is None:
+                    gross_r = 0.5 * float(sig.risk_reward_t1)
+                    friction_r = 0.08
+                    sig.realized_rr = gross_r
+                    sig.realized_rr_gross = gross_r
+                    sig.realized_rr_net = round(gross_r - friction_r, 4)
 
             elif to_state == "EXPIRED":
                 sig.terminal_outcome = "EXPIRED"

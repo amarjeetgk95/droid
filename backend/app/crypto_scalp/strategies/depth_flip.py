@@ -12,6 +12,7 @@ from app.models.crypto import SignalDirection
 class DepthFlipStrategy:
     strategy_code = "DEPTH_FLIP"
     name = "L2 Depth Imbalance Scalp"
+    entry_style = "MARKET"  # Liquidity-flip market entry at spot, not a breakout trigger
 
     def detect(self, ctx: CryptoScalpContext) -> CryptoScalpCandidate | None:
         if not ctx.orderbook:

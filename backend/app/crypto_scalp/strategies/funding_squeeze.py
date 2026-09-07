@@ -12,6 +12,7 @@ from app.models.crypto import SignalDirection
 class FundingSqueezeStrategy:
     strategy_code = "FUNDING_SQUEEZE"
     name = "Perpetual Funding Squeeze"
+    entry_style = "MARKET"  # Squeeze-thrust market entry at spot, not a breakout trigger
 
     def detect(self, ctx: CryptoScalpContext) -> CryptoScalpCandidate | None:
         if not ctx.derivatives:

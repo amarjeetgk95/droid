@@ -11,6 +11,7 @@ from app.models.crypto import SignalDirection
 class EMACrossScalpStrategy:
     strategy_code = "EMA_CROSS_SCALP"
     name = "EMA Cross Micro-Scalp"
+    entry_style = "MARKET"  # Momentum market entry at spot, not a breakout trigger
 
     def detect(self, ctx: CryptoScalpContext) -> CryptoScalpCandidate | None:
         if not ctx.candles_1m or len(ctx.candles_1m) < 25:

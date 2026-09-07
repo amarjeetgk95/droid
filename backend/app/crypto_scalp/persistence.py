@@ -756,8 +756,8 @@ async def load_unclosed_execution_records() -> list[CryptoScalpExecutionRecord]:
 async def delete_execution_record(trade_id: str) -> bool:
     """Delete a trade execution record and its audit events from database and local cache."""
     try:
-        from app.crypto_scalp.outcome_tracker import crypto_outcome_tracker
-        crypto_outcome_tracker.active_positions.pop(trade_id, None)
+        from app.crypto_scalp.outcome_tracker import crypto_scalp_outcome_tracker
+        crypto_scalp_outcome_tracker.active_positions.pop(trade_id, None)
     except Exception:
         pass
 
@@ -797,6 +797,91 @@ async def delete_execution_record(trade_id: str) -> bool:
 
 CRYPTO_FSM_STATE_FILE = Path("crypto_signals_fsm_state.json")
 
+# Max audit entries retained in the local snapshot (append-only in memory).
+AUDIT_LOG_SNAPSHOT_LIMIT = 500
+
+
+async def save_execution_record_from_reconciliation(
+    sig: Any,
+    rec: Any,
+    exit_reason: str,
+) -> bool:
+    """
+    Synthesize a consolidated CryptoScalpExecutionRecord from the FSM + fill
+    reconciler ledger and persist it (Supabase + local cache). This bridges the
+    production signal path into the executions ledger so the performance API
+    reports real completed trades instead of an empty book.
+    """
+    try:
+        from app.models.crypto import SignalDirection
+        now_ms = int(time.time() * 1000)
+
+        if sig.t1_hit:
+            if exit_reason in ("TARGET_2", "TARGET_2_HIT"):
+                exit_ev = CryptoScalpExitEventType.T2_HIT
+                theoretical_r = round(0.5 * float(sig.risk_reward_t1) + 0.5 * float(sig.risk_reward_t2), 2)
+            elif exit_reason == "RUNNER_TIME_STOP_HIT":
+                exit_ev = CryptoScalpExitEventType.TIME_STOP
+                theoretical_r = round(0.5 * float(sig.risk_reward_t1), 2)
+            else:
+                exit_ev = CryptoScalpExitEventType.BREAKEVEN_STOP
+                theoretical_r = round(0.5 * float(sig.risk_reward_t1), 2)
+        else:
+            exit_ev = CryptoScalpExitEventType.TIME_STOP if "TIME_STOP" in str(exit_reason) else CryptoScalpExitEventType.INITIAL_STOP
+            theoretical_r = -1.0 if exit_ev == CryptoScalpExitEventType.INITIAL_STOP else 0.0
+
+        duration = max(0, int((now_ms - sig.created_at_utc) / 1000))
+        risk_base = rec.initial_risk_usd if rec.initial_risk_usd > 0 else max(1.0, abs(rec.entry_fill_price) * rec.initial_qty * 0.001)
+        final_qty = round(rec.initial_qty - rec.t1_qty, 6) if rec.t1_qty else rec.initial_qty
+
+        record = CryptoScalpExecutionRecord(
+            trade_id=f"trade_{sig.signal_id}",
+            signal_id=sig.signal_id,
+            symbol=sig.symbol,
+            asset=sig.asset,
+            direction=SignalDirection.LONG if sig.direction == "LONG" else SignalDirection.SHORT,
+            strategy=sig.strategy,
+            strategy_name=sig.strategy_name or sig.strategy,
+            position_state=CryptoScalpPositionState.CLOSED,
+            signal_price=float(sig.trigger),
+            entry_fill_price=rec.entry_fill_price,
+            initial_stop_price=float(sig.initial_stop_loss or sig.stop_loss),
+            current_stop_price=float(sig.current_stop_loss or sig.stop_loss),
+            target_1_price=float(sig.target_1),
+            target_2_price=float(sig.target_2),
+            exit_price=rec.final_fill_price,
+            exit_reason=exit_ev,
+            quantity_initial=rec.initial_qty,
+            quantity_closed_t1=rec.t1_qty,
+            quantity_closed_final=final_qty,
+            quantity_remaining=0.0,
+            notional_usd=round(rec.entry_fill_price * rec.initial_qty, 2),
+            initial_risk_usd=rec.initial_risk_usd,
+            gross_pnl_usd=rec.total_gross_pnl_usd,
+            fees_usd=rec.total_fees_usd,
+            slippage_usd=rec.total_slippage_usd,
+            net_pnl_usd=rec.total_net_pnl_usd,
+            net_return_pct=round((rec.total_net_pnl_usd / risk_base) * 100.0, 2),
+            r_multiple=rec.realized_rr_net,
+            theoretical_r=theoretical_r,
+            execution_drag_r=round(theoretical_r - rec.realized_rr_net, 2),
+            t1_hit_at=sig.t1_fill_timestamp,
+            t2_hit_at=now_ms if exit_ev == CryptoScalpExitEventType.T2_HIT else None,
+            stop_hit_at=now_ms if exit_ev in (CryptoScalpExitEventType.INITIAL_STOP, CryptoScalpExitEventType.BREAKEVEN_STOP) else None,
+            duration_seconds=duration,
+            duration_str=f"{duration // 60}m {duration % 60}s" if duration >= 60 else f"{duration}s",
+            created_at_utc=sig.created_at_utc,
+            closed_at_utc=now_ms,
+        )
+        return await save_execution_record(record)
+    except Exception as e:
+        logger.warning(
+            "crypto_reconciliation_record_persist_failed",
+            signal_id=getattr(sig, "signal_id", "?"),
+            error=str(e)[:200],
+        )
+        return False
+
 
 def save_crypto_signals_state_local() -> bool:
     """Safely persist active crypto FSM signals and fill reconciliation records to local cache file."""
@@ -824,6 +909,11 @@ def save_crypto_signals_state_local() -> bool:
         payload = {
             "fsm_signals": serialized_fsm,
             "fill_reconciliations": serialized_recon,
+            # Append-only transition audit log survives restarts too.
+            "audit_log": [
+                a.model_dump(mode="json")
+                for a in list(crypto_signal_fsm._audit_log)[-AUDIT_LOG_SNAPSHOT_LIMIT:]
+            ],
             "updated_at_utc": int(time.time() * 1000),
         }
 
@@ -870,6 +960,16 @@ def restore_crypto_signals_state_local() -> int:
                 try:
                     rec = CryptoFillReconciliationRecord(**rdata)
                     crypto_fill_reconciler._records[rid] = rec
+                except Exception:
+                    pass
+
+        # Restore the append-only transition audit log.
+        from app.crypto_scalp.fsm import CryptoFSMTransitionAudit as _Audit
+        existing_audit_ids = {a.transition_id for a in crypto_signal_fsm._audit_log}
+        for adata in payload.get("audit_log", []):
+            if isinstance(adata, dict) and adata.get("transition_id") not in existing_audit_ids:
+                try:
+                    crypto_signal_fsm._audit_log.append(_Audit(**adata))
                 except Exception:
                     pass
 

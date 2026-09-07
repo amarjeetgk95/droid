@@ -81,6 +81,7 @@ class PaperExecutionProvider:
         self,
         entry_price: float,
         stop_loss: float,
+        symbol: str | None = None,
     ) -> tuple[float, float, float]:
         """
         Calculate risk-based position size so every scalp risks exactly configured % of equity.
@@ -91,8 +92,15 @@ class PaperExecutionProvider:
         quantity = risk_amount / stop_distance
         notional = quantity * entry_price
 
-        # Standard crypto precision
-        qty_precision = 4 if "BTC" in str(entry_price) or entry_price > 1000 else 2
+        # Standard crypto precision: 4 decimals for BTC, 2 for ETH,
+        # fall back to a price-based heuristic when the symbol is unknown.
+        sym = (symbol or "").upper()
+        if "BTC" in sym:
+            qty_precision = 4
+        elif "ETH" in sym:
+            qty_precision = 2
+        else:
+            qty_precision = 4 if entry_price > 1000 else 2
         return (
             round(quantity, qty_precision),
             round(notional, 2),

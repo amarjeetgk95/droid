@@ -78,6 +78,7 @@ class CryptoScalpOutcomeTracker:
             qty, notional_usd, risk_usd = paper_execution_provider.calculate_position_size(
                 entry_price=signal.entry_price,
                 stop_loss=signal.stop_loss,
+                symbol=signal.symbol,
             )
 
             # 2. Entry Fill Simulation (Ask for Long, Bid for Short + Slippage)
@@ -306,26 +307,35 @@ class CryptoScalpOutcomeTracker:
                     except Exception:
                         pass
                 elif res == "TARGET_1_HIT":
-                    crypto_fill_reconciler.reconcile_t1_exit(sig, exit_fill_price=float(sig.target_1), exit_time_ms=now_ms)
+                    # FSM transition first (state integrity, runner clock, BE ratchet);
+                    # the fill reconciler then owns the authoritative blended net R.
                     crypto_signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=sig.target_1, reason="T1_HIT")
+                    crypto_fill_reconciler.reconcile_t1_exit(sig, exit_fill_price=float(sig.target_1), exit_time_ms=now_ms)
                     events.append({"signal_id": sig.signal_id, "event": "TARGET_1_HIT", "price": float(sig.target_1), "rr": sig.realized_rr})
                     try:
                         await crypto_sse_hub.broadcast("target_1_hit", sig.model_dump(), priority="P0")
                     except Exception:
                         pass
-                elif res == "TARGET_2_HIT":
-                    crypto_fill_reconciler.reconcile_final_exit(sig, exit_fill_price=float(sig.target_2), exit_reason="TARGET_2", exit_time_ms=now_ms)
-                    crypto_signal_fsm.transition(sig.signal_id, "TARGET_2_HIT", market_price=sig.target_2, reason="T2_HIT")
-                    events.append({"signal_id": sig.signal_id, "event": "TARGET_2_HIT", "price": float(sig.target_2), "rr": sig.realized_rr})
+                elif res in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT"):
+                    exit_p = float(sig.current_stop_loss or sig.stop_loss) if res == "STOP_LOSS_HIT" else (
+                        float(sig.target_2) if res == "TARGET_2_HIT" else current_price
+                    )
+                    # FSM transition first, then the reconciler sets the authoritative
+                    # blended net P&L / R (FSM no longer overwrites it with crude constants).
+                    crypto_signal_fsm.transition(sig.signal_id, res, market_price=Decimal(str(exit_p)), reason=f"{res}_TRIGGERED")
+                    crypto_fill_reconciler.reconcile_final_exit(sig, exit_fill_price=exit_p, exit_reason=res, exit_time_ms=now_ms)
+                    events.append({"signal_id": sig.signal_id, "event": res, "price": exit_p, "rr": sig.realized_rr})
+
+                    # Bridge the FSM/fill-reconciler ledger into the persisted
+                    # executions ledger so the performance API reports real trades.
                     try:
-                        await crypto_sse_hub.broadcast("target_2_hit", sig.model_dump(), priority="P0")
+                        from app.crypto_scalp.persistence import save_execution_record_from_reconciliation
+                        rec = crypto_fill_reconciler.get_record(sig.signal_id)
+                        if rec:
+                            asyncio.create_task(save_execution_record_from_reconciliation(sig, rec, res))
                     except Exception:
                         pass
-                elif res in ("STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT"):
-                    exit_p = float(sig.current_stop_loss or sig.stop_loss) if res == "STOP_LOSS_HIT" else current_price
-                    crypto_fill_reconciler.reconcile_final_exit(sig, exit_fill_price=exit_p, exit_reason=res, exit_time_ms=now_ms)
-                    crypto_signal_fsm.transition(sig.signal_id, res, market_price=Decimal(str(exit_p)), reason=f"{res}_TRIGGERED")
-                    events.append({"signal_id": sig.signal_id, "event": res, "price": exit_p, "rr": sig.realized_rr})
+
                     try:
                         await crypto_sse_hub.broadcast("signal_exit", {"signal_id": sig.signal_id, "status": res, "exit_price": exit_p, "rr": sig.realized_rr}, priority="P0")
                     except Exception:
