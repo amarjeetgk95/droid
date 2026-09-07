@@ -75,3 +75,5 @@ backend/crypto_scalp_signals_state.json
 # Build
 *.log
 
+# Scratch / Temp files
+.tmp*

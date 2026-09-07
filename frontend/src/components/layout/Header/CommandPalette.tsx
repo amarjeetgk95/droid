@@ -170,9 +170,9 @@ export function CommandPalette({
         key: 'act:ai',
         category: 'actions',
         section: 'Terminal Actions',
-        label: 'AI Deep Insights Briefing',
-        sub: 'Launch generative market synthesis, multi-TF bias & scenario tree',
-        href: '/ai-analysis',
+        label: 'AI Command Center',
+        sub: 'Launch live AI signals, multi-TF analysis & strategy tools',
+        href: '/ai-command-center',
         icon: <Sparkles className="w-3.5 h-3.5 text-purple-500" />,
       },
       {

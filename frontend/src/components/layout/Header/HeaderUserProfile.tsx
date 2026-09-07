@@ -27,8 +27,8 @@ export function HeaderUserProfile() {
   };
 
   const emailDisplay = user?.email || 'Active Trader';
-  const traderName = user?.displayName || (user?.email ? user.email.split('@')[0] : 'Trader');
-  const initial = (user?.displayName || emailDisplay).charAt(0).toUpperCase();
+  const traderName = user?.email ? user.email.split('@')[0] : 'Trader';
+  const initial = emailDisplay.charAt(0).toUpperCase();
 
   return (
     <DropdownMenu>

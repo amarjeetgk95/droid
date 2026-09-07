@@ -19,6 +19,7 @@ from app.crypto_scalp.models_execution import (
     CryptoScalpPositionState,
     CryptoScalpExitEventType,
     CryptoScalpExecutionMode,
+    format_detailed_exit_reason,
 )
 
 logger = structlog.get_logger()
@@ -667,6 +668,17 @@ async def fetch_execution_records(
                         duration_str=row.get("duration_str", "0s"),
                         created_at_utc=int(row.get("created_at_utc", 0)),
                         closed_at_utc=row.get("closed_at_utc"),
+                        exit_reason_detail=row.get("exit_reason_detail") or format_detailed_exit_reason(
+                            reason=row.get("exit_reason"),
+                            symbol=row["symbol"],
+                            entry_fill=float(row["entry_fill_price"]),
+                            exit_price=float(row["exit_price"]) if row.get("exit_price") is not None else None,
+                            target_1=float(row["target_1_price"]),
+                            target_2=float(row["target_2_price"]),
+                            stop_loss=float(row["initial_stop_price"]),
+                            r_multiple=float(row.get("r_multiple", 0.0)),
+                            duration_str=row.get("duration_str", "0s"),
+                        ),
                     )
                     records.append(rec)
                 if records:
@@ -676,6 +688,19 @@ async def fetch_execution_records(
 
     # Fallback to local
     local = restore_executions_local()
+    for r in local:
+        if not r.exit_reason_detail and r.exit_reason:
+            r.exit_reason_detail = format_detailed_exit_reason(
+                reason=r.exit_reason,
+                symbol=r.symbol,
+                entry_fill=r.entry_fill_price,
+                exit_price=r.exit_price,
+                target_1=r.target_1_price,
+                target_2=r.target_2_price,
+                stop_loss=r.initial_stop_price,
+                r_multiple=r.r_multiple,
+                duration_str=r.duration_str,
+            )
     if symbol:
         local = [r for r in local if r.symbol.upper() == symbol.upper()]
     if state:
@@ -872,6 +897,17 @@ async def save_execution_record_from_reconciliation(
             duration_str=f"{duration // 60}m {duration % 60}s" if duration >= 60 else f"{duration}s",
             created_at_utc=sig.created_at_utc,
             closed_at_utc=now_ms,
+            exit_reason_detail=format_detailed_exit_reason(
+                reason=exit_ev,
+                symbol=sig.symbol,
+                entry_fill=rec.entry_fill_price,
+                exit_price=rec.final_fill_price,
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                stop_loss=float(sig.initial_stop_loss or sig.stop_loss),
+                r_multiple=rec.realized_rr_net,
+                duration_str=f"{duration // 60}m {duration % 60}s" if duration >= 60 else f"{duration}s",
+            ),
         )
         return await save_execution_record(record)
     except Exception as e:

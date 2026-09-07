@@ -1010,6 +1010,7 @@ export interface CryptoScalpExecutionRecord {
   target_2_price: number;
   exit_price?: number | null;
   exit_reason?: CryptoScalpExitEventType | null;
+  exit_reason_detail?: string | null;
   quantity_initial: number;
   quantity_closed_t1: number;
   quantity_closed_final: number;

@@ -278,7 +278,7 @@ export function HeaderNotifications() {
             </DropdownMenuItem>
 
             <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
-              <Link href="/ai-analysis">
+              <Link href="/ai-command-center?tab=research">
                 <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200 shrink-0 mt-0.5">
                   <Sparkles className="w-3.5 h-3.5" />
                 </div>

@@ -92,6 +92,7 @@ class CryptoScalpExecutionRecord(BaseModel):
     target_2_price: float
     exit_price: Optional[float] = None
     exit_reason: Optional[CryptoScalpExitEventType] = None
+    exit_reason_detail: Optional[str] = None
 
     # Quantities & Position Sizing
     quantity_initial: float
@@ -188,3 +189,38 @@ class CryptoScalpPerformanceMetrics(BaseModel):
     # Attributions
     strategy_breakdown: dict[str, CryptoScalpStrategyStats] = Field(default_factory=dict)
     asset_breakdown: dict[str, CryptoScalpAssetStats] = Field(default_factory=dict)
+
+
+def format_detailed_exit_reason(
+    reason: Optional[Any],
+    symbol: str = "BTCUSDT",
+    entry_fill: float = 0.0,
+    exit_price: Optional[float] = None,
+    target_1: float = 0.0,
+    target_2: float = 0.0,
+    stop_loss: float = 0.0,
+    r_multiple: float = 0.0,
+    duration_str: str = "",
+) -> str:
+    """Generate institutional-grade detailed narrative for trade exit reason."""
+    r_str = f"{r_multiple:+.2f}R" if r_multiple != 0 else "0.00R"
+    clean_sym = symbol.replace("USDT", "")
+    exit_p_str = f"${exit_price:,.2f}" if exit_price else "market price"
+
+    val = reason.value if hasattr(reason, "value") else str(reason or "")
+    if val in ("T2_HIT", "TARGET_2", "TARGET_2_HIT"):
+        return f"Target 2 Reached — Full scale-out executed at {exit_p_str} on {clean_sym}, locking in max profit ({r_str})."
+    elif val in ("BREAKEVEN_STOP", "BREAKEVEN_RATCHET"):
+        return f"Breakeven Stop Hit — 50% locked at Target 1; remaining runner was protected and closed at entry ({exit_p_str}) with net gain {r_str}."
+    elif val in ("INITIAL_STOP", "STOP_LOSS_HIT"):
+        return f"Stop Loss Hit — Market breached risk threshold at {exit_p_str} on {clean_sym}; position liquidated to cap downside at {r_str}."
+    elif val in ("TIME_STOP", "RUNNER_TIME_STOP_HIT"):
+        dur = f" after {duration_str}" if duration_str else ""
+        return f"Time Stop Exceeded — Scalp duration cap reached{dur}; auto-squared off at {exit_p_str} ({r_str})."
+    elif val in ("MANUAL_CLOSE", "MANUAL_EXIT"):
+        return f"Manual Square-Off — Position was manually exited by operator at {exit_p_str} ({r_str})."
+    elif val == "T1_HIT":
+        return f"Target 1 Hit — Scaled out 50% at ${target_1:,.2f}; stop-loss ratcheted to breakeven (${entry_fill:,.2f})."
+    elif val in ("ACTIVE", "OPEN", ""):
+        return f"Position Active — Tracking live market towards T1 (${target_1:,.2f}) and T2 (${target_2:,.2f}) with stop at ${stop_loss:,.2f}."
+    return f"Order Closed — Reason: {val} at {exit_p_str} ({r_str})."

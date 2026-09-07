@@ -827,6 +827,18 @@ class CryptoScalpOutcomeTracker:
             trade.theoretical_r = trade.r_multiple
 
         trade.execution_drag_r = round(trade.theoretical_r - trade.r_multiple, 2)
+        from app.crypto_scalp.models_execution import format_detailed_exit_reason
+        trade.exit_reason_detail = format_detailed_exit_reason(
+            reason=exit_reason,
+            symbol=trade.symbol,
+            entry_fill=trade.entry_fill_price,
+            exit_price=trade.exit_price,
+            target_1=trade.target_1_price,
+            target_2=trade.target_2_price,
+            stop_loss=trade.initial_stop_price,
+            r_multiple=trade.r_multiple,
+            duration_str=trade.duration_str,
+        )
 
         # Terminal Audit Event
         exit_event = CryptoScalpExecutionEvent(

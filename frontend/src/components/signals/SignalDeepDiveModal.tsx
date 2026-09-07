@@ -1,26 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
-import { formatDateTime } from '@/lib/signal-utils';
+import { formatDateTime, safeNum, safeStr } from '@/lib/signal-utils';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import {
-  Activity,
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   CheckCircle2,
-  Clock,
-  Crosshair,
   Gauge,
-  Layers,
   ShieldAlert,
-  Target,
-  TrendingDown,
-  TrendingUp,
   X,
   Zap,
 } from 'lucide-react';
@@ -31,21 +23,50 @@ interface Props {
   onPaperExecuted?: (result: any) => void;
 }
 
+function KV({ label, value, mono = true }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-border/50 last:border-0">
+      <span className="text-[11px] text-muted-foreground shrink-0 pt-0.5">{label}</span>
+      <span className={`text-[11px] text-right break-all text-foreground ${mono ? 'font-mono' : ''}`}>{value ?? '—'}</span>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card/60 p-4 space-y-2">
+      <div className="text-xs font-bold uppercase tracking-wider text-foreground border-b pb-2">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function fmtVal(v: any): string {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'number') return Number.isFinite(v) ? v.toLocaleString('en-IN') : '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
 export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Props) {
   const market = useOptionalMarketDataContext();
   const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
 
   const [data, setData] = useState<any>(null);
+  const [audit, setAudit] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
   const [customLots, setCustomLots] = useState<string>('2');
   const [paperResult, setPaperResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
     if (!signalId) return;
     setLoading(true);
     setError(null);
+    setAudit(null);
     api
       .getSignalDeepDive(signalId)
       .then((res) => {
@@ -54,6 +75,11 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
       })
       .catch((err) => setError(err.message || 'Failed to load signal deep dive'))
       .finally(() => setLoading(false));
+    // Best-effort: single-signal audit ledger (PnL, fills, MTM). Never blocks dossier.
+    api
+      .getSingleSignalAudit(signalId)
+      .then((res) => setAudit(res))
+      .catch(() => setAudit(null));
   }, [signalId]);
 
   // Escape dismisses the dossier (backdrop click also closes below).
@@ -90,6 +116,12 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
   const isExpired = ['EXPIRED', 'CLOSED', 'INVALIDATED', 'TARGET_2_HIT', 'STOP_LOSS_HIT', 'TIME_STOP_HIT', 'RUNNER_TIME_STOP_HIT'].includes(fsmState);
   const isCall = sig?.direction?.includes('CALL');
   const dirColor = isCall ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/30' : 'text-red-600 bg-red-500/10 border-red-500/30';
+  const conf = data?.confluence ?? sig?.confluence_breakdown ?? {};
+  const levels = data?.levels ?? {};
+  const sizing = data?.position_sizing_preview ?? {};
+  const fsmHistory: any[] = data?.fsm_history?.length ? data.fsm_history : (sig?.state_history ?? []);
+  const opt = data?.option_contract ?? sig?.option_contract ?? null;
+  const livePrice = data?.current_market_price;
 
   return (
     <div
@@ -127,6 +159,9 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                 Signal ID: <span className="font-mono">{sig?.signal_id}</span> • Spot: ₹{Number(sig?.spot_price || 0).toLocaleString('en-IN')}
                 {sig?.created_at_utc ? (
                   <> • Generated: <span className="font-mono font-medium text-foreground" title="Generated Date & Time (IST)">{formatDateTime(sig.created_at_utc)}</span></>
+                ) : null}
+                {livePrice ? (
+                  <> • Live: <span className="font-mono font-medium text-foreground">₹{Number(livePrice).toLocaleString('en-IN')}</span></>
                 ) : null}
               </p>
             </div>
@@ -209,6 +244,11 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                         ? `Signal timestamp: ${formatDateTime(sig?.created_at_utc)}. Market session has concluded (FSM Status: ${fsmState}).`
                         : `Tick received from live data stream${sig?.created_at_utc ? ` on ${formatDateTime(sig.created_at_utc)}` : ''}. Active market session validated (NSE Hours 09:15 - 15:30 IST).`}
                     </p>
+                    {livePrice ? (
+                      <p className="text-muted-foreground text-[11px] pl-7">
+                        Current market: ₹{Number(livePrice).toLocaleString('en-IN')} • Trigger: ₹{Number(sig.trigger).toLocaleString('en-IN')}
+                      </p>
+                    ) : null}
                   </div>
 
                   {/* Stage 2 */}
@@ -258,25 +298,30 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pl-7 text-[10px]">
                       <div className="p-1.5 rounded-lg border bg-secondary/30">
                         <div className="text-muted-foreground">Technical (40%)</div>
-                        <div className="font-bold text-foreground mt-0.5">{sig.confluence_breakdown?.technical || 80}%</div>
+                        <div className="font-bold text-foreground mt-0.5">{conf?.technical ?? sig.confluence_breakdown?.technical ?? '—'}%</div>
                       </div>
                       <div className="p-1.5 rounded-lg border bg-secondary/30">
                         <div className="text-muted-foreground">Multi-TF (20%)</div>
-                        <div className="font-bold text-foreground mt-0.5">{sig.confluence_breakdown?.mtf || 75}%</div>
+                        <div className="font-bold text-foreground mt-0.5">{conf?.mtf ?? sig.confluence_breakdown?.mtf ?? '—'}%</div>
                       </div>
                       <div className="p-1.5 rounded-lg border bg-secondary/30">
                         <div className="text-muted-foreground">F&O OI/PCR (20%)</div>
-                        <div className="font-bold text-foreground mt-0.5">{sig.confluence_breakdown?.fno || 75}%</div>
+                        <div className="font-bold text-foreground mt-0.5">{conf?.fno ?? sig.confluence_breakdown?.fno ?? '—'}%</div>
                       </div>
                       <div className="p-1.5 rounded-lg border bg-secondary/30">
                         <div className="text-muted-foreground">Regime (10%)</div>
-                        <div className="font-bold text-foreground mt-0.5">{sig.confluence_breakdown?.regime || 80}%</div>
+                        <div className="font-bold text-foreground mt-0.5">{conf?.regime ?? sig.confluence_breakdown?.regime ?? '—'}%</div>
                       </div>
                       <div className="p-1.5 rounded-lg border bg-secondary/30">
                         <div className="text-muted-foreground">AI Advisory (10%)</div>
-                        <div className="font-bold text-foreground mt-0.5">{sig.confluence_breakdown?.ai || 75}%</div>
+                        <div className="font-bold text-foreground mt-0.5">{conf?.ai ?? sig.confluence_breakdown?.ai ?? '—'}%</div>
                       </div>
                     </div>
+                    {conf && Object.keys(conf).length > 0 && (
+                      <p className="text-muted-foreground text-[10px] pl-7 font-mono break-all">
+                        Full breakdown: {JSON.stringify(conf)}
+                      </p>
+                    )}
                   </div>
 
                   {/* Stage 5 */}
@@ -289,7 +334,7 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                       <span className="text-emerald-600 dark:text-emerald-400 text-[11px]">✓ Resolved</span>
                     </div>
                     <p className="text-muted-foreground text-[11px] pl-7">
-                      Matched <code className="text-foreground font-bold">{sig.option_contract?.broker_symbol || `${sig.underlying} ATM`}</code> ({sig.option_contract?.lot_size || 75} Qty/Lot, Expiry: {sig.option_contract?.expiry_date || 'Weekly'}). Position sized to 2% portfolio risk capital.
+                      Matched <code className="text-foreground font-bold">{opt?.broker_symbol || `${sig.underlying} ATM`}</code> ({opt?.lot_size || 75} Qty/Lot, Expiry: {opt?.expiry_date || 'Weekly'}). Position sized to 2% portfolio risk capital.
                     </p>
                   </div>
 
@@ -313,7 +358,188 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                 </div>
               </div>
 
-              {/* 3. EXECUTION CONTROLS & STATUS */}
+              {/* 3. FULL SIGNAL DETAIL — identity, timing, risk */}
+              <Section title="Signal Detail — Identity & Timing">
+                <div className="grid sm:grid-cols-2 gap-x-6">
+                  <div>
+                    <KV label="Signal ID" value={safeStr(sig.signal_id)} />
+                    <KV label="Underlying" value={safeStr(sig.underlying)} />
+                    <KV label="Strategy" value={safeStr(sig.strategy)} />
+                    <KV label="Direction" value={safeStr(sig.direction)} />
+                    <KV label="Timeframe" value={safeStr(sig.timeframe)} />
+                    <KV label="Signal type / Desk" value={`${safeStr(sig.signal_type)}${sig.is_scalp ? ' / SCALP' : ''}`} />
+                    <KV label="Confidence" value={`${safeStr(sig.confidence)}%`} />
+                  </div>
+                  <div>
+                    <KV label="Spot at creation" value={`₹${safeNum(sig.spot_price)}`} />
+                    <KV label="Entry range" value={`₹${safeNum(sig.entry_min)} – ₹${safeNum(sig.entry_max)}`} />
+                    <KV label="Risk points" value={`${safeNum(sig.risk_points, 1)} pts`} />
+                    <KV label="R:R T1 / T2" value={`${safeNum(sig.risk_reward_t1, 2)} / ${safeNum(sig.risk_reward_t2, 2)}`} />
+                    <KV label="Risk R (1R)" value={fmtVal(sig.risk_r)} />
+                    <KV label="TTL" value={`${safeStr(sig.ttl_seconds)}s`} />
+                    <KV label="Created" value={formatDateTime(sig.created_at_utc)} />
+                    <KV label="Expires" value={formatDateTime(sig.expires_at_utc)} />
+                    <KV label="Triggered" value={sig.triggered_at_utc ? formatDateTime(sig.triggered_at_utc) : '—'} />
+                    <KV label="Confirmed" value={sig.confirmed_at_utc ? formatDateTime(sig.confirmed_at_utc) : '—'} />
+                    <KV label="Last updated" value={sig.last_updated_utc ? formatDateTime(sig.last_updated_utc) : '—'} />
+                  </div>
+                </div>
+                {sig.rationale?.length > 0 && (
+                  <div className="pt-2">
+                    <div className="text-[11px] font-semibold text-foreground mb-1">Why this signal fired (rationale)</div>
+                    <ul className="space-y-1 text-[11px] text-muted-foreground list-disc list-inside">
+                      {sig.rationale.map((r: string, i: number) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </Section>
+
+              {/* 4. OPTION CONTRACT — full master */}
+              <Section title="Option Contract — Full Master">
+                {opt && typeof opt === 'object' && Object.keys(opt).length > 0 ? (
+                  <div className="grid sm:grid-cols-2 gap-x-6">
+                    <div>
+                      <KV label="Broker symbol" value={safeStr(opt.broker_symbol)} />
+                      <KV label="Instrument ID" value={safeStr(opt.instrument_id)} />
+                      <KV label="Underlying" value={safeStr(opt.underlying ?? sig.underlying)} />
+                      <KV label="Strike" value={safeStr(opt.strike)} />
+                      <KV label="Option type" value={safeStr(opt.option_type)} />
+                      <KV label="Exchange" value={safeStr(opt.exchange)} />
+                    </div>
+                    <div>
+                      <KV label="Expiry" value={safeStr(opt.expiry_date)} />
+                      <KV label="Expiry type" value={safeStr(opt.expiry_type)} />
+                      <KV label="Lot size" value={safeStr(opt.lot_size)} />
+                      <KV label="Tick size" value={safeStr(opt.tick_size)} />
+                      <KV label="Strike interval" value={safeStr(opt.strike_interval)} />
+                      <KV label="Active" value={opt.active === undefined ? '—' : opt.active ? 'Yes' : 'No'} />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground font-mono">No option contract resolved for this signal.</p>
+                )}
+              </Section>
+
+              {/* 5. SIZING, RISK, LEVELS */}
+              <Section title="Position Sizing, Risk & Levels">
+                <div className="grid sm:grid-cols-2 gap-x-6">
+                  <div>
+                    <KV label="Lots" value={fmtVal(sig.lots)} />
+                    <KV label="Quantity" value={fmtVal(sig.quantity)} />
+                    <KV label="Max rupee loss" value={sig.max_rupee_loss ? `₹${Number(sig.max_rupee_loss).toLocaleString('en-IN')}` : '—'} />
+                    <KV label="Current market" value={livePrice ? `₹${Number(livePrice).toLocaleString('en-IN')}` : '—'} />
+                    <KV label="Entry range (API)" value={levels?.entry_range ? levels.entry_range.map((x: number) => `₹${Number(x).toLocaleString('en-IN')}`).join(' – ') : '—'} />
+                  </div>
+                  <div>
+                    <KV label="Trigger (API)" value={levels?.trigger !== undefined ? `₹${Number(levels.trigger).toLocaleString('en-IN')}` : '—'} />
+                    <KV label="Stop (API)" value={levels?.stop_loss !== undefined ? `₹${Number(levels.stop_loss).toLocaleString('en-IN')}` : '—'} />
+                    <KV label="T1 / T2 (API)" value={levels?.target_1 !== undefined ? `₹${Number(levels.target_1).toLocaleString('en-IN')} / ₹${Number(levels.target_2).toLocaleString('en-IN')}` : '—'} />
+                    <KV label="1L account sizing" value={sizing?.account_1lakh ? JSON.stringify(sizing.account_1lakh) : '—'} />
+                    <KV label="5L account sizing" value={sizing?.account_5lakh ? JSON.stringify(sizing.account_5lakh) : '—'} />
+                  </div>
+                </div>
+              </Section>
+
+              {/* 6. EXECUTION & OUTCOME */}
+              <Section title="Execution, Breakeven & Outcome">
+                <div className="grid sm:grid-cols-2 gap-x-6">
+                  <div>
+                    <KV label="FSM state" value={safeStr(sig.fsm_state)} />
+                    <KV label="Outcome status" value={safeStr(sig.outcome_status)} />
+                    <KV label="Terminal outcome" value={safeStr(sig.terminal_outcome)} />
+                    <KV label="Entry price (fill domain)" value={fmtVal(sig.entry_price)} />
+                    <KV label="Actual fill price" value={fmtVal(sig.actual_fill_price)} />
+                    <KV label="Exit price" value={fmtVal(sig.exit_price)} />
+                    <KV label="Realized R" value={fmtVal(sig.realized_rr)} />
+                    <KV label="Realized R gross / net" value={`${fmtVal(sig.realized_rr_gross)} / ${fmtVal(sig.realized_rr_net)}`} />
+                  </div>
+                  <div>
+                    <KV label="Initial SL" value={fmtVal(sig.initial_stop_loss)} />
+                    <KV label="Current SL" value={fmtVal(sig.current_stop_loss)} />
+                    <KV label="Breakeven active" value={sig.breakeven_activated ? 'Yes' : 'No'} />
+                    <KV label="BE trigger / activation" value={`${fmtVal(sig.breakeven_trigger_price)} / ${fmtVal(sig.breakeven_activation_price)}`} />
+                    <KV label="T1 hit / fill time" value={`${fmtVal(sig.t1_hit)}${sig.t1_fill_timestamp ? ` @ ${formatDateTime(sig.t1_fill_timestamp)}` : ''}`} />
+                    <KV label="T2 hit" value={fmtVal(sig.t2_hit)} />
+                    <KV label="T1 realized qty" value={fmtVal(sig.t1_realized_qty)} />
+                    <KV label="Intended / remaining qty" value={`${fmtVal(sig.intended_qty)} / ${fmtVal(sig.remaining_qty)}`} />
+                    <KV label="Time stop (s / at)" value={`${fmtVal(sig.time_stop_seconds)}${sig.time_stop_at_utc ? ` @ ${formatDateTime(sig.time_stop_at_utc)}` : ''}`} />
+                    <KV label="Runner stop at" value={sig.runner_time_stop_at_utc ? formatDateTime(sig.runner_time_stop_at_utc) : '—'} />
+                    <KV label="Regime at confirm" value={safeStr(sig.regime_at_confirmation)} />
+                  </div>
+                </div>
+                {sig.cost_breakdown_r && (
+                  <p className="text-[10px] font-mono text-muted-foreground break-all pt-1">
+                    Cost breakdown (R): {JSON.stringify(sig.cost_breakdown_r)}
+                  </p>
+                )}
+                {(sig.greeks || sig.expected_move || sig.ai_research || sig.path_simulation) && (
+                  <div className="pt-1 space-y-1">
+                    {sig.greeks && <p className="text-[10px] font-mono text-muted-foreground break-all">Greeks: {JSON.stringify(sig.greeks)}</p>}
+                    {sig.expected_move && <p className="text-[10px] font-mono text-muted-foreground break-all">Expected move: {JSON.stringify(sig.expected_move)}</p>}
+                    {sig.ai_research && <p className="text-[10px] font-mono text-muted-foreground break-all">AI research: {JSON.stringify(sig.ai_research)}</p>}
+                    {sig.path_simulation && <p className="text-[10px] font-mono text-muted-foreground break-all">Path sim: {JSON.stringify(sig.path_simulation)}</p>}
+                  </div>
+                )}
+              </Section>
+
+              {/* 7. FSM HISTORY TIMELINE */}
+              <Section title={`FSM History — ${fsmHistory.length} transitions`}>
+                {fsmHistory.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground font-mono">No state transitions recorded.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {fsmHistory.map((h: any, i: number) => (
+                      <div key={h.transition_id ?? i} className="flex items-start gap-3 text-[11px] font-mono">
+                        <span className="mt-0.5 h-2 w-2 rounded-full bg-primary shrink-0" />
+                        <div className="flex-1">
+                          <div className="text-foreground font-semibold">
+                            {safeStr(h.from_state)} → {safeStr(h.to_state)}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {safeStr(h.reason_code)} • {h.processed_timestamp ? formatDateTime(h.processed_timestamp) : safeStr(h.timestamp)}
+                            {h.market_price ? ` • @ ₹${h.market_price}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              {/* 8. AUDIT LEDGER RECORD */}
+              <Section title="Audit Ledger — Paper P&L Record">
+                {!audit ? (
+                  <p className="text-[11px] text-muted-foreground font-mono">No audit record yet (signal not paper-executed, or ledger pending).</p>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-x-6">
+                    <div>
+                      <KV label="Audit ID" value={safeStr(audit.audit_id)} />
+                      <KV label="Status" value={safeStr(audit.status)} />
+                      <KV label="Outcome" value={safeStr(audit.outcome_label ?? audit.exit_reason)} />
+                      <KV label="Side / qty" value={`${safeStr(audit.paper_side)} / ${fmtVal(audit.quantity)}`} />
+                      <KV label="Fill price" value={audit.actual_fill_price ? `₹${safeNum(audit.actual_fill_price)}` : '—'} />
+                      <KV label="Exit price" value={audit.exit_price ? `₹${safeNum(audit.exit_price)}` : '—'} />
+                    </div>
+                    <div>
+                      <KV label="Realized P&L" value={audit.actual_pnl_inr !== undefined ? `₹${Number(audit.actual_pnl_inr).toLocaleString('en-IN')} (${safeNum(audit.actual_pnl_points, 1)} pts)` : '—'} />
+                      <KV label="Unrealized / MTM" value={audit.unrealized_pnl_inr !== undefined ? `₹${Number(audit.unrealized_pnl_inr).toLocaleString('en-IN')}` : '—'} />
+                      <KV label="Total P&L" value={audit.total_pnl_inr !== undefined ? `₹${Number(audit.total_pnl_inr).toLocaleString('en-IN')}` : '—'} />
+                      <KV label="Holding time" value={safeStr(audit.holding_time_str ?? audit.live_duration_str)} />
+                      <KV label="Executed" value={audit.executed_at_utc ? formatDateTime(audit.executed_at_utc) : '—'} />
+                      <KV label="Exited" value={audit.exited_at_utc ? formatDateTime(audit.exited_at_utc) : '—'} />
+                    </div>
+                  </div>
+                )}
+                {paperResult && (
+                  <p className="text-[10px] font-mono text-muted-foreground break-all pt-1">
+                    Paper order: {JSON.stringify(paperResult)}
+                  </p>
+                )}
+              </Section>
+
+              {/* 9. EXECUTION CONTROLS & STATUS */}
               <div className="rounded-xl border p-4 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-4">
                 {paperResult ? (
                   <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-mono text-xs bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 w-full">
@@ -336,7 +562,7 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                         className="w-20 h-8 rounded border px-2 text-xs font-mono bg-background"
                       />
                       <span className="text-xs text-muted-foreground font-mono">
-                        ({(parseInt(customLots, 10) || 1) * (sig.option_contract?.lot_size || 75)} Qty)
+                        ({(parseInt(customLots, 10) || 1) * (opt?.lot_size || 75)} Qty)
                       </span>
                     </div>
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -352,6 +578,21 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
                       </Button>
                     </div>
                   </>
+                )}
+              </div>
+
+              {/* 10. RAW JSON FOR LEARNING */}
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <button
+                  onClick={() => setShowRaw((v) => !v)}
+                  className="text-[11px] font-mono font-bold text-primary hover:underline"
+                >
+                  {showRaw ? '▾ Hide full raw signal JSON (for learning)' : '▸ Show full raw signal JSON (for learning)'}
+                </button>
+                {showRaw && (
+                  <pre className="mt-2 max-h-96 overflow-auto text-[10px] font-mono bg-background border rounded-lg p-3 whitespace-pre-wrap break-all">
+                    {JSON.stringify(data, null, 2)}
+                  </pre>
                 )}
               </div>
             </>

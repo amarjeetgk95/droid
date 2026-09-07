@@ -99,9 +99,9 @@ export default function CryptoPage() {
     }
   }, []);
 
-  const fetchScalpLedger = useCallback(async () => {
+  const fetchScalpLedger = useCallback(async (isSilent = false) => {
     try {
-      setLoadingLedger(true);
+      if (!isSilent) setLoadingLedger(true);
       const lRes = await api.getCryptoScalpLedger({ limit: 50 }).catch(() => null);
       if (lRes) {
         setScalpLedger(lRes);
@@ -109,7 +109,7 @@ export default function CryptoPage() {
     } catch (err) {
       console.error('Failed to fetch crypto scalp ledger:', err);
     } finally {
-      setLoadingLedger(false);
+      if (!isSilent) setLoadingLedger(false);
     }
   }, []);
 
@@ -542,7 +542,7 @@ export default function CryptoPage() {
           <CryptoScalpLedgerTable
             records={scalpLedger}
             loading={loadingLedger}
-            onRefresh={fetchScalpLedger}
+            onRefresh={() => fetchScalpLedger(true)}
             onDeleteRecord={handleDeleteLedgerTrade}
           />
         </div>

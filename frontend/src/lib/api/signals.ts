@@ -56,6 +56,10 @@ export function createSignalsApi(core: ApiCore) {
     return core.request<any>(`/api/v1/signals/${encodeURIComponent(signalId)}/deep-dive`);
   },
 
+    async getSingleSignalAudit(signalId: string) {
+    return core.request<any>(`/api/v1/signals/${encodeURIComponent(signalId)}/audit`);
+  },
+
     async getSignalEngines() {
     return core.request<{ approved_universe: string[]; broker: string; strategies: any[] }>(`/api/v1/signals/engines`);
   },

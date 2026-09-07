@@ -1,28 +1,35 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   TrendingUp,
   TrendingDown,
-  ChevronDown,
-  ChevronUp,
   Clock,
   ListOrdered,
-  FileText,
-  DollarSign,
   CheckCircle2,
   Trash2,
-  Calendar,
+  RefreshCw,
+  Eye,
+  Zap,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  Info,
 } from 'lucide-react';
 import {
   CryptoScalpExecutionRecord,
 } from '@/lib/types';
+import {
+  CryptoTradeDetailModal,
+  formatDetailedExitReason,
+} from './CryptoTradeDetailModal';
 
 interface CryptoScalpLedgerTableProps {
   records: CryptoScalpExecutionRecord[];
   loading?: boolean;
-  onRefresh?: () => void;
-  onDeleteRecord?: (tradeId: string) => void;
+  onRefresh?: () => Promise<void> | void;
+  onDeleteRecord?: (tradeId: string) => Promise<void> | void;
+  refreshIntervalMs?: number;
 }
 
 interface FormattedLedgerTimestamp {
@@ -33,7 +40,7 @@ interface FormattedLedgerTimestamp {
   relative: string;
 }
 
-function formatLedgerDate(timestampUtc?: number): FormattedLedgerTimestamp {
+export function formatLedgerDate(timestampUtc?: number): FormattedLedgerTimestamp {
   if (!timestampUtc) {
     return { localTimeStr: '—', localDateStr: '—', fullLocalStr: '—', utcStr: '—', relative: '—' };
   }
@@ -44,12 +51,12 @@ function formatLedgerDate(timestampUtc?: number): FormattedLedgerTimestamp {
   let localDateStr = '';
   let fullLocalStr = '';
   try {
-    localTimeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    localTimeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     localDateStr = date.toLocaleDateString([], { month: 'short', day: '2-digit' });
     fullLocalStr = `${localDateStr}, ${localTimeStr}`;
   } catch {
-    fullLocalStr = date.toISOString().substring(0, 16).replace('T', ' ');
-    localTimeStr = date.toISOString().substring(11, 16);
+    fullLocalStr = date.toISOString().substring(0, 19).replace('T', ' ');
+    localTimeStr = date.toISOString().substring(11, 19);
     localDateStr = date.toISOString().substring(5, 10);
   }
 
@@ -81,11 +88,40 @@ export function CryptoScalpLedgerTable({
   loading = false,
   onRefresh,
   onDeleteRecord,
+  refreshIntervalMs = 2000,
 }: CryptoScalpLedgerTableProps) {
-  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<CryptoScalpExecutionRecord | null>(null);
   const [filterSymbol, setFilterSymbol] = useState<string>('ALL');
   const [filterState, setFilterState] = useState<string>('ALL');
+  const [filterOutcome, setFilterOutcome] = useState<string>('ALL');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [autoRefreshMs, setAutoRefreshMs] = useState<number>(refreshIntervalMs);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Background silent millisecond refresh without full-page redraw
+  useEffect(() => {
+    if (autoRefreshMs <= 0 || !onRefresh) return;
+
+    const timer = setInterval(async () => {
+      try {
+        await onRefresh();
+      } catch (e) {
+        console.error('Silent ledger background refresh failed:', e);
+      }
+    }, autoRefreshMs);
+
+    return () => clearInterval(timer);
+  }, [autoRefreshMs, onRefresh]);
+
+  const handleManualRefresh = async () => {
+    if (!onRefresh) return;
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 300);
+    }
+  };
 
   const filteredRecords = records.filter((r) => {
     if (filterSymbol !== 'ALL' && !r.symbol.toUpperCase().includes(filterSymbol)) {
@@ -94,15 +130,19 @@ export function CryptoScalpLedgerTable({
     if (filterState !== 'ALL' && r.position_state !== filterState) {
       return false;
     }
+    if (filterOutcome === 'PROFIT' && (r.position_state !== 'CLOSED' || r.net_pnl_usd <= 0)) {
+      return false;
+    }
+    if (filterOutcome === 'LOSS' && (r.position_state !== 'CLOSED' || r.net_pnl_usd >= 0)) {
+      return false;
+    }
     return true;
   });
 
-  const toggleExpand = (tradeId: string) => {
-    setExpandedTradeId((prev) => (prev === tradeId ? null : tradeId));
-  };
-
-  const handleDelete = async (tradeId: string) => {
+  const handleDelete = async (e: React.MouseEvent, tradeId: string) => {
+    e.stopPropagation();
     if (!onDeleteRecord) return;
+    if (!window.confirm('Delete this trade record from the ledger?')) return;
     setDeletingId(tradeId);
     try {
       await onDeleteRecord(tradeId);
@@ -111,28 +151,78 @@ export function CryptoScalpLedgerTable({
     }
   };
 
-  // Quick summary calculation for the ledger
+  // Summary calculation for the ledger
   const closedRecords = filteredRecords.filter((r) => r.position_state === 'CLOSED');
   const totalRealizedPnl = closedRecords.reduce((acc, r) => acc + (r.net_pnl_usd || 0), 0);
   const winningTrades = closedRecords.filter((r) => (r.net_pnl_usd || 0) > 0).length;
+  const losingTrades = closedRecords.filter((r) => (r.net_pnl_usd || 0) < 0).length;
   const winRate = closedRecords.length > 0 ? (winningTrades / closedRecords.length) * 100 : 0;
   const activeCount = filteredRecords.filter((r) => r.position_state === 'ACTIVE' || r.position_state === 'PARTIALLY_CLOSED').length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-5">
-      {/* 1. Header & Filters */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-        <div className="space-y-0.5">
-          <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-            <ListOrdered className="w-4 h-4 text-slate-700" />
-            <span>Profit & Loss Execution Ledger</span>
-          </h3>
+      {/* 1. Header & Live Background Sync Controls */}
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2.5">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <ListOrdered className="w-4 h-4 text-blue-600" />
+              <span>Profit & Loss Execution Ledger</span>
+            </h3>
+
+            {/* Live Millisecond Refresh Indicator */}
+            {autoRefreshMs > 0 ? (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span>Live Sync ({autoRefreshMs}ms)</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                <span className="h-2 w-2 rounded-full bg-slate-400"></span>
+                <span>Paused</span>
+              </span>
+            )}
+          </div>
+
           <p className="text-xs text-slate-500">
-            Realized fills, slippage drag, taker fees, and chronological audit ledger with deletion controls.
+            Realized fills with explicit Profit & Loss attribution. Click any order row to view its full execution dossier.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        {/* Sync Controls & Filter Strip */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Millisecond Rate Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[10px] text-slate-500 font-mono">Sync:</span>
+            <select
+              value={autoRefreshMs}
+              onChange={(e) => setAutoRefreshMs(Number(e.target.value))}
+              className="bg-transparent text-slate-800 text-xs font-mono font-medium focus:outline-none cursor-pointer"
+            >
+              <option value={1000}>1000ms (1s)</option>
+              <option value={2000}>2000ms (2s)</option>
+              <option value={5000}>5000ms (5s)</option>
+              <option value={0}>Paused</option>
+            </select>
+          </div>
+
+          {/* Manual Refresh Button */}
+          <button
+            type="button"
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            title="Instant ledger sync"
+            className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+          </button>
+
+          <div className="h-4 w-px bg-slate-200 hidden sm:block mx-1" />
+
           {/* Symbol Filter */}
           <select
             value={filterSymbol}
@@ -152,8 +242,19 @@ export function CryptoScalpLedgerTable({
           >
             <option value="ALL">All States</option>
             <option value="ACTIVE">ACTIVE</option>
-            <option value="PARTIALLY_CLOSED">PARTIALLY_CLOSED (T1)</option>
+            <option value="PARTIALLY_CLOSED">T1 HIT (50%)</option>
             <option value="CLOSED">CLOSED</option>
+          </select>
+
+          {/* Outcome Filter */}
+          <select
+            value={filterOutcome}
+            onChange={(e) => setFilterOutcome(e.target.value)}
+            className="bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-slate-400 focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">All Outcomes</option>
+            <option value="PROFIT">Profits Only</option>
+            <option value="LOSS">Losses Only</option>
           </select>
         </div>
       </div>
@@ -164,12 +265,16 @@ export function CryptoScalpLedgerTable({
           <span className="text-[11px] font-mono text-slate-500 uppercase block">Realized Net P&L</span>
           <span
             className={`text-base font-bold font-mono mt-0.5 block ${
-              totalRealizedPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'
+              totalRealizedPnl > 0 ? 'text-emerald-600' : totalRealizedPnl < 0 ? 'text-rose-600' : 'text-slate-800'
             }`}
           >
-            {totalRealizedPnl >= 0 ? `+$${totalRealizedPnl.toFixed(2)}` : `-$${Math.abs(totalRealizedPnl).toFixed(2)}`}
+            {totalRealizedPnl > 0
+              ? `+$${totalRealizedPnl.toFixed(2)} Profit`
+              : totalRealizedPnl < 0
+              ? `-$${Math.abs(totalRealizedPnl).toFixed(2)} Loss`
+              : '$0.00 Breakeven'}
           </span>
-          <span className="text-[10px] text-slate-400">Net of fees & slippage</span>
+          <span className="text-[10px] text-slate-400">Net of taker fees & slippage</span>
         </div>
 
         <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3">
@@ -177,21 +282,21 @@ export function CryptoScalpLedgerTable({
           <span className="text-base font-bold font-mono text-slate-900 mt-0.5 block">
             {closedRecords.length > 0 ? `${winRate.toFixed(1)}%` : '—'}
           </span>
-          <span className="text-[10px] text-slate-400">
-            {winningTrades} wins / {closedRecords.length} completed
+          <span className="text-[10px] text-slate-400 font-mono">
+            {winningTrades} wins / {losingTrades} losses ({closedRecords.length} closed)
           </span>
         </div>
 
         <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3">
           <span className="text-[11px] font-mono text-slate-500 uppercase block">Active Trades</span>
           <span className="text-base font-bold font-mono text-blue-600 mt-0.5 block">
-            {activeCount} Active
+            {activeCount} Open
           </span>
-          <span className="text-[10px] text-slate-400">Currently open positions</span>
+          <span className="text-[10px] text-slate-400">Mark-to-market live</span>
         </div>
 
         <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3">
-          <span className="text-[11px] font-mono text-slate-500 uppercase block">Total Executions</span>
+          <span className="text-[11px] font-mono text-slate-500 uppercase block">Total Orders</span>
           <span className="text-base font-bold font-mono text-slate-900 mt-0.5 block">
             {filteredRecords.length} Fills
           </span>
@@ -199,7 +304,7 @@ export function CryptoScalpLedgerTable({
         </div>
       </div>
 
-      {/* 3. Detailed Ledger Table */}
+      {/* 3. Streamlined Minimal Table */}
       {filteredRecords.length === 0 ? (
         <div className="p-10 text-center border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs bg-slate-50/50">
           {loading ? 'Reconciling execution records...' : 'No execution records matching filter criteria.'}
@@ -209,58 +314,50 @@ export function CryptoScalpLedgerTable({
           <table className="w-full text-xs text-left">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-                <th className="py-2.5 px-3">Date & Time</th>
-                <th className="py-2.5 px-3">Trade ID</th>
-                <th className="py-2.5 px-3">Asset</th>
-                <th className="py-2.5 px-3">Direction</th>
+                <th className="py-2.5 px-3.5">Execution Time</th>
+                <th className="py-2.5 px-3">Asset & Side</th>
                 <th className="py-2.5 px-3">Strategy</th>
-                <th className="py-2.5 px-3">State</th>
-                <th className="py-2.5 px-3 text-right">Entry Fill</th>
-                <th className="py-2.5 px-3 text-right">Exit Price</th>
+                <th className="py-2.5 px-3 text-right">Fills (Entry &rarr; Exit)</th>
+                <th className="py-2.5 px-3.5 text-right">Realized P&L</th>
                 <th className="py-2.5 px-3 text-center">Exit Reason</th>
-                <th className="py-2.5 px-3 text-right">Realized R</th>
-                <th className="py-2.5 px-3 text-right">Net P&L ($)</th>
-                <th className="py-2.5 px-3 text-right">Duration</th>
-                <th className="py-2.5 px-2 text-center">Audit</th>
-                <th className="py-2.5 px-2 text-center">Delete</th>
+                <th className="py-2.5 px-3 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredRecords.map((trade) => {
                 const isLong = trade.direction === 'LONG';
-                const isExpanded = expandedTradeId === trade.trade_id;
-                const isProfitable = trade.net_pnl_usd > 0;
-                const { localTimeStr, localDateStr, fullLocalStr, utcStr, relative: relativeTime } = formatLedgerDate(trade.created_at_utc);
+                const isClosed = trade.position_state === 'CLOSED';
+                const isPartial = trade.position_state === 'PARTIALLY_CLOSED';
+                const isProfit = trade.net_pnl_usd > 0;
+                const isLoss = trade.net_pnl_usd < 0;
+                const { localTimeStr, localDateStr, relative: relativeTime } = formatLedgerDate(trade.created_at_utc);
+                const exitDetail = formatDetailedExitReason(trade);
 
                 return (
-                  <React.Fragment key={trade.trade_id}>
-                    <tr
-                      onClick={() => toggleExpand(trade.trade_id)}
-                      className="hover:bg-slate-50/80 cursor-pointer transition-colors text-slate-800"
-                    >
-                      {/* Date & Time Column */}
-                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 font-semibold text-slate-800">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          <span>{localTimeStr}</span>
-                          <span className="text-slate-500 font-normal text-[10px]">({relativeTime})</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">
-                          {localDateStr} · {utcStr}
+                  <tr
+                    key={trade.trade_id}
+                    onClick={() => setSelectedTrade(trade)}
+                    className="hover:bg-blue-50/40 cursor-pointer transition-colors text-slate-800 group"
+                  >
+                    {/* 1. Time Column */}
+                    <td className="py-2.5 px-3.5 font-mono whitespace-nowrap">
+                      <div className="flex items-center gap-1.5 font-semibold text-slate-800">
+                        <Clock className="w-3 h-3 text-slate-400 group-hover:text-blue-600 transition-colors" />
+                        <span>{localTimeStr}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">
+                        {localDateStr} · {relativeTime}
+                      </span>
+                    </td>
+
+                    {/* 2. Asset & Side */}
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 font-mono">
+                          {trade.symbol.replace('USDT', '')}
                         </span>
-                      </td>
-
-                      <td className="py-2.5 px-3 font-mono font-medium text-slate-700">
-                        #{trade.trade_id.slice(-6).toUpperCase()}
-                      </td>
-
-                      <td className="py-2.5 px-3 font-semibold text-slate-900">
-                        {trade.symbol.replace('USDT', '')}
-                      </td>
-
-                      <td className="py-2.5 px-3">
                         <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono ${
+                          className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono ${
                             isLong
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : 'bg-rose-50 text-rose-700 border border-rose-200'
@@ -269,166 +366,132 @@ export function CryptoScalpLedgerTable({
                           {isLong ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                           {trade.direction}
                         </span>
-                      </td>
+                      </div>
+                    </td>
 
-                      <td className="py-2.5 px-3 text-slate-600 font-medium">
-                        {trade.strategy_name || trade.strategy}
-                      </td>
-
-                      <td className="py-2.5 px-3">
-                        {trade.position_state === 'ACTIVE' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                            ACTIVE
+                    {/* 3. Strategy & State */}
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-700 font-medium">
+                          {trade.strategy_name || trade.strategy}
+                        </span>
+                        {isPartial && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            T1
                           </span>
                         )}
-                        {trade.position_state === 'PARTIALLY_CLOSED' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                            T1 HIT (50%)
-                          </span>
-                        )}
-                        {trade.position_state === 'CLOSED' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                            CLOSED
-                          </span>
-                        )}
-                      </td>
+                      </div>
+                    </td>
 
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-800">
+                    {/* 4. Entry -> Exit Fills */}
+                    <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
+                      <span className="text-slate-800 font-medium">
                         ${trade.entry_fill_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
+                      </span>
+                      <span className="text-slate-400 mx-1.5">&rarr;</span>
+                      {trade.exit_price ? (
+                        <span className="text-slate-900 font-bold">
+                          ${trade.exit_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      ) : (
+                        <span className="text-blue-600 font-medium text-[11px]">Tracking</span>
+                      )}
+                    </td>
 
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-800">
-                        {trade.exit_price ? (
-                          `$${trade.exit_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-center">
-                        {trade.exit_reason ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                            {trade.exit_reason}
+                    {/* 5. Realized P&L in Written Profit & Loss format */}
+                    <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                      {isClosed ? (
+                        <div className="inline-flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-xs font-bold font-mono inline-flex items-center gap-1 shadow-2xs ${
+                              isProfit
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : isLoss
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            {isProfit
+                              ? `+$${trade.net_pnl_usd.toFixed(2)} Profit`
+                              : isLoss
+                              ? `-$${Math.abs(trade.net_pnl_usd).toFixed(2)} Loss`
+                              : '$0.00 Breakeven'}
                           </span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
+                          <span
+                            className={`text-[11px] font-mono font-bold ${
+                              trade.r_multiple > 0
+                                ? 'text-emerald-600'
+                                : trade.r_multiple < 0
+                                ? 'text-rose-600'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            {trade.r_multiple >= 0 ? `+${trade.r_multiple.toFixed(2)}R` : `${trade.r_multiple.toFixed(2)}R`}
+                          </span>
+                        </div>
+                      ) : isPartial ? (
+                        <div className="inline-flex items-center gap-1.5">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-amber-50 text-amber-700 border border-amber-200">
+                            50% Booked
+                          </span>
+                          <span className="text-[11px] font-mono font-bold text-amber-600">+0.75R</span>
+                        </div>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold font-mono bg-blue-50 text-blue-700 border border-blue-200">
+                          Active MTM
+                        </span>
+                      )}
+                    </td>
 
-                      <td className={`py-2.5 px-3 text-right font-mono font-bold ${trade.r_multiple >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {trade.position_state === 'CLOSED' ? (
-                          trade.r_multiple > 0 ? `+${trade.r_multiple.toFixed(2)}R` : `${trade.r_multiple.toFixed(2)}R`
-                        ) : trade.position_state === 'PARTIALLY_CLOSED' ? (
-                          <span className="text-amber-600">+0.75R (T1)</span>
-                        ) : (
-                          <span className="text-slate-400">0.0R</span>
-                        )}
-                      </td>
+                    {/* 6. Exit Reason Column */}
+                    <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border ${exitDetail.badgeColor}`}
+                        title={exitDetail.description}
+                      >
+                        <span>{exitDetail.title.split('(')[0].trim()}</span>
+                      </span>
+                    </td>
 
-                      <td className={`py-2.5 px-3 text-right font-bold font-mono ${isProfitable ? 'text-emerald-600' : trade.net_pnl_usd < 0 ? 'text-rose-600' : 'text-slate-600'}`}>
-                        {trade.position_state === 'CLOSED' ? (
-                          trade.net_pnl_usd >= 0 ? `+$${trade.net_pnl_usd.toFixed(2)}` : `-$${Math.abs(trade.net_pnl_usd).toFixed(2)}`
-                        ) : (
-                          <span className="text-blue-600 font-semibold">Active</span>
-                        )}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right text-slate-500 font-mono">
-                        {trade.duration_str}
-                      </td>
-
-                      {/* Expand Button */}
-                      <td className="py-2.5 px-2 text-center text-slate-400">
-                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </td>
-
-                      {/* Delete Option */}
-                      <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                    {/* 7. Action Column */}
+                    <td className="py-2.5 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => handleDelete(trade.trade_id)}
+                          onClick={() => setSelectedTrade(trade)}
+                          title="View complete trade execution details"
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 transition-all cursor-pointer"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>View</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => handleDelete(e, trade.trade_id)}
                           disabled={deletingId === trade.trade_id}
                           title="Delete this execution record"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer border border-transparent hover:border-rose-200 disabled:opacity-50"
+                          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer border border-transparent hover:border-rose-200 disabled:opacity-50"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                      </td>
-                    </tr>
-
-                    {/* Expandable Audit Trail Row */}
-                    {isExpanded && (
-                      <tr className="bg-slate-50/80 border-b border-slate-200">
-                        <td colSpan={14} className="p-4 space-y-3">
-                          <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 border-b border-slate-200 pb-2 gap-2">
-                            <span className="font-semibold text-slate-800 flex items-center gap-1.5">
-                              <FileText className="w-3.5 h-3.5 text-blue-600" />
-                              <span>Execution Audit Trail ({trade.events?.length || 0} events)</span>
-                            </span>
-                            <div className="flex items-center gap-4 text-[11px] font-mono">
-                              <span>Created: <strong>{fullLocalStr} ({utcStr})</strong></span>
-                              <span>Theoretical: <strong>{trade.theoretical_r}R</strong></span>
-                              <span>Realized: <strong>{trade.r_multiple}R</strong></span>
-                              <span>Drag: <strong className="text-amber-600">-{trade.execution_drag_r}R</strong></span>
-                              <span>Fees: <strong>${trade.fees_usd.toFixed(2)}</strong></span>
-                              <span>Slippage: <strong>${trade.slippage_usd.toFixed(2)}</strong></span>
-                            </div>
-                          </div>
-
-                          {/* Event Timeline */}
-                          <div className="space-y-2">
-                            {trade.events && trade.events.length > 0 ? (
-                              trade.events.map((ev, idx) => (
-                                <div
-                                  key={ev.event_id || idx}
-                                  className="flex flex-wrap items-center justify-between p-2.5 bg-white rounded-lg border border-slate-200 text-xs shadow-2xs gap-2"
-                                >
-                                  <div className="flex items-center gap-3">
-                                    <span className="font-mono text-[11px] text-slate-500">
-                                      {new Date(ev.timestamp_ms).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                      {ev.event_type}
-                                    </span>
-                                    <span className="text-slate-800">
-                                      Fill: <strong className="font-mono">${ev.fill_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-                                    </span>
-                                    <span className="text-slate-500">
-                                      Qty: <strong className="font-mono">{ev.quantity}</strong>
-                                    </span>
-                                  </div>
-
-                                  <div className="flex items-center gap-4">
-                                    <span className="text-slate-500 text-[11px]">
-                                      Fee: ${ev.fee_usd.toFixed(3)} | Slip: ${ev.slippage_usd.toFixed(3)}
-                                    </span>
-                                    <span
-                                      className={`font-bold font-mono text-xs ${
-                                        ev.net_pnl_usd > 0 ? 'text-emerald-600' : ev.net_pnl_usd < 0 ? 'text-rose-600' : 'text-slate-600'
-                                      }`}
-                                    >
-                                      {ev.net_pnl_usd !== 0 ? (ev.net_pnl_usd > 0 ? `+$${ev.net_pnl_usd.toFixed(2)}` : `-$${Math.abs(ev.net_pnl_usd).toFixed(2)}`) : '$0.00'}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 font-mono">
-                                      {ev.state_before} &rarr; {ev.state_after}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="text-slate-400 text-xs italic">No granular events logged for this trade.</div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
+                      </div>
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* 4. Executed Order Detail Modal */}
+      <CryptoTradeDetailModal
+        trade={selectedTrade}
+        isOpen={!!selectedTrade}
+        onClose={() => setSelectedTrade(null)}
+        onDeleteRecord={onDeleteRecord}
+      />
     </div>
   );
 }
