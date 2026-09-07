@@ -70,7 +70,7 @@ export class ApiCore {
     const contentType = response.headers.get('content-type') || '';
 
     if (!response.ok) {
-      // Global 401 signal — lets AuthProvider/logout listeners react instead of
+      // Global 401 signal â€” lets AuthProvider/logout listeners react instead of
       // silent infinite 401 polling loops.
       if (response.status === 401 && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { url } }));
