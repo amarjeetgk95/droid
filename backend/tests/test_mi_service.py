@@ -75,6 +75,33 @@ class TestSessionPivots:
         assert mi.session_pivots_from_candles([]) == (None, None)
 
 
+class TestSanitizeOptions:
+    def test_zero_pcr_rejected(self):
+        cleaned, reason = mi.sanitize_options_data({"pcr": 0.0})
+        assert cleaned is None and reason
+
+    def test_negative_pcr_rejected(self):
+        cleaned, _ = mi.sanitize_options_data({"pcr": -0.5})
+        assert cleaned is None
+
+    def test_zero_totals_rejected(self):
+        cleaned, reason = mi.sanitize_options_data({"pcr": 1.1, "total_call_oi": 0, "total_put_oi": 0})
+        assert cleaned is None and "empty" in reason
+
+    def test_valid_pcr_kept(self):
+        src = {"pcr": 1.32, "total_call_oi": 1000, "total_put_oi": 1320, "pcr_volume": 0.9}
+        cleaned, reason = mi.sanitize_options_data(src)
+        assert cleaned == src and reason is None
+
+    def test_legacy_pcr_without_totals_kept(self):
+        # Ingest-seeded {"pcr": 1.3} has no totals — judge on PCR alone.
+        cleaned, reason = mi.sanitize_options_data({"pcr": 1.3})
+        assert cleaned == {"pcr": 1.3} and reason is None
+
+    def test_none_passthrough(self):
+        assert mi.sanitize_options_data(None) == (None, None)
+
+
 class TestFeedBlock:
     def test_fresh_is_healthy(self, monkeypatch):
         now = 1_700_000_000_000

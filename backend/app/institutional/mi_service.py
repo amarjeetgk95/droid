@@ -212,6 +212,27 @@ def session_pivots_from_candles(candles: list) -> tuple[dict[str, list] | None, 
         return None, None
 
 
+def sanitize_options_data(options_data: dict | None) -> tuple[dict | None, str | None]:
+    """Reject non-tradeable PCR readings.
+
+    Returns (cleaned_or_None, reason_or_None). A PCR of 0 (or negative) is the
+    options service's EMPTY-chain sentinel, not bearish positioning; likewise a
+    chain reporting zero total OI carries no information. Both are normalized
+    to missing data with an explicit reason.
+    """
+    if options_data is None:
+        return None, None
+    try:
+        pcr_v = float(options_data.get("pcr", 0) or 0)
+        has_totals = "total_call_oi" in options_data or "total_put_oi" in options_data
+        oi_total = int(options_data.get("total_call_oi", 0) or 0) + int(options_data.get("total_put_oi", 0) or 0)
+        if not (pcr_v > 0) or (has_totals and oi_total <= 0):
+            return None, "option chain empty (no OI totals) — PCR not tradeable"
+        return options_data, None
+    except Exception:
+        return None, "invalid PCR value"
+
+
 def build_cross_snapshot(iid: str, pipeline: str, now_ms: int):
     """Synchronized cross-market snapshot for Indian equities (buffer-only, sync).
     Returns None for crypto (continuous market, no peer sync) or when no peer
@@ -635,10 +656,16 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
 
         if options_data is None:
             if chain is not None and getattr(chain, "analytics", None) is not None:
-                pcr = getattr(chain.analytics, "pcr_oi", None)
+                ana = chain.analytics
+                pcr = getattr(ana, "pcr_oi", None)
                 if pcr is not None:
                     try:
-                        options_data = {"pcr": float(pcr)}
+                        options_data = {
+                            "pcr": float(pcr),
+                            "total_call_oi": int(getattr(ana, "total_call_oi", 0) or 0),
+                            "total_put_oi": int(getattr(ana, "total_put_oi", 0) or 0),
+                            "pcr_volume": float(getattr(ana, "pcr_volume", 0) or 0),
+                        }
                     except Exception:
                         options_data = None
                         options_status_reason = "invalid PCR value"
@@ -691,6 +718,15 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
                     support_resistance = support_resistance or _sr
                     breakout_level = breakout_level or _bl
                     levels_source = levels_source or "session-developing"
+
+    # PCR validity gate: the options service emits pcr_oi=0.0 as a sentinel for
+    # an EMPTY chain (no strikes / zero OI totals). Zero is not a tradeable
+    # reading — surfacing it as "Bearish" is a false signal. Reject it (and any
+    # non-positive PCR) here so every consumer (MI engine, signal center, UI)
+    # treats it as missing data, regardless of which path seeded it.
+    options_data, _gate_reason = sanitize_options_data(options_data)
+    if _gate_reason is not None:
+        options_status_reason = _gate_reason
 
     # Liquidity heuristic: very low relative volume → THIN (raises false-breakout risk honestly)
     try:

@@ -771,8 +771,22 @@ async def get_full_mi(instrument_id: str):
         _vol_chg = None
     try:
         _pcr = float((mi.options_data or {}).get("pcr")) if mi.options_data else None
+        if _pcr is not None and not (_pcr > 0):
+            _pcr = None
     except Exception:
         _pcr = None
+    try:
+        _call_oi = int((mi.options_data or {}).get("total_call_oi")) if (mi.options_data or {}).get("total_call_oi") is not None else None
+    except Exception:
+        _call_oi = None
+    try:
+        _put_oi = int((mi.options_data or {}).get("total_put_oi")) if (mi.options_data or {}).get("total_put_oi") is not None else None
+    except Exception:
+        _put_oi = None
+    try:
+        _pcr_vol = float((mi.options_data or {}).get("pcr_volume")) if (mi.options_data or {}).get("pcr_volume") is not None else None
+    except Exception:
+        _pcr_vol = None
     try:
         _volat_chg = float((mi.volatility or {}).get("volatility_change")) if mi.volatility else None
     except Exception:
@@ -800,6 +814,9 @@ async def get_full_mi(instrument_id: str):
         },
         "options": {
             "pcr": _pcr,
+            "total_call_oi": _call_oi,
+            "total_put_oi": _put_oi,
+            "pcr_volume": _pcr_vol,
             "status": "AVAILABLE" if _pcr is not None else "UNAVAILABLE",
             "reason": None if _pcr is not None else (_prov.get("options_status") or "option chain unavailable"),
         },

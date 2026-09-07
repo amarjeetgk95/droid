@@ -48,7 +48,7 @@ interface FullMiResponse {
     spot: { price: number | null; source: string; age_ms: number | null; used_cache: boolean; status: string };
     vwap: { value: number | null; relation: string; source: string | null; status: string; reason: string | null };
     volume: { volume_change: number | null; state: string; quote_volume: number | null; status: string; reason: string | null };
-    options: { pcr: number | null; status: string; reason: string | null };
+    options: { pcr: number | null; total_call_oi: number | null; total_put_oi: number | null; pcr_volume: number | null; status: string; reason: string | null };
     volatility: { volatility_change: number | null; regime: string; status: string; reason: string | null };
     futures: { status: string; reason: string | null };
     liquidity: { state: string };
@@ -629,10 +629,15 @@ export default function MarketIntelligencePage() {
                 const d = data.details;
                 if (!d) return (<div className="mt-2 text-xs text-muted-foreground">Detail feed loading — switch tabs or refresh. Backend authoritative, frontend never recreates trading logic.</div>);
                 if (secondary === 'options') {
-                  const pcr = d.options.pcr;
+                  // PCR ≤ 0 is never a real reading (empty chain sentinel) — show '—', never a bias label.
+                  const pcr = d.options.pcr != null && d.options.pcr > 0 ? d.options.pcr : null;
                   const interp = pcr == null ? '—' : pcr > 1.2 ? 'Bullish positioning' : pcr < 0.85 ? 'Bearish positioning' : 'Neutral positioning';
+                  const fmtOi = (v: number | null) => v != null ? v.toLocaleString('en-IN') : '—';
                   return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                     <MetricTile label="PCR (OI)" value={pcr != null ? pcr.toFixed(2) : '—'} sub={interp} />
+                    <MetricTile label="Put OI" value={fmtOi(d.options.total_put_oi)} />
+                    <MetricTile label="Call OI" value={fmtOi(d.options.total_call_oi)} />
+                    <MetricTile label="PCR (Vol)" value={d.options.pcr_volume != null && d.options.pcr_volume > 0 ? d.options.pcr_volume.toFixed(2) : '—'} />
                     <MetricTile label="Status" value={d.options.status} />
                     <MetricTile label="Spot ref" value={data.header.price_formatted} />
                     {d.options.status !== 'AVAILABLE' ? <div className="col-span-full"><MiUnavailable reason={d.options.reason} /></div> : null}
