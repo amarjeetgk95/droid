@@ -70,8 +70,15 @@ class RSIIndicator(IndicatorBase):
         confidence = round(min(1.0, abs(score) / 80.0), 3)
 
         atr = calculate_atr(highs, lows, closes, 14) if len(closes) >= 14 else (current_price * 0.005)
-        target_price = round(current_price + (1.5 * atr) if direction == Direction.BULLISH else current_price - (1.5 * atr), 2)
-        invalidation_price = round(current_price - (1.0 * atr) if direction == Direction.BULLISH else current_price + (1.0 * atr), 2)
+        if direction == Direction.BULLISH:
+            target_price = round(current_price + (1.5 * atr), 2)
+            invalidation_price = round(current_price - (1.0 * atr), 2)
+        elif direction == Direction.BEARISH:
+            target_price = round(current_price - (1.5 * atr), 2)
+            invalidation_price = round(current_price + (1.0 * atr), 2)
+        else:
+            target_price = None
+            invalidation_price = None
 
         return IndicatorOutput(
             indicator_id=self.indicator_id,

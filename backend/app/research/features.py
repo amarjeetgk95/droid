@@ -61,6 +61,30 @@ def calculate_intraday_vwap(candles: List[Dict[str, Any]]) -> Optional[float]:
     return round(candles[-1]["close"], 2)
 
 
+def determine_market_regime(
+    closes: List[float],
+    highs: List[float],
+    lows: List[float],
+    current_price: float,
+) -> MarketRegime:
+    """Determine market regime based on ADX, Bollinger Bandwidth, and ATR."""
+    if len(closes) < 14 or len(highs) < 14 or len(lows) < 14:
+        return MarketRegime.RANGING
+
+    plus_di, minus_di, adx = calculate_adx(highs, lows, closes, 14)
+    _, _, _, bb_bandwidth, _ = calculate_bollinger_bands(closes, 20, 2.0) if len(closes) >= 20 else (0, 0, 0, 2.0, 0)
+    atr_14 = calculate_atr(highs, lows, closes, 14)
+
+    if adx >= 25.0:
+        return MarketRegime.TRENDING_UP if plus_di > minus_di else MarketRegime.TRENDING_DOWN
+    elif bb_bandwidth < 1.0:
+        return MarketRegime.COMPRESSING
+    elif atr_14 > (current_price * 0.008):
+        return MarketRegime.VOLATILE
+    else:
+        return MarketRegime.RANGING
+
+
 class FeatureLayer:
     """Unified feature computer for research."""
 
@@ -156,14 +180,7 @@ class FeatureLayer:
             ta_analysis = {}
 
         # 5. Market Regime Determination
-        if adx >= 25.0:
-            regime = MarketRegime.TRENDING_UP if plus_di > minus_di else MarketRegime.TRENDING_DOWN
-        elif bb_bandwidth < 1.0:
-            regime = MarketRegime.COMPRESSING
-        elif atr_14 > (current_price * 0.008):
-            regime = MarketRegime.VOLATILE
-        else:
-            regime = MarketRegime.RANGING
+        regime = determine_market_regime(closes, highs, lows, current_price)
 
         # 6. Options Features
         opt_features = {}

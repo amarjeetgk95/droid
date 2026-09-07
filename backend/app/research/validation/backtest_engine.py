@@ -11,7 +11,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.research.enums import ExperimentStatus, ForecastHorizon, MarketRegime, MarketSession
-from app.research.features import classify_session_ist
+from app.research.features import classify_session_ist, determine_market_regime
 from app.research.indicator_base import IndicatorBase
 from app.research.models import (
     ExperimentDefinition,
@@ -109,6 +109,11 @@ class CheapValidationGate:
             curr_price = float(decision_candle["close"])
             sess = classify_session_ist(dt)
 
+            p_closes = [float(c["close"]) for c in past_candles]
+            p_highs = [float(c["high"]) for c in past_candles]
+            p_lows = [float(c["low"]) for c in past_candles]
+            dynamic_regime = determine_market_regime(p_closes, p_highs, p_lows, curr_price)
+
             ctx = IndicatorContext(
                 instrument=instrument,
                 timeframe=timeframe,
@@ -116,7 +121,7 @@ class CheapValidationGate:
                 candles=past_candles,
                 current_price=curr_price,
                 options_context=options_ctx,
-                market_regime=MarketRegime.RANGING,  # default or dynamic
+                market_regime=dynamic_regime,
                 session=sess,
             )
 

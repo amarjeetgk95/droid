@@ -1214,6 +1214,10 @@ class ApiClient {
     });
   }
 
+  async getResearchPredictionOutcome(predictionId: string) {
+    return this.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}/outcome`);
+  }
+
   async runResearchExperiment(params: { indicator_id: string; instrument: string; timeframe: string; horizon_candles?: number; stride?: number; parameters?: any; candles?: any[] }) {
     return this.request<any>('/api/v1/research/experiments/run', {
       method: 'POST',

@@ -228,8 +228,15 @@ class OMPIIndicator(IndicatorBase):
         confidence = round(min(1.0, abs(normalized_score) / 60.0), 3)
 
         # Target and Invalidation
-        target_price = round(current_price + (1.6 * atr) if direction == Direction.BULLISH else current_price - (1.6 * atr), 2)
-        invalidation_price = round(current_price - (1.0 * atr) if direction == Direction.BULLISH else current_price + (1.0 * atr), 2)
+        if direction == Direction.BULLISH:
+            target_price = round(current_price + (1.6 * atr), 2)
+            invalidation_price = round(current_price - (1.0 * atr), 2)
+        elif direction == Direction.BEARISH:
+            target_price = round(current_price - (1.6 * atr), 2)
+            invalidation_price = round(current_price + (1.0 * atr), 2)
+        else:
+            target_price = None
+            invalidation_price = None
 
         data_quality = DataQualityStatus.LIVE if opt_ctx.get("available", False) else DataQualityStatus.DEGRADED
 

@@ -123,3 +123,40 @@ async def test_ompi_bearish_calculation(bearish_candles):
     assert out.indicator_id == "ompi"
     assert out.direction == Direction.BEARISH
     assert out.score <= -20.0
+    assert out.target_price is not None
+    assert out.invalidation_price is not None
+
+
+@pytest.mark.asyncio
+async def test_ompi_neutral_calculation():
+    """Verify that NEUTRAL signals have None for target_price and invalidation_price."""
+    ind = OMPIIndicator()
+    now = datetime.now(timezone.utc)
+    # Flat candles that produce neutral score
+    candles = []
+    base = 24000.0
+    for i in range(60):
+        # alternating small variations
+        offset = 1.0 if i % 2 == 0 else -1.0
+        candles.append({
+            "open": base,
+            "high": base + 2.0,
+            "low": base - 2.0,
+            "close": base + offset,
+            "volume": 1000.0,
+            "timestamp": now.isoformat(),
+        })
+
+    ctx = IndicatorContext(
+        instrument="NIFTY 50",
+        timeframe="5m",
+        timestamp=now,
+        candles=candles,
+        current_price=base,
+        options_context={"available": False},
+    )
+
+    out = await ind.calculate(ctx)
+    if out.direction == Direction.NEUTRAL:
+        assert out.target_price is None
+        assert out.invalidation_price is None

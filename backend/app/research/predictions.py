@@ -42,7 +42,10 @@ class PredictionService:
         if not prediction.created_at:
             prediction.created_at = datetime.now(timezone.utc)
 
-        # Store in memory cache
+        # Store in memory cache (bounded to prevent memory leaks)
+        if len(cls._memory_predictions) >= 1000:
+            oldest_key = next(iter(cls._memory_predictions))
+            cls._memory_predictions.pop(oldest_key, None)
         cls._memory_predictions[prediction.prediction_id] = prediction
 
         if session is not None:
@@ -109,6 +112,10 @@ class PredictionService:
         if not outcome.evaluated_at:
             outcome.evaluated_at = datetime.now(timezone.utc)
 
+        # Store in memory cache (bounded to prevent memory leaks)
+        if len(cls._memory_outcomes) >= 1000:
+            oldest_key = next(iter(cls._memory_outcomes))
+            cls._memory_outcomes.pop(oldest_key, None)
         cls._memory_outcomes[outcome.prediction_id] = outcome
 
         if session is not None:
