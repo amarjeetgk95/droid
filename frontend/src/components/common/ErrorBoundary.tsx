@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { reportError } from '@/lib/telemetry';
 
 interface Props {
   children: ReactNode;
@@ -26,7 +27,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error(`[ErrorBoundary]${this.props.label ? ` (${this.props.label})` : ''}`, error, info.componentStack);
+    reportError(error, { label: this.props.label, componentStack: info.componentStack ?? undefined });
   }
 
   render() {

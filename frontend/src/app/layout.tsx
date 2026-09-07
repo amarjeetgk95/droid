@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/auth/AuthProvider';
+import { WebVitalsReporter } from '@/components/common/WebVitalsReporter';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <body className={`${inter.className} antialiased bg-background text-foreground`}>
+        <WebVitalsReporter />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
