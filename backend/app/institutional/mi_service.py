@@ -34,7 +34,27 @@ from app.institutional.decimal_types import D
 logger = structlog.get_logger()
 
 _IO_TIMEOUT_S = 3.0  # per-upstream budget; MI must never hang on a provider
-_ENRICH_TIMEOUT_S = 5.0  # enrichment budget (regime/options/candles can be slow on cold cache)
+_ENRICH_TIMEOUT_S = 8.0  # enrichment budget (regime/options/candles are slow on cold cache + free tier)
+# Slow-moving enrichment is cached briefly so ONE slow poll cannot blank every
+# poll: levels/indicators/options move slowly (60s), candles back volume/MTF
+# which barely change inside a 5m bar (30s). Fresh fetch first, cache fallback.
+_CACHE_TTLS_MS = {"kl": 60_000, "ind": 60_000, "opt": 60_000, "candles": 30_000, "breadth": 60_000}
+_ttl_cache: dict[str, tuple[int, Any]] = {}
+
+
+def _cache_get(key: str, now_ms: int) -> Any | None:
+    ent = _ttl_cache.get(key)
+    if not ent:
+        return None
+    ts, val = ent
+    if val is None or now_ms - ts > _CACHE_TTLS_MS.get(key.split(":")[0], 30_000):
+        return None
+    return val
+
+
+def _cache_set(key: str, val: Any, now_ms: int) -> None:
+    if val is not None:
+        _ttl_cache[key] = (now_ms, val)
 _LAST_GOOD_MAX_AGE_MS = 15 * 60 * 1000  # serve cached spot as STALE up to 15m
 
 # Staleness bands. Indian-equity quotes arrive via REST polling (typical cadence
@@ -59,6 +79,7 @@ class MIInputs:
     vwap_source: str | None = None  # candle | session-derived | none
     volumes: dict[str, Any] | None = None
     quote_volume: int | None = None
+    breadth: dict[str, Any] | None = None
     oi_data: dict[str, Any] | None = None
     options_data: dict[str, Any] | None = None
     support_resistance: dict[str, list] | None = None
@@ -182,6 +203,30 @@ def session_vwap_from_candles(candles: list) -> Decimal | None:
         if den <= 0:
             return None
         return D(str(round(num / den, 2)))
+    except Exception:
+        return None
+
+
+def map_breadth_sentiment(sentiment: str | None) -> str:
+    """Map provider sentiment to engine breadth bias. Pure — unit-testable."""
+    try:
+        s = (sentiment or "").upper()
+        if s in ("BULLISH", "VERY_BULLISH"):
+            return "BULLISH"
+        if s in ("BEARISH", "VERY_BEARISH"):
+            return "BEARISH"
+        return "NEUTRAL"
+    except Exception:
+        return "NEUTRAL"
+
+
+def eod_spot_from_candles(candles: list) -> Decimal | None:
+    """Closed-market reference price = last 5m bar close. Pure — unit-testable."""
+    try:
+        if not candles:
+            return None
+        px = float(getattr(candles[-1], "close", 0) or 0)
+        return D(str(px)) if px > 0 else None
     except Exception:
         return None
 
@@ -467,26 +512,9 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
     except Exception:
         snap_health = {}
     buf_age = snap_health.get("age_ms")
-    # Effective age: buffer age if buffer hit, else now - last_update
-    if spot_source == "buffer" and buf_age is not None:
-        eff_age = max(0, int(buf_age))
-    elif spot is not None:
-        eff_age = max(0, now_ms - int(last_update_ms))
-    else:
-        eff_age = None
 
-    if feed_health == "FEED_DEGRADED":
-        data_health = "FEED_DEGRADED"
-    elif spot is None:
-        if prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED":
-            data_health = "CLOSED"
-        else:
-            data_health = "DISCONNECTED"
-    else:
-        # Bands widened for REST-poll cadence (see LIVE_AFTER_MS/STALE_AFTER_MS):
-        # flapping LIVE/STALE across polls is worse than a calm RECENT.
-        data_health = health_band(eff_age)
-
+    # ── Health is derived AFTER enrichment (see below): EOD reference and
+    # ── last-good cache can still fill spot after this point.
     # ── 3. Best-effort enrichment (never raises) ────────────────────
     # Seed from fresh ingest metadata first; upstream fills only gaps.
     vwap: Decimal | None = _meta_vwap if _meta_fresh else None
@@ -499,10 +527,15 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
     funding: dict[str, Any] | None = dict(_meta_fund) if (_meta_fresh and _meta_fund) else None
     breakout_level: Decimal | None = _meta_brk if _meta_fresh else None
     atr: Decimal | None = _meta_atr if _meta_fresh else None
+    breadth: dict[str, Any] | None = None
     # Source labels for UI honesty (set by enrichment branches below)
     vwap_source: str | None = "ingest" if (_meta_fresh and _meta_vwap is not None) else None
     levels_source: str | None = "ingest" if (_meta_fresh and _meta_sr is not None) else None
     options_status_reason: str | None = None
+    # Per-source failure reasons + cache hits (Indian branch fills these;
+    # initialized here so the BTC path and provenance below are always safe).
+    enrich_errs: dict[str, str] = {}
+    enrich_cached: dict[str, bool] = {}
 
     if iid == "BTCUSD":
         if funding is None:
@@ -556,63 +589,121 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
         need_ind = atr is None or volatility is None
         need_opt = options_data is None
         need_candles = vwap is None or volumes is None or multi_timeframe is None
+        # Closed market with no live spot still needs candles for EOD reference.
+        if spot is None and prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED":
+            need_candles = True
+        # Breadth is equity-only (CapabilityMap) and slow-moving: 60s cache.
+        need_breadth = breadth is None and prof.pipeline == "INDIAN_EQUITY"
+
+        async def _fetch_breadth():
+            if not need_breadth:
+                return None
+            from app.services.market_service import MarketService as _MSB
+
+            return await _with_cache(
+                "breadth", "breadth", lambda: _MSB().get_market_breadth()
+            )
+
+        async def _with_cache(label: str, cache_key: str, coro_fn):
+            """Fetch upstream; on miss serve the brief TTL cache; record why."""
+            try:
+                r = await _with_timeout(coro_fn(), timeout=_ENRICH_TIMEOUT_S)
+            except Exception as e:
+                r = None
+                enrich_errs[label] = f"error: {str(e)[:120]}"
+                logger.debug("mi_enrich_failed", instrument=iid, source=label, error=str(e)[:150])
+            if r is not None and r != []:
+                _cache_set(f"{cache_key}:{iid}", r, now_ms)
+                return r
+            if r == []:
+                enrich_errs[label] = "upstream returned empty"
+            cached = _cache_get(f"{cache_key}:{iid}", now_ms)
+            if cached is not None:
+                enrich_cached[label] = True
+                return cached
+            if r is None and label not in enrich_errs:
+                enrich_errs[label] = "no result within budget and nothing cached"
+            return None
 
         async def _fetch_kl():
             if not need_kl:
                 return None
-            try:
-                from app.services.regime_service import regime_service
+            from app.services.regime_service import regime_service
 
-                return await _with_timeout(regime_service.get_key_levels(iid), timeout=_ENRICH_TIMEOUT_S)
-            except Exception as e:
-                logger.debug("mi_regime_kl_failed", instrument=iid, error=str(e)[:150])
-                return None
+            return await _with_cache("key_levels", "kl", lambda: regime_service.get_key_levels(iid))
 
         async def _fetch_ind():
             if not need_ind:
                 return None
-            try:
-                from app.services.regime_service import regime_service
+            from app.services.regime_service import regime_service
 
-                return await _with_timeout(regime_service.get_technical_indicators(iid), timeout=_ENRICH_TIMEOUT_S)
-            except Exception as e:
-                logger.debug("mi_regime_ind_failed", instrument=iid, error=str(e)[:150])
-                return None
+            return await _with_cache("indicators", "ind", lambda: regime_service.get_technical_indicators(iid))
 
         async def _fetch_opt():
             if not need_opt:
                 return None
-            try:
-                from app.services.options_service import options_service
+            from app.services.options_service import options_service
 
-                return await _with_timeout(options_service.get_option_chain_matrix(iid), timeout=_ENRICH_TIMEOUT_S)
-            except Exception as e:
-                logger.debug("mi_options_enrich_failed", instrument=iid, error=str(e)[:150])
-                return None
+            return await _with_cache("options_chain", "opt", lambda: options_service.get_option_chain_matrix(iid))
 
         async def _fetch_candles():
             if not need_candles:
                 return None
-            try:
-                from app.services.market_service import MarketService as _MS
+            from app.services.market_service import MarketService as _MS
 
-                svc = _MS()
+            svc = _MS()
+
+            async def _all():
                 return await asyncio.gather(
                     _with_timeout(svc.get_candles(iid, timeframe="5m"), timeout=_ENRICH_TIMEOUT_S),
                     _with_timeout(svc.get_candles(iid, timeframe="1m"), timeout=_ENRICH_TIMEOUT_S),
                     _with_timeout(svc.get_candles(iid, timeframe="15m"), timeout=_ENRICH_TIMEOUT_S),
                 )
-            except Exception as e:
-                logger.debug("mi_candles_enrich_failed", instrument=iid, error=str(e)[:150])
+
+            pack = await _with_cache("candles", "candles", _all)
+            if pack is None:
                 return None
+            # A pack of all-empty lists carries no information — treat as miss
+            # and evict it so emptiness is never served from cache.
+            try:
+                if not any(pack or []):
+                    enrich_errs["candles"] = "upstream returned empty"
+                    _ttl_cache.pop(f"candles:{iid}", None)
+                    return None
+            except Exception:
+                pass
+            return pack
 
         try:
-            kl, ind, chain, candle_pack = await asyncio.gather(
-                _fetch_kl(), _fetch_ind(), _fetch_opt(), _fetch_candles()
+            kl, ind, chain, candle_pack, breadth_raw = await asyncio.gather(
+                _fetch_kl(), _fetch_ind(), _fetch_opt(), _fetch_candles(), _fetch_breadth()
             )
         except Exception as e:
             logger.debug("mi_enrich_gather_failed", instrument=iid, error=str(e)[:150])
-            kl, ind, chain, candle_pack = None, None, None, None
+            kl, ind, chain, candle_pack, breadth_raw = None, None, None, None, None
+
+        if breadth_raw is not None:
+            try:
+                adv = int(getattr(breadth_raw, "advancing", 0) or 0)
+                dec = int(getattr(breadth_raw, "declining", 0) or 0)
+                unc = int(getattr(breadth_raw, "unchanged", 0) or 0)
+                if adv + dec + unc > 0:
+                    breadth = {
+                        "breadth": map_breadth_sentiment(getattr(breadth_raw, "sentiment", None)),
+                        "advancing": adv,
+                        "declining": dec,
+                        "unchanged": unc,
+                        "advance_decline_ratio": float(getattr(breadth_raw, "advance_decline_ratio", 0) or 0),
+                        "sentiment": str(getattr(breadth_raw, "sentiment", "NEUTRAL")),
+                        "sentiment_score": float(getattr(breadth_raw, "sentiment_score", 50) or 50),
+                    }
+                else:
+                    # Zero-count breadth carries no information — evict so it is
+                    # never served from cache, and record why.
+                    _ttl_cache.pop(f"breadth:{iid}", None)
+                    enrich_errs["breadth"] = "provider returned zero counts"
+            except Exception as e:
+                enrich_errs["breadth"] = f"error: {str(e)[:120]}"
 
         # ── Parse parallel results (each independent; failure keeps gap) ──
         if kl is not None and (support_resistance is None or breakout_level is None):
@@ -633,6 +724,8 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
                     if r1 > 0 and breakout_level is None:
                         breakout_level = D(str(r1))
                     levels_source = "regime-service"
+                if levels_source == "regime-service" and enrich_cached.get("key_levels"):
+                    levels_source = "regime-service-cached"
             except Exception:
                 pass
         if ind is not None:
@@ -719,6 +812,41 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
                     breakout_level = breakout_level or _bl
                     levels_source = levels_source or "session-developing"
 
+        # Closed-market EOD reference: after close there are no live ticks, but
+        # the day's candles still describe what happened. Use the last 5m close
+        # as the reference price (source "eod", NEVER cached as live) so the
+        # workspace shows the session's real structure instead of all-UNKNOWN.
+        if spot is None and prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED" and c5:
+            _eod_px = eod_spot_from_candles(c5)
+            if _eod_px is not None:
+                spot = _eod_px
+                spot_source = "eod"
+                last_update_ms = now_ms
+
+    # ── 4. Health derivation (after all spot sources incl. EOD) ──────
+    # Effective age: buffer age if buffer hit, else now - last_update
+    if spot_source == "buffer" and buf_age is not None:
+        eff_age = max(0, int(buf_age))
+    elif spot is not None:
+        eff_age = max(0, now_ms - int(last_update_ms))
+    else:
+        eff_age = None
+
+    if feed_health == "FEED_DEGRADED":
+        data_health = "FEED_DEGRADED"
+    elif spot is None:
+        if prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED":
+            data_health = "CLOSED"
+        else:
+            data_health = "DISCONNECTED"
+    elif prof.pipeline == "INDIAN_EQUITY" and sess_state == "CLOSED":
+        # EOD reference or late tick after close: session truth, not staleness.
+        data_health = "CLOSED"
+    else:
+        # Bands widened for REST-poll cadence (see LIVE_AFTER_MS/STALE_AFTER_MS):
+        # flapping LIVE/STALE across polls is worse than a calm RECENT.
+        data_health = health_band(eff_age)
+
     # PCR validity gate: the options service emits pcr_oi=0.0 as a sentinel for
     # an EMPTY chain (no strikes / zero OI totals). Zero is not a tradeable
     # reading — surfacing it as "Bearish" is a false signal. Reject it (and any
@@ -750,9 +878,12 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
         "levels_source": levels_source,
         "options_status": "AVAILABLE" if options_data is not None else (options_status_reason or "UNAVAILABLE"),
         "cross_market": getattr(cross_snap, "status", None),
+        "errors": dict(enrich_errs),
+        "cache_hits": sorted([k for k, v in enrich_cached.items() if v]),
         "enriched": {
             "vwap": vwap is not None,
             "volumes": volumes is not None,
+            "breadth": breadth is not None,
             "options": options_data is not None,
             "levels": support_resistance is not None,
             "mtf": multi_timeframe is not None,
@@ -772,6 +903,7 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
         vwap_source=vwap_source,
         volumes=volumes,
         quote_volume=quote_volume,
+        breadth=breadth,
         oi_data=None,
         options_data=options_data,
         support_resistance=support_resistance,
@@ -824,7 +956,14 @@ def sequence_block(iid: str) -> dict[str, Any]:
         return {"last_seq": 0, "gap_detected": False, "gap_count": 0, "out_of_order_count": 0}
 
 
-def feed_block(iid: str, last_update_ms: int, now_ms: int, has_spot: bool, used_cache: bool) -> dict[str, Any]:
+def feed_block(
+    iid: str,
+    last_update_ms: int,
+    now_ms: int,
+    has_spot: bool,
+    used_cache: bool,
+    spot_source: str = "spot",
+) -> dict[str, Any]:
     try:
         snap = feed_circuit.snapshot(iid)
         health = getattr(snap, "health", "HEALTHY")
@@ -837,6 +976,10 @@ def feed_block(iid: str, last_update_ms: int, now_ms: int, has_spot: bool, used_
         is_stale = True
         if health == "HEALTHY":
             health = "STALE"
+    elif spot_source == "eod":
+        # EOD reference after close: freshly derived, nothing wrong with feed.
+        staleness = max(0, now_ms - int(last_update_ms))
+        is_stale = False
     else:
         staleness = max(0, now_ms - int(last_update_ms))
         # Same widened band as health_band(): REST-poll cadence lives in RECENT.

@@ -124,6 +124,54 @@ class TestFeedBlock:
         assert feed["health"] == "STALE" and feed["staleness_ms"] == 999999
 
 
+class TestBreadthMapping:
+    def test_bullish(self):
+        assert mi.map_breadth_sentiment("BULLISH") == "BULLISH"
+        assert mi.map_breadth_sentiment("VERY_BULLISH") == "BULLISH"
+
+    def test_bearish(self):
+        assert mi.map_breadth_sentiment("BEARISH") == "BEARISH"
+        assert mi.map_breadth_sentiment("VERY_BEARISH") == "BEARISH"
+
+    def test_neutral_fallback(self):
+        assert mi.map_breadth_sentiment("NEUTRAL") == "NEUTRAL"
+        assert mi.map_breadth_sentiment(None) == "NEUTRAL"
+        assert mi.map_breadth_sentiment("garbage") == "NEUTRAL"
+
+
+class TestTtlCache:
+    def test_set_get(self):
+        mi._ttl_cache.clear()
+        mi._cache_set("kl:NIFTY", {"r1": 1}, 1000)
+        assert mi._cache_get("kl:NIFTY", 1000) == {"r1": 1}
+
+    def test_expiry(self):
+        mi._ttl_cache.clear()
+        mi._cache_set("ind:NIFTY", {"atr": 2}, 1000)
+        # TTL for ind: is 60s
+        assert mi._cache_get("ind:NIFTY", 1000 + 59_000) == {"atr": 2}
+        assert mi._cache_get("ind:NIFTY", 1000 + 61_000) is None
+
+    def test_none_never_cached(self):
+        mi._ttl_cache.clear()
+        mi._cache_set("opt:NIFTY", None, 1000)
+        assert mi._cache_get("opt:NIFTY", 1000) is None
+
+
+class TestEodSpot:
+    def test_last_close(self):
+        from types import SimpleNamespace
+
+        candles = [SimpleNamespace(close=100.0), SimpleNamespace(close=101.5)]
+        assert float(mi.eod_spot_from_candles(candles)) == 101.5
+
+    def test_empty_or_zero_none(self):
+        from types import SimpleNamespace
+
+        assert mi.eod_spot_from_candles([]) is None
+        assert mi.eod_spot_from_candles([SimpleNamespace(close=0)]) is None
+
+
 class TestCrossSnapshot:
     def test_crypto_always_none(self):
         assert mi.build_cross_snapshot("BTCUSD", "CRYPTO", 1_700_000_000_000) is None

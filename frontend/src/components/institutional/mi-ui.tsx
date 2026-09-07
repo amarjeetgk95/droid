@@ -47,9 +47,11 @@ export function FeedHealthBadge({
   className?: string;
 }) {
   const degraded = feed === 'FEED_DEGRADED' || quality === 'FEED_DEGRADED';
-  const live = !degraded && (feed === 'HEALTHY' || feed === 'LIVE') && (quality === 'LIVE' || quality === 'RECENT' || !quality);
-  const label = degraded ? 'FEED DEGRADED' : quality === 'RECENT' ? 'RECENT' : feed === 'HEALTHY' ? 'HEALTHY' : (feed || quality || 'UNKNOWN');
-  const dot = degraded ? 'bg-destructive' : live ? (quality === 'LIVE' || !quality ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500') : 'bg-amber-400';
+  // Market closed is routine, not a fault — neutral gray, never the alarming amber.
+  const closed = !degraded && (quality === 'CLOSED' || feed === 'CLOSED');
+  const live = !degraded && !closed && (feed === 'HEALTHY' || feed === 'LIVE') && (quality === 'LIVE' || quality === 'RECENT' || !quality);
+  const label = degraded ? 'FEED DEGRADED' : closed ? 'CLOSED' : quality === 'RECENT' ? 'RECENT' : feed === 'HEALTHY' ? 'HEALTHY' : (feed || quality || 'UNKNOWN');
+  const dot = degraded ? 'bg-destructive' : closed ? 'bg-muted-foreground' : live ? (quality === 'LIVE' || !quality ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500') : 'bg-amber-400';
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span className={cn('w-2 h-2 rounded-full shrink-0', dot)} />

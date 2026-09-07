@@ -30,7 +30,7 @@ interface FullMiResponse {
   instrument_id: string;
   asset_class: string;
   pipeline: string;
-  header: { instrument: string; display_name: string; live_status: string; price: string | null; price_formatted: string; session: string; session_label: string; last_update_utc: number; last_update_iso: string; data_quality: string; feed_health: string; };
+  header: { instrument: string; display_name: string; live_status: string; price: string | null; price_formatted: string; session: string; session_label: string; last_update_utc: number; last_update_iso: string; data_quality: string; feed_health: string; spot_source?: string; used_cache?: boolean };
   market_state: { regime: string; price_action: any; momentum: string; participation: any; volatility: string; vwap: string; scores: { bullish_score: number; bearish_score: number; breakout_pressure: number; breakdown_pressure: number; false_breakout_risk: number } };
   price_action: { structure: string; trend: string; momentum: string; location: string; vwap: string; volume: string; breadth: string };
   evidence: { supporting: {dimension:string; signal:string; detail:string; state:string}[]; conflicting: {dimension:string; signal:string; detail:string; state:string}[]; missing: string[]; stale: string[]; invalid: string[] };
@@ -58,6 +58,8 @@ interface FullMiResponse {
     levels_source: string | null;
     breadth: string;
     cross_market: { status: string; detail: any };
+    breadth_detail?: { advancing: number | null; declining: number | null; unchanged: number | null; advance_decline_ratio: number | null; sentiment: string | null; sentiment_score: number | null; status: string; reason: string | null };
+    provenance?: { errors?: Record<string, string>; cache_hits?: string[]; vwap_source?: string | null; levels_source?: string | null; options_status?: string; meta_fresh?: boolean; spot_source?: string };
   };
 }
 
@@ -367,14 +369,21 @@ export default function MarketIntelligencePage() {
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                   <FeedHealthBadge feed={data.header.live_status} quality={data.header.data_quality} />
                   <span className="text-xs text-muted-foreground">Price: <span className="font-mono font-bold tabular-nums text-foreground">{data.header.price_formatted}</span></span>
+                  {data.header.spot_source === 'eod' && <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground" title="Reference price from the last session candle — not a live tick">EOD</span>}
                   <span className="text-xs text-muted-foreground hidden sm:inline">Session: <span className="font-medium text-foreground">{data.header.session_label}</span></span>
                 </div>
               </div>
               <div className="sm:text-right shrink-0">
                 <div className="text-[11px] text-muted-foreground">Last Update</div>
-                <div className="text-xs font-mono font-medium tabular-nums text-foreground" title={data.header.last_update_iso}>
-                  {formatClock(data.header.last_update_utc)} <span className="text-muted-foreground">({timeAgo(data.header.last_update_utc)})</span>
-                </div>
+                {data.header.price != null && data.header.spot_source !== 'eod' ? (
+                  <div className="text-xs font-mono font-medium tabular-nums text-foreground" title={data.header.last_update_iso}>
+                    {formatClock(data.header.last_update_utc)} <span className="text-muted-foreground">({timeAgo(data.header.last_update_utc)})</span>
+                  </div>
+                ) : data.header.price != null ? (
+                  <div className="text-xs text-muted-foreground">EOD reference — market closed</div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">No live ticks — {data.header.session_label === 'CLOSED' ? 'market closed' : 'feed idle'}</div>
+                )}
                 <div className="text-[10px] text-muted-foreground">{data.header.data_quality} • {data.header.feed_health} • {data.asset_class} {data.pipeline}</div>
               </div>
             </CardContent>
@@ -671,12 +680,17 @@ export default function MarketIntelligencePage() {
                 }
                 // cross-market
                 const cm: any = d.cross_market?.detail || {};
+                const bd = d.breadth_detail;
                 return (<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   <MetricTile label="Sync status" value={d.cross_market?.status || 'UNKNOWN'} />
                   <MetricTile label="Delta ms" value={cm.delta_ms != null ? String(cm.delta_ms) : '—'} sub="Threshold 500ms" />
-                  <MetricTile label="Breadth" value={d.breadth || '—'} />
+                  <MetricTile label="Breadth" value={d.breadth || '—'} sub={bd?.sentiment ? `Sentiment: ${bd.sentiment}` : undefined} />
+                  <MetricTile label="Advancing" value={bd?.advancing != null ? bd.advancing.toLocaleString('en-IN') : '—'} />
+                  <MetricTile label="Declining" value={bd?.declining != null ? bd.declining.toLocaleString('en-IN') : '—'} />
+                  <MetricTile label="Adv/Dec ratio" value={bd?.advance_decline_ratio != null ? bd.advance_decline_ratio.toFixed(2) : '—'} />
+                  {bd?.status !== 'AVAILABLE' && !data.instrument_specific.is_crypto ? <div className="col-span-full"><MiUnavailable reason={bd?.reason} /></div> : null}
                   {data.instrument_specific.is_crypto
-                    ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD trades 24/7 — no peer sync, no Indian EOD reset.</p>
+                    ? <p className="text-[11px] text-muted-foreground col-span-full">BTCUSD trades 24/7 — no peer sync, no Indian EOD reset. Breadth is NOT_APPLICABLE to crypto.</p>
                     : <p className="text-[11px] text-muted-foreground col-span-full">NIFTY↔BANKNIFTY peer sync Δt&lt;500ms. UNKNOWN means the peer snapshot has not arrived yet — not an error.</p>}
                 </div>);
               })()}
@@ -698,6 +712,22 @@ export default function MarketIntelligencePage() {
               {data.data_health.last_event_age_ms != null && (
                 <p className="text-[11px] text-muted-foreground mt-2 tabular-nums">Last event age: {(data.data_health.last_event_age_ms / 1000).toFixed(1)}s{data.data_health.spot_source ? ` • source: ${data.data_health.spot_source}` : ''}{data.data_health.used_cache ? ' • cached' : ''}</p>
               )}
+              {(() => {
+                const prov = data.details?.provenance;
+                const errs = prov?.errors || {};
+                const keys = Object.keys(errs);
+                if (!keys.length) return null;
+                const hits = prov?.cache_hits || [];
+                return (
+                  <div className="mt-2 text-[11px] space-y-1">
+                    <p className="font-semibold">Enrichment gaps this poll:</p>
+                    {keys.map(k => <p key={k} className="text-muted-foreground font-mono break-words">{k}: {errs[k]}</p>)}
+                    {hits.length > 0 && (
+                      <p className="text-muted-foreground">Served from short cache: {hits.join(', ')}</p>
+                    )}
+                  </div>
+                );
+              })()}
               {isDegraded && (
                 <div className="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg text-xs">
                   <p className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> FEED DEGRADED</p>

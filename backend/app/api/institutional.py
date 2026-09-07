@@ -511,6 +511,7 @@ async def dashboard_market_intelligence(instrument_id: str = "NIFTY"):
         volatility=mi.volatility,
         liquidity=mi.liquidity,
         funding=mi.funding,
+        breadth=mi.breadth,
         synchronized_snapshot=mi.synchronized_snapshot,
         data_health=mi.data_health,
         feed_health=mi.feed_health,
@@ -543,7 +544,7 @@ async def dashboard_market_intelligence(instrument_id: str = "NIFTY"):
         ctx, breakout_level=mi.breakout_level, current_price=mi.spot, atr=mi.atr,
         close_confirmed=close_conf, volume_expansion=vol_exp,
     )
-    feed = _mi.feed_block(mi.instrument_id, mi.last_update_ms, now_ms, mi.spot is not None, mi.used_cache)
+    feed = _mi.feed_block(mi.instrument_id, mi.last_update_ms, now_ms, mi.spot is not None, mi.used_cache, mi.spot_source)
     return {
         "instrument": mi.instrument_id,
         "regime": ctx.technical.get("regime"),
@@ -663,7 +664,7 @@ async def get_full_mi(instrument_id: str):
     last_update_ms = mi.last_update_ms
 
     sess = _mi.session_block(iid, now_ms)
-    feed = _mi.feed_block(iid, last_update_ms, now_ms, spot is not None, mi.used_cache)
+    feed = _mi.feed_block(iid, last_update_ms, now_ms, spot is not None, mi.used_cache, mi.spot_source)
     seq = _mi.sequence_block(iid)
     caps = _mi.capabilities_dict(iid)
 
@@ -679,6 +680,7 @@ async def get_full_mi(instrument_id: str):
         volatility=mi.volatility,
         liquidity=mi.liquidity,
         funding=mi.funding,
+        breadth=mi.breadth,
         synchronized_snapshot=mi.synchronized_snapshot,
         data_health=mi.data_health,
         feed_health=mi.feed_health,
@@ -760,6 +762,9 @@ async def get_full_mi(instrument_id: str):
         data_quality = "FEED_DEGRADED"
     elif spot is None:
         data_quality = "CLOSED" if mi.data_health == "CLOSED" else "STALE"
+    elif mi.data_health == "CLOSED":
+        # EOD reference / late tick after close: session truth, not staleness.
+        data_quality = "CLOSED"
     else:
         data_quality = _mi.health_band(feed.get("staleness_ms"))
     # Per-module detail blocks for the workspace tabs. Every block carries an
@@ -836,9 +841,30 @@ async def get_full_mi(instrument_id: str):
         "funding": mi.funding,
         "levels_source": mi.levels_source,
         "breadth": (ctx.participation or {}).get("breadth", "UNKNOWN"),
+        "breadth_detail": {
+            "advancing": (mi.breadth or {}).get("advancing"),
+            "declining": (mi.breadth or {}).get("declining"),
+            "unchanged": (mi.breadth or {}).get("unchanged"),
+            "advance_decline_ratio": (mi.breadth or {}).get("advance_decline_ratio"),
+            "sentiment": (mi.breadth or {}).get("sentiment"),
+            "sentiment_score": (mi.breadth or {}).get("sentiment_score"),
+            "status": "AVAILABLE" if mi.breadth is not None else "UNAVAILABLE",
+            "reason": None if mi.breadth is not None else (_prov.get("errors", {}).get("breadth") or "breadth feed gave no reading this poll"),
+        },
         "cross_market": {
             "status": ctx.synchronization_status,
             "detail": ctx.cross_market,
+        },
+        # Upstream diagnostics: which enrichment sources failed and why, plus
+        # cache/source labels. Lets the UI explain empty modules honestly.
+        "provenance": {
+            "errors": _prov.get("errors", {}),
+            "cache_hits": _prov.get("cache_hits", []),
+            "vwap_source": _prov.get("vwap_source"),
+            "levels_source": _prov.get("levels_source"),
+            "options_status": _prov.get("options_status"),
+            "meta_fresh": _prov.get("meta_fresh"),
+            "spot_source": _prov.get("spot_source"),
         },
     }
 

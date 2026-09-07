@@ -139,10 +139,13 @@ export function MarketIntelligencePanel({ instrument = 'NIFTY', refreshKey }: Mi
               {Number(data.spot_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
             </span>
           )}
-          {data.last_update_ms != null && (
+          {data.spot_price != null && data.last_update_ms != null ? (
             <span className="text-muted-foreground" title={new Date(data.last_update_ms).toLocaleString()}>{timeAgo(data.last_update_ms)}</span>
+          ) : (
+            <span className="text-muted-foreground">no live ticks</span>
           )}
           {data.used_cache && <span className="text-amber-600 font-medium">cached</span>}
+          {data.spot_source === 'eod' && <span className="font-mono font-bold text-secondary-foreground bg-secondary rounded px-1" title="Reference price from the last session candle">EOD</span>}
           {error && <span className="text-destructive truncate" title={error}>refresh failed — showing last good</span>}
         </div>
 

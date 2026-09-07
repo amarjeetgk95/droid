@@ -89,6 +89,7 @@ class SignalCenterService:
             volatility=mi.volatility,
             liquidity=mi.liquidity,
             funding=mi.funding,
+            breadth=mi.breadth,
             data_health=mi.data_health,
             feed_health=mi.feed_health,
             market_session=session_state,
