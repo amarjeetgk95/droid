@@ -262,17 +262,30 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       const entryPrice = t.trigger_price || t.spot_price_at_creation || t.actual_fill_price || livePrice;
       const isBullish = (t.direction.includes('CALL') || t.direction === 'BULLISH') && !t.direction.includes('PUT') && !t.direction.includes('BEARISH');
       const ptsDiff = isBullish ? livePrice - entryPrice : entryPrice - livePrice;
-      const livePnlInr = (t.unrealized_pnl_inr !== undefined && t.unrealized_pnl_inr !== null)
+      // Backend MTM is authoritative. The local fallback below is spot-domain
+      // only: for option trades (premium domain) a spot-diff × qty fabricates
+      // phantom MTM, so hold at the last backend value instead of inventing one.
+      const backendMtm = (t.unrealized_pnl_inr !== undefined && t.unrealized_pnl_inr !== null)
         ? t.unrealized_pnl_inr
-        : Math.round(ptsDiff * t.quantity * 100) / 100;
+        : null;
+      const isOptionTrade = Boolean(t.option_symbol || t.option_type || t.option_strike);
+      const livePnlInr = backendMtm !== null
+        ? backendMtm
+        : isOptionTrade
+          ? 0
+          : Math.round(ptsDiff * t.quantity * 100) / 100;
       const margin = t.margin_used || (entryPrice * t.quantity * 0.15);
       const livePct = margin > 0 ? Math.round((livePnlInr / margin * 100) * 100) / 100 : 0;
+
+      const backendPts = (t.unrealized_pnl_points !== undefined && t.unrealized_pnl_points !== null)
+        ? t.unrealized_pnl_points
+        : null;
 
       return {
         ...t,
         displayPrice: livePrice,
         displayPnlInr: livePnlInr,
-        displayPoints: Math.round(ptsDiff * 100) / 100,
+        displayPoints: backendPts !== null ? backendPts : (isOptionTrade ? 0 : Math.round(ptsDiff * 100) / 100),
         displayPct: livePct,
         isProfit: livePnlInr >= 0,
         liveLtp: livePrice,

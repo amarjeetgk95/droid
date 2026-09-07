@@ -11,6 +11,8 @@ from app.services.market_service import MarketService
 
 logger = structlog.get_logger()
 
+APPROVED_INDEXES = {"NIFTY", "BANKNIFTY", "SENSEX"}
+
 
 class LiveOptionsContext(BaseModel):
     underlying: str
@@ -51,7 +53,9 @@ class OptionsIntelligenceService:
     async def get_live_options_context(self, underlying: str = "BANKNIFTY") -> LiveOptionsContext:
         """Fetch live option chain and derive volatility & tradeability metrics."""
         clean_symbol = underlying.upper().replace(" ", "")
-        target_symbol = "BANKNIFTY" if "BANK" in clean_symbol else "NIFTY"
+        if clean_symbol not in APPROVED_INDEXES:
+            raise ValueError(f"Unsupported underlying for options context: {underlying}")
+        target_symbol = clean_symbol
 
         try:
             chain_res = await self._options_svc.get_option_chain_matrix(symbol=target_symbol)
@@ -126,17 +130,16 @@ class OptionsIntelligenceService:
                 diagnostics={"strikes_count": len(chain_res.strikes), "atm_oi": total_atm_oi},
             )
 
-        except Exception as e:
+        except (TimeoutError, ConnectionError, OSError) as e:
             logger.warning("live_options_context_error", symbol=underlying, error=str(e))
-            # Safe degraded fallback (§33)
             return LiveOptionsContext(
                 underlying=target_symbol,
-                spot_price=52000.0 if "BANK" in target_symbol else 24500.0,
-                futures_price=52150.0 if "BANK" in target_symbol else 24580.0,
+                spot_price=52000.0 if target_symbol == "BANKNIFTY" else 24500.0,
+                futures_price=52150.0 if target_symbol == "BANKNIFTY" else 24580.0,
                 basis_points=150.0,
                 expiry=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 days_to_expiry=4.0,
-                atm_strike=52000.0 if "BANK" in target_symbol else 24500.0,
+                atm_strike=52000.0 if target_symbol == "BANKNIFTY" else 24500.0,
                 atm_iv=14.5,
                 atm_straddle_price=420.0,
                 pcr_oi=1.05,
@@ -149,8 +152,8 @@ class OptionsIntelligenceService:
                 spread_acceptable=True,
                 liquidity_acceptable=True,
                 iv_crush_risk_level="MODERATE",
-                market_data_valid=True,
-                diagnostics={"mode": "FALLBACK_CALIBRATED"},
+                market_data_valid=False,
+                diagnostics={"mode": "FALLBACK_CALIBRATED", "error": str(e)},
             )
 
 

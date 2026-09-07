@@ -105,6 +105,12 @@ class AutomatedSignalWorker:
                         self._last_market_open = False
                         sweep_res = signal_fsm.sweep_expired()
                         logger.info("market_closed_idempotent_sweep_executed", reason=perm.reason, sweep=sweep_res)
+                        # EOD square-off: the FSM sweep alone never books P&L —
+                        # without this, open paper positions and EXECUTED audit
+                        # rows survive overnight with frozen MTM (ghost opens).
+                        eod_task = asyncio.create_task(self._settle_eod_positions())
+                        self._bg_tasks.add(eod_task)
+                        eod_task.add_done_callback(self._bg_tasks.discard)
 
                     now_wall = time.time()
                     if now_wall - self._last_risk_closed_log_ts >= 60.0:
@@ -191,6 +197,43 @@ class AutomatedSignalWorker:
                 await asyncio.sleep(sleep_sec)
             except asyncio.CancelledError:
                 break
+
+    async def _settle_eod_positions(self) -> None:
+        """EOD session square-off: close open paper positions and settle the audit
+        ledger so no ghost EXECUTED rows (frozen MTM, no exit) survive overnight.
+        Idempotent — signals without paper orders or already settled are skipped."""
+        try:
+            from app.signals.paper_engine import signal_paper_engine
+            settled = 0
+            for sig in signal_fsm.list_active(include_terminal=True):
+                # RUNNER_TIME_STOP_HIT / TIME_STOP_HIT must be included: the
+                # sweep executed moments earlier on this same market-close edge
+                # converts TARGET_1_HIT/CONFIRMED into those terminal states
+                # without squaring off the paper position — skipping them here
+                # would leave exactly the ghost opens this task exists to clear.
+                if sig.fsm_state not in ("CONFIRMED", "TARGET_1_HIT", "RUNNER_TIME_STOP_HIT", "TIME_STOP_HIT"):
+                    continue
+                if not getattr(sig, "paper_order", None):
+                    continue
+                try:
+                    await signal_paper_engine.close_signal_position(
+                        sig.signal_id,
+                        exit_price=None,
+                        reason="EOD_SQUAREOFF",
+                        allow_closed_market=True,
+                    )
+                    settled += 1
+                except Exception as ce:
+                    logger.debug("eod_square_off_failed", signal_id=sig.signal_id, error=str(ce)[:150])
+                    continue
+                try:
+                    signal_fsm.transition(sig.signal_id, "CLOSED", market_price=None, reason="EOD_SESSION_SQUARE_OFF")
+                except Exception:
+                    pass
+            if settled:
+                logger.info("eod_positions_settled", count=settled)
+        except Exception as e:
+            logger.warning("eod_settle_error", error=str(e)[:200])
 
     async def _run_scanner_loop(self) -> None:
         """

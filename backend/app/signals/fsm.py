@@ -108,6 +108,48 @@ def compute_option_friction_r(
     return round(friction_r, 4), breakdown
 
 
+def _spot_be_reference(sig: SignalInstance) -> Optional[Decimal]:
+    """
+    Spot-domain breakeven reference for stop-loss ratchets.
+
+    current_stop_loss is evaluated against underlying spot ticks, so the
+    ratchet target MUST be a spot price (entry/trigger zone) — never an
+    option premium fill. actual_fill_price/entry_price live in the execution
+    premium domain for option signals (e.g. ₹118 premium vs ₹23807 spot);
+    assigning one as a spot stop fires an instant phantom STOP_LOSS_HIT on
+    the next tick. True spot fills (same scale as the trigger) are still
+    preferred as the most accurate cost.
+    """
+    try:
+        trig = Decimal(str(sig.trigger or "0"))
+    except Exception:
+        trig = Decimal("0")
+    # Prefer true fills only when they share the trigger's scale (spot fills
+    # for spot-tracked signals). A premium fill is orders of magnitude below
+    # an index trigger — reject it and fall through to the spot entry zone.
+    for cand in (sig.actual_fill_price, sig.entry_price):
+        if cand is None:
+            continue
+        try:
+            v = Decimal(str(cand))
+        except Exception:
+            continue
+        if v <= 0:
+            continue
+        if trig > 0 and v > trig * Decimal("0.5") and v < trig * Decimal("1.5"):
+            return v
+    for cand in (sig.entry_min, sig.entry_max, sig.trigger, sig.spot_price):
+        if cand is None:
+            continue
+        try:
+            v = Decimal(str(cand))
+        except Exception:
+            continue
+        if v > 0:
+            return v
+    return None
+
+
 class SignalInstance(BaseModel):
     signal_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     underlying: str
@@ -218,6 +260,46 @@ class SignalInstance(BaseModel):
         if self.fsm_state == "CONFIRMED" and self.time_stop_at_utc:
             return max(0, int((self.time_stop_at_utc - now_ms) / 1000))
         return max(0, int((self.expires_at_utc - now_ms) / 1000))
+
+
+def _exit_premium_for_friction(sig: SignalInstance, market_price: Optional[Decimal]) -> float:
+    """
+    Exit premium in the option domain for friction math.
+
+    Transitions receive underlying SPOT ticks, but entry fills are option
+    PREMIUMS. Feeding a spot exit (e.g. 23773) against a premium entry (118)
+    fabricates ~8R of friction (STT/slippage on a ₹17L phantom turnover) and
+    turns every win's realized_rr_net deeply negative — poisoning win-rate,
+    expectancy and profit-factor metrics. Estimate the exit premium via
+    Black76 when the signal owns an option contract; otherwise fall back to
+    the raw tick (spot-tracked flow, unchanged behavior).
+    """
+    try:
+        opt = sig.option_contract or {}
+        strike = opt.get("strike")
+        if strike and ("CALL" in str(sig.direction) or "PUT" in str(sig.direction)):
+            from app.signals.fill_reconciler import option_fill_reconciler
+            otype = str(opt.get("option_type") or ("CE" if "CALL" in str(sig.direction) else "PE"))
+            try:
+                dte = float(opt.get("dte", 3.0) or 3.0)
+            except Exception:
+                dte = 3.0
+            try:
+                spot = float(market_price if market_price is not None else (sig.trigger or 0.0))
+            except Exception:
+                spot = 0.0
+            if spot > 0 and float(strike) > 0:
+                return float(
+                    option_fill_reconciler.estimate_option_premium(
+                        spot=spot, strike=float(strike), option_type=otype, dte_days=dte
+                    )
+                )
+    except Exception:
+        pass
+    try:
+        return float(market_price or 0.0)
+    except Exception:
+        return 0.0
 
 
 class SignalFSMManager:
@@ -474,7 +556,7 @@ class SignalFSMManager:
                 sig.realized_rr = gross_r
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = float(market_price or sig.target_1 or 150.0)
+                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
                 risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
@@ -484,10 +566,12 @@ class SignalFSMManager:
                 runner_ttl_sec = sig.runner_ttl_seconds or 300
                 sig.runner_time_stop_at_utc = sig.last_updated_utc + (runner_ttl_sec * 1000)
 
-                # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19)
+                # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19).
+                # Spot-domain only: actual_fill_price is an option premium
+                # (execution domain) and must never become a spot stop.
                 if not sig.breakeven_activated:
                     sig.breakeven_activated = True
-                    cost_ref = sig.actual_fill_price or sig.entry_min or sig.trigger
+                    cost_ref = _spot_be_reference(sig) or sig.stop_loss
                     if sig.direction == "LONG_CALL":
                         sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
                     else:
@@ -502,7 +586,7 @@ class SignalFSMManager:
                 sig.realized_rr = gross_r
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = float(market_price or sig.target_2 or 200.0)
+                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_2 or 200.0)
                 risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
@@ -519,7 +603,7 @@ class SignalFSMManager:
                 sig.realized_rr = gross_r
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = float(market_price or sig.stop_loss or 80.0)
+                exit_p = _exit_premium_for_friction(sig, market_price or sig.stop_loss or 80.0)
                 risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
@@ -532,7 +616,7 @@ class SignalFSMManager:
                 sig.realized_rr = gross_r
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = float(market_price or entry_p)
+                exit_p = _exit_premium_for_friction(sig, market_price) if market_price is not None else float(entry_p)
                 risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
@@ -545,7 +629,7 @@ class SignalFSMManager:
                 sig.realized_rr = gross_r
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = float(market_price or sig.target_1 or 150.0)
+                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
                 risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
@@ -595,14 +679,21 @@ class SignalFSMManager:
             return True, None
 
     def ratchet_breakeven(self, signal_id: str, market_price: Decimal) -> bool:
-        """Activate +0.8R Breakeven Ratchet (§19). Moves stop loss to cost/entry."""
+        """Activate +0.8R Breakeven Ratchet (§19). Moves stop loss to cost/entry.
+
+        Spot-domain only: the stop is evaluated against underlying spot ticks,
+        so the ratchet target is the spot entry zone (never the option premium
+        fill — e.g. ₹118 premium vs ₹23807 spot would stop out instantly).
+        """
         sig = self._signals.get(signal_id)
         if not sig or sig.breakeven_activated:
             return False
         if sig.fsm_state not in ("CONFIRMED", "TARGET_1_HIT"):
             return False
 
-        cost_ref = sig.actual_fill_price or sig.entry_price or sig.trigger or sig.entry_min or sig.spot_price
+        cost_ref = _spot_be_reference(sig)
+        if cost_ref is None:
+            return False
         if sig.direction == "LONG_CALL":
             new_sl = cost_ref
             # Ensure stop loss does not move beyond current market price

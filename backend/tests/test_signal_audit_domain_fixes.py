@@ -251,3 +251,59 @@ def test_worker_retains_bg_tasks():
     from app.signals.worker import AutomatedSignalWorker
     worker = AutomatedSignalWorker()
     assert isinstance(worker._bg_tasks, set)
+
+
+NIFTY_PUT_23800 = {"broker_symbol": "NSE:NIFTY26SEP1023800PE", "option_type": "PE",
+                   "strike": 23800.0, "lot_size": 75}
+
+
+def test_friction_uses_exit_premium_not_spot_tick():
+    """FSM R must be premium-vs-premium for option signals.
+
+    Regression for the ledger's poisoned performance metrics: feeding a spot
+    exit tick (e.g. 23773) against a premium entry (118.75) fabricated ~8R of
+    friction and turned every win's realized_rr_net deeply negative.
+    """
+    from app.signals.fsm import SignalFSMManager, SignalInstance
+    fsm = SignalFSMManager()
+    sig = SignalInstance(
+        underlying="NIFTY", strategy="TREND_PULLBACK", direction="LONG_PUT",
+        timeframe="5M", spot_price=Decimal("23807.10"),
+        entry_min=Decimal("23807.10"), entry_max=Decimal("23807.10"),
+        trigger=Decimal("23807.10"), stop_loss=Decimal("23825.10"),
+        target_1=Decimal("23773.50"), target_2=Decimal("23753.34"),
+        risk_points=Decimal("18"), risk_reward_t1=1.5, risk_reward_t2=2.5,
+        confidence=69.0, fsm_state="CONFIRMED",
+        actual_fill_price=Decimal("118.75"), entry_price=Decimal("118.75"),
+        lots=1, option_contract=dict(NIFTY_PUT_23800),
+    )
+    fsm.register(sig)
+    fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("23773.50"),
+                   reason="TARGET_1_ACHIEVED")
+    assert sig.realized_rr_gross == 1.5
+    assert sig.realized_rr_net is not None
+    assert 0.0 < sig.realized_rr_net < sig.realized_rr_gross
+
+
+def test_breakeven_ratchet_stays_in_spot_domain():
+    """BE ratchet must move the spot stop to the spot entry zone, never to the
+    option premium fill (₹118 premium as a ₹23807-scale stop = instant phantom
+    STOP_LOSS_HIT on the next tick)."""
+    from app.signals.fsm import SignalFSMManager, SignalInstance, evaluate_tick
+    fsm = SignalFSMManager()
+    sig = SignalInstance(
+        underlying="NIFTY", strategy="TREND_PULLBACK", direction="LONG_PUT",
+        timeframe="5M", spot_price=Decimal("23807.10"),
+        entry_min=Decimal("23807.10"), entry_max=Decimal("23807.10"),
+        trigger=Decimal("23807.10"), stop_loss=Decimal("23825.10"),
+        target_1=Decimal("23773.50"), target_2=Decimal("23753.34"),
+        risk_points=Decimal("18"), risk_reward_t1=1.5, risk_reward_t2=2.5,
+        confidence=69.0, fsm_state="CONFIRMED",
+        actual_fill_price=Decimal("118.75"), entry_price=Decimal("118.75"),
+        option_contract=dict(NIFTY_PUT_23800),
+    )
+    fsm.register(sig)
+    assert fsm.ratchet_breakeven(sig.signal_id, Decimal("23790")) is True
+    assert float(sig.current_stop_loss) > 5000.0
+    action, _ = evaluate_tick(sig, Decimal("23800"), None)
+    assert action != "STOP_LOSS_HIT"

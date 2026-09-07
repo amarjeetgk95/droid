@@ -195,6 +195,21 @@ class SignalPaperEngine:
 
         # Update FSM with order details
         sig.paper_order = paper_order.model_dump()
+        sig.actual_fill_price = Decimal(str(fill_price))
+        sig.entry_price = Decimal(str(fill_price))
+        sig.intended_qty = Decimal(str(final_qty))
+        sig.remaining_qty = Decimal(str(final_qty))
+        sig.lots = final_lots
+        sig.quantity = final_qty
+
+        # Register in Option Fill Reconciler
+        try:
+            from app.signals.fill_reconciler import option_fill_reconciler
+            lot_sz = 75 if u == "NIFTY" else (30 if u == "BANKNIFTY" else 10)
+            option_fill_reconciler.reconcile_entry(sig, fill_price, final_qty, lot_sz)
+        except Exception as re_err:
+            logger.warning("reconcile_entry_init_failed", signal_id=signal_id, error=str(re_err))
+
         if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
             signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(fill_price)), reason="PAPER_TRADE_EXECUTED")
 

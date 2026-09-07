@@ -109,15 +109,15 @@ class CentralRiskEngine:
             "version": 1,
             "envelopes": {
                 "NIFTY": {
-                    "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 180, "active_time_stop_seconds": 900},
+                    "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 18.0, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
                 },
                 "BANKNIFTY": {
-                    "1m_scalp": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 120.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 180, "active_time_stop_seconds": 900},
+                    "1m_scalp": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 120.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 50.0, "max_risk_pts": 95.0, "t1_ceiling_pts": 140.0, "t2_ceiling_pts": 220.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
                 },
                 "SENSEX": {
-                    "1m_scalp": {"min_risk_pts": 35.0, "max_risk_pts": 70.0, "t1_ceiling_pts": 100.0, "t2_ceiling_pts": 160.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 180, "active_time_stop_seconds": 900},
+                    "1m_scalp": {"min_risk_pts": 35.0, "max_risk_pts": 70.0, "t1_ceiling_pts": 100.0, "t2_ceiling_pts": 160.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
                 }
             },

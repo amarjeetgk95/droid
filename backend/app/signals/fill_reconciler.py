@@ -108,6 +108,15 @@ class OptionFillReconciler:
         """
         Registers actual entry fill, sets initial position and pre-computes 50% staged exit qty.
         """
+        # Guard: Option fill price can NEVER be an index spot price (>5000 pts)
+        is_opt = bool(sig.option_contract or "CALL" in sig.direction or "PUT" in sig.direction)
+        if is_opt and fill_price > 5000.0:
+            logger.error("corrupted_option_fill_price_detected", signal_id=sig.signal_id, bad_price=fill_price)
+            strike = float((sig.option_contract or {}).get("strike", 0.0)) or float(sig.spot_price or sig.trigger)
+            opt_type = (sig.option_contract or {}).get("option_type", "CE" if "CALL" in sig.direction else "PE")
+            fill_price = self.estimate_option_premium(float(sig.spot_price or sig.trigger), strike, opt_type)
+            logger.info("reconcile_entry_clamped_to_estimate", signal_id=sig.signal_id, estimated_price=fill_price)
+
         now_ms = int(time.time() * 1000)
         d_fill = Decimal(str(fill_price))
 
@@ -250,6 +259,49 @@ class OptionFillReconciler:
 
         close_qty = rec.remaining_qty
         if close_qty > 0:
+            # Domain repair: option premiums live below ~5000. A spot-scale
+            # entry (e.g. trigger 23807 stored as fill) paired with a premium
+            # exit (132.98) fabricates a -₹17L P&L. Repair via Black76
+            # estimate; if unrepairable, close the position without poisoning
+            # P&L with cross-domain garbage.
+            _is_opt = bool(
+                (sig.option_contract or {})
+                or ("CALL" in str(sig.direction) or "PUT" in str(sig.direction))
+                or rec.option_type
+                or rec.strike
+            )
+            if _is_opt and rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0:
+                _repaired: Optional[float] = None
+                try:
+                    _opt = sig.option_contract or {}
+                    _strike = float(_opt.get("strike") or rec.strike or 0.0)
+                    _otype = str(_opt.get("option_type") or rec.option_type or ("CE" if "CALL" in str(sig.direction) else "PE"))
+                    _spot = float(sig.spot_price or sig.trigger or 0.0)
+                    if _strike > 0 and _spot > 0:
+                        _repaired = self.estimate_option_premium(spot=_spot, strike=_strike, option_type=_otype)
+                except Exception:
+                    _repaired = None
+                if _repaired and _repaired < 5000.0:
+                    logger.warning(
+                        "fill_entry_spot_scale_repaired",
+                        signal_id=sig.signal_id,
+                        bad_entry=rec.entry_fill_price,
+                        repaired=_repaired,
+                    )
+                    rec.entry_fill_price = _repaired
+                else:
+                    logger.error(
+                        "fill_entry_spot_scale_unrepairable_hold_pnl",
+                        signal_id=sig.signal_id,
+                        entry=rec.entry_fill_price,
+                        exit_price=exit_fill_price,
+                    )
+                    rec.remaining_qty = 0
+                    sig.remaining_qty = Decimal("0")
+                    rec.is_fully_closed = True
+                    rec.exit_reason = exit_reason
+                    rec.updated_at_utc = now_ms
+                    return rec
             buy_turnover = round(rec.entry_fill_price * close_qty, 2)
             sell_turnover = round(exit_fill_price * close_qty, 2)
             costs: CostBreakdown = calculate_option_costs(
@@ -284,11 +336,12 @@ class OptionFillReconciler:
         rec.exit_reason = exit_reason
         rec.updated_at_utc = now_ms
 
-        # Compute blended realized R:R
+        # Compute blended realized R:R (premium-domain only; a spot-scale
+        # entry here means the repair above was bypassed — skip R, keep P&L).
         # R = initial risk in INR = (entry_fill_price - stop_loss) * intended_qty
         option_risk_pts = max(1.0, rec.entry_fill_price * 0.30)  # default 30% option stop if not explicit
         risk_inr = option_risk_pts * rec.intended_qty
-        if risk_inr > 0:
+        if risk_inr > 0 and not (rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0):
             rec.realized_rr = round(rec.net_realized_pnl_inr / risk_inr, 2)
 
         logger.info(

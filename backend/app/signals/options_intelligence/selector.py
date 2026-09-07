@@ -57,6 +57,8 @@ class StrikeSelectionResult(BaseModel):
     selection_score: float
     path_simulation: PathSimulationReport
     expected_move_projection: Optional[object] = None
+    is_viable: bool = Field(..., description="True only if the selected candidate passed all guards")
+    non_viability_reasons: list[str] = Field(default_factory=list)
 
 
 class QuantitativeContractSelector:
@@ -253,6 +255,8 @@ class QuantitativeContractSelector:
             selection_score=best_candidate.score,
             path_simulation=best_candidate.simulation_report,
             expected_move_projection=expected_move_projection,
+            is_viable=bool(acceptable_candidates),
+            non_viability_reasons=[] if acceptable_candidates else best_candidate.rejection_reasons,
         )
 
 

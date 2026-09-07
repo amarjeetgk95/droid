@@ -95,8 +95,19 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
 
   const prevDisplayedRef = useRef<Map<string, IndexCard>>(new Map());
   const displayedCards = useMemo(() => {
+    // Crypto trades 24/7 — NSE closed must never force BTC/ETH to CLOSED.
+    const isCryptoCard = (c: IndexCard) => {
+      const sym = (c.symbol || '').toUpperCase();
+      const prov = (c.provider || '').toLowerCase();
+      return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
+    };
     const applyClosedStatus = (list: IndexCard[]) =>
-      isMarketClosed ? list.map((c) => (c.status === 'CLOSED' ? c : { ...c, status: 'CLOSED' as DataStatus })) : list;
+      isMarketClosed
+        ? list.map((c) => {
+            if (isCryptoCard(c)) return c.status === 'LIVE' ? c : { ...c, status: 'LIVE' as DataStatus };
+            return c.status === 'CLOSED' ? c : { ...c, status: 'CLOSED' as DataStatus };
+          })
+        : list;
 
     if (!batchedTicks || Object.keys(batchedTicks).length === 0) {
       prevDisplayedRef.current.clear();
@@ -112,7 +123,8 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
     }
     const next: IndexCard[] = [];
     for (const card of baseCards) {
-      const targetStatus: DataStatus = (card.status === 'CLOSED' || isMarketClosed) ? 'CLOSED' : 'LIVE';
+      const crypto = isCryptoCard(card);
+      const targetStatus: DataStatus = crypto ? 'LIVE' : (card.status === 'CLOSED' || isMarketClosed) ? 'CLOSED' : 'LIVE';
       const tick: TimestampedTick | undefined = batchedTicks[card.symbol];
       if (!tick) {
         const currentCard = card.status !== targetStatus ? { ...card, status: targetStatus } : card;

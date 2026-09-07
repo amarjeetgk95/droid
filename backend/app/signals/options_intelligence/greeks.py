@@ -68,8 +68,12 @@ class BlackScholesGreeks:
         risk_free_rate: float = DEFAULT_R,
         dividend_yield: float = DEFAULT_Q,
     ) -> tuple[float, float]:
-        if spot <= 0 or strike <= 0 or time_to_expiry_years <= 0 or volatility <= 0:
-            return 0.0, 0.0
+        if spot <= 0 or strike <= 0:
+            raise ValueError(f"Invalid option inputs: spot={spot}, strike={strike} must be positive")
+        if volatility <= 0:
+            raise ValueError(f"Invalid volatility: {volatility} must be positive")
+        if time_to_expiry_years <= 0:
+            return float("-inf"), float("-inf")
         
         sigma_sqrt_t = volatility * math.sqrt(time_to_expiry_years)
         d1 = (
@@ -123,6 +127,8 @@ class BlackScholesGreeks:
         dividend_yield: float = DEFAULT_Q,
     ) -> GreeksResult:
         """Calculates complete suite of first and second-order Greeks."""
+        if spot <= 0 or strike <= 0 or volatility <= 0:
+            raise ValueError("spot, strike and volatility must be strictly positive")
         t = max(1e-6, time_to_expiry_years)
         vol = max(0.0001, volatility)
         
@@ -211,16 +217,15 @@ class BlackScholesGreeks:
         initial_guess: float = 0.18,
         max_iterations: int = 100,
         tolerance: float = 1e-4,
-    ) -> float:
+    ) -> Optional[float]:
         """
         Solves for Implied Volatility (IV) from option market price.
         Uses Newton-Raphson with robust Brent/Bisection fallback.
-        Returns annualized IV as a decimal (e.g. 0.15 = 15.0%).
+        Returns annualized IV as a decimal (e.g. 0.15 = 15.0%), or None if unresolved.
         """
         if market_price <= 0 or spot <= 0 or strike <= 0 or time_to_expiry_years <= 1e-6:
-            return 0.0
+            return None
 
-        # Lower bound: Intrinsic value discounted
         t = max(1e-6, time_to_expiry_years)
         df_q = math.exp(-dividend_yield * t)
         df_r = math.exp(-risk_free_rate * t)
@@ -231,7 +236,11 @@ class BlackScholesGreeks:
             intrinsic = max(0.0, strike * df_r - spot * df_q)
 
         if market_price <= intrinsic:
-            return 0.001  # At lower boundary / near intrinsic
+            return None
+
+        upper_theo = cls.calculate_price(spot, strike, t, 4.0, option_type, risk_free_rate, dividend_yield)
+        if market_price > upper_theo * 1.05:
+            return None
 
         sigma = max(0.02, min(initial_guess, 2.0))
 
@@ -270,4 +279,7 @@ class BlackScholesGreeks:
             else:
                 low = mid
 
+        final_theo = cls.calculate_price(spot, strike, t, 0.5 * (low + high), option_type, risk_free_rate, dividend_yield)
+        if abs(final_theo - market_price) > tolerance * 10:
+            return None
         return round(0.5 * (low + high), 4)

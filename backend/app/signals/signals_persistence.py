@@ -620,6 +620,25 @@ async def restore_signals_from_db() -> int:
                             sl_val = Decimal(str(row.get("stop_loss") or 0.0))
                             cur_sl_val = Decimal(str(row.get("current_stop_loss") or sl_val))
 
+                            fill_val = row.get("actual_fill_price")
+                            # If fill price is suspiciously index spot (>5000) for an option, try to estimate realistic premium
+                            is_opt = bool(row.get("option_symbol") or row.get("option_type") or row.get("option_strike"))
+                            if fill_val is not None and is_opt and float(fill_val) > 5000.0:
+                                try:
+                                    from app.signals.fill_reconciler import option_fill_reconciler
+                                    fill_val = option_fill_reconciler.estimate_option_premium(
+                                        spot=float(row.get("trigger_price") or row.get("spot_price_at_creation") or fill_val),
+                                        strike=float(row.get("option_strike") or fill_val),
+                                        option_type=str(row.get("option_type") or "PE"),
+                                    )
+                                except Exception:
+                                    fill_val = None
+
+                            f_val_dec = Decimal(str(fill_val)) if fill_val is not None else None
+                            trade_qty = int(row.get("quantity") or (row.get("lots", 1) * row.get("lot_size", 75)))
+                            is_closed = st in ("WON", "LOST", "CLOSED", "TIME_STOP_HIT", "STOP_LOSS_HIT", "TARGET_2_HIT")
+                            rem_qty = Decimal(str(row.get("remaining_qty") if row.get("remaining_qty") is not None else (0 if is_closed else trade_qty)))
+
                             fsm_inst = SignalInstance(
                                 signal_id=sid,
                                 underlying=row["underlying"],
@@ -650,8 +669,50 @@ async def restore_signals_from_db() -> int:
                                 t1_hit=bool(row.get("t1_hit") or False),
                                 fsm_state=resolved_fsm_state,
                                 created_at_utc=row["created_at_utc"],
+                                entry_price=f_val_dec,
+                                actual_fill_price=f_val_dec,
+                                intended_qty=Decimal(str(trade_qty)),
+                                remaining_qty=rem_qty,
+                                lots=row.get("lots"),
+                                quantity=trade_qty,
                             )
                             signal_fsm._signals[sid] = fsm_inst
+
+                            # Synthesize the paper execution receipt so restored
+                            # positions remain settleable: close_signal_position()
+                            # and the worker EOD square-off both refuse signals
+                            # without paper_order, which would leave restored
+                            # EXECUTED rows as permanent ghost opens. status is
+                            # kept "FILLED" (matches execute_signal receipt shape);
+                            # audit-ledger sync won't double-fire because the
+                            # restored audit record already exists for this sid.
+                            if fill_val is not None and fsm_inst.paper_order is None:
+                                try:
+                                    fsm_inst.paper_order = {
+                                        "symbol": row.get("option_symbol") or f"{row.get('underlying', 'NIFTY')}_OPT",
+                                        "quantity": trade_qty,
+                                        "lots": int(row.get("lots") or max(1, trade_qty // int(row.get("lot_size", 75) or 75))),
+                                        "order_id": row.get("paper_order_id") or f"RESTORED-{sid}",
+                                        "status": "FILLED",
+                                        "side": "BUY",
+                                        "fill_price": float(fill_val),
+                                    }
+                                except Exception:
+                                    pass
+
+                            # Reconcile record restoration
+                            if fill_val is not None:
+                                try:
+                                    from app.signals.fill_reconciler import option_fill_reconciler
+                                    lot_sz = row.get("lot_size", 75)
+                                    rec = option_fill_reconciler.reconcile_entry(fsm_inst, float(fill_val), trade_qty, lot_sz)
+                                    if is_closed and rec:
+                                        rec.remaining_qty = 0
+                                        rec.is_fully_closed = True
+                                        if row.get("actual_pnl_inr") is not None:
+                                            rec.net_realized_pnl_inr = float(row["actual_pnl_inr"])
+                                except Exception:
+                                    pass
 
                         db_restored_count += 1
                     except Exception as row_err:

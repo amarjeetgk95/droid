@@ -122,6 +122,22 @@ class SignalOutcomeTracker:
 
             # ── 2. ORDERED EVALUATION FOR CONFIRMED & TARGET_1_HIT (RUNNER) ──
             elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                # Fully-booked runner: staged accounting booked the entire
+                # position at T1 (intended>0, remaining 0 — single-lot fills).
+                # Nothing is left to stop out — settle quietly instead of
+                # firing a phantom STOP that would overwrite the settled T1
+                # reason/P&L downstream. Runners with untracked quantities
+                # (intended 0, e.g. sync-only flows) keep legacy evaluation.
+                if st == "TARGET_1_HIT" and sig.t1_hit:
+                    try:
+                        _intended = Decimal(str(sig.intended_qty)) if sig.intended_qty is not None else Decimal("0")
+                        _rem = Decimal(str(sig.remaining_qty)) if sig.remaining_qty is not None else Decimal("0")
+                    except Exception:
+                        _intended, _rem = Decimal("0"), Decimal("1")
+                    if _intended > 0 and _rem <= 0:
+                        signal_fsm.transition(sig.signal_id, "CLOSED", market_price=d_price, reason="T1_FULLY_BOOKED_NO_RUNNER")
+                        events.append({"signal_id": sig.signal_id, "event": "CLOSED", "price": float(d_price)})
+                        continue
                 res = signal_fsm.evaluate_tick(sig, d_price, ts_now)
                 if res == "BE_ACTIVATED":
                     signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
@@ -171,17 +187,39 @@ class SignalOutcomeTracker:
         from app.signals.fill_reconciler import option_fill_reconciler
 
         ts_now = now_ms or int(__import__("time").time() * 1000)
-        active = signal_fsm.list_active(underlying=underlying)
+        # include_terminal=True: list_active() runs sweep_expired() internally,
+        # which can pre-emptively convert a CONFIRMED trade / runner to a terminal
+        # state on THIS call (RUNNER_TTL_EXCEEDED / TIME_STOP_EXCEEDED). With the
+        # default filter those signals are dropped from the result and the
+        # reconciled exit below never runs — the residual quantity ghosts in the
+        # paper portfolio. Terminal signals are still skipped in the loop head
+        # unless they need sweep-pre-emption recovery.
+        active = signal_fsm.list_active(underlying=underlying, include_terminal=True)
         processed_events: list[dict] = []
 
         for sig in active:
+            st = sig.fsm_state
+            # Sweep pre-emption recovery: list_active() runs sweep_expired() BEFORE
+            # evaluate_tick sees this tick, so a CONFIRMED trade or runner whose
+            # time-stop elapsed is force-transitioned to a terminal state WITHOUT
+            # the reconciled exit (paper square-off + audit P&L booking). If
+            # residual quantity is still open, settle it here instead of skipping,
+            # otherwise the remainder ghosts in the paper portfolio with frozen MTM.
+            sweep_pre_empted = (
+                st in ("RUNNER_TIME_STOP_HIT", "TIME_STOP_HIT")
+                and bool(getattr(sig, "paper_order", None))
+                and sig.remaining_qty is not None
+                and sig.remaining_qty > 0
+            )
             # Runners (TARGET_1_HIT / WIN_T1) must keep evaluating until a terminal
             # state; only settled outcomes skip the tick.
-            if sig.outcome_status is not None and sig.fsm_state != "TARGET_1_HIT":
+            if sig.outcome_status is not None and st != "TARGET_1_HIT" and not sweep_pre_empted:
                 continue
-            st = sig.fsm_state
+            eval_action: Optional[str] = None
             if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
-                continue
+                if not sweep_pre_empted:
+                    continue
+                eval_action = st
             direction = sig.direction
 
             # ── 1. TRIGGER & CONFIRMATION -> AUTO PAPER EXECUTION ──
@@ -243,7 +281,10 @@ class SignalOutcomeTracker:
                                 paper_fill_price=paper_res.fill_price,
                                 paper_filled_qty=paper_res.quantity,
                                 paper_status="FILLED",
-                                paper_side="BUY" if "CALL" in sig.direction else "SELL",
+                                # Long options always BUY the contract (LONG_CALL
+                                # and LONG_PUT alike); spot SHORT/SELL must never
+                                # leak into the execution-side label.
+                                paper_side="BUY",
                             )
                             await telegram_notification_queue.publish_signal_event(conf_ev)
                         except Exception as te:
@@ -283,8 +324,23 @@ class SignalOutcomeTracker:
                         })
 
             # ── 2. ORDERED TICK EVALUATION (CONFIRMED & TARGET_1_HIT RUNNERS) ──
-            elif st in ("CONFIRMED", "TARGET_1_HIT"):
-                eval_action = signal_fsm.evaluate_tick(sig, d_price, ts_now)
+            # (also entered for sweep-pre-empted terminal states carrying an
+            # eval_action — see recovery comment at the top of the loop)
+            elif st in ("CONFIRMED", "TARGET_1_HIT") or eval_action is not None:
+                # Fully-booked runner (see sync path above): single-lot T1
+                # booked everything; settle to CLOSED instead of a phantom STOP.
+                if st == "TARGET_1_HIT" and sig.t1_hit:
+                    try:
+                        _intended = Decimal(str(sig.intended_qty)) if sig.intended_qty is not None else Decimal("0")
+                        _rem = Decimal(str(sig.remaining_qty)) if sig.remaining_qty is not None else Decimal("0")
+                    except Exception:
+                        _intended, _rem = Decimal("0"), Decimal("1")
+                    if _intended > 0 and _rem <= 0:
+                        signal_fsm.transition(sig.signal_id, "CLOSED", market_price=d_price, reason="T1_FULLY_BOOKED_NO_RUNNER")
+                        processed_events.append({"signal_id": sig.signal_id, "event": "CLOSED", "price": float(d_price)})
+                        continue
+                if eval_action is None:
+                    eval_action = signal_fsm.evaluate_tick(sig, d_price, ts_now)
                 if not eval_action:
                     continue
 
@@ -406,11 +462,44 @@ class SignalOutcomeTracker:
                         if not sq_rec:
                             sq_rec = signal_audit_ledger.get(sig.signal_id)
                         if sq_rec and recon:
-                            sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
-                            sq_rec.total_pnl_inr = recon.net_realized_pnl_inr
-                            sq_rec.is_winner = recon.net_realized_pnl_inr > 0
-                            sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
-                            signal_audit_ledger._schedule_persist(sq_rec)
+                            # Guarded sync: the reconciler entry and the audit
+                            # fill must share a domain (both option premiums
+                            # <5000 or both spot-scale >5000). A spot-scale
+                            # entry (e.g. trigger 23807 stored as fill) paired
+                            # with a premium exit (132.98) fabricates a -₹17L
+                            # P&L while points stay +14.23. Keep the audit's
+                            # own P&L in that case and never persist garbage.
+                            _audit_fill = sq_rec.actual_fill_price
+                            _recon_entry = recon.entry_fill_price
+                            _domain_ok = True
+                            try:
+                                if _audit_fill and _recon_entry:
+                                    if (float(_audit_fill) > 5000) != (float(_recon_entry) > 5000):
+                                        _domain_ok = False
+                            except Exception:
+                                _domain_ok = True
+                            if _domain_ok:
+                                sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
+                                sq_rec.total_pnl_inr = recon.net_realized_pnl_inr
+                                _qty = sq_rec.quantity or recon.intended_qty or 0
+                                if _qty:
+                                    try:
+                                        sq_rec.actual_pnl_points = round(recon.gross_realized_pnl / _qty, 2)
+                                    except Exception:
+                                        pass
+                                sq_rec.is_winner = recon.net_realized_pnl_inr > 0
+                                sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
+                                signal_audit_ledger._schedule_persist(sq_rec)
+                            else:
+                                logger.warning(
+                                    "audit_recon_domain_mismatch_skip_overwrite",
+                                    signal_id=sig.signal_id,
+                                    audit_fill=_audit_fill,
+                                    recon_entry=_recon_entry,
+                                    recon_exit=recon.final_fill_price,
+                                    audit_pnl=sq_rec.actual_pnl_inr,
+                                    recon_pnl=recon.net_realized_pnl_inr,
+                                )
                     except Exception as le:
                         logger.warning("audit_square_off_failed", signal_id=sig.signal_id, error=str(le))
 

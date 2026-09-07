@@ -291,6 +291,94 @@ class CryptoScalpOutcomeTracker:
                     crypto_fill_reconciler.reconcile_entry(sig, fill_price=float(sig.trigger), quantity=sig.quantity or 0.01)
                     crypto_signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=sig.trigger, reason="ENTRY_CONFIRMED")
                     events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(sig.trigger)})
+
+                    # Create and persist execution record when entry is confirmed so ledger shows the trade immediately
+                    try:
+                        from app.crypto_scalp.persistence import save_execution_record
+                        from app.models.crypto import SignalDirection as SDS
+                        from app.crypto_scalp.models_execution import CryptoScalpPositionState as PSS
+
+                        trade_id = f"trade_{sig.signal_id}"
+                        rec = crypto_fill_reconciler.get_record(sig.signal_id)
+                        if rec:
+                            # Create execution record matching the outcome_tracker format
+                            from decimal import Decimal
+                            qty = float(sig.quantity) if sig.quantity else 0.01
+                            entry_fill = float(sig.trigger)
+
+                            # Calculate risk
+                            risk_pts = float(abs(sig.trigger - sig.stop_loss)) if sig.trigger and sig.stop_loss else 0.0
+                            risk_usd = round(qty * risk_pts, 2)
+
+                            execution_record = CryptoScalpExecutionRecord(
+                                trade_id=trade_id,
+                                signal_id=sig.signal_id,
+                                symbol=sig.symbol,
+                                asset=sig.asset,
+                                direction=SignalDirection.LONG if sig.direction == "LONG" else SignalDirection.SHORT,
+                                strategy=sig.strategy,
+                                strategy_name=sig.strategy_name or sig.strategy,
+                                execution_mode=CryptoScalpExecutionMode.PAPER,
+                                position_state=CryptoScalpPositionState.ACTIVE,
+                                signal_price=float(sig.trigger),
+                                entry_fill_price=entry_fill,
+                                initial_stop_price=float(sig.stop_loss),
+                                current_stop_price=float(sig.current_stop_loss or sig.stop_loss),
+                                target_1_price=float(sig.target_1),
+                                target_2_price=float(sig.target_2),
+                                quantity_initial=qty,
+                                quantity_remaining=qty,
+                                notional_usd=round(entry_fill * qty, 2),
+                                initial_risk_usd=risk_usd,
+                                gross_pnl_usd=0.0,
+                                fees_usd=rec.total_fees_usd,
+                                slippage_usd=rec.total_slippage_usd,
+                                net_pnl_usd=-rec.total_fees_usd,
+                                created_at_utc=sig.created_at_utc,
+                            )
+
+                            # Add entry event
+                            from app.crypto_scalp.models_execution import CryptoScalpExitEventType
+                            entry_event = CryptoScalpExecutionEvent(
+                                event_id=f"ev_entry_{trade_id}",
+                                trade_id=trade_id,
+                                signal_id=sig.signal_id,
+                                event_type=CryptoScalpExitEventType.ENTRY_FILL,
+                                symbol=sig.symbol,
+                                direction=SignalDirection.LONG if sig.direction == "LONG" else SignalDirection.SHORT,
+                                strategy=sig.strategy,
+                                timestamp_ms=int(time.time() * 1000),
+                                market_price=entry_fill,
+                                fill_price=entry_fill,
+                                quantity=qty,
+                                fee_usd=rec.total_fees_usd,
+                                slippage_usd=rec.total_slippage_usd,
+                                gross_pnl_usd=0.0,
+                                net_pnl_usd=-rec.total_fees_usd,
+                                r_multiple=0.0,
+                                state_before=CryptoScalpPositionState.ACTIVE,
+                                state_after=CryptoScalpPositionState.ACTIVE,
+                            )
+                            execution_record.events.append(entry_event)
+
+                            # Add to active_positions so outcome_tracker can process future ticks
+                            self.active_positions[trade_id] = execution_record
+
+                            # Persist to database
+                            asyncio.create_task(save_execution_record(execution_record))
+                            asyncio.create_task(save_execution_event(entry_event))
+
+                            logger.info(
+                                "crypto_scalp_fsm_trade_registered",
+                                trade_id=trade_id,
+                                signal_id=sig.signal_id,
+                                symbol=sig.symbol,
+                                entry_fill=entry_fill,
+                                qty=qty,
+                            )
+                    except Exception as e:
+                        logger.warning("crypto_scalp_fsm_trade_registration_failed", signal_id=sig.signal_id, error=str(e)[:200])
+
                     try:
                         await crypto_sse_hub.broadcast("signal_confirmed", sig.model_dump(), priority="P0")
                     except Exception:
@@ -312,6 +400,67 @@ class CryptoScalpOutcomeTracker:
                     crypto_signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=sig.target_1, reason="T1_HIT")
                     crypto_fill_reconciler.reconcile_t1_exit(sig, exit_fill_price=float(sig.target_1), exit_time_ms=now_ms)
                     events.append({"signal_id": sig.signal_id, "event": "TARGET_1_HIT", "price": float(sig.target_1), "rr": sig.realized_rr})
+
+                    # Update execution record in active_positions
+                    try:
+                        trade_id = f"trade_{sig.signal_id}"
+                        if trade_id in self.active_positions:
+                            trade = self.active_positions[trade_id]
+                            # Apply same logic as _apply_partial_exit_t1
+                            close_qty = round(trade.quantity_initial * self.config.target_1_close_fraction, 4)
+                            if close_qty <= 0 or close_qty > trade.quantity_remaining:
+                                close_qty = trade.quantity_remaining
+                            from app.crypto_scalp.paper_execution import paper_execution_provider
+                            fill = paper_execution_provider.calculate_fill(
+                                market_price=float(sig.target_1),
+                                direction=trade.direction,
+                                is_entry=False,
+                                quantity=close_qty,
+                                spread=0.0,
+                            )
+                            if trade.direction == SignalDirection.LONG:
+                                gross_pnl_t1 = close_qty * (fill.fill_price - trade.entry_fill_price)
+                            else:
+                                gross_pnl_t1 = close_qty * (trade.entry_fill_price - fill.fill_price)
+                            net_pnl_t1 = gross_pnl_t1 - fill.fee_usd
+
+                            trade.quantity_closed_t1 = close_qty
+                            trade.quantity_remaining = max(0.0, round(trade.quantity_remaining - close_qty, 4))
+                            trade.position_state = CryptoScalpPositionState.PARTIALLY_CLOSED
+                            trade.current_stop_price = trade.entry_fill_price
+                            trade.t1_hit_at = now_ms
+                            trade.gross_pnl_usd = round(trade.gross_pnl_usd + gross_pnl_t1, 4)
+                            trade.fees_usd = round(trade.fees_usd + fill.fee_usd, 4)
+                            trade.slippage_usd = round(trade.slippage_usd + fill.slippage_usd, 4)
+                            trade.net_pnl_usd = round(trade.gross_pnl_usd - trade.fees_usd, 4)
+
+                            t1_event = CryptoScalpExecutionEvent(
+                                event_id=f"ev_t1_{trade_id}_{now_ms}",
+                                trade_id=trade_id,
+                                signal_id=sig.signal_id,
+                                event_type=CryptoScalpExitEventType.T1_HIT,
+                                symbol=trade.symbol,
+                                direction=trade.direction,
+                                strategy=trade.strategy,
+                                timestamp_ms=now_ms,
+                                market_price=float(sig.target_1),
+                                fill_price=fill.fill_price,
+                                quantity=close_qty,
+                                fee_usd=fill.fee_usd,
+                                slippage_usd=fill.slippage_usd,
+                                gross_pnl_usd=round(gross_pnl_t1, 4),
+                                net_pnl_usd=round(net_pnl_t1, 4),
+                                r_multiple=round(net_pnl_t1 / max(1.0, trade.initial_risk_usd), 2),
+                                state_before=CryptoScalpPositionState.ACTIVE,
+                                state_after=CryptoScalpPositionState.PARTIALLY_CLOSED,
+                                metadata_json={"new_stop_price": trade.current_stop_price},
+                            )
+                            trade.events.append(t1_event)
+                            asyncio.create_task(save_execution_event(t1_event))
+                            asyncio.create_task(save_execution_record(trade))
+                    except Exception as e:
+                        logger.warning("crypto_scalp_t1_update_failed", signal_id=sig.signal_id, error=str(e)[:200])
+
                     try:
                         await crypto_sse_hub.broadcast("target_1_hit", sig.model_dump(), priority="P0")
                     except Exception:
