@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -119,6 +120,7 @@ export function SignalCard({
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
 }) {
+  const router = useRouter();
   const [executing, setExecuting] = useState(false);
   const [paperResult, setPaperResult] = useState<any>(signal.paper_order || null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -126,6 +128,12 @@ export function SignalCard({
   const [armDelete, setArmDelete] = useState(false);
   const [levelsOpen, setLevelsOpen] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [toast, setToast] = useState<{ msg: string } | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast({ msg });
+    setTimeout(() => setToast(null), 5000);
+  }, []);
 
   const market = useOptionalMarketDataContext();
   const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
@@ -152,6 +160,7 @@ export function SignalCard({
       if (res && res.success) {
         setPaperResult(res);
         onPaperExecuted?.(res);
+        showToast(`Paper trade placed — ${res.lots || 2} Lots @ ₹${safeNum(res.fill_price)}. View in Paper Trading →`);
       }
     } catch (err: any) {
       setExecError(err.message || 'Execution failed');
@@ -280,6 +289,21 @@ export function SignalCard({
       className={`p-3 space-y-2.5 cursor-pointer hover:shadow-md hover:border-primary/40 transition-all rounded-2xl border bg-card/70 ${isSelected ? 'ring-2 ring-primary border-primary' : ''}`}
       onClick={() => onInspect?.(signal.signal_id)}
     >
+      {toast && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-[11px] font-mono text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+          <span className="truncate">{toast.msg}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push('/paper-trading');
+            }}
+            className="shrink-0 font-bold underline underline-offset-2 hover:no-underline cursor-pointer"
+            aria-label="Go to paper trading page"
+          >
+            View in Paper Trading →
+          </button>
+        </div>
+      )}
       {/* ── Layer 1: Identity Bar ── */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap min-w-0">

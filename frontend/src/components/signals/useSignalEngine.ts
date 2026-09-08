@@ -216,7 +216,14 @@ export function useSignalEngine() {
         });
         return;
       }
-      if (signal?.signal_id && (t.includes('signal') || t.includes('paper') || t.includes('execution') || t.includes('outcome') || t.includes('staged'))) {
+      if (t === 'paper_execution') {
+        const exec = p as Record<string, unknown> | undefined;
+        if (exec?.signal_id) {
+          knownSignalIds.current.add(String(exec.signal_id));
+        }
+        return;
+      }
+      if (signal?.signal_id && (t.includes('signal') || t.includes('execution') || t.includes('outcome') || t.includes('staged'))) {
         setActive((prev) => upsertSignal(prev, signal));
         knownSignalIds.current.add(signal.signal_id);
         if (soundEnabled && (signal.fsm_state === 'CONFIRMED' || String(signal.fsm_state || '').includes('TARGET'))) {

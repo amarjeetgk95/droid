@@ -163,6 +163,27 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     loadWallet();
   }, []);
 
+  const refreshWalletBalance = useCallback(async () => {
+    try {
+      const portRes: any = await api.getPaperPortfolio();
+      const cap = portRes?.data?.virtual_capital || portRes?.virtual_capital;
+      if (cap) {
+        setWalletBalance(Number(cap));
+        setCustomCapital(String(cap));
+      }
+    } catch {
+      // silently ignore
+    }
+  }, []);
+
+  // Keep wallet balance in sync with paper portfolio (single source of truth)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void refreshWalletBalance();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [refreshWalletBalance]);
+
   const handleDeleteSignal = async (signalId: string) => {
     setDeletingId(signalId);
     try {
@@ -225,12 +246,13 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     try {
       const res = await api.setPaperWalletCapital(num);
       if (res?.capital) {
-        setWalletBalance(res.capital);
+        setWalletBalance(Number(res.capital));
       } else {
         setWalletBalance(num);
       }
       setShowCapitalModal(false);
       onRefresh();
+      showToast('success', `Paper wallet capital updated to ₹${num.toLocaleString('en-IN')}`);
     } catch (err: any) {
       showToast('error', `Failed to update capital: ${err?.message || 'Unknown error'}`);
     } finally {

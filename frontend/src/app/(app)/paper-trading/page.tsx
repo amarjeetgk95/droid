@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSignalStream } from '@/hooks/useSignalStream';
 import { api } from '@/lib/api';
 import {
   PortfolioSummary,
@@ -104,54 +105,56 @@ export default function PaperTradingPage() {
     setLastUpdatedMs(Date.now());
   }, [applySnapshot]);
 
+  const loadFast = useCallback(async () => {
+    try {
+      const [sumRes, posRes] = await Promise.all([
+        api.getPaperPortfolio(),
+        api.getPaperPositions(),
+      ]);
+      setSummary(sumRes.data);
+      setPositions(posRes.data);
+      setOfflineMode(false);
+      setError(null);
+      setLastUpdatedMs(Date.now());
+    } catch (err) {
+      if (isBackendUnreachableError(err)) {
+        setSummary(getLocalPortfolio());
+        setPositions(getLocalPositions());
+        setOfflineMode(true);
+        setError(null);
+        setLastUpdatedMs(Date.now());
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load paper trading data');
+      }
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [applySnapshot]);
+
+  const loadSlow = useCallback(async () => {
+    try {
+      const ordRes = await api.getPaperOrders();
+      setOrders(ordRes.data);
+    } catch (err) {
+      if (isBackendUnreachableError(err)) {
+        setOrders(getLocalOrders());
+        setOfflineMode(true);
+      }
+    }
+  }, []);
+
+  const handlePaperStreamEvent = useCallback((e: { type: string; payload: unknown }) => {
+    if (e.type === 'paper_execution') {
+      void loadFast();
+    }
+  }, [loadFast]);
+
+  const { streamState: paperStreamState } = useSignalStream(true, handlePaperStreamEvent);
+
   // Polling: fast lane (portfolio+positions ~10s for live MTM) + slow lane (orders 15s).
   // Falls back to localStorage when backend unreachable. Pauses when tab hidden.
   useEffect(() => {
     let isMounted = true;
-
-    const loadFast = async () => {
-      try {
-        const [sumRes, posRes] = await Promise.all([
-          api.getPaperPortfolio(),
-          api.getPaperPositions(),
-        ]);
-        if (isMounted) {
-          setSummary(sumRes.data);
-          setPositions(posRes.data);
-          setOfflineMode(false);
-          setError(null);
-          setLastUpdatedMs(Date.now());
-        }
-      } catch (err) {
-        if (isBackendUnreachableError(err)) {
-          if (isMounted) {
-            setSummary(getLocalPortfolio());
-            setPositions(getLocalPositions());
-            setOfflineMode(true);
-            setError(null);
-            setLastUpdatedMs(Date.now());
-          }
-        } else if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load paper trading data');
-        }
-      } finally {
-        if (isMounted) setInitialLoading(false);
-      }
-    };
-
-    const loadSlow = async () => {
-      try {
-        const ordRes = await api.getPaperOrders();
-        if (isMounted) setOrders(ordRes.data);
-      } catch (err) {
-        if (isBackendUnreachableError(err)) {
-          if (isMounted) {
-            setOrders(getLocalOrders());
-            setOfflineMode(true);
-          }
-        }
-      }
-    };
 
     const loadAll = async () => {
       await loadFast();
@@ -188,7 +191,7 @@ export default function PaperTradingPage() {
       clearInterval(clockTimer);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, []);
+  }, [loadFast, loadSlow]);
 
   const retryBackend = async () => {
     try {
