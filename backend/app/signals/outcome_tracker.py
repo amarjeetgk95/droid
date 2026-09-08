@@ -549,7 +549,12 @@ class SignalOutcomeTracker:
 
     def get_performance_metrics(self) -> PerformanceMetrics:
         """Calculate complete historical performance attribution split across Desks (§31)."""
-        all_signals = list(signal_fsm._signals.values())
+        demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
+        all_signals = [
+            s for s in signal_fsm._signals.values()
+            if not str(s.signal_id).lower().startswith(("sig-test-", "test-", "sig-persist-sanitize"))
+            and s.signal_id not in demo_ids
+        ]
         total = len(all_signals)
         active_ct = sum(1 for s in all_signals if s.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT"))
 
@@ -639,18 +644,34 @@ class SignalOutcomeTracker:
         empirical_expectancy = (sum(all_completed_net_r) / len(all_completed_net_r)) if all_completed_net_r else 0.0
 
         # Net Realized R Sum (Reconciliation Invariant)
-        net_r_sum = sum(
-            float(getattr(s, "realized_rr_net", None) if getattr(s, "realized_rr_net", None) is not None else (s.realized_rr or 0.0))
-            for s in all_signals
-            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")
-            or s.outcome_status in ("WIN_T1", "WIN_T2", "LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP")
-        )
-        gross_r_sum = sum(
-            float(getattr(s, "realized_rr_gross", None) or s.realized_rr or 0.0)
-            for s in all_signals
-            if s.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")
-            or s.outcome_status in ("WIN_T1", "WIN_T2", "LOSS_SL", "TIME_STOP", "RUNNER_TIME_STOP")
-        )
+        def _get_signal_net_r(s: SignalInstance) -> float:
+            net_r = getattr(s, "realized_rr_net", None)
+            if net_r is None:
+                net_r = getattr(s, "realized_rr_gross", None)
+            if net_r is None:
+                net_r = s.realized_rr
+            if net_r is None:
+                if _signal_is_win(s):
+                    target_ref = s.risk_reward_t2 if (s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2") else s.risk_reward_t1
+                    net_r = float(target_ref or 1.5)
+                else:
+                    net_r = -1.0 if (s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL") else 0.0
+            return float(net_r)
+
+        def _get_signal_gross_r(s: SignalInstance) -> float:
+            gross_r = getattr(s, "realized_rr_gross", None)
+            if gross_r is None:
+                gross_r = s.realized_rr
+            if gross_r is None:
+                if _signal_is_win(s):
+                    target_ref = s.risk_reward_t2 if (s.fsm_state == "TARGET_2_HIT" or s.outcome_status == "WIN_T2") else s.risk_reward_t1
+                    gross_r = float(target_ref or 1.5)
+                else:
+                    gross_r = -1.0 if (s.fsm_state == "STOP_LOSS_HIT" or s.outcome_status == "LOSS_SL") else 0.0
+            return float(gross_r)
+
+        net_r_sum = sum(_get_signal_net_r(s) for s in completed_signals_list)
+        gross_r_sum = sum(_get_signal_gross_r(s) for s in completed_signals_list)
 
         full_win_ct = t2_hits
         partial_win_ct = t1_hits + runner_time_stops

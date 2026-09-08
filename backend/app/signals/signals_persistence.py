@@ -77,15 +77,24 @@ def save_signals_state_local(
 
 def restore_signals_state_local() -> int:
     """Restore signals from local cache file if PostgreSQL is unavailable or empty."""
-    if not SIGNALS_STATE_FILE.exists():
-        return 0
+    target_file = SIGNALS_STATE_FILE
+    if not target_file.exists():
+        parent_file = Path("..") / "signals_state.json"
+        if parent_file.exists():
+            target_file = parent_file
+        else:
+            return 0
+    elif target_file.stat().st_size <= 200:
+        parent_file = Path("..") / "signals_state.json"
+        if parent_file.exists() and parent_file.stat().st_size > 200:
+            target_file = parent_file
 
     try:
         from app.signals.fsm import signal_fsm, SignalInstance
         from app.signals.audit_ledger import signal_audit_ledger, AuditTradeRecord
         from app.signals.fill_reconciler import option_fill_reconciler, FillReconciliationRecord
 
-        with open(SIGNALS_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(target_file, "r", encoding="utf-8") as f:
             payload = json.load(f)
 
         count = 0
@@ -132,10 +141,11 @@ def restore_signals_state_local() -> int:
 def sanitize_persisted_signals() -> int:
     """
     Sanitizes FSM signals and audit records in memory:
-    1. If market is closed, sweeps any pre-trigger/untriggered signals (DETECTED, VALIDATED, ARMED, TRIGGERED)
-       to EXPIRED with reason MARKET_CLOSED.
-    2. Identifies and repairs corrupted records (e.g. non-positive exit_price <= 0, spot_price <= 0)
-       to ensure P&L and win rate metrics are never poisoned by false offline ticks.
+    1. Sweeps pre-trigger/untriggered signals when market is closed or across sessions.
+    2. Correctly populates outcome_status, terminal_outcome, and realized_rr when
+       force-transitioning signals so win-rate and P&L metrics are never poisoned.
+    3. Repairs corrupted or incomplete legacy persisted records.
+    4. Purges synthetic/demo seeded trades and test signals.
     """
     sanitized_count = 0
     try:
@@ -161,17 +171,89 @@ def sanitize_persisted_signals() -> int:
             if is_prior_day:
                 if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED") and not inst.actual_fill_price and not inst.paper_order:
                     inst.fsm_state = "EXPIRED"
+                    inst.outcome_status = "EXPIRED"
+                    inst.terminal_outcome = "EXPIRED"
                     sanitized_count += 1
                 elif inst.fsm_state in ("CONFIRMED", "TARGET_1_HIT"):
-                    inst.fsm_state = "CLOSED"
+                    if inst.fsm_state == "TARGET_1_HIT":
+                        inst.fsm_state = "RUNNER_TIME_STOP_HIT"
+                        inst.t1_hit = True
+                        inst.outcome_status = "RUNNER_TIME_STOP"
+                        inst.terminal_outcome = "PARTIAL_WIN"
+                        gross_r = float(inst.risk_reward_t1 or 1.5)
+                        inst.realized_rr = gross_r
+                        inst.realized_rr_gross = gross_r
+                        if inst.realized_rr_net is None:
+                            inst.realized_rr_net = gross_r
+                    else:
+                        inst.fsm_state = "CLOSED"
+                        inst.outcome_status = "EXPIRED"
+                        inst.terminal_outcome = "EXPIRED"
                     sanitized_count += 1
             elif not market_open:
                 if inst.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED") or (inst.fsm_state == "CONFIRMED" and not inst.actual_fill_price and not inst.paper_order):
                     inst.fsm_state = "EXPIRED"
+                    inst.outcome_status = "EXPIRED"
+                    inst.terminal_outcome = "EXPIRED"
                     sanitized_count += 1
                 elif inst.fsm_state == "TARGET_1_HIT":
                     inst.fsm_state = "RUNNER_TIME_STOP_HIT"
+                    inst.t1_hit = True
+                    inst.outcome_status = "RUNNER_TIME_STOP"
+                    inst.terminal_outcome = "PARTIAL_WIN"
+                    gross_r = float(inst.risk_reward_t1 or 1.5)
+                    inst.realized_rr = gross_r
+                    inst.realized_rr_gross = gross_r
+                    if inst.realized_rr_net is None:
+                        inst.realized_rr_net = gross_r
                     sanitized_count += 1
+
+        # 2. Repair missing outcome attributes on persisted terminal signals
+        for sid, inst in list(signal_fsm._signals.items()):
+            if inst.fsm_state in ("TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "EXPIRED", "CLOSED"):
+                needs_repair = not inst.outcome_status or not inst.terminal_outcome or inst.realized_rr is None
+                if needs_repair:
+                    if inst.fsm_state == "TARGET_2_HIT":
+                        inst.t2_hit = True
+                        inst.outcome_status = "WIN_T2"
+                        inst.terminal_outcome = "FULL_WIN"
+                        gross_r = float(inst.risk_reward_t2 or 3.0)
+                        inst.realized_rr = gross_r
+                        inst.realized_rr_gross = gross_r
+                        if inst.realized_rr_net is None:
+                            inst.realized_rr_net = gross_r
+                        sanitized_count += 1
+                    elif inst.fsm_state in ("RUNNER_TIME_STOP_HIT", "TARGET_1_HIT"):
+                        inst.t1_hit = True
+                        inst.outcome_status = "RUNNER_TIME_STOP" if inst.fsm_state == "RUNNER_TIME_STOP_HIT" else "WIN_T1"
+                        inst.terminal_outcome = "PARTIAL_WIN"
+                        gross_r = float(inst.risk_reward_t1 or 1.5)
+                        inst.realized_rr = gross_r
+                        inst.realized_rr_gross = gross_r
+                        if inst.realized_rr_net is None:
+                            inst.realized_rr_net = gross_r
+                        sanitized_count += 1
+                    elif inst.fsm_state == "STOP_LOSS_HIT":
+                        inst.outcome_status = "LOSS_SL"
+                        inst.terminal_outcome = "BREAKEVEN" if inst.breakeven_activated else "STOP_LOSS_HIT"
+                        gross_r = 0.0 if inst.breakeven_activated else -1.0
+                        inst.realized_rr = gross_r
+                        inst.realized_rr_gross = gross_r
+                        if inst.realized_rr_net is None:
+                            inst.realized_rr_net = gross_r
+                        sanitized_count += 1
+                    elif inst.fsm_state == "TIME_STOP_HIT":
+                        inst.outcome_status = "TIME_STOP"
+                        inst.terminal_outcome = "TIME_STOP_LOSS"
+                        inst.realized_rr = 0.0
+                        inst.realized_rr_gross = 0.0
+                        if inst.realized_rr_net is None:
+                            inst.realized_rr_net = 0.0
+                        sanitized_count += 1
+                    elif inst.fsm_state in ("EXPIRED", "CLOSED"):
+                        inst.outcome_status = "EXPIRED" if inst.fsm_state == "EXPIRED" else "CLOSED"
+                        inst.terminal_outcome = "EXPIRED"
+                        sanitized_count += 1
 
         for aid, rec in list(signal_audit_ledger._trades.items()):
             try:
@@ -185,8 +267,11 @@ def sanitize_persisted_signals() -> int:
                     rec.status = "EXPIRED"
                     rec.unrealized_pnl_inr = 0.0
                     rec.total_pnl_inr = 0.0
+                elif rec.status == "TARGET_1_HIT":
+                    rec.status = "RUNNER_TIME_STOP_HIT"
+                    rec.is_winner = True
 
-        # 2. Check for invalid prices (<= 0) in audit ledger
+        # 3. Check for invalid prices (<= 0) in audit ledger
         for aid, rec in list(signal_audit_ledger._trades.items()):
             corrupted = False
             if rec.exit_price is not None and rec.exit_price <= 0.0:
@@ -199,13 +284,23 @@ def sanitize_persisted_signals() -> int:
                 sanitized_count += 1
                 logger.warning("sanitized_corrupt_audit_trade", audit_id=aid)
 
-        # 3. Permanently purge synthetic/demo seeded trades and implausible ghost prices
+        # 4. Permanently purge synthetic/demo seeded trades and test signals
         demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
+
+        def _is_test_or_ghost_id(target_id: Any) -> bool:
+            s_id = str(target_id).strip()
+            s_lower = s_id.lower()
+            return (
+                s_id in demo_ids
+                or s_lower.startswith("sig-test-")
+                or s_lower.startswith("test-")
+                or s_lower.startswith("sig-persist-sanitize")
+            )
+
         for aid, rec in list(signal_audit_ledger._trades.items()):
             is_ghost = (
-                aid in demo_ids
-                or str(aid).startswith("SIG-TEST-")
-                or str(aid).startswith("test-")
+                _is_test_or_ghost_id(aid)
+                or _is_test_or_ghost_id(rec.signal_id)
                 or (rec.underlying == "BANKNIFTY" and rec.spot_price_at_creation < 40000.0)
                 or (rec.underlying == "NIFTY" and rec.spot_price_at_creation < 22000.0)
             )
@@ -216,9 +311,7 @@ def sanitize_persisted_signals() -> int:
         for sid, inst in list(signal_fsm._signals.items()):
             spot_flt = float(inst.spot_price or 0.0)
             is_ghost = (
-                sid in demo_ids
-                or str(sid).startswith("SIG-TEST-")
-                or str(sid).startswith("test-")
+                _is_test_or_ghost_id(sid)
                 or (inst.underlying == "BANKNIFTY" and spot_flt < 40000.0)
                 or (inst.underlying == "NIFTY" and spot_flt < 22000.0)
             )

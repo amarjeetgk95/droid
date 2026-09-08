@@ -285,9 +285,9 @@ class SignalAuditLedger:
         rec.updated_at_utc = now_ms
         if market_price is not None:
             rec.current_price = market_price
-        if to_state in ("TARGET_1_HIT", "TARGET_2_HIT", "WON"):
+        if to_state in ("TARGET_1_HIT", "TARGET_2_HIT", "WON", "RUNNER_TIME_STOP_HIT"):
             rec.is_winner = True
-        elif to_state in ("STOP_LOSS_HIT", "LOST"):
+        elif to_state in ("STOP_LOSS_HIT", "LOST", "TIME_STOP_HIT"):
             rec.is_winner = False
 
         rec.state_history.append(
@@ -677,13 +677,43 @@ class SignalAuditLedger:
 
     def get_summary_metrics(self) -> dict[str, Any]:
         """Compute aggregated portfolio PnL and accuracy statistics including live unrealized MTM."""
-        all_t = list(self._trades.values())
-        closed_t = [t for t in all_t if t.status in ("WON", "LOST", "CLOSED")]
+        demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
+        all_t = [
+            t for t in self._trades.values()
+            if not str(t.signal_id).lower().startswith(("sig-test-", "test-", "sig-persist-sanitize"))
+            and t.signal_id not in demo_ids
+        ]
+        closed_t = [
+            t for t in all_t
+            if t.status in ("WON", "LOST", "CLOSED", "TARGET_2_HIT", "STOP_LOSS_HIT", "RUNNER_TIME_STOP_HIT", "TIME_STOP_HIT")
+        ]
         open_t = [t for t in all_t if t.status in ("ARMED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT")]
 
+        def _trade_is_winner(t: AuditTradeRecord) -> bool:
+            if t.is_winner is True:
+                return True
+            if t.is_winner is False:
+                return False
+            if t.status in ("TARGET_1_HIT", "TARGET_2_HIT", "WON", "RUNNER_TIME_STOP_HIT"):
+                return True
+            if (t.actual_pnl_inr or 0.0) > 0:
+                return True
+            return False
+
+        def _trade_is_loser(t: AuditTradeRecord) -> bool:
+            if t.is_winner is False:
+                return True
+            if t.is_winner is True:
+                return False
+            if t.status in ("STOP_LOSS_HIT", "LOST", "TIME_STOP_HIT"):
+                return True
+            if (t.actual_pnl_inr or 0.0) < 0:
+                return True
+            return False
+
         total_closed = len(closed_t)
-        winners = [t for t in closed_t if t.is_winner is True]
-        losers = [t for t in closed_t if t.is_winner is False and (t.actual_pnl_inr or 0) < 0]
+        winners = [t for t in closed_t if _trade_is_winner(t)]
+        losers = [t for t in closed_t if _trade_is_loser(t)]
 
         win_rate = round((len(winners) / total_closed * 100.0), 1) if total_closed > 0 else 0.0
         net_realized_pnl = round(sum(t.actual_pnl_inr or 0.0 for t in closed_t), 2)
@@ -709,9 +739,9 @@ class SignalAuditLedger:
         for t in all_t:
             s_entry = strat_breakdown.setdefault(t.strategy, {"total": 0, "wins": 0, "losses": 0, "net_pnl": 0.0})
             s_entry["total"] += 1
-            if t.is_winner:
+            if _trade_is_winner(t):
                 s_entry["wins"] += 1
-            elif t.is_winner is False and ((t.actual_pnl_inr or 0) < 0 or (t.unrealized_pnl_inr or 0) < 0):
+            elif _trade_is_loser(t):
                 s_entry["losses"] += 1
             s_pnl = t.actual_pnl_inr if t.actual_pnl_inr is not None else (t.unrealized_pnl_inr or 0.0)
             s_entry["net_pnl"] = round(s_entry["net_pnl"] + s_pnl, 2)
@@ -725,12 +755,12 @@ class SignalAuditLedger:
         for t in all_t:
             u_entry = under_breakdown.setdefault(t.underlying, {"total": 0, "wins": 0, "losses": 0, "net_pnl": 0.0})
             u_entry["total"] += 1
-            if t.is_winner:
+            if _trade_is_winner(t):
                 u_entry["wins"] += 1
-            elif t.is_winner is False and ((t.actual_pnl_inr or 0) < 0 or (t.unrealized_pnl_inr or 0) < 0):
+            elif _trade_is_loser(t):
                 u_entry["losses"] += 1
-            u_pnl = t.actual_pnl_inr if t.actual_pnl_inr is not None else (t.unrealized_pnl_inr or 0.0)
-            u_entry["net_pnl"] = round(u_entry["net_pnl"] + u_pnl, 2)
+            s_pnl = t.actual_pnl_inr if t.actual_pnl_inr is not None else (t.unrealized_pnl_inr or 0.0)
+            u_entry["net_pnl"] = round(u_entry["net_pnl"] + s_pnl, 2)
 
         for v in under_breakdown.values():
             dec = v["wins"] + v["losses"]
