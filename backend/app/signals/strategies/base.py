@@ -11,12 +11,16 @@ from app.signals.contract_resolver import InstrumentMaster
 
 StrategyName = Literal[
     "BREAKOUT",
+    "VOLATILITY_BREAKOUT",
     "MEAN_REVERSION",
     "TREND_PULLBACK",
+    "REGIME_ADAPTIVE_TREND",
     "GAMMA_SQUEEZE",
     "ORB",
     "VWAP_SCALP",
+    "LIQUIDITY_SWEEP_RECLAIM",
     "MICRO_MOMENTUM",
+    "MOMENTUM_REACCELERATION",
     "EMA_RIBBON",
     "GAMMA_SPIKE",
 ]
@@ -43,6 +47,7 @@ class StrategyContext(BaseModel):
     fno_degraded: bool = False
     vwap_degraded: bool = False
     vwap_coverage_pct: float = 100.0
+    feature_snapshot: Optional[Any] = None
 
 
 class SignalCandidate(BaseModel):
@@ -99,6 +104,11 @@ class SignalCandidate(BaseModel):
     ai_research: Optional[dict[str, Any]] = None
     path_simulation: Optional[dict[str, Any]] = None
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    
+    # Orthogonal Confluence & Net Edge (§23, §27)
+    confluence_factors: list[str] = Field(default_factory=list)
+    participation: Optional[dict[str, Any]] = None
+    net_edge: Optional[float] = None
 
     created_at_utc: int = Field(default_factory=lambda: int(__import__("time").time() * 1000))
     strategy_version: str = "v6.0"

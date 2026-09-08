@@ -14,6 +14,21 @@ export function createCryptoApi(core: ApiCore) {
     });
   },
 
+    async bulkDeleteCryptoTrades(payload: {
+      trade_ids?: string[];
+      before_ms?: number;
+      symbol?: string;
+      position_state?: string;
+      outcome?: string;
+      delete_all?: boolean;
+      confirm_all?: boolean;
+    }) {
+    return core.request<{ status: string; deleted_count: number; trade_ids: string[] }>(
+      '/api/v1/crypto/scalp-signals/ledger/bulk',
+      { method: 'POST', body: JSON.stringify(payload) }
+    );
+  },
+
     async getCryptoCandles(symbol: string, timeframe: string = '1h', limit: number = 100) {
     return core.request<{ data: import('../types').NormalizedCandle[]; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/crypto/${encodeURIComponent(symbol)}/candles?timeframe=${encodeURIComponent(timeframe)}&limit=${limit}`);
   },

@@ -5,7 +5,6 @@ import {
   Settings,
   Layers,
   TrendingUp,
-  Bot,
   BarChart3,
   Radio,
   Brain,
@@ -16,6 +15,7 @@ import {
   ArrowLeftRight,
   Calendar,
   FlaskConical,
+  Gauge,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -117,8 +117,9 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'options-intelligence',
         href: '/options-intelligence',
         label: 'Options Intelligence',
-        icon: Zap,
+        icon: Gauge,
         description: 'AI Research, Greeks, Expected Move & Portfolio Risk',
+        shortcut: '⌘7',
         keywords: ['options', 'intelligence', 'greeks', 'expected move', 'contradiction', 'simulation', 'portfolio'],
       },
       {
@@ -153,7 +154,6 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Crypto Derivatives',
         icon: Bitcoin,
         description: 'Bitcoin & crypto futures orderbook',
-        shortcut: '⌘0',
         keywords: ['crypto', 'binance', 'btc', 'eth', 'futures', 'orderbook'],
       },
     ],

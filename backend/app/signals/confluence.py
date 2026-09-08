@@ -28,7 +28,7 @@ from app.signals.strategies.base import SignalCandidate
 logger = structlog.get_logger()
 
 
-def _load_confluence_weights() -> dict:
+def _load_confluence_config() -> dict:
     try:
         for p in (
             Path(__file__).resolve().parents[2] / "config" / "scoring_weights.json",
@@ -37,32 +37,29 @@ def _load_confluence_weights() -> dict:
         ):
             if p.exists():
                 with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                wf = data.get("weights_fraction", {})
-                if wf:
-                    return {
-                        "technical": float(wf.get("technical", 0.40)),
-                        "mtf": float(wf.get("mtf", 0.20)),
-                        "fno": float(wf.get("fno", 0.15)),
-                        "regime": float(wf.get("regime", 0.10)),
-                        "ai": float(wf.get("ai", 0.10)),
-                    }
+                    return json.load(f)
     except Exception:
         pass
-    return {
-        "technical": 0.40,
-        "mtf": 0.20,
-        "fno": 0.15,
-        "regime": 0.10,
-        "ai": 0.10,
-    }
+    return {}
 
 
-DEFAULT_WEIGHTS = _load_confluence_weights()
-ARMED_THRESHOLD = 78.0
-AI_UNAVAILABLE_HAIRCUT = 8.0
-FNODEGRADED_HAIRCUT = 10.0
-VWAPDEGRADED_HAIRCUT = 10.0
+_CONFIG = _load_confluence_config()
+_WF = _CONFIG.get("weights_fraction", {})
+_THRESH = _CONFIG.get("thresholds", {})
+_PEN = _CONFIG.get("penalties", {})
+
+DEFAULT_WEIGHTS = {
+    "technical": float(_WF.get("technical", 0.40)),
+    "mtf": float(_WF.get("mtf", 0.20)),
+    "fno": float(_WF.get("fno", 0.15)),
+    "regime": float(_WF.get("regime", 0.10)),
+    "ai": float(_WF.get("ai", 0.10)),
+}
+ARMED_THRESHOLD = float(_THRESH.get("armed", 70.0))
+AI_UNAVAILABLE_HAIRCUT = float(_PEN.get("ai_unavailable_haircut", 8.0))
+FNODEGRADED_HAIRCUT = float(_PEN.get("fno_degraded_haircut", 10.0))
+VWAPDEGRADED_HAIRCUT = float(_PEN.get("vwap_degraded_haircut", 10.0))
+MAX_TOTAL_HAIRCUT = float(_PEN.get("max_total_haircut", 12.0))
 
 
 class AIAdviceResult(BaseModel):
@@ -252,7 +249,8 @@ class ConfluenceEngine:
             elif s < 45.0:
                 penalty_count += 1
             else:
-                # 45-55: neutral, contribute weight but no bonus
+                # 45-55: neutral, contribute baseline weight and contribution (§12 [FIX])
+                fused += s * w
                 total_w += w
 
         if total_w > 0:
@@ -263,12 +261,16 @@ class ConfluenceEngine:
         if penalty_count >= 2:
             fused -= 10.0
 
+        raw_haircut = 0.0
         if not ai_available:
-            fused -= AI_UNAVAILABLE_HAIRCUT
+            raw_haircut += AI_UNAVAILABLE_HAIRCUT
         if getattr(candidate, "fno_degraded", False):
-            fused -= FNODEGRADED_HAIRCUT
+            raw_haircut += FNODEGRADED_HAIRCUT
         if getattr(candidate, "vwap_degraded", False):
-            fused -= VWAPDEGRADED_HAIRCUT
+            raw_haircut += VWAPDEGRADED_HAIRCUT
+
+        # Cap cumulative infrastructure haircut so degraded feeds don't kill high confluence
+        fused -= min(raw_haircut, MAX_TOTAL_HAIRCUT)
         return round(float(max(15.0, min(98.0, fused))), 1)
 
 

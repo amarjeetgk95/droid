@@ -19,6 +19,11 @@ from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY
 from app.signals.confluence import confluence_engine, ARMED_THRESHOLD
 from app.signals.fsm import signal_fsm, SignalInstance
 from app.signals.scalp_confirmation import scalp_confirmation_engine
+from app.signals.features.engine import compute_feature_snapshot
+from app.signals.participation.oi_volume_engine import participation_engine
+from app.signals.orthogonal_confluence import orthogonal_confluence_engine
+from app.signals.risk.friction_gate import friction_gate
+from app.signals.risk.cross_desk_arbiter import cross_desk_arbiter
 
 logger = structlog.get_logger()
 
@@ -182,7 +187,7 @@ class SignalScanner:
         prev_close = getattr(quote, "previous_close", None)
         gap_pct = 0.0
         if prev_close and prev_close > 0:
-            gap_pct = abs((spot - Decimal(str(prev_close))) / Decimal(str(prev_close))) * 100.0
+            gap_pct = float(abs((spot - Decimal(str(prev_close))) / Decimal(str(prev_close))) * Decimal("100.0"))
 
         # Fetch real candles for indicators (bounded timeout, never fatal)
         candles_dict = {}
@@ -211,7 +216,14 @@ class SignalScanner:
             diag.reasons.append(f"Candle fetch failed: {str(e)[:120]}")
 
         target_tf = timeframe.lower()
-        active_candles = candles_dict.get(target_tf) or candles_dict.get("5m") or candles_dict.get("1m") or []
+        if target_tf == "1m":
+            active_candles = candles_dict.get("1m") or []
+            if not active_candles:
+                diag.reasons.append("Scalp native 1m candles unavailable — fallback prohibited to prevent timeframe skew")
+        else:
+            active_candles = candles_dict.get(target_tf) or candles_dict.get("5m") or []
+            if not active_candles and "1m" in candles_dict:
+                active_candles = candles_dict.get("1m") or []
         diag.candles_count = len(active_candles)
         if not active_candles:
             diag.reasons.append("No candles available — S/R, volume and MTF use synthetic defaults")
@@ -354,6 +366,18 @@ class SignalScanner:
         ist_minute_of_day = now_ist.hour * 60 + now_ist.minute
         lunch_session = 720 <= ist_minute_of_day <= 810
 
+        feat_snap = compute_feature_snapshot(
+            underlying=u,
+            spot_price=float(spot),
+            candles=active_candles,
+            timeframe=timeframe,
+            vwap=float(vwap_val) if vwap_val else None,
+            indicators=ta_analysis,
+            timestamp_ms=int(time.time() * 1000),
+            prior_day_high=float(getattr(quote, "high", 0.0) or 0.0) if getattr(quote, "high", None) else None,
+            prior_day_low=float(getattr(quote, "low", 0.0) or 0.0) if getattr(quote, "low", None) else None,
+        )
+
         ctx = StrategyContext(
             underlying=u,  # type: ignore
             spot_price=spot,
@@ -375,6 +399,7 @@ class SignalScanner:
             vix_percentile=None,
             lunch_session=lunch_session,
             pre_market_gap_pct=float(gap_pct),
+            feature_snapshot=feat_snap,
         )
 
         # Select strategies according to desk and timeframe
@@ -424,6 +449,35 @@ class SignalScanner:
                             continue
                         # Gate passed: record confirmed fingerprint
                         scalp_confirmation_engine.record_confirmed(candidate, candle_timestamp_ms=ctx.timestamp_ms)
+
+                    # ── Participation Engine (§18, §19) ──
+                    desk_type = "SCALP" if (candidate.is_scalp or strat_name in SCALP_STRATEGIES) else "INTRADAY"
+                    part_ctx = participation_engine.evaluate(
+                        direction=candidate.direction,
+                        desk=desk_type,
+                        rvol=feat_snap.rvol if feat_snap else 1.0,
+                        volume_acceleration=feat_snap.volume_acceleration if feat_snap else 0.0,
+                        price_change_pct=feat_snap.roc_1 if feat_snap else 0.0,
+                        fno_data=fno_data,
+                        candles=active_candles,
+                    )
+                    candidate.participation = part_ctx.model_dump()
+
+                    # ── Orthogonal Confluence Engine (§23, §24) ──
+                    conf_res = orthogonal_confluence_engine.evaluate(candidate, feat_snap, part_ctx)
+                    candidate.confluence_factors = conf_res.confirmed_factors
+                    if not conf_res.passed:
+                        rejected_gates.append(f"{strat_name}:REJECT_CONFLUENCE")
+                        logger.info("candidate_rejected_confluence", strategy=strat_name, underlying=u, reasons=conf_res.rejection_reasons)
+                        continue
+
+                    # ── Net Edge & Friction Gate (§27, §28) ──
+                    edge_res = friction_gate.evaluate(candidate)
+                    candidate.net_edge = edge_res.expected_net_edge_pts
+                    if not edge_res.passed:
+                        rejected_gates.append(f"{strat_name}:{edge_res.rejection_reason or 'REJECT_FRICTION'}")
+                        logger.info("candidate_rejected_friction", strategy=strat_name, underlying=u, reason=edge_res.rejection_reason)
+                        continue
 
                     candidate.vwap_coverage_pct = vwap_coverage_pct
                     candidate.context_snapshot = {
@@ -553,6 +607,18 @@ class SignalScanner:
                 logger.info("candidate_rejected_portfolio_cap", strategy=cand.strategy, active_open_trades=len(portfolio_open_trades))
                 continue
 
+            # ── Cross-Desk Inventory Arbiter (§31, §51) ──
+            arb_dec = cross_desk_arbiter.arbitrate(
+                candidate_is_scalp=cand_is_scalp,
+                candidate_underlying=cand.underlying,
+                candidate_direction=cand.direction,
+                active_trades=all_active,
+            )
+            if not arb_dec.passed:
+                rejected_gates.append(f"{cand.strategy}:{arb_dec.reason}")
+                logger.info("candidate_rejected_cross_desk_arbiter", strategy=cand.strategy, underlying=cand.underlying, reason=arb_dec.reason)
+                continue
+
             # ── Centralized Risk Engine Validation (Enforces Envelopes & Rejection of Oversized SL) ──
             strat_setup = StrategySetup(
                 strategy_name=cand.strategy,
@@ -599,30 +665,58 @@ class SignalScanner:
             cand.ttl_seconds = risk_decision.trigger_ttl_seconds
             cand.time_stop_seconds = risk_decision.active_time_stop_seconds
 
-            # ── 1a. RSI-14 confirmation gate — reject overbought/oversold extremes ──
+            # ── 1a. Strategy-aware RSI confirmation gate ──
             indicators_snap = cand.context_snapshot.get("indicators", {}) or {}
             rsi_explicit = indicators_snap.get("rsi") or indicators_snap.get("momentum", {}).get("rsi")
             if rsi_explicit is not None:
                 rsi_val = float(rsi_explicit)
                 is_call = "CALL" in cand.direction
-                rsi_ok = (is_call and 55.0 <= rsi_val <= 78.0) or (not is_call and 22.0 <= rsi_val <= 45.0)
+                strat = cand.strategy.upper()
+
+                if strat == "MEAN_REVERSION":
+                    # Exhaustion setups: CALL requires oversold, PUT requires overbought
+                    rsi_ok = (is_call and rsi_val <= 38.0) or (not is_call and rsi_val >= 62.0)
+                elif strat in ("BREAKOUT", "MICRO_MOMENTUM", "GAMMA_SQUEEZE", "GAMMA_SPIKE"):
+                    # Momentum expansion setups
+                    rsi_ok = (is_call and 52.0 <= rsi_val <= 82.0) or (not is_call and 18.0 <= rsi_val <= 48.0)
+                elif strat in ("TREND_PULLBACK", "EMA_RIBBON", "ORB", "VWAP_SCALP"):
+                    # Trend-following pullback / continuation
+                    rsi_ok = (is_call and 40.0 <= rsi_val <= 70.0) or (not is_call and 30.0 <= rsi_val <= 60.0)
+                else:
+                    # Default permissive window
+                    rsi_ok = (is_call and 35.0 <= rsi_val <= 80.0) or (not is_call and 20.0 <= rsi_val <= 65.0)
+
                 if not rsi_ok:
                     rejected_gates.append(f"{cand.strategy}:RSI_REJECTION_{rsi_val:.1f}")
                     logger.info("candidate_rejected_rsi", strategy=cand.strategy, underlying=cand.underlying, rsi=rsi_val, direction=cand.direction)
                     continue
 
-            # ── 1b. Market-structure proximity filter — reject if near key S/R level ──
-            atr_val = Decimal(str(indicators_snap.get("volatility", {}).get("atr") or float(cand.risk_points or 20.0)))
-            sr_levels = []
-            sr_data = indicators_snap.get("support_resistance", {})
-            if sr_data:
-                sr_levels = [Decimal(str(r)) for r in sr_data.get("resistance", []) + sr_data.get("support", [])]
-            if sr_levels:
-                dist_to_nearest = min(abs(Decimal(str(cand.spot_price)) - lvl) for lvl in sr_levels)
-                if dist_to_nearest < (atr_val * Decimal("0.25")):
-                    rejected_gates.append(f"{cand.strategy}:NEAR_KEY_LEVEL_{float(dist_to_nearest):.1f}pts")
-                    logger.info("candidate_rejected_key_level", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_nearest))
-                    continue
+            # ── 1b. Strategy-aware market-structure proximity filter ──
+            # Universal rejection near S/R breaks BREAKOUT (which triggers at S/R) and MEAN_REVERSION.
+            # Only trend-continuation setups should reject running directly into opposing blocking levels.
+            strat = cand.strategy.upper()
+            if strat not in ("BREAKOUT", "MEAN_REVERSION", "VWAP_SCALP"):
+                atr_val = Decimal(str(indicators_snap.get("volatility", {}).get("atr") or float(cand.risk_points or 20.0)))
+                sr_data = indicators_snap.get("support_resistance", {})
+                is_call = "CALL" in cand.direction
+                if is_call and sr_data.get("resistance"):
+                    # Check for immediate overhead resistance blocking CALL upside
+                    res_levels = [Decimal(str(r)) for r in sr_data.get("resistance", []) if Decimal(str(r)) > cand.spot_price]
+                    if res_levels:
+                        dist_to_overhead = min(lvl - cand.spot_price for lvl in res_levels)
+                        if dist_to_overhead < (atr_val * Decimal("0.25")):
+                            rejected_gates.append(f"{cand.strategy}:BLOCKED_BY_RESISTANCE_{float(dist_to_overhead):.1f}pts")
+                            logger.info("candidate_rejected_blocking_resistance", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_overhead))
+                            continue
+                elif (not is_call) and sr_data.get("support"):
+                    # Check for immediate support floor blocking PUT downside
+                    sup_levels = [Decimal(str(s)) for s in sr_data.get("support", []) if Decimal(str(s)) < cand.spot_price]
+                    if sup_levels:
+                        dist_to_floor = min(cand.spot_price - lvl for lvl in sup_levels)
+                        if dist_to_floor < (atr_val * Decimal("0.25")):
+                            rejected_gates.append(f"{cand.strategy}:BLOCKED_BY_SUPPORT_{float(dist_to_floor):.1f}pts")
+                            logger.info("candidate_rejected_blocking_support", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_floor))
+                            continue
 
             # ── 2. Trigger integrity gate: kill born-triggered / no-edge setups ──
             gate = check_trigger_integrity(

@@ -15,4 +15,15 @@ describe('nav-config navigation layout', () => {
     expect(findNavItemByHref('/options-intelligence')).toBeDefined();
     expect(findNavItemByHref('/research')).toBeDefined();
   });
+
+  it('uses unique keyboard shortcuts (no duplicates for quick jumps)', () => {
+    const shortcuts = ALL_NAV_ITEMS.map((i) => i.shortcut).filter(Boolean) as string[];
+    expect(new Set(shortcuts).size).toBe(shortcuts.length);
+  });
+
+  it('gives Options Intelligence a distinct icon and shortcut', () => {
+    const item = findNavItemByHref('/options-intelligence');
+    expect(item?.shortcut).toBe('⌘7');
+    expect(item?.icon).toBeDefined();
+  });
 });

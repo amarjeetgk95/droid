@@ -59,21 +59,27 @@ export function SidebarFlyout({ group, onNavigate, telemetryBadges }: SidebarFly
               aria-label={`${group.label} menu`}
               aria-expanded={open}
               aria-haspopup="menu"
+              title={`${group.label} (${group.items.length})`}
               onFocus={scheduleOpen}
               className={cn(
-                'group relative flex h-9 w-9 items-center justify-center rounded-lg transition-all duration-150',
+                'group relative flex h-10 w-10 items-center justify-center rounded-xl transition-colors duration-150',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 cursor-pointer',
-                activeGroup
-                  ? 'bg-primary text-primary-foreground shadow-xs ring-1 ring-primary/30'
-                  : 'text-muted-foreground hover:bg-accent/80 hover:text-foreground',
+                activeGroup || open
+                  ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
               )}
             >
-              <GroupIcon className="w-[18px] h-[18px] shrink-0 transition-transform duration-150 group-hover:scale-105" />
+              <GroupIcon className="w-[18px] h-[18px] shrink-0" aria-hidden />
+              {/* In-rail active bar — kept inside the button so the
+                  rail's overflow-hidden doesn't clip it */}
               {activeGroup && (
-                <span className="absolute -left-[7px] top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-primary" />
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-r-full bg-current opacity-90"
+                  aria-hidden
+                />
               )}
               {hasLiveBadge && !activeGroup && (
-                <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-card" aria-hidden />
+                <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-card" aria-hidden />
               )}
             </button>
           </DropdownMenuTrigger>
@@ -92,15 +98,15 @@ export function SidebarFlyout({ group, onNavigate, telemetryBadges }: SidebarFly
         align="start"
         onMouseEnter={cancelTimers}
         onMouseLeave={scheduleClose}
-        className="w-60 p-1.5 shadow-lg rounded-xl border border-border bg-popover"
+        className="w-64 p-2 shadow-xl rounded-xl border border-border bg-popover"
       >
-        <DropdownMenuLabel className="flex items-center justify-between px-2 py-1.5 text-xs font-bold text-foreground">
+        <DropdownMenuLabel className="flex items-center justify-between px-2 py-1.5 text-xs font-semibold text-foreground">
           <span className="flex items-center gap-1.5">
-            <GroupIcon className="w-3.5 h-3.5 text-primary" />
+            <GroupIcon className="w-3.5 h-3.5 text-primary" aria-hidden />
             {group.label}
           </span>
-          <span className="text-[10px] font-normal text-muted-foreground">
-            {group.items.length} pages
+          <span className="text-[10px] font-mono font-medium tabular-nums text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
+            {group.items.length}
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="my-1" />
@@ -116,41 +122,56 @@ export function SidebarFlyout({ group, onNavigate, telemetryBadges }: SidebarFly
                 <Link
                   href={item.href}
                   aria-current={active ? 'page' : undefined}
+                  title={item.description ?? item.label}
                   onClick={() => {
                     setOpen(false);
                     if (onNavigate) onNavigate();
                   }}
                   className={cn(
-                    'flex items-center justify-between gap-2 px-2 py-2 rounded-lg cursor-pointer text-[13px] transition-colors',
+                    'flex items-start justify-between gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[13px] transition-colors',
                     active
-                      ? 'bg-primary/[0.12] text-primary font-semibold ring-1 ring-primary/20'
+                      ? 'bg-primary/[0.10] text-primary font-semibold ring-1 ring-primary/20'
                       : 'text-foreground/80 hover:bg-accent hover:text-foreground',
                   )}
                 >
-                  <span className="flex items-center gap-2 min-w-0">
+                  <span className="flex items-start gap-2 min-w-0">
                     <ItemIcon
                       className={cn(
-                        'w-4 h-4 shrink-0',
-                        active ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
+                        'w-4 h-4 shrink-0 mt-px',
+                        active ? 'text-primary' : 'text-muted-foreground',
                       )}
+                      aria-hidden
                     />
-                    <span className="truncate">{item.label}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate leading-tight">{item.label}</span>
+                      {item.description && (
+                        <span className="block truncate text-[11px] font-normal text-muted-foreground leading-snug">
+                          {item.description}
+                        </span>
+                      )}
+                    </span>
                   </span>
 
-                  {badge ? (
-                    <span
-                      className={cn(
-                        'text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 tabular-nums',
-                        badge.color,
-                      )}
-                    >
-                      {badge.label}
-                    </span>
-                  ) : item.shortcut ? (
-                    <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/50 shrink-0">
-                      {item.shortcut}
-                    </kbd>
-                  ) : null}
+                  <span className="flex items-center shrink-0 ml-2 mt-0.5">
+                    {badge ? (
+                      <span
+                        className={cn(
+                          'text-[10px] font-bold px-1.5 py-0.5 rounded-full border leading-none tabular-nums',
+                          badge.color,
+                        )}
+                      >
+                        {badge.label}
+                      </span>
+                    ) : item.isBeta ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-amber-500/10 text-amber-600 border-amber-500/25">
+                        BETA
+                      </span>
+                    ) : item.shortcut ? (
+                      <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60 leading-none">
+                        {item.shortcut}
+                      </kbd>
+                    ) : null}
+                  </span>
                 </Link>
               </DropdownMenuItem>
             );

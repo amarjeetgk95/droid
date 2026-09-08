@@ -48,6 +48,7 @@ class PerformanceMetrics(BaseModel):
     underlying_breakdown: dict[str, dict] = Field(default_factory=dict)
     scalp_summary: dict = Field(default_factory=dict)
     intraday_summary: dict = Field(default_factory=dict)
+    calibration_buckets: dict[str, dict] = Field(default_factory=dict)
     audit_summary: Optional[dict] = None
 
 
@@ -760,6 +761,39 @@ class SignalOutcomeTracker:
         except Exception:
             pass
 
+        # Score Calibration Buckets (§45)
+        calibration_buckets: dict[str, dict] = {
+            "70-75": {"total": 0, "completed": 0, "wins": 0, "losses": 0, "win_rate_pct": 0.0, "expectancy_r": 0.0, "net_r_sum": 0.0},
+            "75-80": {"total": 0, "completed": 0, "wins": 0, "losses": 0, "win_rate_pct": 0.0, "expectancy_r": 0.0, "net_r_sum": 0.0},
+            "80-85": {"total": 0, "completed": 0, "wins": 0, "losses": 0, "win_rate_pct": 0.0, "expectancy_r": 0.0, "net_r_sum": 0.0},
+            "85+":   {"total": 0, "completed": 0, "wins": 0, "losses": 0, "win_rate_pct": 0.0, "expectancy_r": 0.0, "net_r_sum": 0.0},
+        }
+        for s in all_signals:
+            sc = float(getattr(s, "confidence", 0.0) or 0.0)
+            if sc < 75.0:
+                b_key = "70-75"
+            elif sc < 80.0:
+                b_key = "75-80"
+            elif sc < 85.0:
+                b_key = "80-85"
+            else:
+                b_key = "85+"
+
+            b_data = calibration_buckets[b_key]
+            b_data["total"] += 1
+            if s in completed_signals_list:
+                b_data["completed"] += 1
+                if _signal_is_win(s):
+                    b_data["wins"] += 1
+                else:
+                    b_data["losses"] += 1
+                b_data["net_r_sum"] = round(b_data["net_r_sum"] + _get_signal_net_r(s), 2)
+
+        for b_data in calibration_buckets.values():
+            comp = b_data["completed"]
+            b_data["win_rate_pct"] = round((b_data["wins"] / comp * 100.0), 1) if comp > 0 else 0.0
+            b_data["expectancy_r"] = round((b_data["net_r_sum"] / comp), 2) if comp > 0 else 0.0
+
         return PerformanceMetrics(
             total_signals=total,
             active_signals=active_ct,
@@ -786,6 +820,7 @@ class SignalOutcomeTracker:
             underlying_breakdown=under_breakdown,
             scalp_summary=_calc_desk(scalp_sigs),
             intraday_summary=_calc_desk(intraday_sigs),
+            calibration_buckets=calibration_buckets,
             audit_summary=audit_stats,
         )
 

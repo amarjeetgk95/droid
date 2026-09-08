@@ -34,6 +34,7 @@
     "fno_degraded_block_arming": true,
     "fno_degraded_haircut": 10.0,
     "vwap_degraded_haircut": 10.0,
+    "max_total_haircut": 12.0,
     "max_confidence": 0.90
   }
 }

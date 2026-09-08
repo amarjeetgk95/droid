@@ -26,7 +26,7 @@ from app.signals.contract_resolver import (
     calculate_position_sizing,
     normalize_price,
 )
-from app.signals.strategies import STRATEGY_REGISTRY
+from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGY_NAMES, INTRADAY_STRATEGY_NAMES
 from app.signals.fsm import signal_fsm, SignalInstance
 from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.scanner import scanner_engine
@@ -794,7 +794,7 @@ async def generate_signal(req: GenerateSignalRequest):
             detail=f"Unknown strategy '{req.strategy}'. Valid: {sorted(STRATEGY_REGISTRY.keys())}",
         )
 
-    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in ("VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"))
+    is_scalp_setup = req.is_scalp or (req.signal_type == "SCALP") or (tf in ("1M", "3M")) or (strat_val in SCALP_STRATEGY_NAMES)
 
     # ── Trigger integrity: reject born-triggered / no-edge manuals ──
     from app.signals.trigger_gate import check_trigger_integrity
@@ -1051,6 +1051,19 @@ async def set_signals_paper_wallet(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── 12.5 OFFICIAL 11-STRATEGY PORTFOLIO METADATA (§3, §67) ──────────
+
+@router.get("/portfolio-strategies")
+def get_portfolio_strategies():
+    """Returns the official 11-Strategy Portfolio grouped by desk."""
+    return {
+        "scalp_desk": sorted(SCALP_STRATEGY_NAMES),
+        "intraday_desk": sorted(INTRADAY_STRATEGY_NAMES),
+        "all_active_strategies": sorted(SCALP_STRATEGY_NAMES | INTRADAY_STRATEGY_NAMES),
+        "strategy_count": len(SCALP_STRATEGY_NAMES) + len(INTRADAY_STRATEGY_NAMES),
+    }
 
 
 # ── 13. SINGLE SIGNAL QUERY (FALLTHROUGH) ─────────────────────────────

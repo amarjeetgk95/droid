@@ -25,9 +25,13 @@ class GammaSqueezeStrategy(Strategy):
         atr = resolve_realistic_atr(ctx.underlying, spot, ctx.indicators)
 
         # DTE filter: gamma squeeze is only valid 0DTE-2DTE (near-expiry gamma acceleration)
-        dte = int(fno.get("dte", fno.get("days_to_expiry", 99)) or 99)
-        if dte > 2:
-            return None
+        raw_dte = fno.get("dte", fno.get("days_to_expiry", None))
+        if raw_dte is not None:
+            try:
+                if int(raw_dte) > 2:
+                    return None
+            except Exception:
+                pass
 
         pcr = float(fno.get("pcr", 1.0))
         oi_change = float(fno.get("oi_change_pct", 0.0) or fno.get("oi_data", {}).get("oi_change_pct", 0.0) or 0.0)

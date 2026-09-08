@@ -19,15 +19,14 @@ class OpeningRangeBreakoutStrategy(Strategy):
     name = "ORB"
 
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
-        # ── Session Time Window Enforcement (§15: Active 09:30 - 14:00 IST) ──
-        # Quality taper: full confidence 09:30-11:30, reduced confidence 11:30-14:00
+        # ── Session Time Window Enforcement (§13: Active 09:30 - 11:30 IST) ──
         session_quality = 1.0
         if ctx.timestamp_ms and ctx.timestamp_ms > 0:
             utc_minutes = (ctx.timestamp_ms // 60000) % 1440
             ist_minutes = (utc_minutes + 330) % 1440
-            if ist_minutes < 570 or ist_minutes > 840:
+            if ist_minutes < 570 or ist_minutes > 690:
                 return None
-            if 690 < ist_minutes <= 840:
+            if 660 < ist_minutes <= 690:
                 session_quality = 0.85
 
         ind = ctx.indicators

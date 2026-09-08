@@ -72,6 +72,16 @@ class AutoDetectCryptoRequest(BaseModel):
     timeframe: str = "1m"
 
 
+class BulkDeleteCryptoRequest(BaseModel):
+    trade_ids: list[str] = Field(default_factory=list, description="Explicit trade IDs to delete")
+    before_ms: Optional[int] = Field(default=None, description="Delete trades created before this epoch-ms (datewise clear)")
+    symbol: Optional[str] = Field(default=None, description="Filter by symbol (e.g. BTCUSDT, ETHUSDT)")
+    position_state: Optional[str] = Field(default=None, description="Filter by position state: ACTIVE, PARTIALLY_CLOSED, CLOSED")
+    outcome: Optional[str] = Field(default=None, description="Filter by outcome: PROFIT or LOSS (closed trades only)")
+    delete_all: bool = Field(default=False, description="Delete everything matching the filters")
+    confirm_all: bool = Field(default=False, description="Required safety flag when delete_all has no other selector")
+
+
 # ── 1. ACTIVE SIGNALS (COMPATIBILITY + FSM) ──────────────────────────
 
 @router.get("", response_model=CryptoScalpSignalsResponse)
@@ -477,3 +487,74 @@ async def delete_crypto_scalp_trade(trade_id: str):
     except Exception as e:
         logger.error("delete_crypto_scalp_trade_failed", trade_id=trade_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to delete trade {trade_id}: {str(e)}")
+
+
+@router.post("/ledger/bulk")
+async def bulk_delete_crypto_trades(req: BulkDeleteCryptoRequest):
+    """
+    Multi-delete + datewise clear for crypto execution ledger.
+    Selectors combine with AND:
+    explicit trade_ids ∪ (ledger records matching symbol/position_state/outcome/before_ms).
+    delete_all=true with no other selector needs confirm_all=true. Capped at 500/call.
+    """
+    from app.crypto_scalp.persistence import delete_execution_record
+
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _add(tid: Any) -> None:
+        s = str(tid or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            ids.append(s)
+
+    for tid in req.trade_ids or []:
+        _add(tid)
+
+    need_scan = bool(req.before_ms or req.delete_all or req.symbol or req.position_state or req.outcome)
+    if need_scan:
+        sym = (req.symbol or "").upper().strip() or None
+        ps = None
+        if req.position_state:
+            try:
+                ps = CryptoScalpPositionState(req.position_state.upper().strip())
+            except ValueError:
+                ps = None
+        outcome = (req.outcome or "").upper().strip() or None
+        if outcome == "ALL":
+            outcome = None
+
+        records = await fetch_execution_records(limit=10000, symbol=sym, state=ps)
+        for r in records:
+            if req.before_ms and not (r.created_at_utc < req.before_ms):
+                continue
+            if outcome == "PROFIT" and not (r.position_state == CryptoScalpPositionState.CLOSED and r.net_pnl_usd > 0):
+                continue
+            if outcome == "LOSS" and not (r.position_state == CryptoScalpPositionState.CLOSED and r.net_pnl_usd < 0):
+                continue
+            _add(r.trade_id)
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="Nothing selected: pass trade_ids or a filter (before_ms/symbol/position_state/outcome/delete_all).")
+    if req.delete_all and not req.confirm_all and not req.trade_ids and not req.before_ms:
+        raise HTTPException(status_code=400, detail="Bulk delete-all needs confirm_all=true.")
+    ids = ids[:500]
+
+    deleted: list[str] = []
+    for tid in ids:
+        try:
+            await delete_execution_record(tid)
+            deleted.append(tid)
+        except Exception as e:
+            logger.warning("bulk_delete_crypto_item_failed", trade_id=tid, error=str(e))
+
+    try:
+        await crypto_sse_hub.broadcast("crypto_ledger_bulk_deleted", {"trade_ids": deleted, "count": len(deleted)}, priority="P0")
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "deleted_count": len(deleted),
+        "trade_ids": deleted,
+    }

@@ -17,6 +17,7 @@ import { SidebarHeader, SidebarNavItem, SidebarFlyout, SidebarStatusDock } from 
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { navigationController } from '@/lib/navigationController';
+import type { StreamConnectionState } from '@/hooks/useMarketStream';
 
 // ---------------------------------------------------------------------------
 // Storage key & helpers
@@ -74,6 +75,167 @@ export type SidebarProps = {
   onMobileOpenChange?: (open: boolean) => void;
 };
 
+export type TelemetryBadges = Record<string, { label: string; color: string; pulse?: boolean }>;
+
+type SidebarNavContentProps = {
+  collapsed: boolean;
+  isMobile?: boolean;
+  pathname: string;
+  openGroups: Record<string, boolean>;
+  onToggleGroup: (id: string) => void;
+  onToggleCollapse: () => void;
+  onCloseMobile: () => void;
+  onExpand: () => void;
+  onNavigate: () => void;
+  telemetryBadges: TelemetryBadges;
+  apiType: string;
+  brokerProvider: string;
+  streamState: StreamConnectionState;
+};
+
+// ---------------------------------------------------------------------------
+// Static navigation content — top-level component so identity is stable
+// across renders (avoids remount / scroll + focus loss on every tick).
+// ---------------------------------------------------------------------------
+function SidebarNavContent({
+  collapsed,
+  isMobile,
+  pathname,
+  openGroups,
+  onToggleGroup,
+  onToggleCollapse,
+  onCloseMobile,
+  onExpand,
+  onNavigate,
+  telemetryBadges,
+  apiType,
+  brokerProvider,
+  streamState,
+}: SidebarNavContentProps) {
+  const rail = collapsed && !isMobile;
+  const dashboardItem = STANDALONE_ITEMS[0];
+
+  return (
+    <div className="flex h-full min-h-0 flex-col select-none">
+      {/* 1. Header (Brand + Pulse + Collapse toggle) */}
+      <SidebarHeader
+        collapsed={collapsed}
+        isMobile={isMobile}
+        streamState={streamState}
+        onToggleCollapse={onToggleCollapse}
+        onCloseMobile={onCloseMobile}
+      />
+
+      {/* 2. Main Navigation Items (scrolls when short viewport) */}
+      <nav
+        aria-label="Primary"
+        className={cn(
+          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-0.5 py-2 px-2 [scrollbar-width:thin]',
+          rail && 'items-center px-1.5 overflow-x-hidden',
+        )}
+      >
+        {/* Home */}
+        <ul className={cn('flex flex-col gap-0.5', rail && 'items-center w-full')}>
+          <li className={cn(rail && 'w-full flex justify-center')}>
+            <SidebarNavItem
+              item={dashboardItem}
+              active={isActivePath(pathname, dashboardItem.href)}
+              collapsed={rail}
+              onNavigate={onNavigate}
+            />
+          </li>
+        </ul>
+
+        {/* Workflow groups */}
+        {NAV_GROUPS.map((group) => {
+          // Collapsed rail: floating flyout
+          if (rail) {
+            return (
+              <div key={group.id} className="flex w-full justify-center py-0.5">
+                <SidebarFlyout group={group} onNavigate={onNavigate} telemetryBadges={telemetryBadges} />
+              </div>
+            );
+          }
+
+          const isOpen = openGroups[group.id] !== false;
+          const groupActive = isGroupActive(pathname, group);
+
+          // Expanded / mobile: collapsible section
+          return (
+            <section
+              key={group.id}
+              aria-labelledby={`sidebar-group-${group.id}`}
+              className="flex flex-col mt-3 first:mt-1.5"
+            >
+              <h2 id={`sidebar-group-${group.id}`} className="sr-only">
+                {group.label}
+              </h2>
+              <button
+                type="button"
+                onClick={() => onToggleGroup(group.id)}
+                aria-expanded={isOpen}
+                aria-controls={`sidebar-section-${group.id}`}
+                className="group flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] font-semibold tracking-[0.06em] uppercase text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full shrink-0 transition-colors',
+                      groupActive ? 'bg-primary' : 'bg-border group-hover:bg-muted-foreground/40',
+                    )}
+                    aria-hidden
+                  />
+                  <span className="truncate">{group.label}</span>
+                  <span className="text-[10px] font-mono font-medium tabular-nums px-1 rounded bg-muted/70 text-muted-foreground">
+                    {group.items.length}
+                  </span>
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'w-3.5 h-3.5 shrink-0 opacity-50 transition-transform duration-150 group-hover:opacity-100',
+                    !isOpen && '-rotate-90',
+                  )}
+                  aria-hidden
+                />
+              </button>
+
+              {isOpen && (
+                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-1">
+                  {group.items.map((item) => {
+                    const active = isActivePath(pathname, item.href);
+                    const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
+                    return (
+                      <li key={item.href}>
+                        <SidebarNavItem
+                          item={item}
+                          active={active}
+                          onNavigate={onNavigate}
+                          badgeData={badgeData}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          );
+        })}
+      </nav>
+
+      {/* 3. Bottom status dock (always visible) */}
+      <SidebarStatusDock
+        collapsed={collapsed}
+        isMobile={isMobile}
+        apiType={apiType}
+        provider={brokerProvider}
+        streamState={streamState}
+        onExpand={onExpand}
+        onNavigate={onNavigate}
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main Confined, Zero-Scroll Side Navigation Bar
 // ---------------------------------------------------------------------------
@@ -88,12 +250,11 @@ export function Sidebar({
 
   // Telemetry / stream health — prefer LiveMarket (stable health context),
   // fall back to Dashboard context for isolated usage.
-  let streamState: import('@/hooks/useMarketStream').StreamConnectionState = 'CONNECTED';
-  try {
-    streamState = useOptionalLiveMarketContext()?.streamState ?? useOptionalMarketDataContext()?.streamState ?? 'CONNECTED';
-  } catch {
-    streamState = 'CONNECTED';
-  }
+  // Hooks are called unconditionally; optional contexts return null outside providers.
+  const liveMarket = useOptionalLiveMarketContext();
+  const marketData = useOptionalMarketDataContext();
+  const streamState: StreamConnectionState =
+    liveMarket?.streamState ?? marketData?.streamState ?? 'CONNECTED';
 
   // Collapsed state
   const [internalCollapsed, setInternalCollapsed] = useState<boolean>(() => loadCollapsed());
@@ -119,8 +280,20 @@ export function Sidebar({
     [onMobileOpenChange],
   );
 
-  const [apiType, setApiType] = useState<string>('indian');
-  const [brokerProvider, setBrokerProvider] = useState<string>('fyers');
+  const [apiType, setApiType] = useState<string>(() => {
+    try {
+      return getStoredSettings().broker.apiType;
+    } catch {
+      return 'indian';
+    }
+  });
+  const [brokerProvider, setBrokerProvider] = useState<string>(() => {
+    try {
+      return getStoredSettings().broker.provider;
+    } catch {
+      return 'fyers';
+    }
+  });
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => loadGroupOpen());
 
   const toggleGroup = useCallback((id: string) => {
@@ -131,9 +304,13 @@ export function Sidebar({
     });
   }, []);
 
+  const handleToggleCollapse = useCallback(() => setCollapsed((p) => !p), [setCollapsed]);
+  const handleCloseMobile = useCallback(() => setMobileOpen(false), [setMobileOpen]);
+  const handleExpand = useCallback(() => setCollapsed(false), [setCollapsed]);
+
   // Auto-expand the group that contains the current page (e.g. deep-link reload)
   // Intentional external->state sync on route change.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
+  /* eslint-disable react-hooks/set-state-in-effect -- route-driven group expansion */
   useEffect(() => {
     const active = NAV_GROUPS.find((g) => isGroupActive(pathname, g));
     if (active) {
@@ -149,7 +326,7 @@ export function Sidebar({
   // Truthful telemetry badges — derived from real stream state, never fake.
   // Signals/AI counts will be wired when a global engine context lands;
   // until then show connection truth (LIVE / SYNC / OFF).
-  const telemetryBadges = useMemo(() => {
+  const telemetryBadges = useMemo<TelemetryBadges>(() => {
     const live = streamState === 'CONNECTED';
     const syncing = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
     const dot = live
@@ -172,7 +349,8 @@ export function Sidebar({
     };
   }, [streamState]);
 
-  // Hydrate settings
+  // Hydrate settings (localStorage -> state sync + cross-tab updates)
+  /* eslint-disable react-hooks/set-state-in-effect -- hydration from localStorage */
   useEffect(() => {
     try {
       const s = getStoredSettings();
@@ -252,122 +430,19 @@ export function Sidebar({
     if (mobileOpen) setMobileOpen(false);
   }, [mobileOpen, setMobileOpen]);
 
-  const dashboardItem = STANDALONE_ITEMS[0];
-
-  // -----------------------------------------------------------------------
-  // Shared Navigation Content (scroll-safe, collapsible groups)
-  // -----------------------------------------------------------------------
-  const NavContent = ({ isCollapsed, isMobile }: { isCollapsed: boolean; isMobile?: boolean }) => (
-    <div className="flex h-full min-h-0 flex-col select-none">
-      {/* 1. Header (Brand + Pulse + Collapse toggle) */}
-      <SidebarHeader
-        collapsed={isCollapsed}
-        isMobile={isMobile}
-        streamState={streamState}
-        onToggleCollapse={() => setCollapsed((p) => !p)}
-        onCloseMobile={() => setMobileOpen(false)}
-      />
-
-      {/* 2. Main Navigation Items (scrolls when short viewport) */}
-      <nav
-        aria-label="Primary"
-        className={cn(
-          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-1 py-2 px-2 scrollbar-thin',
-          isCollapsed && !isMobile && 'items-center px-1.5 overflow-y-auto overflow-x-hidden',
-        )}
-      >
-        {/* Home */}
-        <ul className={cn('flex flex-col gap-0.5', isCollapsed && !isMobile && 'items-center')}>
-          <li>
-            <SidebarNavItem
-              item={dashboardItem}
-              active={isActivePath(pathname, dashboardItem.href)}
-              collapsed={isCollapsed && !isMobile}
-              onNavigate={handleNavigate}
-            />
-          </li>
-        </ul>
-
-        {/* Workflow groups */}
-        {NAV_GROUPS.map((group) => {
-          // Collapsed rail: floating flyout
-          if (isCollapsed && !isMobile) {
-            return (
-              <SidebarFlyout
-                key={group.id}
-                group={group}
-                onNavigate={handleNavigate}
-                telemetryBadges={telemetryBadges}
-              />
-            );
-          }
-
-          const isOpen = openGroups[group.id] !== false;
-          const groupActive = isGroupActive(pathname, group);
-
-          // Expanded / mobile: collapsible section
-          return (
-            <section key={group.id} aria-labelledby={`sidebar-group-${group.id}`} className="flex flex-col mt-2 first:mt-1">
-              <h2 id={`sidebar-group-${group.id}`} className="sr-only">
-                {group.label}
-              </h2>
-              <button
-                type="button"
-                onClick={() => toggleGroup(group.id)}
-                aria-expanded={isOpen}
-                aria-controls={`sidebar-section-${group.id}`}
-                className="group flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] font-semibold tracking-wider uppercase text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span className="flex items-center gap-1.5 min-w-0">
-                  {groupActive && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" aria-hidden />
-                  )}
-                  <span className="truncate">{group.label}</span>
-                  <span className="text-[10px] font-mono font-normal opacity-60">{group.items.length}</span>
-                </span>
-                <ChevronDown
-                  className={cn(
-                    'w-3.5 h-3.5 shrink-0 opacity-60 transition-transform duration-150 group-hover:opacity-100',
-                    !isOpen && '-rotate-90',
-                  )}
-                />
-              </button>
-
-              {isOpen && (
-                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-0.5">
-                  {group.items.map((item) => {
-                    const active = isActivePath(pathname, item.href);
-                    const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
-                    return (
-                      <li key={item.href}>
-                        <SidebarNavItem
-                          item={item}
-                          active={active}
-                          onNavigate={handleNavigate}
-                          badgeData={badgeData}
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
-          );
-        })}
-      </nav>
-
-      {/* 3. Bottom status dock (always visible) */}
-      <SidebarStatusDock
-        collapsed={isCollapsed}
-        isMobile={isMobile}
-        apiType={apiType}
-        provider={brokerProvider}
-        streamState={streamState}
-        onExpand={() => setCollapsed(false)}
-        onNavigate={handleNavigate}
-      />
-    </div>
-  );
+  const navContentProps = {
+    pathname,
+    openGroups,
+    onToggleGroup: toggleGroup,
+    onToggleCollapse: handleToggleCollapse,
+    onCloseMobile: handleCloseMobile,
+    onExpand: handleExpand,
+    onNavigate: handleNavigate,
+    telemetryBadges,
+    apiType,
+    brokerProvider,
+    streamState,
+  };
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -375,11 +450,11 @@ export function Sidebar({
       <aside
         aria-label="Primary navigation"
         className={cn(
-          'hidden md:flex shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 ease-out will-change-transform overflow-hidden shadow-2xs select-none',
-          collapsed ? 'w-[68px]' : 'w-64 lg:w-[268px]',
+          'hidden md:flex shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 ease-out overflow-hidden select-none',
+          collapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]',
         )}
       >
-        <NavContent isCollapsed={collapsed} />
+        <SidebarNavContent collapsed={collapsed} {...navContentProps} />
       </aside>
 
       {/* Mobile Modal Drawer */}
@@ -402,11 +477,11 @@ export function Sidebar({
         <aside
           aria-label="Primary navigation"
           className={cn(
-            'absolute left-0 top-0 h-full w-[80vw] max-w-[300px] bg-card border-r border-border shadow-md flex flex-col transition-transform duration-300 ease-out will-change-transform',
+            'absolute left-0 top-0 h-full w-[80vw] max-w-[300px] bg-card border-r border-border shadow-xl flex flex-col transition-transform duration-300 ease-out will-change-transform',
             mobileOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
-          <NavContent isCollapsed={false} isMobile />
+          <SidebarNavContent collapsed={false} isMobile {...navContentProps} />
         </aside>
       </div>
     </TooltipProvider>
