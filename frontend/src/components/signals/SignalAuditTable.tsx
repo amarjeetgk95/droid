@@ -406,7 +406,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </div>
       )}
       {/* ── 5-TIER LIVE P&L SUMMARY KPI STRIP ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
         {/* Card 1: LIVE UNREALIZED MTM P&L */}
         <Card className={`relative overflow-hidden transition-all duration-200 border ${
           openTrades.length === 0
@@ -415,30 +415,31 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
               ? 'bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.08)]'
               : 'bg-rose-500/10 border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.08)]'
         }`}>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold flex items-center gap-1.5 text-foreground">
+          <CardContent className="p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold flex items-center gap-1.5 text-foreground">
                 {openTrades.length > 0 ? (
-                  <span className="relative flex h-2 w-2">
+                  <span className="relative flex h-1.5 w-1.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                   </span>
                 ) : (
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40 inline-block" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 inline-block" />
                 )}
-                Live Unrealized
+                <span className="hidden sm:inline">Live Unrealized</span>
+                <span className="sm:hidden">MTM</span>
               </span>
-              <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-mono font-bold ${
+              <Badge variant="outline" className={`text-[9px] px-1 py-0 font-mono font-bold ${
                 openTrades.length === 0
                   ? 'bg-secondary/50 text-muted-foreground border-border/50'
                   : isUnrealizedProfit
                     ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
                     : 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
               }`}>
-                {openTrades.length === 0 ? 'FLAT' : 'LIVE MTM'}
+                {openTrades.length === 0 ? 'FLAT' : 'LIVE'}
               </Badge>
             </div>
-            <div className={`text-xl font-extrabold font-mono mt-1 ${
+            <div className={`text-lg font-extrabold font-mono mt-0.5 ${
               openTrades.length === 0
                 ? 'text-foreground/80'
                 : isUnrealizedProfit
@@ -447,14 +448,14 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
             }`}>
               {liveUnrealizedPnl >= 0 ? `+₹${liveUnrealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `-₹${Math.abs(liveUnrealizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>{openTrades.length === 0 ? 'No Open Positions' : `${openTrades.length} Active Positions`}</span>
+            <div className="text-[10px] text-muted-foreground flex items-center justify-between">
+              <span>{openTrades.length === 0 ? 'No Open' : `${openTrades.length} Active`}</span>
               {openTrades.length > 0 ? (
                 <span className="font-mono">
                   <span className="text-emerald-600 font-bold">{liveWinningCount}W</span> / <span className="text-rose-600 font-bold">{liveLosingCount}L</span>
                 </span>
               ) : (
-                <span className="text-muted-foreground font-mono">0 at risk</span>
+                <span className="text-muted-foreground font-mono">0 risk</span>
               )}
             </div>
           </CardContent>
@@ -462,71 +463,71 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
         {/* Card 2: NET REALIZED P&L */}
         <Card className={`border transition-all duration-200 ${isRealizedProfit ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Net Realized P&L</span>
-              {isRealizedProfit ? <TrendingUp className="w-4 h-4 text-emerald-500" /> : <TrendingDown className="w-4 h-4 text-rose-500" />}
+          <CardContent className="p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground font-medium">Net Realized</span>
+              {isRealizedProfit ? <TrendingUp className="w-3.5 h-3.5 text-emerald-500" /> : <TrendingDown className="w-3.5 h-3.5 text-rose-500" />}
             </div>
-            <div className={`text-xl font-bold font-mono mt-1 ${isRealizedProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+            <div className={`text-lg font-bold font-mono mt-0.5 ${isRealizedProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
               {netRealizedPnl >= 0 ? `+₹${netRealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(netRealizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+            <div className="text-[10px] text-muted-foreground truncate">
               Gross: +₹{(summary?.gross_profit_inr || 0).toLocaleString()} / -₹{(summary?.gross_loss_inr || 0).toLocaleString()}
             </div>
           </CardContent>
         </Card>
 
         {/* Card 3: COMBINED TOTAL PORTFOLIO P&L */}
-        <Card className={`border-2 transition-all duration-200 ${isTotalProfit ? 'border-primary/40 bg-primary/5 shadow-[0_0_15px_rgba(59,130,246,0.06)]' : 'border-rose-500/30 bg-rose-500/5'}`}>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-foreground flex items-center gap-1">
-                <DollarSign className="w-3.5 h-3.5 text-primary" /> Total Net P&L
+        <Card className={`border transition-all duration-200 ${isTotalProfit ? 'border-primary/40 bg-primary/5' : 'border-rose-500/30 bg-rose-500/5'}`}>
+          <CardContent className="p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold text-foreground flex items-center gap-1">
+                <DollarSign className="w-3.5 h-3.5 text-primary" /> Total P&L
               </span>
               <Badge variant="secondary" className="text-[9px] px-1 py-0 font-mono">
-                COMBINED
+                NET
               </Badge>
             </div>
-            <div className={`text-xl font-extrabold font-mono mt-1 ${isTotalProfit ? 'text-primary' : 'text-rose-600'}`}>
+            <div className={`text-lg font-extrabold font-mono mt-0.5 ${isTotalProfit ? 'text-primary' : 'text-rose-600'}`}>
               {totalCombinedPnl >= 0 ? `+₹${totalCombinedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(totalCombinedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Realized + Live Open MTM
+            <div className="text-[10px] text-muted-foreground">
+              Realized + Open MTM
             </div>
           </CardContent>
         </Card>
 
         {/* Card 4: WIN RATE & PROFIT FACTOR */}
         <Card className="bg-secondary/20 border-border/60">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Win Rate & Factor</span>
-              <Award className="w-4 h-4 text-amber-500/80" />
+          <CardContent className="p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground font-medium">Win Rate</span>
+              <Award className="w-3.5 h-3.5 text-amber-500/80" />
             </div>
-            <div className="text-xl font-bold font-mono mt-1 flex items-center gap-1.5">
+            <div className="text-lg font-bold font-mono mt-0.5 flex items-center gap-1">
               <span className="text-emerald-600 dark:text-emerald-400">{summary?.win_rate_pct !== undefined ? `${summary.win_rate_pct}%` : '0%'}</span>
-              <span className="text-xs text-muted-foreground font-normal">({summary?.profit_factor || 1.0}x)</span>
+              <span className="text-[10px] text-muted-foreground font-normal">({summary?.profit_factor || 1.0}x)</span>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              {summary?.winning_trades || 0}W - {summary?.losing_trades || 0}L ({summary?.closed_trades || 0} closed)
+            <div className="text-[10px] text-muted-foreground">
+              {summary?.winning_trades || 0}W - {summary?.losing_trades || 0}L
             </div>
           </CardContent>
         </Card>
 
         {/* Card 5: ACTIVE EXPOSURE & PAPER EXECUTIONS */}
         <Card className="bg-secondary/20 border-border/60">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground font-medium">Active Exposure</span>
-              <Activity className="w-4 h-4 text-primary/70" />
+          <CardContent className="p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted-foreground font-medium">Exposure</span>
+              <Activity className="w-3.5 h-3.5 text-primary/70" />
             </div>
-            <div className="text-xl font-bold font-mono mt-1">
+            <div className="text-lg font-bold font-mono mt-0.5">
               {(summary?.total_active_exposure_inr || 0) === 0
-                ? '₹0.00'
+                ? '₹0'
                 : `₹${((summary?.total_active_exposure_inr || 0) / 1000).toFixed(1)}k`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>{openTrades.length === 0 ? 'Zero Risk Deployed' : `${openTrades.length} Paper Trades`}</span>
+            <div className="text-[10px] text-muted-foreground flex items-center justify-between">
+              <span>{openTrades.length === 0 ? 'Zero Risk' : `${openTrades.length} Trades`}</span>
               <span className="font-mono text-primary">{summary?.total_signals_audited || 0} Logged</span>
             </div>
           </CardContent>

@@ -56,55 +56,55 @@ export function SignalPerformanceView() {
       </div>
 
       {/* Top 4 KPI Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
         <Card className="bg-emerald-500/5 border-emerald-500/20">
-          <CardContent className="pt-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Percent className="w-4 h-4 text-emerald-600" /> Win Rate
+          <CardContent className="p-2.5 space-y-0.5">
+            <span className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Percent className="w-3.5 h-3.5 text-emerald-600" /> Win Rate
             </span>
-            <div className="text-2xl font-bold font-mono text-emerald-600">
+            <div className="text-xl font-bold font-mono text-emerald-600">
               {data?.win_rate_pct !== undefined ? `${data.win_rate_pct}%` : '—'}
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              {data?.winning_signals || 0} Wins / {data?.completed_signals || 0} Completed
+            <p className="text-[10px] text-muted-foreground">
+              {data?.winning_signals || 0}W / {data?.completed_signals || 0} done
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-primary/5 border-primary/20">
-          <CardContent className="pt-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Scale className="w-4 h-4 text-primary" /> Profit Factor
+          <CardContent className="p-2.5 space-y-0.5">
+            <span className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Scale className="w-3.5 h-3.5 text-primary" /> Profit Factor
             </span>
-            <div className="text-2xl font-bold font-mono text-primary">
+            <div className="text-xl font-bold font-mono text-primary">
               {data?.profit_factor !== undefined ? `${data.profit_factor}x` : '—'}
             </div>
-            <p className="text-[11px] text-muted-foreground">Gross Gains vs Losses</p>
+            <p className="text-[10px] text-muted-foreground">Gains vs Losses</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="pt-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-emerald-600" /> Expectancy / Trade
+          <CardContent className="p-2.5 space-y-0.5">
+            <span className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" /> Expectancy
             </span>
-            <div className="text-2xl font-bold font-mono text-foreground">
+            <div className="text-xl font-bold font-mono text-foreground">
               {data?.expectancy_r !== undefined ? `+${data.expectancy_r} R` : '—'}
             </div>
-            <p className="text-[11px] text-muted-foreground">Average R:R {data?.average_rr || '2.25'}x</p>
+            <p className="text-[10px] text-muted-foreground">Avg R:R {data?.average_rr || '2.25'}x</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="pt-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Target className="w-4 h-4 text-primary" /> Target 2 Full Wins
+          <CardContent className="p-2.5 space-y-0.5">
+            <span className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Target className="w-3.5 h-3.5 text-primary" /> T2 Wins
             </span>
-            <div className="text-2xl font-bold font-mono text-emerald-700">
+            <div className="text-xl font-bold font-mono text-emerald-700">
               {data?.target_2_hits || 0}
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              {data?.target_1_hits || 0} T1 Hits • {data?.stop_loss_hits || 0} SL Hits
+            <p className="text-[10px] text-muted-foreground">
+              {data?.target_1_hits || 0} T1 • {data?.stop_loss_hits || 0} SL
             </p>
           </CardContent>
         </Card>
