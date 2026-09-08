@@ -37,6 +37,11 @@ class BreakoutStrategy(Strategy):
         if resistances:
             key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
             if (spot >= key_res or breakout_pressure >= 72) and mtf_bias != "BEARISH":
+                # Close-price confirmation: require previous candle close above resistance
+                if len(ctx.candles) >= 2:
+                    prev_close = Decimal(str(ctx.candles[-2].get("close", spot)))
+                    if prev_close < key_res:
+                        return None  # Wick trap — previous candle didn't confirm breakout
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 if spot < key_res:
                     # Pre-breakout setup: trigger above resistance
@@ -108,6 +113,11 @@ class BreakoutStrategy(Strategy):
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
             if (spot <= key_sup or breakout_pressure >= 72) and mtf_bias != "BULLISH":
+                # Close-price confirmation: require previous candle close below support
+                if len(ctx.candles) >= 2:
+                    prev_close = Decimal(str(ctx.candles[-2].get("close", spot)))
+                    if prev_close > key_sup:
+                        return None  # Wick trap — previous candle didn't confirm breakdown
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 if spot > key_sup:
                     # Pre-breakdown setup: trigger below support

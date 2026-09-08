@@ -40,8 +40,17 @@ class MeanReversionStrategy(Strategy):
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
         # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 32.0).
-        # Trigger sits a confirmation gap above spot — never spot ± 1 tick.
+        # Volume exhaustion: volume on approach should be declining (last vol < avg vol)
         if (spot <= bb_lower * Decimal("1.003")) and rsi <= 32.0:
+            vol_ok = True
+            if len(ctx.candles) >= 3:
+                last_vol = float(ctx.candles[-1].get("volume", 0))
+                prev_vols = [float(c.get("volume", 0)) for c in ctx.candles[-4:-1]]
+                avg_vol = sum(prev_vols) / len(prev_vols) if prev_vols else 1.0
+                if avg_vol > 0 and last_vol > avg_vol * 1.2:
+                    vol_ok = False  # Volume spiking on approach = not exhaustion
+            if not vol_ok:
+                return None
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
@@ -94,6 +103,15 @@ class MeanReversionStrategy(Strategy):
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
         if (spot >= bb_upper * Decimal("0.997")) and rsi >= 68.0:
+            vol_ok = True
+            if len(ctx.candles) >= 3:
+                last_vol = float(ctx.candles[-1].get("volume", 0))
+                prev_vols = [float(c.get("volume", 0)) for c in ctx.candles[-4:-1]]
+                avg_vol = sum(prev_vols) / len(prev_vols) if prev_vols else 1.0
+                if avg_vol > 0 and last_vol > avg_vol * 1.2:
+                    vol_ok = False  # Volume spiking on approach = not exhaustion
+            if not vol_ok:
+                return None
             entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
             entry_max = normalize_price(spot, tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))

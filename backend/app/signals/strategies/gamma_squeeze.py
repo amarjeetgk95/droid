@@ -24,6 +24,11 @@ class GammaSqueezeStrategy(Strategy):
         tick = Decimal("0.05")
         atr = resolve_realistic_atr(ctx.underlying, spot, ctx.indicators)
 
+        # DTE filter: gamma squeeze is only valid 0DTE-2DTE (near-expiry gamma acceleration)
+        dte = int(fno.get("dte", fno.get("days_to_expiry", 99)) or 99)
+        if dte > 2:
+            return None
+
         pcr = float(fno.get("pcr", 1.0))
         oi_change = float(fno.get("oi_change_pct", 0.0) or fno.get("oi_data", {}).get("oi_change_pct", 0.0) or 0.0)
         if oi_change == 0.0 and fno.get("futures_oi_change") and fno.get("futures_oi"):
@@ -44,6 +49,16 @@ class GammaSqueezeStrategy(Strategy):
         _oi_surge = oi_change >= 5.0
         _above_wall = spot >= max_pain * Decimal("0.998")
         if sum((_pcr_extreme, _oi_surge, _above_wall)) >= 2:
+            # Spot velocity check: require acceleration, not just positioning
+            spot_velocity_ok = True
+            if len(ctx.candles) >= 6:
+                spot_5ago = Decimal(str(ctx.candles[-6].get("close", spot)))
+                spot_velocity = abs(spot - spot_5ago)
+                if spot_velocity < (atr * Decimal("1.2")):
+                    spot_velocity_ok = False
+            if not spot_velocity_ok:
+                return None
+
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.25")), tick)
             trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
@@ -95,6 +110,16 @@ class GammaSqueezeStrategy(Strategy):
         _oi_surge_p = oi_change >= 5.0
         _below_wall = spot <= max_pain * Decimal("1.002")
         if sum((_pcr_extreme_p, _oi_surge_p, _below_wall)) >= 2:
+            # Spot velocity check: require acceleration, not just positioning
+            spot_velocity_ok = True
+            if len(ctx.candles) >= 6:
+                spot_5ago = Decimal(str(ctx.candles[-6].get("close", spot)))
+                spot_velocity = abs(spot - spot_5ago)
+                if spot_velocity < (atr * Decimal("1.2")):
+                    spot_velocity_ok = False
+            if not spot_velocity_ok:
+                return None
+
             entry_min = normalize_price(spot - (atr * Decimal("0.25")), tick)
             entry_max = normalize_price(spot, tick)
             trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))

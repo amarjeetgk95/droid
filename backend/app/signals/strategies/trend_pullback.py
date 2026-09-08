@@ -26,13 +26,20 @@ class TrendPullbackStrategy(Strategy):
         trend_data = ind.get("trend", {})
         ema20 = Decimal(str(trend_data.get("ema20") or spot * Decimal("0.998")))
         ema50 = Decimal(str(trend_data.get("ema50") or spot * Decimal("0.995")))
+        ema200 = trend_data.get("ema200")
         adx = float(ind.get("adx") or trend_data.get("adx", 25.0))
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
+        # EMA200 gate: if EMA200 available, require full ribbon alignment
+        ema200_ok = True
+        if ema200 is not None:
+            ema200_dec = Decimal(str(ema200))
+            ema200_ok = (ema20 > ema50 > ema200_dec) or (ema20 < ema50 < ema200_dec)
+
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
         is_bull_trend = (ema20 >= ema50 or trend_data.get("trend") == "BULLISH" or ctx.regime == "TREND_UP")
-        if spot > Decimal("0") and is_bull_trend and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 25.0:
+        if spot > Decimal("0") and is_bull_trend and ema200_ok and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 25.0:
             # Check if spot is near EMA20 (within 0.6%)
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.6") or spot >= ema20:
@@ -88,7 +95,7 @@ class TrendPullbackStrategy(Strategy):
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
         is_bear_trend = (ema20 <= ema50 or trend_data.get("trend") == "BEARISH" or ctx.regime == "TREND_DOWN")
-        if spot > Decimal("0") and is_bear_trend and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 25.0:
+        if spot > Decimal("0") and is_bear_trend and ema200_ok and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 25.0:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.6") or spot <= ema20:
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))

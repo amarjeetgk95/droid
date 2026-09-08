@@ -19,12 +19,16 @@ class OpeningRangeBreakoutStrategy(Strategy):
     name = "ORB"
 
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
-        # ── Session Time Window Enforcement (§15: Active 09:30 - 11:30 IST) ──
+        # ── Session Time Window Enforcement (§15: Active 09:30 - 14:00 IST) ──
+        # Quality taper: full confidence 09:30-11:30, reduced confidence 11:30-14:00
+        session_quality = 1.0
         if ctx.timestamp_ms and ctx.timestamp_ms > 0:
             utc_minutes = (ctx.timestamp_ms // 60000) % 1440
             ist_minutes = (utc_minutes + 330) % 1440
-            if ist_minutes < 570 or ist_minutes > 690:
+            if ist_minutes < 570 or ist_minutes > 840:
                 return None
+            if 690 < ist_minutes <= 840:
+                session_quality = 0.85
 
         ind = ctx.indicators
         spot = ctx.spot_price
@@ -100,7 +104,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
                     mtf_score=mtf_score,
                     fno_score=fno_score,
                     regime_score=regime_score,
-                    overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1),
+                    overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1) * session_quality,
                     rationale=[
                         f"15-Minute Opening Range High Breakout (₹{orb_high:,.2f})",
                         f"Session volume expansion ratio {vol_ratio:.2f}x",
@@ -157,7 +161,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
                     mtf_score=mtf_score,
                     fno_score=fno_score,
                     regime_score=regime_score,
-                    overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1),
+                    overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1) * session_quality,
                     rationale=[
                         f"15-Minute Opening Range Low Breakdown (₹{orb_low:,.2f})",
                         f"Session volume expansion ratio {vol_ratio:.2f}x",

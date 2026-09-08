@@ -55,6 +55,9 @@ class SignalCandidate(BaseModel):
     fno_degraded: bool = False
     vwap_degraded: bool = False
     vwap_coverage_pct: float = 100.0
+    vix_percentile: Optional[float] = None
+    lunch_session: bool = False
+    pre_market_gap_pct: float = 0.0
 
     # Desk & Classification
     signal_type: SignalType = "INTRADAY"

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timezone, time as dt_time
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Optional, Any
 import structlog
@@ -177,6 +178,12 @@ class SignalScanner:
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
 
+        # Pre-market gap filter: suppress strategies for first 3 candles if gap > 0.5%
+        prev_close = getattr(quote, "previous_close", None)
+        gap_pct = 0.0
+        if prev_close and prev_close > 0:
+            gap_pct = abs((spot - Decimal(str(prev_close))) / Decimal(str(prev_close))) * 100.0
+
         # Fetch real candles for indicators (bounded timeout, never fatal)
         candles_dict = {}
         try:
@@ -342,6 +349,11 @@ class SignalScanner:
         if len(active_candles) >= 20:
             vol_ma = sum(float(c.get("volume", 0)) for c in active_candles[-20:]) / 20.0
 
+        # Lunch-session liquidity vacuum detection (12:00-13:30 IST = 720-810 min)
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        ist_minute_of_day = now_ist.hour * 60 + now_ist.minute
+        lunch_session = 720 <= ist_minute_of_day <= 810
+
         ctx = StrategyContext(
             underlying=u,  # type: ignore
             spot_price=spot,
@@ -359,6 +371,10 @@ class SignalScanner:
             fno_degraded=fno_degraded,
             vwap_degraded=vwap_degraded,
             vwap_coverage_pct=vwap_coverage_pct,
+            timestamp_ms=int(time.time() * 1000),
+            vix_percentile=None,
+            lunch_session=lunch_session,
+            pre_market_gap_pct=float(gap_pct),
         )
 
         # Select strategies according to desk and timeframe
@@ -375,6 +391,19 @@ class SignalScanner:
             try:
                 candidate = strat.detect(ctx)
                 if candidate:
+                    # Propagate context flags to candidate before confirmation gates
+                    candidate.fno_degraded = fno_degraded
+                    candidate.vwap_degraded = vwap_degraded
+                    candidate.vwap_coverage_pct = vwap_coverage_pct
+                    candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
+                    candidate.lunch_session = getattr(ctx, "lunch_session", False)
+
+                    # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles
+                    if ctx.pre_market_gap_pct > 0.5 and len(ctx.candles) <= 3:
+                        rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{ctx.pre_market_gap_pct:.2f}pct")
+                        logger.info("candidate_rejected_gap", strategy=strat_name, underlying=u, gap_pct=ctx.pre_market_gap_pct)
+                        continue
+
                     # Gating Fast Scalping setups through ScalpConfirmationEngine (§16)
                     if candidate.is_scalp or strat_name in SCALP_STRATEGIES:
                         confirm_res = scalp_confirmation_engine.validate(
@@ -396,8 +425,6 @@ class SignalScanner:
                         # Gate passed: record confirmed fingerprint
                         scalp_confirmation_engine.record_confirmed(candidate, candle_timestamp_ms=ctx.timestamp_ms)
 
-                    candidate.fno_degraded = fno_degraded
-                    candidate.vwap_degraded = vwap_degraded
                     candidate.vwap_coverage_pct = vwap_coverage_pct
                     candidate.context_snapshot = {
                         "regime": ctx.regime,
