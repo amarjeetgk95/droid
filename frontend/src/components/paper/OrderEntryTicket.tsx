@@ -1,15 +1,19 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { OrderPayload, BasketOrderPayload } from '@/lib/types';
-import { Send, Zap, PlusCircle, MinusCircle, Plus, Minus } from 'lucide-react';
+import { Send, Zap, PlusCircle, MinusCircle, Plus, Minus, Crosshair, RotateCw } from 'lucide-react';
 import { api } from '@/lib/api';
-import { lotSizeFor, estimateMarginLocal, buildOptionSymbol } from '@/lib/paperLots';
+import { lotSizeFor, strikeStepFor, estimateMarginLocal, buildOptionSymbol } from '@/lib/paperLots';
+import { useOptionChain } from '@/hooks/useOptionChain';
+import { StrikeSelect } from './StrikeSelect';
 
 type BasketLeg = {
   id: number;
   symbol: string;
   underlying: string;
+  strike: number;
+  optionType: 'CE' | 'PE';
   side: 'BUY' | 'SELL';
   product: 'INTRADAY' | 'CARRYFORWARD';
   quantity: number;
@@ -52,6 +56,32 @@ export function OrderEntryTicket({
   const [price, setPrice] = useState(150.0);
   const [customSymbol, setCustomSymbol] = useState<string | null>(null);
 
+  // Live chain ladder (expiry + strikes + LTPs) with synthetic offline fallback.
+  const chain = useOptionChain(underlying, strike);
+  const selectedLtp = chain.ltpFor(strike, optionType);
+
+  // Snap to ATM whenever the underlying/expiry context changes — this also
+  // retires the hardcoded 24800 default as soon as the live ATM arrives.
+  // Manual strike picks are untouched (chain only refetches on context change).
+  const snapKey = `${underlying}|${chain.expiry ?? ''}`;
+  const snappedFor = useRef('');
+  useEffect(() => {
+    if (!chain.atm) return;
+    const key = `${snapKey}|${chain.atm}`;
+    if (snappedFor.current === key) return;
+    snappedFor.current = key;
+    setStrike(chain.atm);
+    setCustomSymbol(null);
+  }, [snapKey, chain.atm]);
+
+  // Auto-fill limit price from the selected chain row — user can still
+  // override afterwards; any strike/type/chain move re-seeds from live LTP.
+  useEffect(() => {
+    const ltp = chain.ltpFor(strike, optionType);
+    if (ltp) setPrice(ltp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strike, optionType, chain.strikes]);
+
   const lotSize = lotSizeFor(underlying);
   const quantity = Math.max(lotSize, lots * lotSize);
   const symbol = customSymbol ?? buildOptionSymbol(underlying, strike, optionType);
@@ -80,13 +110,35 @@ export function OrderEntryTicket({
     setActiveTab('SINGLE');
   }, [prefill]);
 
-  // Keep strike step aligned with underlying (NIFTY 50, BANKNIFTY 100, SENSEX 100).
-  const strikeStep = underlying === 'NIFTY' ? 50 : 100;
+  // Step through the chain ladder (not blind arithmetic) so +/- always lands
+  // on a tradable strike; falls back to step math only when offline-empty.
+  const stepStrike = (dir: 1 | -1) => {
+    setCustomSymbol(null);
+    if (chain.strikes.length > 0) {
+      const idx = chain.strikes.findIndex((s) => s.strike === strike);
+      if (idx >= 0) {
+        const next = chain.strikes[Math.min(chain.strikes.length - 1, Math.max(0, idx + dir))];
+        setStrike(next.strike);
+        return;
+      }
+      const sorted = [...chain.strikes].sort((a, b) => a.strike - b.strike);
+      const next =
+        dir > 0
+          ? (sorted.find((s) => s.strike > strike) ?? sorted[sorted.length - 1])
+          : ([...sorted].reverse().find((s) => s.strike < strike) ?? sorted[0]);
+      if (next) {
+        setStrike(next.strike);
+        return;
+      }
+    }
+    setStrike((s) => s + dir * strikeStepFor(underlying));
+  };
 
   // Instant local estimate + authoritative backend check (debounced, best-effort).
+  const marketRefPrice = selectedLtp ?? 150;
   const localEst = useMemo(
-    () => estimateMarginLocal({ symbol, underlying, side, price: orderType === 'LIMIT' ? Number(price) : 150, quantity }),
-    [symbol, underlying, side, orderType, price, quantity],
+    () => estimateMarginLocal({ symbol, underlying, side, price: orderType === 'LIMIT' ? Number(price) : marketRefPrice, quantity }),
+    [symbol, underlying, side, orderType, price, quantity, marketRefPrice],
   );
   const [serverMargin, setServerMargin] = useState<number | null>(null);
   useEffect(() => {
@@ -98,7 +150,7 @@ export function OrderEntryTicket({
           underlying,
           side,
           quantity,
-          price: orderType === 'LIMIT' ? Number(price) : 150,
+          price: orderType === 'LIMIT' ? Number(price) : marketRefPrice,
         });
         setServerMargin(res.data.required_margin);
       } catch {
@@ -106,7 +158,7 @@ export function OrderEntryTicket({
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [symbol, underlying, side, quantity, price, orderType]);
+  }, [symbol, underlying, side, quantity, price, orderType, marketRefPrice]);
 
   const requiredMargin = serverMargin ?? localEst.requiredMargin;
   const premium = orderType === 'LIMIT' ? Math.round(Number(price) * quantity * 100) / 100 : localEst.premium;
@@ -126,50 +178,92 @@ export function OrderEntryTicket({
       product,
       order_type: orderType,
       quantity,
-      price: orderType === 'MARKET' ? 0.0 : Number(price),
+      price: fillPrice,
     });
   };
 
-  // Editable basket legs
+  // Editable basket legs — strike/type picked from the same chain ladder,
+  // symbol derived automatically. No free-typed symbols or manual LTPs.
   const [legs, setLegs] = useState<BasketLeg[]>([]);
   const [basketName, setBasketName] = useState('Custom Basket');
+  const legLtp = (leg: BasketLeg): number | null =>
+    leg.underlying === underlying ? chain.ltpFor(leg.strike, leg.optionType) : null;
   const updateLeg = (id: number, patch: Partial<BasketLeg>) =>
     setLegs((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const updateLegContract = (id: number, patch: { strike?: number; optionType?: 'CE' | 'PE' }) =>
+    setLegs((prev) =>
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        const strikeNext = patch.strike ?? l.strike;
+        const typeNext = patch.optionType ?? l.optionType;
+        const ltp = l.underlying === underlying ? chain.ltpFor(strikeNext, typeNext) : null;
+        return {
+          ...l,
+          strike: strikeNext,
+          optionType: typeNext,
+          symbol: buildOptionSymbol(l.underlying, strikeNext, typeNext),
+          ...(ltp ? { price: ltp } : {}),
+        };
+      }),
+    );
   const removeLeg = (id: number) => setLegs((prev) => prev.filter((l) => l.id !== id));
-  const addLeg = () =>
+  const baseStrike = chain.atm ?? strike;
+  const addLeg = () => {
+    const ls = lotSizeFor(underlying);
+    const ltp = chain.ltpFor(baseStrike, 'CE');
     setLegs((prev) => [
       ...prev,
-      { id: nextLegId(), symbol: buildOptionSymbol(underlying, strike, 'CE'), underlying, side: 'BUY', product: 'INTRADAY', quantity: lotSizeFor(underlying), price: 100 },
+      {
+        id: nextLegId(),
+        symbol: buildOptionSymbol(underlying, baseStrike, 'CE'),
+        underlying,
+        strike: baseStrike,
+        optionType: 'CE',
+        side: 'BUY',
+        product: 'INTRADAY',
+        quantity: ls,
+        price: ltp ?? 100,
+      },
     ]);
+  };
 
   const presetLegs = (name: string, mk: () => Omit<BasketLeg, 'id'>[]) => {
     setBasketName(name);
     setLegs(mk().map((l) => ({ ...l, id: nextLegId() })));
   };
+  const legPrice = (strikePx: number, type: 'CE' | 'PE', fallback: number) =>
+    (underlying ? chain.ltpFor(strikePx, type) : null) ?? fallback;
   const handlePresetStraddle = () =>
     presetLegs('9:20 Intraday Short Straddle', () => {
       const ls = lotSizeFor(underlying);
       return [
-        { symbol: buildOptionSymbol(underlying, strike, 'CE'), underlying, side: 'SELL', product: 'INTRADAY', quantity: ls, price: 180.0 },
-        { symbol: buildOptionSymbol(underlying, strike, 'PE'), underlying, side: 'SELL', product: 'INTRADAY', quantity: ls, price: 175.0 },
+        { symbol: buildOptionSymbol(underlying, baseStrike, 'CE'), underlying, strike: baseStrike, optionType: 'CE', side: 'SELL', product: 'INTRADAY', quantity: ls, price: legPrice(baseStrike, 'CE', 180.0) },
+        { symbol: buildOptionSymbol(underlying, baseStrike, 'PE'), underlying, strike: baseStrike, optionType: 'PE', side: 'SELL', product: 'INTRADAY', quantity: ls, price: legPrice(baseStrike, 'PE', 175.0) },
       ];
     });
   const handlePresetBullCall = () =>
     presetLegs('Bull Call Debit Spread', () => {
       const ls = lotSizeFor(underlying);
+      const step = strikeStepFor(underlying);
+      const upper = baseStrike + step * 2;
       return [
-        { symbol: buildOptionSymbol(underlying, strike, 'CE'), underlying, side: 'BUY', product: 'INTRADAY', quantity: ls, price: 180.0 },
-        { symbol: buildOptionSymbol(underlying, strike + strikeStep * 2, 'CE'), underlying, side: 'SELL', product: 'INTRADAY', quantity: ls, price: 65.0 },
+        { symbol: buildOptionSymbol(underlying, baseStrike, 'CE'), underlying, strike: baseStrike, optionType: 'CE', side: 'BUY', product: 'INTRADAY', quantity: ls, price: legPrice(baseStrike, 'CE', 180.0) },
+        { symbol: buildOptionSymbol(underlying, upper, 'CE'), underlying, strike: upper, optionType: 'CE', side: 'SELL', product: 'INTRADAY', quantity: ls, price: legPrice(upper, 'CE', 65.0) },
       ];
     });
   const handlePresetIronCondor = () =>
     presetLegs('Weekly Defined-Risk Iron Condor', () => {
       const ls = lotSizeFor(underlying);
+      const step = strikeStepFor(underlying);
+      const cShort = baseStrike + step * 2;
+      const pShort = baseStrike - step * 2;
+      const cLong = baseStrike + step * 4;
+      const pLong = baseStrike - step * 4;
       return [
-        { symbol: buildOptionSymbol(underlying, strike + strikeStep * 2, 'CE'), underlying, side: 'SELL', product: 'CARRYFORWARD', quantity: ls, price: 55.0 },
-        { symbol: buildOptionSymbol(underlying, strike - strikeStep * 2, 'PE'), underlying, side: 'SELL', product: 'CARRYFORWARD', quantity: ls, price: 50.0 },
-        { symbol: buildOptionSymbol(underlying, strike + strikeStep * 4, 'CE'), underlying, side: 'BUY', product: 'CARRYFORWARD', quantity: ls, price: 15.0 },
-        { symbol: buildOptionSymbol(underlying, strike - strikeStep * 4, 'PE'), underlying, side: 'BUY', product: 'CARRYFORWARD', quantity: ls, price: 12.0 },
+        { symbol: buildOptionSymbol(underlying, cShort, 'CE'), underlying, strike: cShort, optionType: 'CE', side: 'SELL', product: 'CARRYFORWARD', quantity: ls, price: legPrice(cShort, 'CE', 55.0) },
+        { symbol: buildOptionSymbol(underlying, pShort, 'PE'), underlying, strike: pShort, optionType: 'PE', side: 'SELL', product: 'CARRYFORWARD', quantity: ls, price: legPrice(pShort, 'PE', 50.0) },
+        { symbol: buildOptionSymbol(underlying, cLong, 'CE'), underlying, strike: cLong, optionType: 'CE', side: 'BUY', product: 'CARRYFORWARD', quantity: ls, price: legPrice(cLong, 'CE', 15.0) },
+        { symbol: buildOptionSymbol(underlying, pLong, 'PE'), underlying, strike: pLong, optionType: 'PE', side: 'BUY', product: 'CARRYFORWARD', quantity: ls, price: legPrice(pLong, 'PE', 12.0) },
       ];
     });
 
@@ -232,6 +326,38 @@ export function OrderEntryTicket({
 
       {activeTab === 'SINGLE' ? (
         <form onSubmit={handleSingleSubmit} className="space-y-3 text-xs">
+          {/* Live context strip — spot/ATM/expiry at a glance, one-tap ATM snap */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-secondary/40 border border-border px-3 py-2 text-[11px] font-semibold text-muted-foreground">
+            <span>
+              Spot{' '}
+              <strong className="text-foreground font-mono">
+                {chain.spot !== null ? `₹${chain.spot.toLocaleString('en-IN')}` : '—'}
+              </strong>
+            </span>
+            <span>
+              ATM{' '}
+              <strong className="text-foreground font-mono">
+                {chain.atm !== null ? chain.atm.toLocaleString('en-IN') : '—'}
+              </strong>
+            </span>
+            {chain.expiry && (
+              <span>
+                Expiry <strong className="text-foreground font-mono">{chain.expiry}</strong>
+              </span>
+            )}
+            <span className={`font-bold ${chain.isLive ? 'text-emerald-500' : 'text-amber-500'}`}>
+              {chain.loading ? 'Loading chain…' : chain.isLive ? '● Live LTP' : '● Offline ladder'}
+            </span>
+            <button
+              type="button"
+              disabled={!chain.atm}
+              onClick={() => chain.atm && (setStrike(chain.atm), setCustomSymbol(null))}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-md bg-secondary border border-border text-[10px] font-bold hover:text-foreground disabled:opacity-50 cursor-pointer"
+            >
+              <Crosshair className="w-3 h-3" /> ATM
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <label className="text-muted-foreground font-semibold">Underlying</label>
@@ -248,20 +374,35 @@ export function OrderEntryTicket({
             </div>
 
             <div className="space-y-1">
+              <label className="text-muted-foreground font-semibold">Expiry</label>
+              {chain.expiries.length > 0 ? (
+                <select
+                  value={chain.expiry ?? ''}
+                  onChange={(e) => { chain.setExpiry(e.target.value || null); setCustomSymbol(null); }}
+                  className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden cursor-pointer"
+                  aria-label="Option expiry"
+                >
+                  {chain.expiries.map((x) => (
+                    <option key={x} value={x}>{x}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground font-semibold">
+                  {chain.loading ? 'Loading…' : 'Spot expiry'}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1 col-span-2 sm:col-span-1">
               <label className="text-muted-foreground font-semibold">Strike</label>
               <div className="flex gap-1">
-                <button type="button" onClick={() => setStrike((s) => s - strikeStep)} className="px-2 rounded-lg bg-secondary border border-border hover:text-foreground text-muted-foreground cursor-pointer" aria-label="Decrease strike">
+                <button type="button" onClick={() => stepStrike(-1)} className="px-2 rounded-lg bg-secondary border border-border hover:text-foreground text-muted-foreground cursor-pointer" aria-label="Previous strike">
                   <Minus className="w-3 h-3" />
                 </button>
-                <input
-                  type="number"
-                  step={strikeStep}
-                  min={1}
-                  value={strike}
-                  onChange={(e) => { setStrike(Number(e.target.value)); setCustomSymbol(null); }}
-                  className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden"
-                />
-                <button type="button" onClick={() => setStrike((s) => s + strikeStep)} className="px-2 rounded-lg bg-secondary border border-border hover:text-foreground text-muted-foreground cursor-pointer" aria-label="Increase strike">
+                <div className="flex-1 min-w-0">
+                  <StrikeSelect value={strike} onChange={(s) => { setStrike(s); setCustomSymbol(null); }} strikes={chain.strikes} atm={chain.atm} />
+                </div>
+                <button type="button" onClick={() => stepStrike(1)} className="px-2 rounded-lg bg-secondary border border-border hover:text-foreground text-muted-foreground cursor-pointer" aria-label="Next strike">
                   <Plus className="w-3 h-3" />
                 </button>
               </div>
@@ -347,17 +488,41 @@ export function OrderEntryTicket({
               </select>
             </div>
 
-            {orderType === 'LIMIT' && (
+            {orderType === 'LIMIT' ? (
               <div className="space-y-1">
-                <label className="text-muted-foreground font-semibold">Limit Price (₹)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  min={0.05}
-                  value={price}
-                  onChange={(e) => setPrice(Number(e.target.value))}
-                  className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden"
-                />
+                <label className="text-muted-foreground font-semibold">
+                  Limit Price (₹){' '}
+                  {selectedLtp !== null && (
+                    <span className="font-mono font-normal">· LTP ₹{selectedLtp}</span>
+                  )}
+                </label>
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min={0.05}
+                    value={price}
+                    onChange={(e) => setPrice(Number(e.target.value))}
+                    className="w-full bg-secondary text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={selectedLtp === null}
+                    onClick={() => selectedLtp !== null && setPrice(selectedLtp)}
+                    title="Reset to live LTP"
+                    className="px-2 rounded-lg bg-secondary border border-border text-muted-foreground hover:text-foreground disabled:opacity-50 cursor-pointer"
+                    aria-label="Use live LTP as limit price"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <label className="text-muted-foreground font-semibold">Expected Price</label>
+                <div className="w-full bg-secondary/60 text-xs px-2.5 py-1.5 rounded-lg border border-border text-foreground font-mono font-semibold">
+                  {selectedLtp !== null ? `≈ ₹${selectedLtp} (LTP)` : 'Market fill'}
+                </div>
               </div>
             )}
           </div>
@@ -373,6 +538,9 @@ export function OrderEntryTicket({
             </span>
           </div>
           {invalidStrike && <p className="text-[11px] text-destructive font-semibold">Enter a valid strike price.</p>}
+          {!chain.isLive && !chain.loading && (
+            <p className="text-[11px] text-amber-600 font-semibold">Offline chain ladder — strikes are ATM-centred estimates. Use Limit (auto) prices; Market needs the live backend.</p>
+          )}
 
           <button
             type="submit"
@@ -391,7 +559,7 @@ export function OrderEntryTicket({
                 <Zap className="w-4 h-4 text-primary" />
                 <span>9:20 Short Straddle</span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">Sell ATM Call + Sell ATM Put at {strike}.</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">Sell ATM Call + Sell ATM Put at {baseStrike}.</p>
               <button type="button" onClick={handlePresetStraddle} disabled={loading} className="w-full py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50">
                 <PlusCircle className="w-3.5 h-3.5" /><span>Load 2-Leg Straddle</span>
               </button>
@@ -409,7 +577,7 @@ export function OrderEntryTicket({
               <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
                 <Zap className="w-4 h-4 text-purple-400" /><span>Iron Condor</span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">4-leg defined risk around {strike}.</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">4-leg defined risk around {baseStrike}.</p>
               <button type="button" onClick={handlePresetIronCondor} disabled={loading} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50">
                 <PlusCircle className="w-3.5 h-3.5" /><span>Load Iron Condor</span>
               </button>
@@ -430,35 +598,68 @@ export function OrderEntryTicket({
           </div>
 
           {legs.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground bg-secondary/30 border border-border rounded-lg p-3 text-center">Load a preset or add legs to build an editable basket. Prices are limit prices per leg.</p>
+            <p className="text-[11px] text-muted-foreground bg-secondary/30 border border-border rounded-lg p-3 text-center">Load a preset or add legs to build an editable basket. Strikes and prices pull from the live chain — no typing needed.</p>
           ) : (
             <div className="space-y-2">
-              {legs.map((l) => (
-                <div key={l.id} className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end bg-secondary/30 border border-border rounded-lg p-2.5">
-                  <div className="col-span-2 space-y-1">
-                    <label className="text-muted-foreground font-semibold text-[10px]">Symbol</label>
-                    <input value={l.symbol} onChange={(e) => updateLeg(l.id, { symbol: e.target.value.toUpperCase() })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-mono font-semibold uppercase focus:outline-hidden" />
+              {legs.map((l) => {
+                const ltp = legLtp(l);
+                return (
+                <div key={l.id} className="bg-secondary/30 border border-border rounded-lg p-2.5 space-y-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end">
+                    <div className="col-span-2 space-y-1">
+                      <label className="text-muted-foreground font-semibold text-[10px]">Strike</label>
+                      <StrikeSelect
+                        value={l.strike}
+                        onChange={(s) => updateLegContract(l.id, { strike: s })}
+                        strikes={l.underlying === underlying ? chain.strikes : []}
+                        atm={l.underlying === underlying ? chain.atm : null}
+                        ariaLabel={`Leg strike ${l.symbol}`}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-muted-foreground font-semibold text-[10px]">Type</label>
+                      <select value={l.optionType} onChange={(e) => updateLegContract(l.id, { optionType: e.target.value as 'CE' | 'PE' })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-bold cursor-pointer" aria-label={`Leg option type ${l.symbol}`}>
+                        <option value="CE">CE</option>
+                        <option value="PE">PE</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-muted-foreground font-semibold text-[10px]">Side</label>
+                      <select value={l.side} onChange={(e) => updateLeg(l.id, { side: e.target.value as 'BUY' | 'SELL' })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-bold cursor-pointer">
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-muted-foreground font-semibold text-[10px]">Qty</label>
+                      <input type="number" min={1} value={l.quantity} onChange={(e) => updateLeg(l.id, { quantity: Math.max(1, Number(e.target.value) || 1) })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-mono focus:outline-hidden" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-muted-foreground font-semibold text-[10px]">Price ₹</label>
+                      <div className="flex gap-1">
+                        <input type="number" min={0.05} step={0.05} value={l.price} onChange={(e) => updateLeg(l.id, { price: Number(e.target.value) })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-mono focus:outline-hidden" />
+                        <button
+                          type="button"
+                          disabled={ltp === null}
+                          onClick={() => ltp !== null && updateLeg(l.id, { price: ltp })}
+                          title={ltp !== null ? `Reset to LTP ₹${ltp}` : 'LTP unavailable offline'}
+                          className="px-1.5 rounded-lg bg-background border border-border text-muted-foreground hover:text-foreground disabled:opacity-40 cursor-pointer"
+                          aria-label={`Reset leg price to LTP ${l.symbol}`}
+                        >
+                          <RotateCw className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => removeLeg(l.id)} className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 border border-transparent hover:border-destructive/30 text-[11px] font-bold cursor-pointer" aria-label={`Remove ${l.symbol}`}>
+                      <MinusCircle className="w-3.5 h-3.5" /> Remove
+                    </button>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-muted-foreground font-semibold text-[10px]">Side</label>
-                    <select value={l.side} onChange={(e) => updateLeg(l.id, { side: e.target.value as 'BUY' | 'SELL' })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-bold cursor-pointer">
-                      <option value="BUY">BUY</option>
-                      <option value="SELL">SELL</option>
-                    </select>
+                  <div className="font-mono text-[10px] text-muted-foreground truncate" title={l.symbol}>
+                    {l.symbol} · {l.underlying} · {l.side}{ltp !== null && <span> · LTP ₹{ltp}</span>}
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-muted-foreground font-semibold text-[10px]">Qty</label>
-                    <input type="number" min={1} value={l.quantity} onChange={(e) => updateLeg(l.id, { quantity: Math.max(1, Number(e.target.value) || 1) })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-mono focus:outline-hidden" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-muted-foreground font-semibold text-[10px]">Price ₹</label>
-                    <input type="number" min={0.05} step={0.05} value={l.price} onChange={(e) => updateLeg(l.id, { price: Number(e.target.value) })} className="w-full bg-background text-[11px] px-2 py-1.5 rounded-lg border border-border font-mono focus:outline-hidden" />
-                  </div>
-                  <button type="button" onClick={() => removeLeg(l.id)} className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 border border-transparent hover:border-destructive/30 text-[11px] font-bold cursor-pointer" aria-label={`Remove ${l.symbol}`}>
-                    <MinusCircle className="w-3.5 h-3.5" /> Remove
-                  </button>
                 </div>
-              ))}
+                );
+              })}
               <div className={`rounded-lg border px-3 py-2 font-mono text-[11px] flex items-center justify-between ${basketAffordable ? 'bg-secondary/40 border-border' : 'bg-destructive/10 border-destructive/30'}`}>
                 <span className="text-muted-foreground font-sans font-semibold">{legs.length} legs • {basketName}</span>
                 <span>Est. margin <strong className={basketAffordable ? 'text-foreground' : 'text-destructive'}>₹{Math.round(basketTotal).toLocaleString('en-IN')}</strong>{avail !== null && <span className="text-muted-foreground"> • Avail ₹{avail.toLocaleString('en-IN')}</span>}</span>

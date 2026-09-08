@@ -42,6 +42,24 @@ export function estimateMarginLocal(args: {
   return { requiredMargin: base * lots, premium: 0 };
 }
 
+// Strike step per underlying — matches the ladder used across ticket + presets.
+export function strikeStepFor(underlying: string): number {
+  const u = (underlying || '').toUpperCase();
+  if (u.includes('NIFTY') && !u.includes('BANK') && !u.includes('FIN')) return 50;
+  return 100;
+}
+
+// Synthetic ATM-centred ladder used when the live option chain is
+// unreachable (offline demo mode / backend down) so the strike
+// dropdown still works with zero manual typing.
+export function syntheticStrikes(center: number, step: number, count = 11): number[] {
+  if (!Number.isFinite(center) || center <= 0 || !Number.isFinite(step) || step <= 0) return [];
+  const c = Math.round(center / step) * step;
+  const half = Math.floor(count / 2);
+  const out: number[] = [];
+  for (let i = -half; i <= half; i++) out.push(c + i * step);
+  return out.filter((s) => s > 0);
+}
 export function buildOptionSymbol(underlying: string, strike: number, optionType: 'CE' | 'PE'): string {
   return `${underlying}${Math.round(strike)}${optionType}`;
 }
