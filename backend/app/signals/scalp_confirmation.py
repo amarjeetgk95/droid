@@ -38,6 +38,7 @@ class ScalpConfirmationEngine:
     """
     Deterministic gatekeeper for High-Frequency Scalping setups.
     Rejects setups that violate anti-chase, regime compatibility, cooldowns, or liquidity guards.
+    Quality target: 80% win rate — tightened thresholds across all 6 gates.
     """
 
     def __init__(
@@ -218,10 +219,10 @@ class ScalpConfirmationEngine:
         else:
             chase_pts = max(Decimal("0"), candidate.trigger - current_spot)
 
-        # Fraction allowed: 0.35 in volatile regimes, otherwise candidate.max_chase_fraction (0.50)
+        # Fraction allowed: 0.30 in volatile regimes, otherwise 0.35R (tightened for 80% quality)
         r_upper = regime.upper()
         is_high_vol = any(k in r_upper for k in ("HIGH_VOL", "VOLATILE", "EVENT"))
-        allowed_fraction = 0.35 if is_high_vol else (candidate.max_chase_fraction or 0.50)
+        allowed_fraction = 0.30 if is_high_vol else 0.35
         max_allowed_chase_pts = candidate.risk_points * Decimal(str(allowed_fraction))
 
         if chase_pts > max_allowed_chase_pts:

@@ -24,12 +24,13 @@ from app.crypto_scalp.base import (
     calc_ema,
     calc_atr,
     calc_vwap,
+    calc_rsi,
 )
 from app.crypto_scalp.strategies import CRYPTO_SCALP_STRATEGIES
 from app.crypto_scalp.risk_filter import crypto_scalp_risk_filter
 from app.crypto_scalp.trigger_gate import check_crypto_trigger_integrity
 from app.crypto_scalp.risk_engine import crypto_risk_engine, CryptoStrategySetup
-from app.crypto_scalp.confluence import crypto_confluence_engine
+from app.crypto_scalp.confluence import crypto_confluence_engine, ARMED_THRESHOLD
 from app.crypto_scalp.fsm import crypto_signal_fsm, CryptoSignalInstance
 from app.crypto_scalp.sse import crypto_sse_hub
 from app.crypto_scalp.persistence import persist_scalp_signal, fetch_persisted_scalp_signals
@@ -127,6 +128,7 @@ class CryptoScalpScanner:
             ema_50 = calc_ema(closes_1m, 50)
             atr_14 = calc_atr(candles_1m, 14)
             vwap = calc_vwap(candles_1m)
+            rsi_14 = calc_rsi(closes_1m, 14)
 
             recent_vols = [c.volume for c in candles_1m[-21:-1]]
             avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else candles_1m[-1].volume
@@ -149,6 +151,7 @@ class CryptoScalpScanner:
                 ema_21_1m=ema_21,
                 ema_50_1m=ema_50,
                 atr_14_1m=atr_14,
+                rsi_14_1m=rsi_14,
                 volume_surge_ratio=vol_ratio,
                 high_15m=high_15m,
                 low_15m=low_15m,
@@ -211,10 +214,27 @@ class CryptoScalpScanner:
                     logger.debug("crypto_candidate_rejected_risk_filter", strategy=strat_code, reason=filter_reason)
                     continue
 
-                # ── 2. Trigger level resolution ──
-                raw_trig = cand.entry_price
+                # ── 1a. Market-structure proximity filter ──
+                atr = ctx.atr_14_1m or (ctx.current_price * 0.001)
+                dist_to_high = abs(ctx.current_price - ctx.high_15m)
+                dist_to_low = abs(ctx.current_price - ctx.low_15m)
+                near_key_level = dist_to_high < atr * 0.3 or dist_to_low < atr * 0.3
+                if near_key_level:
+                    logger.debug("crypto_candidate_near_key_level", strategy=strat_code, symbol=ctx.symbol)
+                    continue
+
                 dir_str = cand.direction.value.upper()
                 is_short = "SHORT" in dir_str
+
+                # ── 1b. RSI-14 confirmation gate ──
+                rsi = ctx.rsi_14_1m
+                rsi_ok = (not is_short and 55 <= rsi <= 78) or (is_short and 22 <= rsi <= 45)
+                if not rsi_ok:
+                    logger.debug("crypto_candidate_rejected_rsi", strategy=strat_code, rsi=rsi, direction=dir_str)
+                    continue
+
+                # ── 2. Trigger level resolution ──
+                raw_trig = cand.entry_price
                 entry_style = str(getattr(strategy, "entry_style", "BREAKOUT")).upper()
 
                 if entry_style in ("MARKET", "REVERSION"):
@@ -288,7 +308,7 @@ class CryptoScalpScanner:
                     regime=self._infer_regime(ctx),
                 )
 
-                if fused_conf < 70.0:
+                if fused_conf < ARMED_THRESHOLD:
                     logger.debug("crypto_candidate_insufficient_confluence", strategy=strat_code, score=fused_conf)
                     continue
 
@@ -342,7 +362,7 @@ class CryptoScalpScanner:
             quantity=best_risk.quantity,
             notional_usd=best_risk.notional_usd,
             max_usd_loss=best_risk.max_usd_loss,
-            fsm_state="ARMED" if best_cand.confidence >= 70.0 else "VALIDATED",
+            fsm_state="ARMED" if best_cand.confidence >= ARMED_THRESHOLD else "VALIDATED",
         )
         crypto_signal_fsm.register(fsm_instance)
 

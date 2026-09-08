@@ -36,22 +36,22 @@ class BreakoutVolumeStrategy:
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 72.0
+        confidence = 78.0
 
         # Bullish Breakout: 1m bar closes above recent 15m high with volume expansion
         bullish_break = (
             curr.close > recent_high
             and curr.close > curr.open
-            and body_ratio >= 0.55
-            and ctx.volume_surge_ratio >= 1.5
+            and body_ratio >= 0.60
+            and ctx.volume_surge_ratio >= 2.0
         )
 
         # Bearish Breakdown: 1m bar closes below recent 15m low with volume expansion
         bearish_break = (
             curr.close < recent_low
             and curr.close < curr.open
-            and body_ratio >= 0.55
-            and ctx.volume_surge_ratio >= 1.5
+            and body_ratio >= 0.60
+            and ctx.volume_surge_ratio >= 2.0
         )
 
         entry = price

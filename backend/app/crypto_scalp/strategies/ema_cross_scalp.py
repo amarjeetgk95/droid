@@ -35,10 +35,10 @@ class EMACrossScalpStrategy:
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 72.0
+        confidence = 78.0
 
         # Volume surge must confirm the EMA momentum or pullback
-        if ctx.volume_surge_ratio < 1.3:
+        if ctx.volume_surge_ratio < 1.5:
             return None
 
         # Bullish Crossover: EMA 9 crosses above EMA 21
@@ -79,7 +79,7 @@ class EMACrossScalpStrategy:
             confluences.append(trigger_type)
             confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
 
-            if price > ema_50_now:
+            if ctx.ema_50_1m > 0 and price > ctx.ema_50_1m:
                 confluences.append("Trend alignment: Price > EMA 50")
                 confidence += 8.0
             if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
@@ -103,7 +103,7 @@ class EMACrossScalpStrategy:
             confluences.append(trigger_type)
             confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x")
 
-            if price < ema_50_now:
+            if ctx.ema_50_1m > 0 and price < ctx.ema_50_1m:
                 confluences.append("Trend alignment: Price < EMA 50")
                 confidence += 8.0
             if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:

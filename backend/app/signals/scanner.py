@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying
 from app.signals.strategies.base import StrategyContext, SignalCandidate
 from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY_STRATEGIES
-from app.signals.confluence import confluence_engine
+from app.signals.confluence import confluence_engine, ARMED_THRESHOLD
 from app.signals.fsm import signal_fsm, SignalInstance
 from app.signals.scalp_confirmation import scalp_confirmation_engine
 
@@ -572,7 +572,32 @@ class SignalScanner:
             cand.ttl_seconds = risk_decision.trigger_ttl_seconds
             cand.time_stop_seconds = risk_decision.active_time_stop_seconds
 
-            # ── Trigger integrity gate: kill born-triggered / no-edge setups ──
+            # ── 1a. RSI-14 confirmation gate — reject overbought/oversold extremes ──
+            indicators_snap = cand.context_snapshot.get("indicators", {}) or {}
+            rsi_explicit = indicators_snap.get("rsi") or indicators_snap.get("momentum", {}).get("rsi")
+            if rsi_explicit is not None:
+                rsi_val = float(rsi_explicit)
+                is_call = "CALL" in cand.direction
+                rsi_ok = (is_call and 55.0 <= rsi_val <= 78.0) or (not is_call and 22.0 <= rsi_val <= 45.0)
+                if not rsi_ok:
+                    rejected_gates.append(f"{cand.strategy}:RSI_REJECTION_{rsi_val:.1f}")
+                    logger.info("candidate_rejected_rsi", strategy=cand.strategy, underlying=cand.underlying, rsi=rsi_val, direction=cand.direction)
+                    continue
+
+            # ── 1b. Market-structure proximity filter — reject if near key S/R level ──
+            atr_val = Decimal(str(indicators_snap.get("volatility", {}).get("atr") or float(cand.risk_points or 20.0)))
+            sr_levels = []
+            sr_data = indicators_snap.get("support_resistance", {})
+            if sr_data:
+                sr_levels = [Decimal(str(r)) for r in sr_data.get("resistance", []) + sr_data.get("support", [])]
+            if sr_levels:
+                dist_to_nearest = min(abs(Decimal(str(cand.spot_price)) - lvl) for lvl in sr_levels)
+                if dist_to_nearest < (atr_val * Decimal("0.25")):
+                    rejected_gates.append(f"{cand.strategy}:NEAR_KEY_LEVEL_{float(dist_to_nearest):.1f}pts")
+                    logger.info("candidate_rejected_key_level", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_nearest))
+                    continue
+
+            # ── 2. Trigger integrity gate: kill born-triggered / no-edge setups ──
             gate = check_trigger_integrity(
                 underlying=cand.underlying,
                 strategy=cand.strategy,
@@ -643,7 +668,7 @@ class SignalScanner:
             cand.overall_confidence = fused_score
 
             # Convert to FSM instance with Version 6.0 fields
-            fsm_init_state = "VALIDATED" if fno_is_degraded else ("ARMED" if fused_score >= 70.0 else "VALIDATED")
+            fsm_init_state = "VALIDATED" if fno_is_degraded else ("ARMED" if fused_score >= ARMED_THRESHOLD else "VALIDATED")
             instance = SignalInstance(
                 underlying=cand.underlying,
                 strategy=cand.strategy,

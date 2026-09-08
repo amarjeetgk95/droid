@@ -107,7 +107,7 @@ def test_orb_strategy_fails_closed_without_opening_range_or_candles():
 
 
 def test_dynamic_fno_scoring_in_breakout():
-    """Verify Breakout strategy continuously scales fno_score with PCR instead of binary 75/55."""
+    """Verify Breakout strategy continuously scales fno_score with PCR using neutral baseline."""
     strat = BreakoutStrategy()
     
     # High PCR = 1.4
@@ -122,8 +122,8 @@ def test_dynamic_fno_scoring_in_breakout():
     )
     cand_high = strat.detect(ctx_high)
     assert cand_high is not None
-    # With PCR 1.4: 60 + (0.4 * 50) = 80.0
-    assert cand_high.fno_score == 80.0
+    # With PCR 1.4: 50 + (0.4 * 40) = 66.0
+    assert cand_high.fno_score == 66.0
 
     # Low PCR = 0.8
     ctx_low = StrategyContext(
@@ -137,8 +137,8 @@ def test_dynamic_fno_scoring_in_breakout():
     )
     cand_low = strat.detect(ctx_low)
     assert cand_low is not None
-    # With PCR 0.8: 60 + (-0.2 * 50) = 50.0
-    assert cand_low.fno_score == 50.0
+    # With PCR 0.8: 50 + (-0.2 * 40) = 34.0 -> clamped to 45.0
+    assert cand_low.fno_score == 45.0
 
 
 def test_dynamic_scoring_in_vwap_scalp():

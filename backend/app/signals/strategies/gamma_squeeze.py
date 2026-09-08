@@ -4,6 +4,7 @@ Mathematical rules:
   - LONG_CALL: Call OI unwinding at ATM strike, PCR <= 0.75 or extreme PCR surge (>1.35), High Delta velocity, Spot crossing Call OI resistance wall.
   - LONG_PUT: Put OI unwinding at ATM strike, PCR >= 1.35 or extreme PCR collapse (<0.70), High Put delta velocity, Spot crossing Put OI support wall.
   - High risk-reward intraday momentum play, tightly bounded TTL.
+  - Quality target: 80% win rate — neutral baseline scoring, no hardcoded confidence.
 """
 from __future__ import annotations
 
@@ -54,10 +55,10 @@ class GammaSqueezeStrategy(Strategy):
                 t2 = normalize_price(entry_min + (risk_pts * Decimal("3.5")), tick)
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = 82.0
-                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                fno_score = min(96.0, 70.0 + (oi_change * 1.5) + (abs(pcr - 1.0) * 20.0))
-                regime_score = 85.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 70.0
+                tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+                regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,
@@ -105,10 +106,10 @@ class GammaSqueezeStrategy(Strategy):
                 t2 = normalize_price(entry_max - (risk_pts * Decimal("3.5")), tick)
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = 82.0
-                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                fno_score = min(96.0, 70.0 + (oi_change * 1.5) + (abs(pcr - 1.0) * 20.0))
-                regime_score = 85.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 70.0
+                tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+                regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,

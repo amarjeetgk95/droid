@@ -76,10 +76,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = min(93.0, 65.0 + (vol_ratio * 15.0))
-                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                fno_score = 70.0
-                regime_score = 80.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 65.0
+                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 18.0)))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                fno_score = 65.0
+                regime_score = 75.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,
@@ -133,10 +133,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = min(93.0, 65.0 + (vol_ratio * 15.0))
-                mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                fno_score = 70.0
-                regime_score = 80.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 65.0
+                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 18.0)))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                fno_score = 65.0
+                regime_score = 75.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,

@@ -1,9 +1,10 @@
 """
 Trend Pullback & EMA Ribbon Retest Strategy
 Mathematical rules:
-  - LONG_CALL: EMA20 > EMA50 > EMA200, ADX >= 22, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bullish
-  - LONG_PUT: EMA20 < EMA50 < EMA200, ADX >= 22, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bearish
+  - LONG_CALL: EMA20 > EMA50 > EMA200, ADX >= 25, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bullish
+  - LONG_PUT: EMA20 < EMA50 < EMA200, ADX >= 25, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bearish
   - SL = Below EMA50 / swing low, T1 = 1.5R (previous high test), T2 = 3.0R (trend extension)
+  - Quality target: 80% win rate — neutral baseline scoring.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ class TrendPullbackStrategy(Strategy):
 
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
         is_bull_trend = (ema20 >= ema50 or trend_data.get("trend") == "BULLISH" or ctx.regime == "TREND_UP")
-        if spot > Decimal("0") and is_bull_trend and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 18.0:
+        if spot > Decimal("0") and is_bull_trend and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 25.0:
             # Check if spot is near EMA20 (within 0.6%)
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.6") or spot >= ema20:
@@ -50,10 +51,10 @@ class TrendPullbackStrategy(Strategy):
                     t2 = normalize_price(trigger + (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                    tech_score = min(94.0, 60.0 + (adx * 0.8) + 10.0)
-                    mtf_score = float(ctx.mtf.get("alignment_score", 75.0))
-                    fno_score = 75.0
-                    regime_score = 85.0 if ctx.regime == "TREND_UP" else 70.0
+                    tech_score = min(90.0, max(50.0, 50.0 + (max(0.0, adx - 25.0) * 0.8) + 8.0))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 75.0)) - 10.0)
+                    fno_score = 70.0
+                    regime_score = 80.0 if ctx.regime == "TREND_UP" else 60.0
 
                     return SignalCandidate(
                         underlying=ctx.underlying,
@@ -87,7 +88,7 @@ class TrendPullbackStrategy(Strategy):
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
         is_bear_trend = (ema20 <= ema50 or trend_data.get("trend") == "BEARISH" or ctx.regime == "TREND_DOWN")
-        if spot > Decimal("0") and is_bear_trend and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 18.0:
+        if spot > Decimal("0") and is_bear_trend and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 25.0:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
             if dist_pct <= Decimal("0.6") or spot <= ema20:
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
@@ -105,10 +106,10 @@ class TrendPullbackStrategy(Strategy):
                     t2 = normalize_price(trigger - (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                    tech_score = min(94.0, 60.0 + (adx * 0.8) + 10.0)
-                    mtf_score = float(ctx.mtf.get("alignment_score", 75.0))
-                    fno_score = 75.0
-                    regime_score = 85.0 if ctx.regime == "TREND_DOWN" else 70.0
+                    tech_score = min(90.0, max(50.0, 50.0 + (max(0.0, adx - 25.0) * 0.8) + 8.0))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 75.0)) - 10.0)
+                    fno_score = 70.0
+                    regime_score = 80.0 if ctx.regime == "TREND_DOWN" else 60.0
 
                     return SignalCandidate(
                         underlying=ctx.underlying,

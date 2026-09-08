@@ -1,9 +1,10 @@
 """
 Mean Reversion & Volatility Exhaustion Strategy
 Mathematical rules:
-  - LONG_CALL: Price <= Lower Bollinger Band (2.0σ/2.5σ), RSI <= 28, Regime == RANGE, proximity to support
-  - LONG_PUT: Price >= Upper Bollinger Band (2.0σ/2.5σ), RSI >= 72, Regime == RANGE, proximity to resistance
+  - LONG_CALL: Price <= Lower Bollinger Band (2.0σ/2.5σ), RSI <= 32, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
+  - LONG_PUT: Price >= Upper Bollinger Band (2.0σ/2.5σ), RSI >= 68, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
   - T1 = Middle BB (20 SMA / VWAP), T2 = Opposite Bollinger Band
+  - Quality target: 80% win rate — neutral baseline scoring.
 """
 from __future__ import annotations
 
@@ -32,13 +33,15 @@ class MeanReversionStrategy(Strategy):
         bb_lower = Decimal(str(bb.get("lower") or vol.get("bollinger_lower") or ind.get("bollinger_lower") or (spot * Decimal("0.99"))))
 
         # Check regime compatibility: primarily RANGE, LOW_VOL, or COMPRESSION_SQUEEZE
-        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE"):
+        # AND ADX must be weak (< 22) — strong trend invalidates mean reversion
+        adx_val = float(ind.get("adx") or ind.get("momentum", {}).get("adx", 20.0))
+        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE") or adx_val >= 22.0:
             return None
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
-        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 35.0).
+        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 32.0).
         # Trigger sits a confirmation gap above spot — never spot ± 1 tick.
-        if (spot <= bb_lower * Decimal("1.003")) and rsi <= 35.0:
+        if (spot <= bb_lower * Decimal("1.003")) and rsi <= 32.0:
             entry_min = normalize_price(spot, tick)
             entry_max = normalize_price(spot + (atr * Decimal("0.2")), tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
@@ -54,10 +57,10 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = min(92.0, 50.0 + max(0.0, (35.0 - rsi) * 2.0) + 15.0)
-                mtf_score = float(ctx.mtf.get("alignment_score", 65.0))
-                fno_score = 70.0
-                regime_score = 85.0 if ctx.regime == "RANGE" else 65.0
+                tech_score = min(90.0, max(50.0, 50.0 + max(0.0, (32.0 - rsi) * 2.0) + 10.0))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 65.0)) - 10.0)
+                fno_score = 65.0
+                regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,
@@ -90,7 +93,7 @@ class MeanReversionStrategy(Strategy):
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
-        if (spot >= bb_upper * Decimal("0.997")) and rsi >= 65.0:
+        if (spot >= bb_upper * Decimal("0.997")) and rsi >= 68.0:
             entry_min = normalize_price(spot - (atr * Decimal("0.2")), tick)
             entry_max = normalize_price(spot, tick)
             trigger_gap = max(atr * Decimal("0.30"), spot * Decimal("0.0006"))
@@ -106,10 +109,10 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = min(92.0, 50.0 + max(0.0, (rsi - 65.0) * 2.0) + 15.0)
-                mtf_score = float(ctx.mtf.get("alignment_score", 65.0))
-                fno_score = 70.0
-                regime_score = 85.0 if ctx.regime == "RANGE" else 65.0
+                tech_score = min(90.0, max(50.0, 50.0 + max(0.0, (rsi - 68.0) * 2.0) + 10.0))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 65.0)) - 10.0)
+                fno_score = 65.0
+                regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0
 
                 return SignalCandidate(
                     underlying=ctx.underlying,

@@ -1,5 +1,7 @@
 """
 Institutional Confluence Engine with Desk-Specific AI & Dynamic Weight Renormalization (§16, §35)
+Quality target: 80% win rate.
+
 Unified weights (backend/config/scoring_weights.json v2):
   - Technical: 40%
   - MTF: 20%
@@ -7,6 +9,10 @@ Unified weights (backend/config/scoring_weights.json v2):
   - Regime: 10%
   - AI Advisory: <= 10% (Capped, desk-specific timeout)
   - ML Predictor: <= 7% (When available)
+
+Baseline is neutral (50.0) — each domain must EARN its contribution by scoring > 55.
+Scores below 45 are penalized. 2+ penalized domains → −10 fused penalty.
+ARMED threshold raised to 78.0.
 """
 from __future__ import annotations
 
@@ -53,7 +59,7 @@ def _load_confluence_weights() -> dict:
 
 
 DEFAULT_WEIGHTS = _load_confluence_weights()
-ARMED_THRESHOLD = 70.0
+ARMED_THRESHOLD = 78.0
 AI_UNAVAILABLE_HAIRCUT = 8.0
 FNODEGRADED_HAIRCUT = 10.0
 VWAPDEGRADED_HAIRCUT = 10.0
@@ -203,10 +209,11 @@ class ConfluenceEngine:
         ai_result: Optional[AIAdviceResult] = None,
         ml_prediction: Optional[dict] = None,
     ) -> float:
-        """Compute final fused confidence score with dynamic weight renormalization (§16).
+        """Compute final fused confidence score with quality-aware weighting.
 
-        Missing AI/ML haircuts (§35): AI unavailable → −8pts, F&O degraded → −10pts,
-        VWAP degraded → −10pts. Prevents silent renormalization inflation.
+        Baseline is neutral (50.0) — each domain must EARN its contribution by scoring > 55.
+        Scores below 45 are penalized. 2+ penalized domains → −10 fused penalty.
+        Missing AI/ML/F&O/VWAP haircuts applied. ARMED threshold is 78.0.
         """
         active_weights = {
             "technical": DEFAULT_WEIGHTS["technical"],
@@ -231,18 +238,38 @@ class ConfluenceEngine:
             is_call = "CALL" in candidate.direction
             scores["ml"] = float(ml_prediction.get("bullish_pct", 50.0) if is_call else ml_prediction.get("bearish_pct", 50.0))
 
-        # Dynamic weight renormalization (§16): weights strictly sum to 1.0
-        total_w = sum(active_weights.values())
-        norm_weights = {k: v / total_w for k, v in active_weights.items()}
+        # Quality-aware weighting: only domains scoring > 55 contribute their full weight.
+        # Domains scoring < 45 become active penalties. 2+ penalties → −10 fused penalty.
+        total_w = 0.0
+        fused = 0.0
+        penalty_count = 0
+        for domain, w in active_weights.items():
+            s = scores.get(domain, 50.0)
+            if s >= 55.0:
+                contribution = s * w
+                fused += contribution
+                total_w += w
+            elif s < 45.0:
+                penalty_count += 1
+            else:
+                # 45-55: neutral, contribute weight but no bonus
+                total_w += w
 
-        fused = sum(scores[k] * norm_weights[k] for k in active_weights)
+        if total_w > 0:
+            fused = fused / total_w
+        else:
+            fused = 50.0
+
+        if penalty_count >= 2:
+            fused -= 10.0
+
         if not ai_available:
             fused -= AI_UNAVAILABLE_HAIRCUT
         if getattr(candidate, "fno_degraded", False):
             fused -= FNODEGRADED_HAIRCUT
         if getattr(candidate, "vwap_degraded", False):
             fused -= VWAPDEGRADED_HAIRCUT
-        return round(float(max(5.0, min(98.0, fused))), 1)
+        return round(float(max(15.0, min(98.0, fused))), 1)
 
 
 confluence_engine = ConfluenceEngine()

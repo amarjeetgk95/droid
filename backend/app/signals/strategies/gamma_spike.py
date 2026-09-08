@@ -84,6 +84,12 @@ class GammaSpikeStrategy(Strategy):
             t2 = normalize_price(entry_max + (risk_pts * Decimal("3.0")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
+            tech_score = min(88.0, max(50.0, 50.0 + (oi_change_pct * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+            mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+            fno_score = min(88.0, max(45.0, 50.0 + (oi_change_pct * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.35 * fno_score + 0.15 * regime_score, 1)
+
             return SignalCandidate(
                 underlying=ctx.underlying,
                 strategy=self.name,
@@ -105,11 +111,11 @@ class GammaSpikeStrategy(Strategy):
                 ttl_seconds=90,
                 time_stop_seconds=90,
                 runner_ttl_seconds=240,
-                technical_score=88.0,
-                mtf_score=80.0,
-                fno_score=90.0,
-                regime_score=90.0,
-                overall_confidence=86.0,
+                technical_score=tech_score,
+                mtf_score=mtf_score,
+                fno_score=fno_score,
+                regime_score=regime_score,
+                overall_confidence=conf_score,
                 rationale=[
                     f"0-DTE Gamma acceleration window (13:15-15:15 IST) active; PCR: {pcr:.2f}",
                     f"Aggressive impulse candle ({float(c_close - c_open):.1f} pts) indicating Call short squeeze",
@@ -130,6 +136,12 @@ class GammaSpikeStrategy(Strategy):
             t1 = normalize_price(entry_min - (risk_pts * Decimal("1.5")), tick)
             t2 = normalize_price(entry_min - (risk_pts * Decimal("3.0")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
+
+            tech_score = min(88.0, max(50.0, 50.0 + (oi_change_pct * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+            mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+            fno_score = min(88.0, max(45.0, 50.0 + (oi_change_pct * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.35 * fno_score + 0.15 * regime_score, 1)
 
             return SignalCandidate(
                 underlying=ctx.underlying,
@@ -152,11 +164,11 @@ class GammaSpikeStrategy(Strategy):
                 ttl_seconds=90,
                 time_stop_seconds=90,
                 runner_ttl_seconds=240,
-                technical_score=88.0,
-                mtf_score=80.0,
-                fno_score=90.0,
-                regime_score=90.0,
-                overall_confidence=86.0,
+                technical_score=tech_score,
+                mtf_score=mtf_score,
+                fno_score=fno_score,
+                regime_score=regime_score,
+                overall_confidence=conf_score,
                 rationale=[
                     f"0-DTE Gamma acceleration window (13:15-15:15 IST) active; PCR: {pcr:.2f}",
                     f"Aggressive impulse breakdown ({float(c_open - c_close):.1f} pts) indicating Put gamma expansion",

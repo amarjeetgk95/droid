@@ -25,7 +25,7 @@ class VWAPBounceStrategy:
         atr = max(ctx.atr_14_1m, price * 0.001)
 
         # Require minimum volume confirmation to avoid flat market whipsaws
-        if ctx.volume_surge_ratio < 1.25:
+        if ctx.volume_surge_ratio < 1.5:
             return None
 
         # Distance to VWAP as percentage
@@ -44,19 +44,19 @@ class VWAPBounceStrategy:
         sl = 0.0
         t1 = 0.0
         t2 = 0.0
-        confidence = 72.0
+        confidence = 78.0
 
         # 1. BULLISH BOUNCE: Price tested VWAP from above or pierced and closed back above
         # Low tested near/below VWAP, reclaimed VWAP on close, green candle with prominent lower wick
         if (
-            current_candle.low <= vwap * 1.0008
+            current_candle.low <= vwap * 1.0005
             and current_candle.close > vwap
             and current_candle.close > current_candle.open
-            and lower_wick_ratio >= 0.35
+            and lower_wick_ratio >= 0.40
         ):
             direction = SignalDirection.LONG
             risk = max(atr * 1.0, (entry - min(current_candle.low, vwap * 0.998)))
-            risk = min(risk, entry * 0.008)
+            risk = min(risk, entry * 0.007)
             sl = round(entry - risk, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t1 = round(entry + risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry + risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
@@ -66,9 +66,12 @@ class VWAPBounceStrategy:
             if ctx.orderbook and ctx.orderbook.depth_imbalance_pct > 15.0:
                 confluences.append(f"Order book bid-skewed ({ctx.orderbook.depth_imbalance_pct:+.1f}%)")
                 confidence += 7.0
-            if ctx.ema_9_1m > ctx.ema_21_1m:
+            if ctx.ema_9_1m > ctx.ema_21_1m and ctx.ema_21_1m > ctx.ema_50_1m:
+                confluences.append("Full EMA bullish stack EMA9 > EMA21 > EMA50")
+                confidence += 8.0
+            elif ctx.ema_9_1m > ctx.ema_21_1m:
                 confluences.append("Short-term EMA9 > EMA21 aligned bullish")
-                confidence += 5.0
+                confidence += 4.0
 
             rationale = (
                 f"{ctx.asset} tested session VWAP (${vwap:,.2f}) and formed a bullish rejection wick. "
@@ -78,14 +81,14 @@ class VWAPBounceStrategy:
         # 2. BEARISH REJECTION: Price tested VWAP from below and got rejected
         # High tested near/above VWAP, rejected below VWAP on close, red candle with prominent upper wick
         elif (
-            current_candle.high >= vwap * 0.9992
+            current_candle.high >= vwap * 0.9995
             and current_candle.close < vwap
             and current_candle.close < current_candle.open
-            and upper_wick_ratio >= 0.35
+            and upper_wick_ratio >= 0.40
         ):
             direction = SignalDirection.SHORT
             risk = max(atr * 1.0, (max(current_candle.high, vwap * 1.002) - entry))
-            risk = min(risk, entry * 0.008)
+            risk = min(risk, entry * 0.007)
             sl = round(entry + risk, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t1 = round(entry - risk * 1.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
             t2 = round(entry - risk * 2.5, 2 if "USDT" in ctx.symbol and price > 100 else 4)
@@ -95,9 +98,12 @@ class VWAPBounceStrategy:
             if ctx.orderbook and ctx.orderbook.depth_imbalance_pct < -15.0:
                 confluences.append(f"Order book ask-skewed ({ctx.orderbook.depth_imbalance_pct:+.1f}%)")
                 confidence += 7.0
-            if ctx.ema_9_1m < ctx.ema_21_1m:
+            if ctx.ema_9_1m < ctx.ema_21_1m and ctx.ema_21_1m < ctx.ema_50_1m:
+                confluences.append("Full EMA bearish stack EMA9 < EMA21 < EMA50")
+                confidence += 8.0
+            elif ctx.ema_9_1m < ctx.ema_21_1m:
                 confluences.append("Short-term EMA9 < EMA21 aligned bearish")
-                confidence += 5.0
+                confidence += 4.0
 
             rationale = (
                 f"{ctx.asset} attempted to breach session VWAP (${vwap:,.2f}) and failed with an upper rejection wick. "

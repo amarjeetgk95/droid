@@ -351,15 +351,18 @@ async def test_scanner_anti_spam_and_cooldown():
     from app.crypto_scalp.scanner import CryptoScalpScanner
 
     scanner = CryptoScalpScanner()
-    candles = [make_mock_candle(2950.0, high=3000.0, low=2900.0) for _ in range(20)]
+    # 20 flat candles then a clean bullish breakout
+    candles = [make_mock_candle(2950.0, high=2960.0, low=2940.0) for _ in range(20)]
     breakout_candle = make_mock_candle(
         price=3015.0, open_p=2995.0, high=3020.0, low=2990.0, vol=50.0,
     )
     candles.append(breakout_candle)
 
-    # Realistic market context: in production build_context always supplies
-    # VWAP, an L2 order book and derivatives; without them the confluence
-    # engine applies data-degradation haircuts and rejects the candidate.
+    # 5m and 15m aligned bullish for MTF confluence
+    candles_5m = [make_mock_candle(2945.0 + i * 2.0, high=2960.0, low=2935.0) for i in range(5)]
+    candles_15m = [make_mock_candle(2935.0 + i * 3.0, high=2955.0, low=2925.0) for i in range(4)]
+
+    # Realistic market context: bullish EMAs, negative funding (LONG-aligned)
     orderbook = CryptoOrderBook(
         symbol="ETHUSDT",
         bids=[CryptoOrderBookLevel(price=3014.0, quantity=5.0, notional=15070.0, cumulative_notional=15070.0)],
@@ -378,27 +381,33 @@ async def test_scanner_anti_spam_and_cooldown():
         symbol="ETHUSDT",
         mark_price=3015.0,
         index_price=3015.0,
-        funding_rate=0.0001,
-        funding_rate_percent=0.01,
-        annualized_funding_rate=10.95,
+        funding_rate=-0.0002,
+        funding_rate_percent=-0.02,
+        annualized_funding_rate=-21.9,
         next_funding_time="2026-09-07T16:00:00Z",
         countdown_seconds=3600,
         open_interest_usd=500_000_000.0,
         open_interest_coins=165_837.0,
-        long_short_ratio=1.1,
-        long_percentage=52.0,
-        short_percentage=48.0,
+        long_short_ratio=0.75,
+        long_percentage=43.0,
+        short_percentage=57.0,
     )
     ctx = CryptoScalpContext(
         symbol="ETHUSDT",
         asset="ETH",
         current_price=3015.0,
         candles_1m=candles,
-        high_15m=3000.0,
+        candles_5m=candles_5m,
+        candles_15m=candles_15m,
+        high_15m=3020.0,
         low_15m=2900.0,
         atr_14_1m=15.0,
+        rsi_14_1m=65.0,
+        ema_9_1m=2957.0,
+        ema_21_1m=2955.0,
+        ema_50_1m=2950.0,
+        vwap_session=2952.0,
         volume_surge_ratio=2.5,
-        vwap_session=2990.0,
         orderbook=orderbook,
         derivatives=derivatives,
     )

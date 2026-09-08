@@ -21,8 +21,8 @@ class CryptoScalpRiskFilter:
     }
     DEFAULT_MAX_SL_PCT = 2.0
 
-    MIN_RR_RATIO = 1.3
-    MIN_CONFIDENCE = 65.0
+    MIN_RR_RATIO = 1.5
+    MIN_CONFIDENCE = 78.0
 
     def validate(self, candidate: CryptoScalpCandidate) -> tuple[bool, str]:
         """

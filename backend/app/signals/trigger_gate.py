@@ -19,8 +19,8 @@ MIN_GAP_PCT = Decimal("0.0005")
 MIN_GAP_RISK_FRACTION = Decimal("0.10")
 # Minimum risk size: 0.03% of spot (filters dust stops that make R:R meaningless).
 MIN_RISK_PCT = Decimal("0.0003")
-# Minimum reward bar for a fresh signal.
-MIN_RR_T2 = 1.2
+# Minimum reward bar for a fresh signal — raised to 1.5 for 80% win-rate quality target.
+MIN_RR_T2 = 1.5
 # Entry zone wider than 2R means the "setup" is just chop.
 MAX_ENTRY_WIDTH_R = Decimal("2.0")
 

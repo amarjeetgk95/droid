@@ -85,7 +85,7 @@ class SignalCandidate(BaseModel):
     fno_score: float = 50.0
     regime_score: float = 50.0
     ai_score: Optional[float] = None
-    overall_confidence: float = 75.0
+    overall_confidence: float = 78.0
 
     rationale: list[str] = Field(default_factory=list)
     option_contract: Optional[InstrumentMaster] = None

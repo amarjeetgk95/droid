@@ -1,9 +1,10 @@
 """
 Institutional Breakout / Breakdown Strategy
 Mathematical rules:
-  - LONG_CALL: Close >= Resistance + 1 tick, Volume Ratio >= 1.4, Breakout Pressure >= 68, 15M MTF != BEARISH
-  - LONG_PUT: Close <= Support - 1 tick, Volume Ratio >= 1.4, Breakout Pressure >= 68, 15M MTF != BULLISH
+  - LONG_CALL: Close >= Resistance + 1 tick, Volume Ratio >= 1.8, Breakout Pressure >= 72, 15M MTF != BEARISH, RSI 55-78
+  - LONG_PUT: Close <= Support - 1 tick, Volume Ratio >= 1.8, Breakout Pressure >= 72, 15M MTF != BULLISH, RSI 22-45
   - SL = Entry - 1.5 * ATR (or S/R level), T1 = Entry + 1.5R, T2 = Entry + 3.0R
+  - Quality target: 80% win rate — neutral baseline scoring, no free points.
 """
 from __future__ import annotations
 
@@ -65,12 +66,13 @@ class BreakoutStrategy(Strategy):
                     t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
                     t2 = normalize_price(trigger + (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
-                    
-                    tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))
-                    mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
+
+                    # Neutral baseline: start at 50, earn points only on strong evidence
+                    tech_score = min(92.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 20.0) + (max(0.0, breakout_pressure - 72) * 0.5)))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
                     pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
-                    fno_score = round(min(95.0, max(40.0, 60.0 + ((pcr_val - 1.0) * 50.0))), 1)
-                    regime_score = 80.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 60.0
+                    fno_score = round(min(88.0, max(45.0, 50.0 + ((pcr_val - 1.0) * 40.0))), 1)
+                    regime_score = 80.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
 
                     return SignalCandidate(
                         underlying=ctx.underlying,
@@ -136,16 +138,16 @@ class BreakoutStrategy(Strategy):
                     t2 = normalize_price(trigger - (risk_pts * Decimal("3.0")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                    tech_score = min(95.0, 50.0 + (vol_ratio * 15.0) + (breakout_pressure * 0.3))
-                    mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
-                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
-                    fno_score = round(min(95.0, max(40.0, 60.0 + ((1.0 - pcr_val) * 50.0))), 1)
-                    regime_score = 80.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 60.0
+                tech_score = min(92.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 20.0) + (max(0.0, breakout_pressure - 72) * 0.5)))
+                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                fno_score = round(min(88.0, max(45.0, 50.0 + ((1.0 - pcr_val) * 40.0))), 1)
+                regime_score = 80.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
-                        strategy=self.name,
-                        direction="LONG_PUT",
+                return SignalCandidate(
+                    underlying=ctx.underlying,
+                    strategy=self.name,
+                    direction="LONG_PUT",
                         timeframe=ctx.timeframe,
                         spot_price=spot,
                         entry_min=entry_min,

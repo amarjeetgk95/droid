@@ -36,8 +36,8 @@ class CryptoSignalEngine:
     MAX_QUOTE_AGE_S = 15.0
     MAX_SPREAD_PCT = 0.15
     MAX_SL_PCT = {"BTC": 1.5, "ETH": 2.0}
-    MIN_RR = 1.3
-    MIN_CONF = 65.0
+    MIN_RR = 1.5
+    MIN_CONF = 78.0
 
     @staticmethod
     def _age_s(ts) -> float:

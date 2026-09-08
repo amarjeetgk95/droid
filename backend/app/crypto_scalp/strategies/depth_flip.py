@@ -27,8 +27,8 @@ class DepthFlipStrategy:
         if spread_pct > 0.05:
             return None
 
-        # 2. Require volume confirmation (volume_surge_ratio >= 1.3)
-        if ctx.volume_surge_ratio < 1.3:
+        # 2. Require volume confirmation (volume_surge_ratio >= 1.5)
+        if ctx.volume_surge_ratio < 1.5:
             return None
 
         # 3. Must have 1m candle context
@@ -45,10 +45,10 @@ class DepthFlipStrategy:
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 72.0
+        confidence = 78.0
 
-        # Bullish: Heavy bid wall (>= +35% imbalance) with green candle push
-        if imbalance_pct >= 35.0 and curr.close > curr.open and body_ratio >= 0.35:
+        # Bullish: Heavy bid wall (>= +40% imbalance) with green candle push
+        if imbalance_pct >= 40.0 and curr.close > curr.open and body_ratio >= 0.40:
             direction = SignalDirection.LONG
             confluences.append(f"Heavy L2 Bid Cushion: {imbalance_pct:+.1f}% depth imbalance")
             confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x with bullish candle body")
@@ -64,8 +64,8 @@ class DepthFlipStrategy:
                 confluences.append("Price positioned above session VWAP")
                 confidence += 5.0
 
-        # Bearish: Heavy ask wall (<= -35% imbalance) with red candle push
-        elif imbalance_pct <= -35.0 and curr.close < curr.open and body_ratio >= 0.35:
+        # Bearish: Heavy ask wall (<= -40% imbalance) with red candle push
+        elif imbalance_pct <= -40.0 and curr.close < curr.open and body_ratio >= 0.40:
             direction = SignalDirection.SHORT
             confluences.append(f"Heavy L2 Ask Overhead: {imbalance_pct:+.1f}% depth imbalance")
             confluences.append(f"Volume surge {ctx.volume_surge_ratio:.1f}x with bearish candle body")

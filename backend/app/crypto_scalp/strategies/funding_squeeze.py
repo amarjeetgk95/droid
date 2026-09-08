@@ -19,7 +19,7 @@ class FundingSqueezeStrategy:
             return None
 
         # Require volume confirmation so we only scalp active squeeze velocity
-        if ctx.volume_surge_ratio < 1.3:
+        if ctx.volume_surge_ratio < 1.5:
             return None
 
         derivs = ctx.derivatives
@@ -31,11 +31,11 @@ class FundingSqueezeStrategy:
 
         direction: SignalDirection | None = None
         confluences: list[str] = []
-        confidence = 72.0
+        confidence = 78.0
 
         # Case 1: SHORT SQUEEZE OPPORTUNITY (Long signal)
         # Abnormal negative funding rate (<= -0.01% or negative with heavy short positioning) + green candle
-        if (funding_rate <= -0.00010 or (funding_rate <= -0.00005 and ls_ratio < 0.85)):
+        if (funding_rate <= -0.00010 or (funding_rate <= -0.00005 and ls_ratio < 0.80)):
             if ctx.candles_1m and ctx.candles_1m[-1].close > ctx.candles_1m[-1].open:
                 direction = SignalDirection.LONG
                 confluences.append(f"Negative funding rate ({funding_pct:+.4f}%) penalizing shorts")

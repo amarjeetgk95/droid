@@ -133,10 +133,11 @@ class DummyCtx:
     ema_21_1m = 65100.0
     ema_50_1m = 65000.0
     vwap_session = 65050.0
+    rsi_14_1m = 62.0
     current_price = 65220.0
     volume_surge_ratio = 2.2
-    candles_5m = [{"close": 65100}, {"close": 65150}, {"close": 65200}]
-    candles_15m = [{"close": 65000}, {"close": 65100}, {"close": 65200}]
+    candles_5m = [type("C", (), {"close": 65100, "open": 65080})(), type("C", (), {"close": 65150, "open": 65120})(), type("C", (), {"close": 65200, "open": 65180})()]
+    candles_15m = [type("C", (), {"close": 65000, "open": 64980})(), type("C", (), {"close": 65100, "open": 65080})(), type("C", (), {"close": 65200, "open": 65180})()]
 
 def test_confluence_engine():
     print("Testing Crypto Confluence Engine...")
@@ -149,7 +150,7 @@ def test_confluence_engine():
         regime="TREND_UP",
         sentiment_score=75.0,
     )
-    assert score >= 60.0, f"Expected strong confluence score, got {score}"
+    assert score >= 72.0, f"Expected strong confluence score, got {score}"
     assert "technical" in breakdown
     assert "mtf" in breakdown
     assert "fused_confidence" in breakdown

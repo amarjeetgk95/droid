@@ -94,6 +94,12 @@ class MicroMomentumStrategy(Strategy):
             t2 = normalize_price(entry_max + (risk_pts * Decimal("2.5")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=-1)
 
+            tech_score = min(88.0, max(50.0, 50.0 + (min(2.0, cur_vol / vol_ma - 1.8) * 12.0)))
+            mtf_score = max(50.0, 70.0 - 10.0)
+            fno_score = 65.0
+            regime_score = 75.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * regime_score, 1)
+
             return SignalCandidate(
                 underlying=ctx.underlying,
                 strategy=self.name,
@@ -115,11 +121,11 @@ class MicroMomentumStrategy(Strategy):
                 ttl_seconds=90,
                 time_stop_seconds=90,
                 runner_ttl_seconds=240,
-                technical_score=85.0,
-                mtf_score=75.0,
-                fno_score=75.0,
-                regime_score=85.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 70.0,
-                overall_confidence=82.0,
+                technical_score=tech_score,
+                mtf_score=mtf_score,
+                fno_score=fno_score,
+                regime_score=regime_score,
+                overall_confidence=conf_score,
                 rationale=[
                     f"5-bar micro consolidation range ({float(consolidation_low):.1f} - {float(consolidation_high):.1f}) broken bullish",
                     f"Volume explosion: {int(cur_vol)} (>{float(vol_ma*1.8):.0f}, 1.8x MA threshold satisfied)",
@@ -148,6 +154,12 @@ class MicroMomentumStrategy(Strategy):
             t2 = normalize_price(entry_min - (risk_pts * Decimal("2.5")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=1)
 
+            tech_score = min(88.0, max(50.0, 50.0 + (min(2.0, cur_vol / vol_ma - 1.8) * 12.0)))
+            mtf_score = max(50.0, 70.0 - 10.0)
+            fno_score = 65.0
+            regime_score = 75.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * regime_score, 1)
+
             return SignalCandidate(
                 underlying=ctx.underlying,
                 strategy=self.name,
@@ -169,11 +181,11 @@ class MicroMomentumStrategy(Strategy):
                 ttl_seconds=90,
                 time_stop_seconds=90,
                 runner_ttl_seconds=240,
-                technical_score=85.0,
-                mtf_score=75.0,
-                fno_score=75.0,
-                regime_score=85.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 70.0,
-                overall_confidence=82.0,
+                technical_score=tech_score,
+                mtf_score=mtf_score,
+                fno_score=fno_score,
+                regime_score=regime_score,
+                overall_confidence=conf_score,
                 rationale=[
                     f"5-bar micro consolidation range ({float(consolidation_low):.1f} - {float(consolidation_high):.1f}) broken bearish",
                     f"Volume explosion: {int(cur_vol)} (>{float(vol_ma*1.8):.0f}, 1.8x MA threshold satisfied)",
