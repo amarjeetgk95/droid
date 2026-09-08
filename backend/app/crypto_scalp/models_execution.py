@@ -43,7 +43,7 @@ class CryptoScalpExecutionConfig(BaseModel):
     target_1_close_fraction: float = 0.50  # 50% closed at T1
     entry_slippage_bps: float = 2.0  # 0.02%
     exit_slippage_bps: float = 2.0  # 0.02%
-    taker_fee_bps: float = 4.0  # 0.04% per side (Binance standard)
+    taker_fee_bps: float = 5.0  # 0.05% per side (Binance Futures VIP0 taker)
     time_stop_seconds: int = 1800  # 30 minutes
     ambiguous_trigger_policy: str = "CONSERVATIVE"  # Prioritize stop loss if both breached in same tick/bar
 

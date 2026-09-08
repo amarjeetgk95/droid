@@ -82,6 +82,7 @@ export function SignalOpportunitiesTab({
 }: SignalOpportunitiesTabProps) {
   const oppSignals = oppSource === 'live' ? active : scannerData.length > 0 ? scannerData : active;
   const isScannerMode = oppSource === 'scanner';
+  const [dismissError, setDismissError] = React.useState(false);
 
   return (
     <div className="space-y-4">
@@ -321,12 +322,24 @@ export function SignalOpportunitiesTab({
         </div>
       </Card>
 
-      {activeError && oppSource === 'live' && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2 flex-wrap">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {activeError}
-          <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto cursor-pointer" onClick={onRefreshActive}>
-            Retry
-          </Button>
+      {activeError && oppSource === 'live' && !dismissError && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{activeError}</span>
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button size="sm" variant="outline" className="h-7 text-[11px] cursor-pointer" onClick={onRefreshActive}>
+              Retry
+            </Button>
+            <button
+              onClick={() => setDismissError(true)}
+              className="text-muted-foreground hover:text-foreground text-xs p-1 cursor-pointer"
+              title="Dismiss notice"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -405,11 +418,32 @@ export function SignalOpportunitiesTab({
         </>
       ) : (
         !loading && !scannerLoading && (
-          <Card className="p-8 text-center space-y-2">
-            <div className="text-sm font-semibold">No {isScannerMode ? 'scanner' : 'active'} index setups match criteria</div>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              No strategy conditions on {filterInstr} with {filterStrat}. Empty is honest — only validated breakouts register.
-            </p>
+          <Card className="p-8 text-center space-y-3 bg-card/60 border-border/60">
+            <div className="w-12 h-12 rounded-full bg-secondary/70 flex items-center justify-center mx-auto text-muted-foreground">
+              <Zap className="w-6 h-6 opacity-60" />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground">
+                No {isScannerMode ? 'scanner' : 'active'} index setups currently detected
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                No confirmed breakout conditions on {filterInstr} with {filterStrat}. Empty is honest — only quantitatively validated setups register.
+              </p>
+            </div>
+            {(filterInstr !== 'ALL' || filterStrat !== 'ALL' || filterDesk !== 'ALL') && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs cursor-pointer text-primary border-primary/30 hover:bg-primary/5"
+                onClick={() => {
+                  setFilterDesk('ALL');
+                  setFilterInstr('ALL');
+                  setFilterStrat('ALL');
+                }}
+              >
+                Reset All Filters
+              </Button>
+            )}
           </Card>
         )
       )}

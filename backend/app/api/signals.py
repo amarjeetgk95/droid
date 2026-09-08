@@ -372,6 +372,30 @@ async def get_signals_audit(
     }
 
 
+@router.post("/audit/sanitize")
+async def sanitize_signal_audit():
+    """
+    Trigger comprehensive memory and database sanitization of audit ledger:
+    - Purges corrupted prices, ghost signals, and phantom exposure
+    - Bounds option buying losses to 100% of premium
+    - Reconciles any mismatched spot vs premium domain levels
+    """
+    from app.signals.signals_persistence import sanitize_persisted_signals, restore_signals_from_db
+    from app.signals.audit_ledger import signal_audit_ledger
+
+    db_count = await restore_signals_from_db()
+    mem_count = sanitize_persisted_signals()
+    summary = signal_audit_ledger.get_summary_metrics()
+
+    return {
+        "status": "success",
+        "db_restored_repaired": db_count,
+        "memory_sanitized": mem_count,
+        "summary": summary,
+        "timestamp_ms": int(time.time() * 1000),
+    }
+
+
 @router.get("/{signal_id}/audit")
 async def get_single_signal_audit(signal_id: str):
     """

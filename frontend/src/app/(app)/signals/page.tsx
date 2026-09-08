@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
@@ -31,8 +32,9 @@ const SignalDeepDiveModal = dynamic(
 
 export default function SignalsPage() {
   const engine = useSignalEngine();
+  const [dismissDegraded, setDismissDegraded] = useState(false);
 
-  const degraded = engine.activeQuality !== 'LIVE' || engine.scanQuality !== 'LIVE';
+  const degraded = (engine.activeQuality !== 'LIVE' || engine.scanQuality !== 'LIVE') && !dismissDegraded;
   const emptyReasons = engine.scanDiagnostics
     .filter((d) => d?.reasons?.length)
     .slice(0, 3)
@@ -179,20 +181,29 @@ export default function SignalsPage() {
       </div>
 
       {degraded && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-semibold text-amber-700 dark:text-amber-400">
-              Market data degraded (signals {engine.activeQuality} / scanner {engine.scanQuality}) — prices and distances may be stale. No signals are fabricated; empty means no confirmed setup.
-            </p>
-            {emptyReasons.length > 0 && (
-              <ul className="text-muted-foreground mt-1 space-y-0.5">
-                {emptyReasons.map((r, i) => (
-                  <li key={i} className="font-mono text-[11px]">• {r}</li>
-                ))}
-              </ul>
-            )}
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-amber-700 dark:text-amber-400">
+                Market data degraded (signals {engine.activeQuality} / scanner {engine.scanQuality}) — prices and distances may be stale. No signals are fabricated; empty means no confirmed setup.
+              </p>
+              {emptyReasons.length > 0 && (
+                <ul className="text-muted-foreground mt-1 space-y-0.5">
+                  {emptyReasons.map((r, i) => (
+                    <li key={i} className="font-mono text-[11px]">• {r}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
+          <button
+            onClick={() => setDismissDegraded(true)}
+            className="text-muted-foreground hover:text-foreground text-xs p-1 cursor-pointer shrink-0"
+            title="Dismiss notice"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -224,7 +235,7 @@ export default function SignalsPage() {
           </div>
           {engine.auditSummary?.total_pnl_inr !== undefined && (
             <div>
-              <span className="text-muted-foreground">Live MTM:</span>
+              <span className="text-muted-foreground">Net P&L:</span>
               <span className={`ml-1 font-bold ${engine.auditSummary.total_pnl_inr >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
                 {engine.auditSummary.total_pnl_inr >= 0
                   ? `+₹${Math.round(engine.auditSummary.total_pnl_inr).toLocaleString('en-IN')}`

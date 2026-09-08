@@ -3,7 +3,7 @@ Crypto Fill Reconciler & Staged Execution Domain Adapter — §18, §24, §25
 Enforces:
   1. Strict Domain Separation: Underlying spot/futures index level vs. Execution fill prices.
   2. Staged Partial Exits: Target 1 (50% booked) + Runner (remaining 50% to Target 2 / BE / Time-Stop).
-  3. Realistic Crypto Friction: Binance perpetuals standard fees (0.04% taker, 0.02% maker) + 2 bps slippage.
+  3. Realistic Crypto Friction: Binance Futures VIP0 (0.05% taker, 0.02% maker) + 2 bps slippage.
   4. Realized Net R-Multiple: computed strictly from actual fills after all exchange fees.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from app.crypto_scalp.fsm import CryptoSignalInstance
 
 logger = structlog.get_logger()
 
-TAKER_FEE_RATE = 0.0004  # 0.04% (Binance VIP0 standard taker fee)
+TAKER_FEE_RATE = 0.0005  # 0.05% (Binance Futures VIP0 taker)
 MAKER_FEE_RATE = 0.0002  # 0.02%
 SLIPPAGE_BPS_RATE = 0.0002  # 2 bps slippage model
 

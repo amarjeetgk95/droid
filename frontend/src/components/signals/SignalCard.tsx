@@ -528,12 +528,21 @@ export function SignalCard({
             <span className="text-[10px] text-muted-foreground">{paperResult.order_id || ''}</span>
           </div>
           {(() => {
+            const isOption = Boolean(signal.option_contract?.strike);
+            const fillP = Number(paperResult.fill_price || 0);
             const trigP = Number(signal.trigger ?? signal.spot_price);
             if (!Number.isFinite(spotNum) || !Number.isFinite(trigP) || trigP <= 0) return null;
-            const pts = isCall ? spotNum - trigP : trigP - spotNum;
+            const spotDiff = isCall ? spotNum - trigP : trigP - spotNum;
+            // For options, delta is ~0.50 of spot move, or spotDiff for futures/spot
+            const effectivePts = isOption ? (spotDiff * 0.5) : spotDiff;
             const qty = Number(paperResult.quantity || lotSize);
             if (!Number.isFinite(qty) || qty <= 0) return null;
-            const pnl = pts * qty;
+            let pnl = effectivePts * qty;
+            // Bound option loss to premium paid
+            if (isOption && fillP > 0) {
+              const maxLoss = fillP * qty;
+              if (pnl < -maxLoss) pnl = -maxLoss;
+            }
             const isProfit = pnl >= 0;
             return (
               <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-[10px]">
@@ -542,7 +551,7 @@ export function SignalCard({
                   Live Open MTM:
                 </span>
                 <span className={`font-bold ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                  {pnl >= 0 ? `+₹${pnl.toFixed(2)}` : `-₹${Math.abs(pnl).toFixed(2)}`} ({pts >= 0 ? '+' : ''}{pts.toFixed(1)} pts)
+                  {pnl >= 0 ? `+₹${pnl.toFixed(2)}` : `-₹${Math.abs(pnl).toFixed(2)}`} ({effectivePts >= 0 ? '+' : ''}{effectivePts.toFixed(1)} pts)
                 </span>
               </div>
             );

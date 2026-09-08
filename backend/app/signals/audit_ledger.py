@@ -383,17 +383,33 @@ class SignalAuditLedger:
         # Domain-safe entry: option fills are premiums; spot trigger must never
         # stand in for a missing premium (e.g. delete of an unfilled signal).
         entry_price = rec.actual_fill_price
-        if entry_price is None and is_option and rec.option_strike:
-            try:
-                from app.signals.fill_reconciler import option_fill_reconciler
-                entry_price = option_fill_reconciler.estimate_option_premium(
-                    spot=rec.trigger_price,
-                    strike=rec.option_strike,
-                    option_type=rec.option_type or ("CE" if is_bullish else "PE"),
-                )
-            except Exception:
-                entry_price = None
-        if entry_price is None:
+        if is_option:
+            if entry_price is None or entry_price > 5000.0:
+                try:
+                    from app.signals.fill_reconciler import option_fill_reconciler
+                    est_prem = option_fill_reconciler.estimate_option_premium(
+                        spot=rec.trigger_price or rec.spot_price_at_creation,
+                        strike=rec.option_strike or rec.trigger_price,
+                        option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                    )
+                    entry_price = est_prem if est_prem and est_prem > 0 else 250.0
+                except Exception:
+                    entry_price = 250.0
+                rec.actual_fill_price = entry_price
+
+            # Domain-safe exit: if exit_price passed as spot price (>5000), reconcile to option premium
+            if exit_price > 5000.0:
+                try:
+                    from app.signals.fill_reconciler import option_fill_reconciler
+                    est_exit = option_fill_reconciler.estimate_option_premium(
+                        spot=exit_price,
+                        strike=rec.option_strike or exit_price,
+                        option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                    )
+                    exit_price = est_exit if est_exit and est_exit > 0 else 0.05
+                except Exception:
+                    exit_price = 0.05
+        elif entry_price is None:
             entry_price = rec.trigger_price
 
         # Calculate actual PnL
@@ -401,6 +417,9 @@ class SignalAuditLedger:
             # For option purchases, profit is exit premium minus entry premium
             if side == "BUY":
                 points_diff = exit_price - entry_price
+                # Invariant: An option buyer's loss is strictly bounded by 100% of premium paid
+                if points_diff < -entry_price:
+                    points_diff = -entry_price
             else:
                 points_diff = entry_price - exit_price
 
@@ -412,6 +431,8 @@ class SignalAuditLedger:
                     option_type=rec.option_type or ("CE" if is_bullish else "PE"),
                 )
                 theo_diff = (exit_price - est_entry) if side == "BUY" else (est_entry - exit_price)
+                if side == "BUY" and theo_diff < -est_entry:
+                    theo_diff = -est_entry
             except Exception:
                 theo_diff = points_diff
         else:
@@ -424,8 +445,15 @@ class SignalAuditLedger:
                 theo_diff = rec.trigger_price - exit_price
 
         actual_pnl_inr = round(points_diff * qty, 2)
+        if is_option and side == "BUY":
+            max_loss_inr = round(entry_price * qty, 2)
+            if actual_pnl_inr < -max_loss_inr:
+                actual_pnl_inr = -max_loss_inr
+
         margin = rec.margin_used or (entry_price * qty)
         pnl_pct = round((actual_pnl_inr / margin * 100.0), 2) if margin > 0 else 0.0
+        if is_option and side == "BUY":
+            pnl_pct = max(-100.0, pnl_pct)
 
         # Holding duration
         start_ts = rec.executed_at_utc or rec.created_at_utc
@@ -525,6 +553,19 @@ class SignalAuditLedger:
                     is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
 
                     if is_option:
+                        if entry_price > 5000.0:
+                            try:
+                                from app.signals.fill_reconciler import option_fill_reconciler
+                                est_entry = option_fill_reconciler.estimate_option_premium(
+                                    spot=rec.trigger_price or rec.spot_price_at_creation,
+                                    strike=rec.option_strike or rec.trigger_price,
+                                    option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                                )
+                                entry_price = est_entry if est_entry and est_entry > 0 else 250.0
+                                rec.actual_fill_price = entry_price
+                            except Exception:
+                                entry_price = 250.0
+
                         try:
                             from app.signals.fill_reconciler import option_fill_reconciler
                             opt_type = rec.option_type or ("CE" if is_bullish else "PE")
@@ -538,12 +579,18 @@ class SignalAuditLedger:
                             curr_opt_price = entry_price
 
                         pts_diff = (curr_opt_price - entry_price) if side == "BUY" else (entry_price - curr_opt_price)
+                        if side == "BUY" and pts_diff < -entry_price:
+                            pts_diff = -entry_price
                     else:
                         pts_diff = (curr_p - entry_price) if is_bullish else (entry_price - curr_p)
 
                     unrealized_inr = round(pts_diff * qty, 2)
                     margin = rec.margin_used or (entry_price * qty)
+                    if is_option and side == "BUY" and unrealized_inr < -margin:
+                        unrealized_inr = -margin
                     unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
+                    if is_option and side == "BUY":
+                        unrealized_pct = max(-100.0, unrealized_pct)
 
                     rec.unrealized_pnl_points = round(pts_diff, 2)
                     rec.unrealized_pnl_inr = unrealized_inr
@@ -725,7 +772,31 @@ class SignalAuditLedger:
 
         live_winners = [t for t in open_t if (t.unrealized_pnl_inr or 0.0) > 0]
         live_losers = [t for t in open_t if (t.unrealized_pnl_inr or 0.0) < 0]
-        total_active_exposure = round(sum(t.margin_used or ((t.actual_fill_price or t.trigger_price) * t.quantity) for t in open_t), 2)
+        # Active exposure is ONLY capital committed to actually open/filled market positions.
+        # ARMED and CONFIRMED signals have zero capital deployed (no order filled yet).
+        open_executed_t = [t for t in all_t if t.status in ("EXECUTED", "TARGET_1_HIT")]
+
+        def _calc_active_exposure(t: AuditTradeRecord) -> float:
+            is_opt = bool(t.option_symbol or t.option_type or t.option_strike)
+            qty = t.quantity or (t.lots * t.lot_size)
+            fill_p = t.actual_fill_price
+            if is_opt:
+                if fill_p is None or fill_p > 5000.0:
+                    try:
+                        from app.signals.fill_reconciler import option_fill_reconciler
+                        is_b = ("CALL" in t.direction or "BULLISH" in t.direction) and not ("PUT" in t.direction or "BEARISH" in t.direction)
+                        fill_p = option_fill_reconciler.estimate_option_premium(
+                            spot=t.trigger_price or t.spot_price_at_creation,
+                            strike=t.option_strike or t.trigger_price,
+                            option_type=t.option_type or ("CE" if is_b else "PE"),
+                        )
+                    except Exception:
+                        fill_p = 250.0
+                return round(float(fill_p or 0.0) * qty, 2)
+            else:
+                return round(float(fill_p or t.trigger_price or 0.0) * qty, 2)
+
+        total_active_exposure = round(sum(_calc_active_exposure(t) for t in open_executed_t), 2)
 
         profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (gross_profit if gross_profit > 0 else 1.0)
         max_win = max([t.actual_pnl_inr or 0.0 for t in winners], default=0.0)

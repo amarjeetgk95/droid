@@ -85,6 +85,13 @@ export function createSignalsApi(core: ApiCore) {
     return core.request<{ trades: any[]; count: number; summary: any; timestamp_ms: number }>(`/api/v1/signals/audit${q}`);
   },
 
+  async sanitizeSignalsAudit() {
+    return core.request<{ status: string; db_restored_repaired: number; memory_sanitized: number; summary: any; timestamp_ms: number }>(
+      `/api/v1/signals/audit/sanitize`,
+      { method: 'POST' }
+    );
+  },
+
     async getSignalsHistory(limit = 20) {
     return core.request<{ records: any[] }>(`/api/v1/signals/history?limit=${limit}`);
   },

@@ -26,6 +26,7 @@ import {
   Wallet,
   Settings2,
   AlertCircle,
+  ShieldCheck,
 } from 'lucide-react';
 
 export interface AuditTradeRecord {
@@ -137,6 +138,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   const [customCapital, setCustomCapital] = useState<string>('1000000');
   const [savingCapital, setSavingCapital] = useState<boolean>(false);
   const [walletBalance, setWalletBalance] = useState<number>(1000000);
+  const [sanitizing, setSanitizing] = useState<boolean>(false);
 
   // Fetch current paper portfolio capital on mount
   useEffect(() => {
@@ -227,6 +229,19 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       alert(`Failed to update capital: ${err?.message || 'Unknown error'}`);
     } finally {
       setSavingCapital(false);
+    }
+  };
+
+  const handleSanitizeLedger = async () => {
+    setSanitizing(true);
+    try {
+      const res: any = await api.sanitizeSignalsAudit();
+      onRefresh();
+      alert(`Ledger Sanitized Successfully!\n• Repaired ${res?.db_restored_repaired || 0} database rows\n• Reconciled ${res?.memory_sanitized || 0} memory states`);
+    } catch (err: any) {
+      alert(`Sanitize failed: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setSanitizing(false);
     }
   };
 
@@ -346,37 +361,63 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
   return (
     <div className="space-y-4">
-      {/* ── 3-TIER LIVE P&L SUMMARY KPI STRIP ── */}
+      {/* ── 5-TIER LIVE P&L SUMMARY KPI STRIP ── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {/* Card 1: LIVE UNREALIZED MTM P&L */}
-        <Card className={`relative overflow-hidden ${isUnrealizedProfit ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
+        <Card className={`relative overflow-hidden transition-all duration-200 border ${
+          openTrades.length === 0
+            ? 'bg-card/70 border-border/60'
+            : isUnrealizedProfit
+              ? 'bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.08)]'
+              : 'bg-rose-500/10 border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.08)]'
+        }`}>
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold flex items-center gap-1.5 text-foreground">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                Live Unrealized P&L
+                {openTrades.length > 0 ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                ) : (
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40 inline-block" />
+                )}
+                Live Unrealized
               </span>
-              <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-mono font-bold ${isUnrealizedProfit ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30' : 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/30'}`}>
-                LIVE MTM
+              <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-mono font-bold ${
+                openTrades.length === 0
+                  ? 'bg-secondary/50 text-muted-foreground border-border/50'
+                  : isUnrealizedProfit
+                    ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                    : 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+              }`}>
+                {openTrades.length === 0 ? 'FLAT' : 'LIVE MTM'}
               </Badge>
             </div>
-            <div className={`text-xl font-extrabold font-mono mt-1 ${isUnrealizedProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+            <div className={`text-xl font-extrabold font-mono mt-1 ${
+              openTrades.length === 0
+                ? 'text-foreground/80'
+                : isUnrealizedProfit
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-rose-400'
+            }`}>
               {liveUnrealizedPnl >= 0 ? `+₹${liveUnrealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `-₹${Math.abs(liveUnrealizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>{openTrades.length} Open Positions</span>
-              <span className="font-mono">
-                <span className="text-emerald-600 font-bold">{liveWinningCount}W</span> / <span className="text-rose-600 font-bold">{liveLosingCount}L</span>
-              </span>
+              <span>{openTrades.length === 0 ? 'No Open Positions' : `${openTrades.length} Active Positions`}</span>
+              {openTrades.length > 0 ? (
+                <span className="font-mono">
+                  <span className="text-emerald-600 font-bold">{liveWinningCount}W</span> / <span className="text-rose-600 font-bold">{liveLosingCount}L</span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground font-mono">0 at risk</span>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {/* Card 2: NET REALIZED P&L */}
-        <Card className={`${isRealizedProfit ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
+        <Card className={`border transition-all duration-200 ${isRealizedProfit ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground font-medium">Net Realized P&L</span>
@@ -392,7 +433,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </Card>
 
         {/* Card 3: COMBINED TOTAL PORTFOLIO P&L */}
-        <Card className={`border-2 ${isTotalProfit ? 'border-primary/40 bg-primary/5' : 'border-rose-500/30 bg-rose-500/5'}`}>
+        <Card className={`border-2 transition-all duration-200 ${isTotalProfit ? 'border-primary/40 bg-primary/5 shadow-[0_0_15px_rgba(59,130,246,0.06)]' : 'border-rose-500/30 bg-rose-500/5'}`}>
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-foreground flex items-center gap-1">
@@ -412,14 +453,14 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </Card>
 
         {/* Card 4: WIN RATE & PROFIT FACTOR */}
-        <Card className="bg-secondary/20">
+        <Card className="bg-secondary/20 border-border/60">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground font-medium">Win Rate & Factor</span>
-              <Award className="w-4 h-4 text-amber-500/70" />
+              <Award className="w-4 h-4 text-amber-500/80" />
             </div>
             <div className="text-xl font-bold font-mono mt-1 flex items-center gap-1.5">
-              <span className="text-emerald-600">{summary?.win_rate_pct !== undefined ? `${summary.win_rate_pct}%` : '0%'}</span>
+              <span className="text-emerald-600 dark:text-emerald-400">{summary?.win_rate_pct !== undefined ? `${summary.win_rate_pct}%` : '0%'}</span>
               <span className="text-xs text-muted-foreground font-normal">({summary?.profit_factor || 1.0}x)</span>
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
@@ -429,17 +470,19 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
         </Card>
 
         {/* Card 5: ACTIVE EXPOSURE & PAPER EXECUTIONS */}
-        <Card className="bg-secondary/20">
+        <Card className="bg-secondary/20 border-border/60">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground font-medium">Active Exposure</span>
               <Activity className="w-4 h-4 text-primary/70" />
             </div>
             <div className="text-xl font-bold font-mono mt-1">
-              ₹{((summary?.total_active_exposure_inr || 0) / 1000).toFixed(1)}k
+              {(summary?.total_active_exposure_inr || 0) === 0
+                ? '₹0.00'
+                : `₹${((summary?.total_active_exposure_inr || 0) / 1000).toFixed(1)}k`}
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>{openTrades.length} Paper Trades</span>
+              <span>{openTrades.length === 0 ? 'Zero Risk Deployed' : `${openTrades.length} Paper Trades`}</span>
               <span className="font-mono text-primary">{summary?.total_signals_audited || 0} Logged</span>
             </div>
           </CardContent>
@@ -447,7 +490,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       </div>
 
       {/* ── FILTER & REAL-TIME STATUS BAR ── */}
-      <Card className="p-3">
+      <Card className="p-3 border-border/60 bg-card/60 backdrop-blur-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
@@ -460,8 +503,8 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 onClick={() => setFilterInstr(instr)}
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
                   filterInstr === instr
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                    : 'bg-secondary/60 hover:bg-secondary border-transparent text-muted-foreground'
                 }`}
               >
                 {instr}
@@ -476,8 +519,8 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
                 onClick={() => setFilterStatus(st)}
                 className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-all ${
                   filterStatus === st
-                    ? 'bg-primary text-primary-foreground border-primary font-bold'
-                    : 'bg-secondary/60 hover:bg-secondary border-transparent'
+                    ? 'bg-primary text-primary-foreground border-primary font-bold shadow-sm'
+                    : 'bg-secondary/60 hover:bg-secondary border-transparent text-muted-foreground'
                 }`}
               >
                 {st}
@@ -485,7 +528,20 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Sanitize & Repair Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSanitizeLedger}
+              disabled={sanitizing}
+              className="h-8 text-xs gap-1.5 font-mono border-emerald-500/30 hover:border-emerald-500 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              title="Audit & Repair Ledger with Supabase Database"
+            >
+              <ShieldCheck className={`w-3.5 h-3.5 ${sanitizing ? 'animate-spin' : ''}`} />
+              <span>{sanitizing ? 'Sanitizing…' : 'Sanitize & Repair'}</span>
+            </Button>
+
             {/* Custom Paper Wallet Capital Trigger */}
             <Button
               variant="outline"
