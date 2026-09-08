@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -139,6 +139,12 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   const [savingCapital, setSavingCapital] = useState<boolean>(false);
   const [walletBalance, setWalletBalance] = useState<number>(1000000);
   const [sanitizing, setSanitizing] = useState<boolean>(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  const showToast = useCallback((type: 'success' | 'error', msg: string) => {
+    setToast({ type, msg });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   // Fetch current paper portfolio capital on mount
   useEffect(() => {
@@ -170,7 +176,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       });
       onRefresh();
     } catch (err: any) {
-      alert(`Failed to delete signal: ${err?.message || 'Unknown error'}`);
+      showToast('error', `Failed to delete signal: ${err?.message || 'Unknown error'}`);
     } finally {
       setDeletingId(null);
     }
@@ -194,7 +200,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       setSelectedIds(new Set());
       onRefresh();
     } catch (err: any) {
-      alert(`Bulk delete failed: ${err?.message || 'Unknown error'}`);
+      showToast('error', `Bulk delete failed: ${err?.message || 'Unknown error'}`);
     } finally {
       setBulkDeleting(false);
     }
@@ -212,7 +218,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
   const handleSaveCapital = async () => {
     const num = Number(customCapital);
     if (isNaN(num) || num <= 0) {
-      alert('Please enter a valid positive capital amount');
+      showToast('error', 'Please enter a valid positive capital amount');
       return;
     }
     setSavingCapital(true);
@@ -226,7 +232,7 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
       setShowCapitalModal(false);
       onRefresh();
     } catch (err: any) {
-      alert(`Failed to update capital: ${err?.message || 'Unknown error'}`);
+      showToast('error', `Failed to update capital: ${err?.message || 'Unknown error'}`);
     } finally {
       setSavingCapital(false);
     }
@@ -237,9 +243,9 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
     try {
       const res: any = await api.sanitizeSignalsAudit();
       onRefresh();
-      alert(`Ledger Sanitized Successfully!\n• Repaired ${res?.db_restored_repaired || 0} database rows\n• Reconciled ${res?.memory_sanitized || 0} memory states`);
+      showToast('success', `Ledger Sanitized Successfully!\n• Repaired ${res?.db_restored_repaired || 0} database rows\n• Reconciled ${res?.memory_sanitized || 0} memory states`);
     } catch (err: any) {
-      alert(`Sanitize failed: ${err?.message || 'Unknown error'}`);
+      showToast('error', `Sanitize failed: ${err?.message || 'Unknown error'}`);
     } finally {
       setSanitizing(false);
     }
@@ -330,12 +336,12 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
   const openDatewiseConfirm = () => {
     if (!clearBeforeDate) {
-      alert('Pick a date first — everything created before that date (00:00) will be deleted.');
+      showToast('error', 'Pick a date first — everything created before that date (00:00) will be deleted.');
       return;
     }
     const beforeMs = new Date(`${clearBeforeDate}T00:00:00`).getTime();
     if (Number.isNaN(beforeMs)) {
-      alert('Invalid date.');
+      showToast('error', 'Invalid date.');
       return;
     }
     const matching = filtered.filter((t) => t.created_at_utc < beforeMs).length;
@@ -361,6 +367,22 @@ export function SignalAuditTable({ trades, summary, loading, onRefresh, onSelect
 
   return (
     <div className="space-y-4">
+      {toast && (
+        <div className={`rounded-lg border p-3 text-xs font-mono flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 ${
+          toast.type === 'success'
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+            : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+        }`}>
+          <span className="whitespace-pre-wrap">{toast.msg}</span>
+          <button
+            onClick={() => setToast(null)}
+            className="shrink-0 text-current hover:opacity-70"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* ── 5-TIER LIVE P&L SUMMARY KPI STRIP ── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {/* Card 1: LIVE UNREALIZED MTM P&L */}

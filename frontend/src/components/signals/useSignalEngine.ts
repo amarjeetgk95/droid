@@ -69,12 +69,6 @@ export function useSignalEngine() {
 
   const [inspectSignalId, setInspectSignalId] = useState<string | null>(null);
   const [perfSummary, setPerfSummary] = useState<any>(null);
-  const [cardsNowMs, setCardsNowMs] = useState<number>(() => Date.now());
-
-  useEffect(() => {
-    const clock = setInterval(() => setCardsNowMs(Date.now()), 1000);
-    return () => clearInterval(clock);
-  }, []);
 
   const [activeError, setActiveError] = useState<string | null>(null);
   const [scannerError, setScannerError] = useState<string | null>(null);
@@ -317,7 +311,6 @@ export function useSignalEngine() {
     inspectSignalId,
     setInspectSignalId,
     perfSummary,
-    cardsNowMs,
     activeError,
     scannerError,
     auditError,

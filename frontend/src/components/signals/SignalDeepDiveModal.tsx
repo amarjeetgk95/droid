@@ -126,7 +126,6 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto"
-      onClick={onClose}
       role="presentation"
     >
       <div
@@ -174,8 +173,18 @@ export function SignalDeepDiveModal({ signalId, onClose, onPaperExecuted }: Prop
         {/* Content */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
           {loading && (
-            <div className="py-12 text-center text-sm text-muted-foreground animate-pulse">
-              Loading Quantitative Dossier & Market Snapshot…
+            <div className="p-6 space-y-5 animate-pulse">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+                <div key={i} className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                  <div className="h-3 w-32 bg-muted rounded" />
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="h-16 bg-muted rounded" />
+                    <div className="h-16 bg-muted rounded" />
+                    <div className="h-16 bg-muted rounded" />
+                    <div className="h-16 bg-muted rounded" />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

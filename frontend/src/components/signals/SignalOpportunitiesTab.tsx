@@ -41,7 +41,6 @@ export interface SignalOpportunitiesTabProps {
   setSelectedOppIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   bulkDeletingOpp: boolean;
   setBulkDeletingOpp: (v: boolean) => void;
-  cardsNowMs: number;
   activeError: string | null;
   scannerError: string | null;
   onInspectSignal: (id: string) => void;
@@ -73,7 +72,6 @@ export function SignalOpportunitiesTab({
   setSelectedOppIds,
   bulkDeletingOpp,
   setBulkDeletingOpp,
-  cardsNowMs,
   activeError,
   scannerError,
   onInspectSignal,
@@ -380,14 +378,13 @@ export function SignalOpportunitiesTab({
           )}
 
           {!isScannerMode && viewMode === 'grid' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {oppSignals.map((signal) => {
                 const sid = signal.id || signal.signal_id;
                 return (
                   <SignalCard
                     key={sid}
                     signal={signal}
-                    cardsNowMs={cardsNowMs}
                     onInspect={() => onInspectSignal(sid)}
                     selectMode={selectMode}
                     isSelected={selectedOppIds.has(sid)}

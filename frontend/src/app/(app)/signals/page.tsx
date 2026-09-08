@@ -73,7 +73,6 @@ export default function SignalsPage() {
           setSelectedOppIds={engine.setSelectedOppIds}
           bulkDeletingOpp={engine.bulkDeletingOpp}
           setBulkDeletingOpp={engine.setBulkDeletingOpp}
-          cardsNowMs={engine.cardsNowMs}
           activeError={engine.activeError}
           scannerError={engine.scannerError}
           onInspectSignal={(id) => engine.setInspectSignalId(id)}
@@ -140,8 +139,9 @@ export default function SignalsPage() {
                   : 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10'
               }`}
               title="SSE live stream state — polling continues as fallback"
+              aria-live="polite"
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${engine.streamState === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${engine.streamState === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} aria-hidden="true" />
               {engine.streamState === 'CONNECTED' ? 'LIVE STREAM' : `STREAM ${engine.streamState} • POLL FALLBACK`}
             </span>
           </p>

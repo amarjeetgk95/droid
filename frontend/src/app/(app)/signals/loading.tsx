@@ -20,9 +20,9 @@ export default function SignalsLoading() {
         </div>
       </div>
 
-      {/* 4-Column Signal Cards Grid Skeleton */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5">
-        {Array.from({ length: 8 }).map((_, i) => (
+      {/* 3-Column Signal Cards Grid Skeleton */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+        {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
             className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs animate-pulse"

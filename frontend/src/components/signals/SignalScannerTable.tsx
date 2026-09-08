@@ -119,8 +119,16 @@ export function SignalScannerTable({ signals, onInspect, onInspectSignal, onRefr
                 return (
                   <tr
                     key={s.signal_id}
-                    className="hover:bg-muted/40 cursor-pointer transition-colors"
+                    className="hover:bg-muted/40 transition-colors cursor-pointer"
                     onClick={() => (onInspect || onInspectSignal)?.(s.signal_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        (onInspect || onInspectSignal)?.(s.signal_id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                   >
                     <td className="p-3 font-bold font-sans">
                       <div className="flex items-center gap-1.5">
@@ -182,6 +190,7 @@ export function SignalScannerTable({ signals, onInspect, onInspectSignal, onRefr
                           className="h-7 text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 font-medium gap-1 px-2"
                           onClick={(e) => handleExecutePaper(s.signal_id, e)}
                           disabled={executingId === s.signal_id}
+                          aria-label={`Execute paper trade for ${s.underlying}`}
                         >
                           <Zap className="w-3 h-3" /> {executingId === s.signal_id ? '…' : 'Paper Trade'}
                         </Button>
