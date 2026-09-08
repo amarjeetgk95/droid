@@ -86,8 +86,19 @@ class SignalPaperEngine:
                 message=f"MARKET_CLOSED: {perm.reason} (NSE trading hours: 09:15 - 15:30 IST)",
             )
 
-        # Position Sizing
-        avail_cap = capital_override or getattr(paper_service, "_initial_capital", 1000000.0)
+        # Position Sizing — wallet-bound: size off live available margin, not initial capital.
+        # This keeps risk-based sizing confined to what the wallet can actually deploy now
+        # (initial_capital + realized + unrealized - used_margin).
+        try:
+            _summary = await paper_service.get_portfolio_summary()
+            _live_available = float(_summary.available_margin)
+        except Exception:
+            _live_available = float(getattr(paper_service, "_initial_capital", 1000000.0))
+        if capital_override and capital_override > 0:
+            avail_cap = min(float(capital_override), _live_available)
+        else:
+            avail_cap = _live_available
+        live_available_margin = _live_available
         
         if quantity_override and quantity_override > 0:
             final_qty = quantity_override
@@ -160,6 +171,73 @@ class SignalPaperEngine:
                 order_id="",
                 status="REJECTED",
                 message="INVALID_PRICE: Fill price is non-positive",
+            )
+
+        # ── Wallet limit: confine trade to available balance, auto-downsize to 1 lot ──
+        # No per-trade % cap (full wallet usable), but required margin must fit live
+        # available_margin. If requested lots don't fit, step down to the largest
+        # affordable lots. If even 1 lot doesn't fit, reject with INSUFFICIENT_FUNDS.
+        from app.quant.margin import calculate_required_margin as _calc_margin
+
+        requested_lots = final_lots
+        try:
+            _summary = await paper_service.get_portfolio_summary()
+            live_available_margin = float(_summary.available_margin)
+        except Exception:
+            pass
+        inst_type = "OPTION_BUY" if ("CE" in broker_sym or "PE" in broker_sym) else "FUTURES"
+        req_margin = _calc_margin(
+            instrument_type=inst_type,  # type: ignore[arg-type]
+            underlying=u,
+            price=fill_price,
+            quantity=final_qty,
+            is_hedged=False,
+        )
+        while req_margin > live_available_margin and final_lots > 1:
+            final_lots -= 1
+            final_qty = final_lots * lot_size
+            req_margin = _calc_margin(
+                instrument_type=inst_type,  # type: ignore[arg-type]
+                underlying=u,
+                price=fill_price,
+                quantity=final_qty,
+                is_hedged=False,
+            )
+        if req_margin > live_available_margin:
+            logger.warning(
+                "paper_execution_blocked_insufficient_funds",
+                signal_id=signal_id,
+                required=req_margin,
+                available=live_available_margin,
+            )
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message=(
+                    f"INSUFFICIENT_FUNDS: Required ₹{req_margin:,.2f} for {final_lots} lot(s), "
+                    f"Available ₹{live_available_margin:,.2f}. Trade skipped — confined to wallet balance."
+                ),
+            )
+        downsized = final_lots < requested_lots
+        if downsized:
+            logger.info(
+                "paper_execution_downsized_to_wallet",
+                signal_id=signal_id,
+                requested_lots=requested_lots,
+                final_lots=final_lots,
+                required=req_margin,
+                available=live_available_margin,
             )
 
         # Place order into Paper Trading Service (final hard safety boundary)
@@ -262,7 +340,10 @@ class SignalPaperEngine:
             target_2=float(sig.target_2),
             order_id=paper_order.order_id,
             status=paper_order.status,
-            message=f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{fill_price:,.2f}",
+            message=(
+                f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{fill_price:,.2f}"
+                + (f" (downsized from {requested_lots} lot(s) to fit wallet ₹{live_available_margin:,.2f})" if downsized else "")
+            ),
         )
 
     async def close_signal_position(
