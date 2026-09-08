@@ -66,7 +66,7 @@ export function CryptoMarketOverviewStrip({ overview, onSelectTicker }: Props) {
                 BTC: {overview.btc_dominance_pct.toFixed(1)}%
               </span>
               <span className="text-sm font-bold text-sky-400 font-mono">
-                ETH: {(overview.eth_dominance_pct || 16.8).toFixed(1)}%
+                ETH: {overview.eth_dominance_pct != null ? `${overview.eth_dominance_pct.toFixed(1)}%` : '—'}
               </span>
             </div>
             <span className="text-[10px] text-muted-foreground block mt-0.5">
@@ -100,7 +100,7 @@ export function CryptoMarketOverviewStrip({ overview, onSelectTicker }: Props) {
             <span className="text-xs text-muted-foreground block">ETH / BTC Ratio</span>
             <div className="flex items-baseline gap-2 mt-0.5">
               <span className="text-base font-bold text-foreground font-mono">
-                {(overview.eth_btc_ratio || 0.0306).toFixed(5)}
+                {overview.eth_btc_ratio != null ? overview.eth_btc_ratio.toFixed(5) : '—'}
               </span>
               <span className="text-[10px] text-muted-foreground font-mono">BTC Price</span>
             </div>

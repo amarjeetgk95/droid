@@ -9,7 +9,14 @@ from app.signals.contract_resolver import (
     calculate_position_sizing,
     normalize_price,
 )
-from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY_STRATEGIES
+from app.signals.strategies import (
+    STRATEGY_REGISTRY,
+    SCALP_STRATEGIES,
+    INTRADAY_STRATEGIES,
+    REGISTRY_VERSION,
+    EXPECTED_INTRADAY_STRATEGIES,
+    EXPECTED_SCALP_STRATEGIES,
+)
 from app.signals.strategies.base import StrategyContext
 from app.signals.confluence import confluence_engine
 from app.signals.fsm import signal_fsm
@@ -75,9 +82,27 @@ class TestInstitutionalSignalCentre:
         assert sizing_large["allowed"] is True
 
     def test_5_strategies_detection(self):
-        assert set(INTRADAY_STRATEGIES.keys()) == {"BREAKOUT", "MEAN_REVERSION", "TREND_PULLBACK", "GAMMA_SQUEEZE", "ORB"}
-        assert set(SCALP_STRATEGIES.keys()) == {"VWAP_SCALP", "MICRO_MOMENTUM", "EMA_RIBBON", "GAMMA_SPIKE"}
-        assert len(STRATEGY_REGISTRY) == 9
+        # Versioned registry contract: renames must update this test + REGISTRY_VERSION,
+        # never silently change the traded portfolio.
+        assert REGISTRY_VERSION == "2026.09.08-11+2legacy"
+        assert set(INTRADAY_STRATEGIES.keys()) == set(EXPECTED_INTRADAY_STRATEGIES) == {
+            "REGIME_ADAPTIVE_TREND",
+            "VOLATILITY_BREAKOUT",
+            "TREND_PULLBACK",
+            "ORB",
+            "MEAN_REVERSION",
+            "GAMMA_SQUEEZE",
+        }
+        assert set(SCALP_STRATEGIES.keys()) == set(EXPECTED_SCALP_STRATEGIES) == {
+            "VWAP_SCALP",
+            "LIQUIDITY_SWEEP_RECLAIM",
+            "MICRO_MOMENTUM",
+            "MOMENTUM_REACCELERATION",
+            "GAMMA_SPIKE",
+        }
+        # 11 active + 2 legacy aliases (BREAKOUT, EMA_RIBBON)
+        assert len(STRATEGY_REGISTRY) == 13
+        assert set(STRATEGY_REGISTRY.keys()) >= set(INTRADAY_STRATEGIES.keys()) | set(SCALP_STRATEGIES.keys()) | {"BREAKOUT", "EMA_RIBBON"}
 
         # Test Breakout
         ctx = StrategyContext(

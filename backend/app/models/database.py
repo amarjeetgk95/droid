@@ -225,6 +225,14 @@ class MLPredictionDB(Base):
     market_regime: Mapped[str] = mapped_column(Text, nullable=False)
     top_features: Mapped[Any] = mapped_column(JSONB, default=list)
     model_version: Mapped[str] = mapped_column(Text, default="XGBoost-LightGBM-Ensemble-v1.0")
+    # Phase 0 multi-horizon + calibration (nullable for pre-existing rows)
+    horizon_minutes: Mapped[int] = mapped_column(nullable=True)
+    target_spec_version: Mapped[str] = mapped_column(Text, nullable=True)
+    model_source: Mapped[str] = mapped_column(Text, nullable=True)
+    outcome_label: Mapped[int] = mapped_column(nullable=True)
+    outcome_spot: Mapped[float] = mapped_column(Float, nullable=True)
+    settled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    atr_at_t: Mapped[float] = mapped_column(Float, nullable=True)
 
 
 # ============================================================

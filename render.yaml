@@ -49,9 +49,16 @@ services:
         sync: false
       - key: BACKEND_PUBLIC_URL
         value: https://droid-backend-emeq.onrender.com
-      # Database
+      # Database — NEVER hardcode credentials. Set via Render dashboard (sync: false).
       - key: DATABASE_URL
-        value: postgresql+asyncpg://postgres.rvwidboufaprjgvwbrjn:amarjeet123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+        sync: false
+      # Auth — production must enforce JWT. Set SUPABASE_JWT_SECRET via dashboard.
+      - key: APP_MODE
+        value: production
+      - key: AUTH_REQUIRED
+        value: true
+      - key: SUPABASE_JWT_SECRET
+        sync: false
       # AI Engine — optional per-request keys fallback to env (no hardcode, Settings UI is primary)
       - key: OPENROUTER_API_KEY
         sync: false

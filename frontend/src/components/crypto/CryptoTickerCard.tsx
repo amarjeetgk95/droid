@@ -14,8 +14,9 @@ export function CryptoTickerCard({ ticker, isSelected, onSelect }: Props) {
   const isPositive = ticker.change_percent_24h >= 0;
   const isBtc = ticker.symbol.includes('BTC');
 
-  // Format currency
+  // Format currency — 0 means unavailable from the feed, never display as $0.00
   const formatPrice = (val: number) => {
+    if (!Number.isFinite(val) || val <= 0) return '—';
     if (val >= 1000) return `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     if (val >= 1) return `$${val.toFixed(2)}`;
     return `$${val.toFixed(5)}`;
@@ -27,11 +28,14 @@ export function CryptoTickerCard({ ticker, isSelected, onSelect }: Props) {
     return `$${(val / 1000).toFixed(1)}K`;
   };
 
-  // 24h Range calculation
+  // 24h Range calculation — unavailable when the feed omits high/low (0)
   const rangeMin = ticker.low_24h;
   const rangeMax = ticker.high_24h;
-  const rangeDelta = rangeMax - rangeMin || 1;
-  const currentPosPct = Math.min(100, Math.max(0, ((ticker.price - rangeMin) / rangeDelta) * 100));
+  const rangeAvailable = rangeMin > 0 && rangeMax > 0 && rangeMax > rangeMin;
+  const rangeDelta = rangeAvailable ? rangeMax - rangeMin : 1;
+  const currentPosPct = rangeAvailable
+    ? Math.min(100, Math.max(0, ((ticker.price - rangeMin) / rangeDelta) * 100))
+    : 50;
 
   // Sparkline generator
   const renderSparkline = () => {
@@ -129,7 +133,7 @@ export function CryptoTickerCard({ ticker, isSelected, onSelect }: Props) {
       <div className="mt-3 space-y-1 w-full">
         <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
           <span>L: {formatPrice(ticker.low_24h)}</span>
-          <span className="text-foreground/70">{currentPosPct.toFixed(0)}% Range</span>
+          <span className="text-foreground/70">{rangeAvailable ? `${currentPosPct.toFixed(0)}% Range` : 'Range —'}</span>
           <span>H: {formatPrice(ticker.high_24h)}</span>
         </div>
         <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden relative">

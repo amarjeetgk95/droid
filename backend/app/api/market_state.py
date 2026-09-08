@@ -2,8 +2,10 @@
 Market State + Pipeline API — covers §6, §7, §22, §23, §28, §40 verification endpoints.
 """
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from app.core.security import AuthUser, get_current_user
 
 from app.core.market_state import capture_market_state
 from app.services.trigger_gateway import trigger_gateway, TriggerType
@@ -15,32 +17,57 @@ from app.models.market import ApiMeta, DataStatus
 from app.services.master_pipeline import master_pipeline
 from app.services.trigger_gateway import TriggerType as _MasterTriggerType
 
-router = APIRouter(prefix="/api/v1/pipeline", tags=["pipeline"])
+router = APIRouter(
+    prefix="/api/v1/pipeline",
+    tags=["pipeline"],
+    # Debug/verification surface: authenticated only. In dev (AUTH_REQUIRED=false)
+    # get_current_user returns a dev admin so local workflows keep working;
+    # in prod it enforces JWT.
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _meta() -> ApiMeta:
-    return ApiMeta(provider="pipeline_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
+    # Honest pipeline status: reflects actual market session instead of a
+    # hardcoded OFFLINE. Falls back to OFFLINE only when the calendar is
+    # unreachable.
+    try:
+        from app.services.calendar_service import calendar_service
+
+        perm = calendar_service.can_trade_now()
+        status = DataStatus.LIVE if perm.allowed else DataStatus.CLOSED
+    except Exception:
+        status = DataStatus.OFFLINE
+    return ApiMeta(provider="pipeline_engine", timestamp=datetime.now(timezone.utc), status=status)
 
 
 @router.post("/state/capture")
 async def capture_state(
     symbol: str = Query(default="NIFTY"),
-    current_price: float = Query(default=24750),
-    atr: float = Query(default=38),
-    regime: str = Query(default="TRENDING_UP"),
+    # Required: no fabricated price/ATR defaults. Callers must supply live values.
+    current_price: float = Query(...),
+    atr: float = Query(...),
+    regime: str = Query(default="UNKNOWN"),
 ):
-    """Capture immutable MarketState snapshot (§6)."""
+    """Capture immutable MarketState snapshot (§6).
+
+    Verification endpoint: captures exactly what the caller supplies — no
+    synthetic probabilities, targets, or order-flow are invented. Optional
+    quantitative blocks stay empty unless provided by a real upstream stage.
+    """
+    if not (current_price > 0 and atr > 0):
+        raise HTTPException(status_code=422, detail="current_price and atr must be positive live values")
     state = capture_market_state(
         symbol=symbol,
         current_price=current_price,
         atr=atr,
         regime=regime,
-        mtf={"1m": "BULLISH", "5m": "BULLISH", "15m": "NEUTRAL_BULLISH", "1h": "BULLISH"},
-        technical={"rsi": 64, "macd": "POSITIVE", "vwap": 24710, "atr": atr},
-        direction_model={"prob_up": 0.68, "prob_down": 0.32},
-        tsfm={"p10": 24695, "p50": 24782, "p90": 24835},
-        orderflow={"ofi": 0.42, "volume_change": 0.31},
-        options={"pcr": 1.12},
+        mtf={},
+        technical={"atr": atr},
+        direction_model={},
+        tsfm={},
+        orderflow={},
+        options={},
         futures={},
     )
     return {"data": state.model_dump(mode="json"), "error": None, "meta": _meta().model_dump()}
@@ -51,13 +78,17 @@ async def evaluate_trigger(
     symbol: str = Query(default="NIFTY"),
     trigger_type: str = Query(default="BREAKOUT"),
     significance: float | None = None,
+    # Required live price — never evaluate a trigger off a fabricated default.
+    current_price: float = Query(...),
 ):
     """Evaluate trigger gateway (§7)."""
     try:
         tt = TriggerType(trigger_type)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"invalid trigger_type {trigger_type}. Allowed: {[t.value for t in TriggerType]}")
-    snapshot = {"symbol": symbol, "price": 24750, "trigger": trigger_type, "sig": significance}
+    if not (current_price > 0):
+        raise HTTPException(status_code=422, detail="current_price must be a positive live value")
+    snapshot = {"symbol": symbol, "price": current_price, "trigger": trigger_type, "sig": significance}
     should, reason = trigger_gateway.should_trigger(tt, symbol, snapshot, significance=significance)
     return {"data": {"should_trigger": should, "reason": reason, "trigger_type": tt.value}, "error": None, "meta": _meta().model_dump()}
 
@@ -180,9 +211,11 @@ async def list_traces(limit: int = Query(default=20, le=100)):
 
 class MasterPipelineRequest(BaseModel):
     symbol: str = "NIFTY"
-    current_price: float = 24750
-    atr: float = 38
-    regime: str = "TRENDING_UP"
+    # Required live inputs — no fabricated 24750/38 defaults. A trade decision
+    # must never be produced off placeholder prices.
+    current_price: float
+    atr: float
+    regime: str = "UNKNOWN"
     mtf: dict | None = None
     technical: dict | None = None
     direction_model: dict | None = None

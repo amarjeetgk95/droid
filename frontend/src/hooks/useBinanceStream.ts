@@ -54,16 +54,13 @@ function normalizeTickerData(data: BinanceTickerPayload): Partial<CryptoTicker> 
   // Binance ticker: c=lastPrice, P=priceChangePercent, p=priceChange, h=high, l=low, v=volume, q=quoteVolume, w=weightedAvg
   const priceChange = numField(data, 'p', 'priceChange');
   const priceChangePercent = numField(data, 'P', 'priceChangePercent');
-  const fallbackHigh = price > 0 ? price * 1.02 : 0;
-  const fallbackLow = price > 0 ? price * 0.98 : 0;
-  const highRaw = numField(data, 'h', 'highPrice');
-  const lowRaw = numField(data, 'l', 'lowPrice');
-  const high = highRaw !== 0 ? highRaw : fallbackHigh;
-  const low = lowRaw !== 0 ? lowRaw : fallbackLow;
+  // Never fabricate: missing high/low/wavg stay 0 (unavailable) so the UI
+  // renders an explicit unavailable state instead of a plausible ±2% band.
+  const high = numField(data, 'h', 'highPrice');
+  const low = numField(data, 'l', 'lowPrice');
   const volQuote = numField(data, 'q', 'quoteVolume');
   const volBase = numField(data, 'v', 'volume');
-  const wavgRaw = numField(data, 'w', 'weightedAvgPrice');
-  const wavg = wavgRaw !== 0 ? wavgRaw : price;
+  const wavg = numField(data, 'w', 'weightedAvgPrice');
 
   return {
     symbol,

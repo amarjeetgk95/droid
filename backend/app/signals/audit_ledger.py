@@ -154,21 +154,8 @@ class SignalAuditLedger:
         import threading
         self._lock = threading.RLock()
 
-    def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
-        with self._lock:
-            return self._trades.get(signal_id)
-
-    def delete_trade(self, signal_id: str) -> bool:
-        with self._lock:
-            if signal_id in self._trades:
-                del self._trades[signal_id]
-            try:
-                from app.signals.signals_persistence import save_signals_state_local
-                save_signals_state_local()
-            except Exception:
-                pass
-            return True
-        return False
+    # NOTE: get/delete_trade are defined once at the end of the class
+    # (with Supabase deletion + logging). Do not re-add duplicates here.
 
     def record_signal_created(
         self,
@@ -684,25 +671,27 @@ class SignalAuditLedger:
         return
 
     def get(self, signal_id: str) -> Optional[AuditTradeRecord]:
-        return self._trades.get(signal_id)
+        with self._lock:
+            return self._trades.get(signal_id)
 
     def delete_trade(self, signal_id: str) -> bool:
         """Delete trade record from memory and schedule deletion from Supabase."""
-        if signal_id in self._trades:
+        with self._lock:
+            if signal_id not in self._trades:
+                return False
             del self._trades[signal_id]
+        try:
+            import asyncio
+            from app.signals.signals_persistence import delete_persisted_signal
             try:
-                import asyncio
-                from app.signals.signals_persistence import delete_persisted_signal
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(delete_persisted_signal(signal_id))
-                except RuntimeError:
-                    pass
-            except Exception:
+                loop = asyncio.get_running_loop()
+                loop.create_task(delete_persisted_signal(signal_id))
+            except RuntimeError:
                 pass
-            logger.info("audit_trade_deleted", signal_id=signal_id)
-            return True
-        return False
+        except Exception:
+            pass
+        logger.info("audit_trade_deleted", signal_id=signal_id)
+        return True
 
     def list_trades(
         self,

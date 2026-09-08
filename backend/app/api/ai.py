@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 import time
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Body, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from app.core.security import AuthUser, get_current_user
 from app.services.ai_service import ai_service
 from app.services.ai_copilot_service import ai_copilot_service
 from app.services.ai_strategy_service import ai_strategy_service
@@ -63,7 +64,10 @@ class AITestRequest(BaseModel):
 
 
 @router.post("/test")
-async def test_ai_provider(payload: AITestRequest = Body(...)):
+async def test_ai_provider(
+    payload: AITestRequest = Body(...),
+    user: AuthUser | None = Depends(get_current_user),
+):
     """Strict end-to-end test: validates connectivity, latency, and JSON schema. No mock fallback for real providers."""
     # compat: mock_ai -> openrouter
     prov_norm = (payload.provider or "openrouter").lower()
@@ -115,6 +119,7 @@ async def generate_market_analysis(
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     openrouter_api_key: str | None = Query(default=None, alias="openRouterApiKey", description="OpenRouter key from Settings (optional, overrides env)"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """Generate grounded, structured AI market analysis. Strict – fails if provider not configured (no silent mock). Settings-driven key (no hardcode)."""
     # compat: mock_ai -> openrouter
@@ -163,6 +168,7 @@ class AIV2EvaluateRequest(BaseModel):
 async def evaluate_v2(
     symbol: str,
     payload: AIV2EvaluateRequest | None = Body(default=None),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """V2 AI evaluation: fast, deterministic, regime-aware signal generation.
 
@@ -392,6 +398,7 @@ async def analyze_with_model(
     payload: AIModelAnalyzeRequest = Body(...),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """
     AI inference with dynamic model validation.
@@ -639,6 +646,7 @@ async def analyze_symbol_with_model(
     allow_paid: bool | None = Query(default=None, description="Override free-only"),
     payload: AIModelAnalyzeRequest | None = Body(default=None),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """Variant with model query param for chart integration. Supports key via body or header."""
     key = None
@@ -661,6 +669,7 @@ async def stream_chat_copilot(
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
     x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """
     Stream interactive multi-turn AI copilot responses via Server-Sent Events (SSE).
@@ -693,6 +702,7 @@ async def recommend_options_strategy(
     payload: AIOptionsStrategyRequest = Body(...),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """Recommend optimal risk-defined options strategy tailored to current IV, S/R, and outlook."""
     if not payload.openrouter_api_key and x_openrouter_key:
@@ -721,6 +731,7 @@ async def validate_trade_setup(
     payload: AITradeValidationRequest = Body(...),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
     x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """Audit user proposed entry/SL/target against live option walls and trend regime."""
     if not payload.openrouter_api_key and x_openrouter_key:

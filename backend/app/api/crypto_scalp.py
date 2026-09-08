@@ -8,12 +8,13 @@ from __future__ import annotations
 import time
 from decimal import Decimal
 from typing import Optional
-from fastapi import APIRouter, Query, Body, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import structlog
 
 from app.core.config import settings
+from app.core.security import AuthUser, get_current_user
 from app.crypto_scalp.scanner import crypto_scalp_scanner
 from app.crypto_scalp.worker import crypto_scalp_worker
 from app.crypto_scalp.fsm import crypto_signal_fsm, CryptoSignalInstance
@@ -173,7 +174,7 @@ async def stream_crypto_signals(request: Request):
 # ── 3. SCANNER TRIGGERS & AUTO-DETECT ─────────────────────────────────
 
 @router.post("/scan", response_model=CryptoScalpSignalsResponse)
-async def trigger_manual_scalp_scan():
+async def trigger_manual_scalp_scan(user: AuthUser | None = Depends(get_current_user)):
     """Force an immediate fresh scalp scan across all crypto pairs."""
     try:
         response = await crypto_scalp_scanner.scan_all(force_refresh=True)
@@ -184,7 +185,10 @@ async def trigger_manual_scalp_scan():
 
 
 @router.post("/auto-detect")
-async def auto_detect_crypto_setup(req: AutoDetectCryptoRequest):
+async def auto_detect_crypto_setup(
+    req: AutoDetectCryptoRequest,
+    user: AuthUser | None = Depends(get_current_user),
+):
     """
     Evaluates live Binance candles and indicators to auto-fill realistic trigger, SL, and targets.
     """
@@ -227,7 +231,10 @@ async def auto_detect_crypto_setup(req: AutoDetectCryptoRequest):
 # ── 4. MANUAL SIGNAL GENERATION WITH FSM REGISTRATION ─────────────────
 
 @router.post("/generate")
-async def generate_crypto_signal(req: GenerateCryptoSignalRequest):
+async def generate_crypto_signal(
+    req: GenerateCryptoSignalRequest,
+    user: AuthUser | None = Depends(get_current_user),
+):
     """
     Manual authoritative signal generation with Trigger Integrity verification,
     Central Risk Engine envelopes, Confluence fusion, FSM registration, and SSE broadcast.
@@ -369,7 +376,7 @@ async def get_crypto_signal_deep_dive(signal_id: str):
 
 
 @router.delete("/{signal_id}")
-async def delete_crypto_signal(signal_id: str):
+async def delete_crypto_signal(signal_id: str, user: AuthUser | None = Depends(get_current_user)):
     """Delete crypto signal from in-memory FSM and scanner cache, then broadcast deletion event."""
     deleted_fsm = crypto_signal_fsm.delete(signal_id)
     deleted_scanner = crypto_scalp_scanner._active_signals.pop(signal_id, None) is not None
@@ -414,6 +421,7 @@ async def get_crypto_scalp_diagnostics():
 @router.patch("/config", response_model=CryptoScalpConfig)
 async def update_crypto_scalp_config(
     config: CryptoScalpConfig = Body(...),
+    user: AuthUser | None = Depends(get_current_user),
 ):
     """Dynamically update the crypto scalp scan interval and Telegram notifications toggle."""
     try:
@@ -478,7 +486,7 @@ async def get_crypto_scalp_trade_detail(trade_id: str):
 
 
 @router.delete("/ledger/{trade_id}")
-async def delete_crypto_scalp_trade(trade_id: str):
+async def delete_crypto_scalp_trade(trade_id: str, user: AuthUser | None = Depends(get_current_user)):
     """Delete a trade execution record and its events from the ledger."""
     try:
         from app.crypto_scalp.persistence import delete_execution_record
@@ -490,7 +498,10 @@ async def delete_crypto_scalp_trade(trade_id: str):
 
 
 @router.post("/ledger/bulk")
-async def bulk_delete_crypto_trades(req: BulkDeleteCryptoRequest):
+async def bulk_delete_crypto_trades(
+    req: BulkDeleteCryptoRequest,
+    user: AuthUser | None = Depends(get_current_user),
+):
     """
     Multi-delete + datewise clear for crypto execution ledger.
     Selectors combine with AND:

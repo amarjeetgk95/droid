@@ -1,9 +1,21 @@
-"""XGBoost/LightGBM Ensemble Trainer — trains on historical feature vectors."""
+"""XGBoost/LightGBM Ensemble Trainer — trains on historical feature vectors.
+
+Phase 0: horizon-aware. Each horizon H trains its own artifact triple
+(xgb/lgb/meta suffixed with _h{H}) against labels built with
+app.ml.targets at TARGET_SPEC_VERSION. The unsuffixed legacy paths alias
+the default horizon so existing readers keep working.
+"""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
+
+from app.ml.targets import (
+    DEFAULT_HORIZON_MINUTES,
+    TARGET_SPEC_VERSION,
+    validate_horizon,
+)
 
 logger = structlog.get_logger()
 
@@ -31,11 +43,32 @@ LABEL_MAP = {"BEARISH": 0, "NEUTRAL": 1, "BULLISH": 2}
 INV_LABEL = {v: k for k, v in LABEL_MAP.items()}
 
 
+def artifact_paths(horizon_minutes: int = DEFAULT_HORIZON_MINUTES) -> tuple[Path, Path, Path]:
+    """Per-horizon artifact triple. Default horizon keeps legacy filenames."""
+    h = validate_horizon(horizon_minutes)
+    if h == DEFAULT_HORIZON_MINUTES:
+        return XGB_PATH, LGB_PATH, META_PATH
+    return (
+        MODEL_DIR / f"xgb_model_h{h}.json",
+        MODEL_DIR / f"lgb_model_h{h}.txt",
+        MODEL_DIR / f"meta_h{h}.json",
+    )
+
+
 async def train_ensemble(
     features: list[list[float]] | None = None,
     labels: list[int] | None = None,
+    horizon_minutes: int = DEFAULT_HORIZON_MINUTES,
+    target_spec_version: str = TARGET_SPEC_VERSION,
 ) -> dict:
     """Train XGBoost + LightGBM ensemble on real historical feature vectors and save artifacts."""
+    horizon_minutes = validate_horizon(horizon_minutes)
+    if target_spec_version != TARGET_SPEC_VERSION:
+        raise ValueError(
+            f"Unknown target_spec_version {target_spec_version!r} "
+            f"(trainer implements {TARGET_SPEC_VERSION!r}). Refusing to train "
+            "against an undefined label definition."
+        )
     if not features or not labels or len(features) < 100 or len(features) != len(labels):
         raise ValueError(
             "Training requires a verified historical dataset of at least 100 samples with corresponding labels. Synthetic training generation is disallowed."
@@ -67,6 +100,10 @@ async def train_ensemble(
         eval_metric="mlogloss",
     )
     xgb_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    xgb_pred = xgb_model.predict(X_test)
+    xgb_proba = xgb_model.predict_proba(X_test)
+    xgb_acc = accuracy_score(y_test, xgb_pred)
+    xgb_ll = log_loss(y_test, xgb_proba)
 
     # LightGBM
     lgb_model = lgb.LGBMClassifier(
@@ -90,14 +127,17 @@ async def train_ensemble(
     ens_pred = ens_proba.argmax(axis=1)
     ens_acc = accuracy_score(y_test, ens_pred)
 
-    # Save artifacts
-    xgb_model.save_model(str(XGB_PATH))
-    lgb_model.booster_.save_model(str(LGB_PATH))
+    # Save per-horizon artifacts
+    xgb_path, lgb_path, meta_path = artifact_paths(horizon_minutes)
+    xgb_model.save_model(str(xgb_path))
+    lgb_model.booster_.save_model(str(lgb_path))
     meta = {
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "n_samples": len(features),
         "feature_names": FEATURE_NAMES,
-        "model_version": "XGBoost-LightGBM-Ensemble-v2.0",
+        "horizon_minutes": horizon_minutes,
+        "target_spec_version": TARGET_SPEC_VERSION,
+        "model_version": f"XGBoost-LightGBM-Ensemble-v2.0-h{horizon_minutes}",
         "metrics": {
             "xgb_accuracy": round(float(xgb_acc), 4),
             "xgb_logloss": round(float(xgb_ll), 4),
@@ -106,33 +146,46 @@ async def train_ensemble(
             "ensemble_accuracy": round(float(ens_acc), 4),
         },
     }
-    META_PATH.write_text(json.dumps(meta, indent=2))
+    meta_path.write_text(json.dumps(meta, indent=2))
 
-    logger.info("ml_ensemble_trained", **meta["metrics"])
+    logger.info("ml_ensemble_trained", horizon_minutes=horizon_minutes, **meta["metrics"])
     return meta
 
 
-def load_ensemble():
-    """Load trained models if available, else return None."""
-    if not XGB_PATH.exists() or not LGB_PATH.exists():
-        return None, None, None
-    try:
-        import xgboost as xgb
-        import lightgbm as lgb
+def load_ensemble(horizon_minutes: int = DEFAULT_HORIZON_MINUTES):
+    """Load trained models for horizon H if available, else return (None, None, None).
 
-        xgb_model = xgb.XGBClassifier()
-        xgb_model.load_model(str(XGB_PATH))
-        lgb_model = lgb.Booster(model_file=str(LGB_PATH))
-        meta = json.loads(META_PATH.read_text()) if META_PATH.exists() else {}
-        return xgb_model, lgb_model, meta
-    except Exception as e:
-        logger.warning("ml_load_failed_fallback_to_heuristic", error=str(e))
-        return None, None, None
+    Falls back to the default-horizon artifacts so a 15m model serves until
+    per-horizon models are trained — callers must surface calibrated=False.
+    """
+    horizon_minutes = validate_horizon(horizon_minutes)
+    candidates = [artifact_paths(horizon_minutes)]
+    if horizon_minutes != DEFAULT_HORIZON_MINUTES:
+        candidates.append(artifact_paths(DEFAULT_HORIZON_MINUTES))
+    for xgb_path, lgb_path, meta_path in candidates:
+        if not xgb_path.exists() or not lgb_path.exists():
+            continue
+        try:
+            import xgboost as xgb
+            import lightgbm as lgb
+
+            xgb_model = xgb.XGBClassifier()
+            xgb_model.load_model(str(xgb_path))
+            lgb_model = lgb.Booster(model_file=str(lgb_path))
+            meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            return xgb_model, lgb_model, meta
+        except Exception as e:
+            logger.warning("ml_load_failed_fallback_to_heuristic", error=str(e))
+            return None, None, None
+    return None, None, None
 
 
-def ensemble_predict_proba(feature_vec: list[float]) -> tuple[float, float, float] | None:
-    """Run ensemble inference. Returns (bearish_pct, neutral_pct, bullish_pct) or None if models not loaded."""
-    xgb_model, lgb_model, _ = load_ensemble()
+def ensemble_predict_proba(
+    feature_vec: list[float],
+    horizon_minutes: int = DEFAULT_HORIZON_MINUTES,
+) -> tuple[float, float, float] | None:
+    """Run ensemble inference for horizon H. Returns (bearish, neutral, bullish) or None."""
+    xgb_model, lgb_model, _ = load_ensemble(horizon_minutes)
     if xgb_model is None:
         return None
     try:

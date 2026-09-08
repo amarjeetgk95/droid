@@ -57,5 +57,11 @@ STRATEGY_REGISTRY: dict[str, Strategy] = {
     "EMA_RIBBON": EMARibbonScalpStrategy(),    # Legacy strategy alias (logic also in features/ema_features.py)
 }
 
+# Versioned registry contract — bump on any add/rename/remove so tests and
+# consumers detect drift instead of silently trading a changed portfolio.
+REGISTRY_VERSION = "2026.09.08-11+2legacy"
+EXPECTED_INTRADAY_STRATEGIES = frozenset(INTRADAY_STRATEGIES.keys())
+EXPECTED_SCALP_STRATEGIES = frozenset(SCALP_STRATEGIES.keys())
+
 SCALP_STRATEGY_NAMES = set(SCALP_STRATEGIES.keys())
 INTRADAY_STRATEGY_NAMES = set(INTRADAY_STRATEGIES.keys())

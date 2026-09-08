@@ -644,7 +644,9 @@ export default function CryptoPage() {
                 <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
                   <span className="text-[10px] font-mono text-slate-500 uppercase block">24H RANGE</span>
                   <span className="text-sm font-bold font-mono text-slate-900 mt-1 block">
-                    {selectedTicker?.high_low_spread_pct?.toFixed(2) || '3.45'}%
+                    {selectedTicker?.high_low_spread_pct != null
+                      ? `${selectedTicker.high_low_spread_pct.toFixed(2)}%`
+                      : '—'}
                   </span>
                   <span className="text-[10px] text-slate-400">High/Low Spread</span>
                 </div>
@@ -652,7 +654,11 @@ export default function CryptoPage() {
                 <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
                   <span className="text-[10px] font-mono text-slate-500 uppercase block">VWAP</span>
                   <span className="text-sm font-bold font-mono text-slate-900 mt-1 block">
-                    ${selectedTicker?.vwap?.toLocaleString() || selectedTicker?.price?.toLocaleString()}
+                    {selectedTicker?.vwap != null
+                      ? `$${selectedTicker.vwap.toLocaleString()}`
+                      : selectedTicker?.price != null
+                        ? `$${selectedTicker.price.toLocaleString()} (spot)`
+                        : '—'}
                   </span>
                   <span className="text-[10px] text-slate-400">Volume-Weighted</span>
                 </div>
@@ -660,7 +666,9 @@ export default function CryptoPage() {
                 <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
                   <span className="text-[10px] font-mono text-slate-500 uppercase block">TRADE COUNT</span>
                   <span className="text-sm font-bold font-mono text-slate-900 mt-1 block">
-                    {(selectedTicker?.trade_count || 1850000).toLocaleString()}
+                    {selectedTicker?.trade_count != null
+                      ? selectedTicker.trade_count.toLocaleString()
+                      : '—'}
                   </span>
                   <span className="text-[10px] text-slate-400">24h Fills</span>
                 </div>
@@ -676,10 +684,10 @@ export default function CryptoPage() {
                         : 'text-slate-900'
                     }`}
                   >
-                    {displayedDerivatives?.basis_status || 'CONTANGO'}
+                    {displayedDerivatives?.basis_status ?? '—'}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">
-                    {displayedDerivatives?.basis ? `$${Math.abs(displayedDerivatives.basis).toFixed(2)}` : '0.01%'}
+                    {displayedDerivatives?.basis != null ? `$${Math.abs(displayedDerivatives.basis).toFixed(2)}` : '—'}
                   </span>
                 </div>
               </div>

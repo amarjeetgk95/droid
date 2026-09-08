@@ -2,6 +2,11 @@ import math
 from datetime import datetime, timezone
 from app.models.ml import MLPredictionResponse, MLFeatureContribution
 from app.ml.feature_extractor import extract_ml_feature_vector, MLFeatures
+from app.ml.targets import (
+    DEFAULT_HORIZON_MINUTES,
+    TARGET_SPEC_VERSION,
+    validate_horizon,
+)
 from app.services.regime_service import regime_service
 from app.services.options_service import options_service
 from app.services.market_service import MarketService
@@ -18,8 +23,18 @@ class MLPredictor:
     def __init__(self, market_service: MarketService | None = None):
         self.market_service = market_service or MarketService()
 
-    async def predict_probabilities(self, symbol: str = "NIFTY") -> MLPredictionResponse:
-        """Calculate multi-class probabilities (Bullish, Neutral, Bearish) and trend strength."""
+    async def predict_probabilities(
+        self,
+        symbol: str = "NIFTY",
+        horizon_minutes: int = DEFAULT_HORIZON_MINUTES,
+    ) -> MLPredictionResponse:
+        """Calculate multi-class probabilities for forward horizon H.
+
+        Phase 0: one shared snapshot feature vector serves all horizons; the
+        horizon is recorded (not silently remapped) so per-horizon training
+        and calibration can follow. Unsupported horizons raise ValueError.
+        """
+        horizon_minutes = validate_horizon(horizon_minutes)
         underlying = symbol.upper().replace(" 50", "")
 
         quote = await self.market_service.get_quote(underlying)
@@ -64,12 +79,26 @@ class MLPredictor:
             features.pivot_position,
         ]
         ensemble_result = None
+        ensemble_meta: dict = {}
         try:
             from app.ml.trainer import ensemble_predict_proba
 
-            ensemble_result = ensemble_predict_proba(feature_vec)
+            ensemble_result = ensemble_predict_proba(feature_vec, horizon_minutes=horizon_minutes)
+            if ensemble_result is not None:
+                from app.ml.trainer import load_ensemble
+
+                _, _, ensemble_meta = load_ensemble(horizon_minutes=horizon_minutes)
+                # Calibrated only when the artifact triple matches this horizon
+                # AND its label spec matches the current definition.
+                calibrated = (
+                    ensemble_meta.get("horizon_minutes", DEFAULT_HORIZON_MINUTES) == horizon_minutes
+                    and ensemble_meta.get("target_spec_version", "") == TARGET_SPEC_VERSION
+                )
+            else:
+                calibrated = False
         except Exception as e:
             logger.info("ml_ensemble_not_available", error=str(e))
+            calibrated = False
 
         if ensemble_result is not None:
             bearish_pct, neutral_pct, bullish_pct = ensemble_result
@@ -168,16 +197,19 @@ class MLPredictor:
             ),
         ]
 
-        # Resolve model_version from artifacts meta if available
+        # Resolve model_version from per-horizon artifacts meta if available
         model_version = "XGBoost-LightGBM-Ensemble-v2.0" if model_source == "xgboost_lightgbm_ensemble" else "XGBoost-LightGBM-Ensemble-v1.0-heuristic"
         try:
-            from app.ml.trainer import META_PATH
+            if ensemble_meta:
+                model_version = ensemble_meta.get("model_version", model_version)
+            else:
+                from app.ml.trainer import META_PATH
 
-            if META_PATH.exists():
-                import json
+                if META_PATH.exists():
+                    import json
 
-                meta = json.loads(META_PATH.read_text())
-                model_version = meta.get("model_version", model_version)
+                    meta = json.loads(META_PATH.read_text())
+                    model_version = meta.get("model_version", model_version)
         except Exception:
             pass
 
@@ -193,6 +225,22 @@ class MLPredictor:
             predicted_bias=predicted_bias,
             market_regime=market_regime,
             top_features=top_features,
+            model_version=model_version,
+            horizon_minutes=horizon_minutes,
+            target_spec_version=TARGET_SPEC_VERSION,
+            model_source=model_source,  # type: ignore[arg-type]
+            calibrated=calibrated,
+            atr_at_t=float(getattr(indicators, "atr_14", 0.0) or 0.0),
+        )
+
+        logger.info(
+            "ml_prediction",
+            symbol=underlying,
+            horizon_minutes=horizon_minutes,
+            bias=predicted_bias,
+            confidence=confidence_score,
+            model_source=model_source,
+            calibrated=calibrated,
             model_version=model_version,
         )
 
