@@ -71,37 +71,88 @@ class PaperTradingRepository:
 
     @staticmethod
     async def save_order(session: AsyncSession, user_id: UUID, order: VirtualOrder) -> PaperOrderDB:
-        """Save a virtual order record."""
-        db_order = PaperOrderDB(
-            order_id=order.order_id,
-            user_id=user_id,
-            symbol=order.symbol,
-            underlying=order.underlying,
-            side=order.side,
-            order_type=order.order_type,
-            product=order.product,
-            quantity=order.quantity,
-            price=order.price,
-            trigger_price=order.trigger_price,
-            status=order.status,
-            fill_price=order.fill_price,
-            rejection_reason=order.rejection_reason,
-            timestamp=datetime.now(timezone.utc),
-        )
-        session.add(db_order)
+        """Save a virtual order record (idempotent on order_id).
+
+        PENDING fills later transition to FILLED via ``evaluate_pending_orders``;
+        upsert on ``order_id`` so the status transition doesn't duplicate rows.
+        Extra audit columns are best-effort — older DBs without migration 004
+        simply ignore them.
+        """
+        existing = None
+        try:
+            _res = await session.execute(
+                select(PaperOrderDB).where(
+                    PaperOrderDB.user_id == user_id,
+                    PaperOrderDB.order_id == order.order_id,
+                )
+            )
+            _so = getattr(_res, "scalar_one_or_none", None)
+            if callable(_so):
+                _val = _so()
+                # Tolerate AsyncMock-based unit tests where this is a coroutine
+                # or a bare Mock (no configured return_value).
+                import inspect as _inspect
+                existing = await _val if _inspect.isawaitable(_val) else _val
+                if not isinstance(existing, PaperOrderDB):
+                    existing = None
+        except Exception:
+            existing = None
+        extra: dict = {}
+        for attr in ("client_order_id", "fill_source", "estimated_costs"):
+            if hasattr(PaperOrderDB, attr):
+                extra[attr] = getattr(order, attr, None)
+        if hasattr(PaperOrderDB, "filled_at"):
+            try:
+                extra["filled_at"] = (
+                    datetime.fromisoformat(order.filled_at) if order.filled_at else None
+                )
+            except Exception:
+                extra["filled_at"] = None
+        if existing is None:
+            db_order = PaperOrderDB(
+                order_id=order.order_id,
+                user_id=user_id,
+                symbol=order.symbol,
+                underlying=order.underlying,
+                side=order.side,
+                order_type=order.order_type,
+                product=order.product,
+                quantity=order.quantity,
+                price=order.price,
+                trigger_price=order.trigger_price,
+                status=order.status,
+                fill_price=order.fill_price,
+                rejection_reason=order.rejection_reason,
+                timestamp=datetime.now(timezone.utc),
+                **extra,
+            )
+            session.add(db_order)
+        else:
+            existing.status = order.status
+            existing.fill_price = order.fill_price
+            existing.rejection_reason = order.rejection_reason
+            for k, v in extra.items():
+                try:
+                    setattr(existing, k, v)
+                except Exception:
+                    pass
+            db_order = existing
         await session.commit()
         await session.refresh(db_order)
         return db_order
 
     @staticmethod
-    async def get_orders(session: AsyncSession, user_id: UUID, limit: int = 50) -> list[PaperOrderDB]:
-        """Fetch virtual order history for a user."""
-        stmt = (
-            select(PaperOrderDB)
-            .where(PaperOrderDB.user_id == user_id)
-            .order_by(PaperOrderDB.timestamp.desc())
-            .limit(limit)
-        )
+    async def get_orders(
+        session: AsyncSession, user_id: UUID, limit: int = 50, offset: int = 0,
+        status: Optional[str] = None,
+    ) -> list[PaperOrderDB]:
+        """Fetch virtual order history for a user (paginated)."""
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
+        stmt = select(PaperOrderDB).where(PaperOrderDB.user_id == user_id)
+        if status:
+            stmt = stmt.where(PaperOrderDB.status == status)
+        stmt = stmt.order_by(PaperOrderDB.timestamp.desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

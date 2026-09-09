@@ -68,13 +68,22 @@ async def get_positions(
 
 @router.get("/orders")
 async def get_orders(
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = None,
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    """Retrieve virtual order book execution logs."""
+    """Retrieve virtual order book execution logs (paginated).
+
+    Query params: ``limit`` (1-500), ``offset``, ``status`` (PENDING/FILLED/...).
+    """
     try:
         user_uuid = _parse_user_uuid(user)
-        orders = await paper_service.get_orders_async(session, user_uuid)
+        orders = await paper_service.get_orders_async(session, user_uuid, limit=limit, offset=offset)
+        if status:
+            s = status.upper()
+            orders = [o for o in orders if o.status == s]
         return {
             "data": [o.model_dump(mode="json") for o in orders],
             "error": None,
@@ -125,20 +134,45 @@ async def place_strategy_basket(
 @router.post("/position/square-off/{position_id}")
 async def square_off_single_position(
     position_id: str,
+    allow_closed_market: bool = False,
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Close an open position at current market price."""
     try:
         user_uuid = _parse_user_uuid(user)
-        closed = await paper_service.square_off_position(position_id, session, user_uuid)
+        closed = await paper_service.square_off_position(
+            position_id, session, user_uuid, allow_closed_market=allow_closed_market
+        )
         return {
             "data": closed.model_dump(mode="json"),
             "error": None,
             "meta": _make_meta().model_dump(),
         }
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        msg = str(ve)
+        raise HTTPException(status_code=404 if "not found" in msg.lower() else 400, detail=msg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/order/{order_id}/cancel")
+async def cancel_pending_order(
+    order_id: str,
+    user: Optional[AuthUser] = Depends(get_current_user),
+    session: Optional[AsyncSession] = Depends(get_db_session),
+):
+    """Cancel a resting PENDING (LIMIT/SL) order."""
+    try:
+        user_uuid = _parse_user_uuid(user)
+        cancelled = await paper_service.cancel_order(order_id, session, user_uuid)
+        return {
+            "data": cancelled.model_dump(mode="json"),
+            "error": None,
+            "meta": _make_meta().model_dump(),
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404 if "not found" in str(ve).lower() else 400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

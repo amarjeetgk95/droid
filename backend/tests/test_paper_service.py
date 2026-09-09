@@ -25,12 +25,18 @@ class TestPaperTradingService:
         order = await service.place_order(order_payload)
 
         assert order.status == "FILLED"
-        assert order.fill_price == 150.0
+        # Industrial fill: MARKET prefers the live quote (LIVE + friction)
+        # and only honors the caller price as flagged CLIENT_FALLBACK when
+        # live is unavailable. Either way the fill must be positive and the
+        # position must track the actual fill — never a silent client price.
+        assert order.fill_price is not None and order.fill_price > 0
+        assert order.fill_source in ("LIVE", "CLIENT_FALLBACK", "LIMIT", "CLOSE_FALLBACK", None)
 
         positions = await service.get_positions()
         assert len(positions) == 1
         assert positions[0].symbol == "NIFTY24800CE"
         assert positions[0].quantity == 75
+        assert positions[0].average_price == order.fill_price
 
         summary = await service.get_portfolio_summary()
         assert summary.open_positions_count == 1

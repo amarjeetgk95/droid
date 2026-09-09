@@ -4,7 +4,11 @@ from pydantic import BaseModel, Field
 OrderSide = Literal["BUY", "SELL"]
 OrderType = Literal["MARKET", "LIMIT", "SL_MARKET", "SL_LIMIT"]
 ProductType = Literal["INTRADAY", "CARRYFORWARD"]
-OrderStatus = Literal["PENDING", "FILLED", "CANCELLED", "REJECTED"]
+OrderStatus = Literal["PENDING", "FILLED", "CANCELLED", "REJECTED", "EXPIRED"]
+# Where did the fill price come from? LIVE = exchange quote + friction,
+# LIMIT = resting order filled at limit-or-better, CLIENT_FALLBACK = live
+# unavailable so the caller-supplied price was honored (flagged, not silent).
+FillSource = Literal["LIVE", "LIMIT", "CLIENT_FALLBACK", "CLOSE_FALLBACK"]
 
 
 class OrderPayload(BaseModel):
@@ -17,6 +21,10 @@ class OrderPayload(BaseModel):
     quantity: int = Field(gt=0)
     price: float = Field(default=0.0, ge=0.0)
     trigger_price: float | None = None
+    # Idempotency key: resubmitting the same (user, client_order_id) returns
+    # the original order instead of double-filling. Signal engine passes
+    # f"sig-{signal_id}" so 1-click execute is safe to retry.
+    client_order_id: str | None = Field(default=None, max_length=128)
 
 
 class BasketOrderPayload(BaseModel):
@@ -40,6 +48,13 @@ class VirtualOrder(BaseModel):
     status: OrderStatus = "FILLED"
     fill_price: float | None = None
     rejection_reason: str | None = None
+    # Industrial-grade audit trail (all optional so old payloads still parse).
+    client_order_id: str | None = None
+    fill_source: FillSource | None = None
+    # Gross fill stays in fill_price (backward compat); this is the honest
+    # all-in cost estimate (brokerage + STT + exchange + GST + slippage).
+    estimated_costs: float | None = None
+    filled_at: str | None = None
 
 
 class VirtualPosition(BaseModel):

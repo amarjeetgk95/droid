@@ -240,7 +240,10 @@ class SignalPaperEngine:
                 available=live_available_margin,
             )
 
-        # Place order into Paper Trading Service (final hard safety boundary)
+        # Place order into Paper Trading Service (final hard safety boundary).
+        # Idempotency: retrying the same signal returns the original fill
+        # instead of doubling the position. The service prefers the live
+        # quote when available; `price` is only the fallback estimate.
         order_payload = OrderPayload(
             symbol=broker_sym,
             underlying=u,
@@ -249,8 +252,28 @@ class SignalPaperEngine:
             product="INTRADAY",
             quantity=final_qty,
             price=fill_price,
+            client_order_id=f"sig-{signal_id}",
         )
         paper_order = await paper_service.place_order(order_payload, allow_closed_market=allow_closed_market)
+
+        if paper_order.status == "PENDING":
+            logger.warning("paper_order_unexpected_pending", signal_id=signal_id, order_id=paper_order.order_id)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id=paper_order.order_id,
+                status="PENDING",
+                message="Order is resting (PENDING) — market has not touched it yet",
+            )
 
         if paper_order.status == "REJECTED":
             logger.warning("paper_order_rejected_by_service", signal_id=signal_id, reason=paper_order.rejection_reason)
@@ -271,10 +294,12 @@ class SignalPaperEngine:
                 message=paper_order.rejection_reason or "Order rejected by paper service",
             )
 
-        # Update FSM with order details
+        # Update FSM with order details — trust the service's actual fill
+        # (live quote + friction) over this engine's pre-trade estimate.
+        actual_fill = float(paper_order.fill_price or fill_price)
         sig.paper_order = paper_order.model_dump()
-        sig.actual_fill_price = Decimal(str(fill_price))
-        sig.entry_price = Decimal(str(fill_price))
+        sig.actual_fill_price = Decimal(str(actual_fill))
+        sig.entry_price = Decimal(str(actual_fill))
         sig.intended_qty = Decimal(str(final_qty))
         sig.remaining_qty = Decimal(str(final_qty))
         sig.lots = final_lots
@@ -284,12 +309,12 @@ class SignalPaperEngine:
         try:
             from app.signals.fill_reconciler import option_fill_reconciler
             lot_sz = 75 if u == "NIFTY" else (30 if u == "BANKNIFTY" else 10)
-            option_fill_reconciler.reconcile_entry(sig, fill_price, final_qty, lot_sz)
+            option_fill_reconciler.reconcile_entry(sig, actual_fill, final_qty, lot_sz)
         except Exception as re_err:
             logger.warning("reconcile_entry_init_failed", signal_id=signal_id, error=str(re_err))
 
         if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
-            signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(fill_price)), reason="PAPER_TRADE_EXECUTED")
+            signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(actual_fill)), reason="PAPER_TRADE_EXECUTED")
 
         # Record into Signal Audit Ledger
         try:
@@ -315,11 +340,11 @@ class SignalPaperEngine:
             signal_audit_ledger.record_paper_executed(
                 signal_id=signal_id,
                 paper_order_id=paper_order.order_id,
-                fill_price=fill_price,
+                fill_price=actual_fill,
                 quantity=final_qty,
                 lots=final_lots,
                 side=side,
-                margin_used=fill_price * final_qty,
+                margin_used=actual_fill * final_qty,
             )
         except Exception as ae:
             logger.warning("audit_record_paper_failed", error=str(ae))
@@ -334,14 +359,14 @@ class SignalPaperEngine:
             side=f"BUY_{direction_label}",
             quantity=final_qty,
             lots=final_lots,
-            fill_price=fill_price,
+            fill_price=actual_fill,
             stop_loss=float(sig.stop_loss),
             target_1=float(sig.target_1),
             target_2=float(sig.target_2),
             order_id=paper_order.order_id,
             status=paper_order.status,
             message=(
-                f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{fill_price:,.2f}"
+                f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{actual_fill:,.2f}"
                 + (f" (downsized from {requested_lots} lot(s) to fit wallet ₹{live_available_margin:,.2f})" if downsized else "")
             ),
         )
@@ -368,12 +393,14 @@ class SignalPaperEngine:
         if not broker_sym or not qty:
             return None
 
-        # Resolve exit price if missing
+        # Resolve exit price if missing — prefer the live position LTP
+        # (VirtualPosition.ltp; there is no `current_price` field).
         if exit_price is None:
             pos_id = f"{broker_sym}_INTRADAY"
             pos = paper_service._positions.get(pos_id)
-            if pos and pos.current_price and float(pos.current_price) > 0:
-                exit_price = float(pos.current_price)
+            live_ltp = getattr(pos, "ltp", None) if pos else None
+            if live_ltp and float(live_ltp) > 0:
+                exit_price = float(live_ltp)
             elif sig.option_contract:
                 try:
                     from app.signals.fill_reconciler import option_fill_reconciler

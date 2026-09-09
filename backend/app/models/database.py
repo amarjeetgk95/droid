@@ -177,6 +177,12 @@ class PaperOrderDB(Base):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Hardening (migration 004): idempotency + fill audit. Nullable so the
+    # migration is online-safe on existing rows.
+    client_order_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fill_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    estimated_costs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    filled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # ============================================================
