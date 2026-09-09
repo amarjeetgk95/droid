@@ -35,6 +35,29 @@ _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "binance": "binance",
 }
 
+# Canonical ctor arg -> ALL accepted saved-field aliases (camelCase from the
+# frontend Settings form, snake_case from backend OAuth callbacks / env).
+# Frontend fyers shape: {appId, secret, redirectUri, accessToken}
+# Backend OAuth dual-writes: {appId, app_id, secret, secret_key,
+#   access_token, accessToken, token}
+_PROVIDER_CRED_ALIASES: Dict[str, Dict[str, tuple[str, ...]]] = {
+    "fyers": {
+        "app_id": ("appId", "app_id", "appID", "client_id", "clientId"),
+        "secret_key": ("secret", "secret_key", "secretKey", "secretId", "secretID"),
+        "access_token": ("access_token", "accessToken", "token", "access_token_key"),
+    },
+    "flattrade": {
+        "user_id": ("userId", "user_id"),
+        "api_key": ("apiKey", "api_key"),
+        "api_secret": ("apiSecret", "api_secret"),
+        "token": ("token", "access_token", "accessToken", "session_token"),
+    },
+    "binance": {
+        "api_key": ("apiKey", "api_key"),
+        "api_secret": ("apiSecret", "api_secret"),
+    },
+}
+
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
     "flattrade": {"user_id": "userId", "api_key": "apiKey", "api_secret": "apiSecret", "token": "token"},
@@ -85,28 +108,30 @@ def _env_config() -> BrokerConfig:
 
 
 def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract the active provider's credentials from the saved app_settings blob."""
+    """Extract the active provider's credentials from the saved app_settings blob.
+
+    Accepts EVERY known alias (frontend camelCase + backend snake_case +
+    OAuth dual-write) so a save from either side can never silently drop the
+    other side's keys — the root cause of the recurring FYERS "meshup".
+    """
     broker = (app_settings or {}).get("broker") or {}
     if not isinstance(broker, dict):
         broker = app_settings if isinstance(app_settings, dict) else {}
     provider = broker.get("provider") or (app_settings or {}).get("preferred_market_provider")
     saved_key = _PROVIDER_SAVED_KEY.get(provider or "")
-    key_map = _PROVIDER_CRED_KEYS.get(provider or "")
-    if not saved_key or not key_map:
+    aliases = _PROVIDER_CRED_ALIASES.get(provider or "")
+    if not saved_key or not aliases:
         return {}
     raw = broker.get(saved_key) or {}
     if not isinstance(raw, dict):
         raw = {}
     creds: Dict[str, Any] = {}
-    for ctor_arg, saved_field in key_map.items():
-        # Check both camelCase and snake_case variations
-        val = raw.get(saved_field)
-        if val in (None, ""):
-            val = raw.get(ctor_arg)
-        if val in (None, "") and ctor_arg == "access_token":
-            val = raw.get("accessToken") or raw.get("access_token") or raw.get("token")
-        if val not in (None, ""):
-            creds[ctor_arg] = val.strip().strip("\"'") if isinstance(val, str) else val
+    for ctor_arg, fields in aliases.items():
+        for f in fields:
+            val = raw.get(f)
+            if val not in (None, ""):
+                creds[ctor_arg] = val.strip().strip("\"'") if isinstance(val, str) else val
+                break
     return creds
 
 

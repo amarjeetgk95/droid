@@ -34,6 +34,11 @@ async def market_data_health():
         health = await service.get_health()
         if health is None:
             raise ValueError("health_unavailable")
+        # Coordinator cache may hold a plain dict from an older deployment /
+        # Redis pickle — accept both so a shape mismatch never looks like the
+        # broker gateway is down.
+        if isinstance(health, dict):
+            return MarketHealthStatus(**health).model_dump()
         return health.model_dump()
     except Exception as e:
         fallback = MarketHealthStatus(

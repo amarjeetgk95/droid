@@ -34,8 +34,20 @@ class FyersProvider(MarketDataProvider):
         secret_key: str | None = None,
         access_token: str | None = None,
     ):
-        self.app_id = app_id or settings.fyers_app_id
-        self.secret_key = secret_key or settings.fyers_secret_key
+        # Resolution order: explicit ctor arg -> runtime broker config (Settings
+        # UI / OAuth dual-write, both naming conventions) -> Render env. Never
+        # env-only, otherwise a Settings save looks like it "did nothing".
+        _rt_creds: dict = {}
+        try:
+            from app.core.broker_runtime import get_config as _get_cfg
+            _cfg = _get_cfg()
+            if _cfg.provider == "fyers" and isinstance(_cfg.credentials, dict):
+                _rt_creds = _cfg.credentials
+        except Exception:
+            _rt_creds = {}
+        self.app_id = (app_id or _rt_creds.get("app_id") or settings.fyers_app_id or "").strip().strip("\"'") or None
+        self.secret_key = (secret_key or _rt_creds.get("secret_key") or settings.fyers_secret_key or "").strip().strip("\"'") or None
+        _rt_token = _rt_creds.get("access_token") or ""
         
         self.token_manager = TokenManager(
             provider="fyers",
@@ -43,10 +55,11 @@ class FyersProvider(MarketDataProvider):
             max_backoff=settings.ws_reconnect_max_seconds,
             enable_jitter=settings.ws_reconnect_jitter,
         )
-        if access_token or settings.fyers_access_token:
+        _eff_token = (access_token or _rt_token or settings.fyers_access_token or "").strip().strip("\"'")
+        if _eff_token:
             self.token_manager.set_token(
                 TokenInfo(
-                    access_token=access_token or settings.fyers_access_token,
+                    access_token=_eff_token,
                     provider="fyers",
                 )
             )

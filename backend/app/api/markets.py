@@ -86,7 +86,21 @@ async def get_candles(
 async def get_market_status():
     """Get current market session status."""
     service = MarketService()
-    status = await service.get_market_status()
+    try:
+        status = await service.get_market_status()
+    except Exception as e:
+        logger.error("get_market_status_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    # Coordinator cache may hold a plain dict from an older deployment /
+    # Redis pickle — accept both instead of 500ing (which the header pill
+    # renders as broker-gateway OFFLINE).
+    if isinstance(status, dict):
+        try:
+            from app.models.market import MarketStatusResponse
+            status = MarketStatusResponse(**status)
+        except Exception as e:
+            logger.error("get_market_status_shape_invalid", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
     return {
         "data": status.model_dump(),
         "error": None,

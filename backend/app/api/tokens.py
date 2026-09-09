@@ -171,10 +171,16 @@ async def fyers_oauth_login(
     """Redirect user to Fyers OAuth authorization using Render server credentials or custom query overrides."""
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
-    
-    clean_app_id = (cfg.fyers_app_id or app_id or creds.get("app_id") or creds.get("appId") or "").strip().strip("\"'")
-    clean_secret = (cfg.fyers_secret_key or secret_key or creds.get("secret_key") or creds.get("secret") or "").strip().strip("\"'")
-    redirect_uri = (creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback").strip()
+
+    def _clean(v: object) -> str:
+        return str(v or "").strip().strip("\"'")
+
+    # Precedence: explicit ?app_id/?secret_key query overrides FIRST (retry form),
+    # then active runtime creds (Settings UI save), then Render env. Env-last so a
+    # stale FYERS_APP_ID in Render can never silently override what the user typed.
+    clean_app_id = (_clean(app_id) or _clean(creds.get("app_id")) or _clean(creds.get("appId")) or _clean(cfg.fyers_app_id))
+    clean_secret = (_clean(secret_key) or _clean(creds.get("secret_key")) or _clean(creds.get("secret")) or _clean(cfg.fyers_secret_key))
+    redirect_uri = (_clean(creds.get("redirect_uri")) or _clean(creds.get("redirectUri")) or _clean(cfg.fyers_redirect_uri) or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback")
     
     if not clean_app_id:
         return HTMLResponse(
@@ -425,12 +431,17 @@ async def fyers_oauth_callback(
     if not return_url:
         return_url = cfg.frontend_url or "https://fo-droid.web.app"
 
-    # 4. Resolve credentials with fallback hierarchy
+    # 4. Resolve credentials with fallback hierarchy.
+    # Precedence: custom state payload (retry form) FIRST, then active runtime
+    # creds (Settings UI), then Render env. Env-last so stale env secrets can
+    # never override what the user just typed.
     broker_config = get_config()
     creds = broker_config.credentials if broker_config.provider == "fyers" else {}
-    app_id = (cfg.fyers_app_id or custom_app_id or creds.get("app_id") or creds.get("appId") or "").strip().strip("\"'")
-    secret_key = (cfg.fyers_secret_key or custom_secret or creds.get("secret_key") or creds.get("secret") or "").strip().strip("\"'")
-    cred_source = "Render Server Environment Variables" if (cfg.fyers_secret_key and cfg.fyers_app_id) else ("Custom Browser Session" if custom_app_id else "Render Server Environment Variables")
+    def _clean2(v: object) -> str:
+        return str(v or "").strip().strip("\"'")
+    app_id = (_clean2(custom_app_id) or _clean2(creds.get("app_id")) or _clean2(creds.get("appId")) or _clean2(cfg.fyers_app_id))
+    secret_key = (_clean2(custom_secret) or _clean2(creds.get("secret_key")) or _clean2(creds.get("secret")) or _clean2(cfg.fyers_secret_key))
+    cred_source = ("Custom Browser Session" if custom_app_id else ("Saved Settings" if creds.get("app_id") or creds.get("appId") else "Render Server Environment Variables"))
 
     if not app_id or not secret_key:
         error_html = """
@@ -467,14 +478,24 @@ async def fyers_oauth_callback(
             if resp.status_code == 200 and data.get("s") == "ok" and data.get("access_token"):
                 access_token = data["access_token"]
                 
-                # Apply new access token
+                # Apply new access token.
+                # Dual-write BOTH snake_case and camelCase keys: backend runtime
+                # reads app_id/secret_key/access_token while the frontend
+                # Settings form reads appId/secret/accessToken. Writing only one
+                # convention caused the other side to see empty creds on the
+                # next save and wipe the good token ("always meshup").
                 new_settings = {
                     "broker": {
                         "provider": "fyers",
+                        "apiType": "indian",
                         "fyers": {
                             "appId": app_id,
+                            "app_id": app_id,
                             "secret": secret_key,
+                            "secret_key": secret_key,
                             "access_token": access_token,
+                            "accessToken": access_token,
+                            "token": access_token,
                         },
                     }
                 }
