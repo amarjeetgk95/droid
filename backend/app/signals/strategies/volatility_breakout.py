@@ -103,6 +103,18 @@ class VolatilityBreakoutStrategy(Strategy):
                     t2 = normalize_price(trigger + (risk_pts * Decimal("2.5")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
+                    tech_score = min(92.0, max(50.0,
+                        50.0
+                        + (max(0.0, vol_ratio - 1.35) * 20.0)
+                        + (max(0.0, breakout_pressure - 70) * 0.5)
+                        + (5.0 if curr_range >= avg_recent_range * 1.5 else 0.0)
+                    ))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                    fno_score = round(min(88.0, max(45.0, 50.0 + ((pcr_val - 1.0) * 40.0))), 1)
+                    regime_score = 90.0 if ctx.regime == "COMPRESSION_SQUEEZE" else (75.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 50.0)
+                    overall_conf = round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1)
+
                     return SignalCandidate(
                         underlying=ctx.underlying,
                         strategy=self.name,
@@ -124,11 +136,11 @@ class VolatilityBreakoutStrategy(Strategy):
                         ttl_seconds=600,
                         time_stop_seconds=2400,
                         runner_ttl_seconds=3600,
-                        technical_score=85.0,
-                        mtf_score=float(ctx.mtf.get("alignment_score", 70.0)),
-                        fno_score=68.0,
-                        regime_score=80.0,
-                        overall_confidence=80.0,
+                        technical_score=tech_score,
+                        mtf_score=mtf_score,
+                        fno_score=fno_score,
+                        regime_score=regime_score,
+                        overall_confidence=overall_conf,
                         rationale=[
                             f"Volatility expansion breaking key resistance {float(key_res):.2f}",
                             f"Expansion confirmed by volume ratio {vol_ratio:.2f} and range growth",
@@ -140,7 +152,7 @@ class VolatilityBreakoutStrategy(Strategy):
         # ── BEARISH VOLATILITY BREAKDOWN ──
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if (spot <= key_sup or breakout_pressure >= 70) and mtf_bias != "BULLISH" and c_close <= c_open:
+            if (spot <= key_sup or breakout_pressure >= 70) and mtf_bias != "BEARISH" and c_close <= c_open:
                 if spot > key_sup:
                     trigger = normalize_price(key_sup - min_gap, tick)
                     if trigger >= spot or abs(spot - trigger) < min_gap:
@@ -163,6 +175,18 @@ class VolatilityBreakoutStrategy(Strategy):
                     t2 = normalize_price(trigger - (risk_pts * Decimal("2.5")), tick)
                     contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
+                    tech_score = min(92.0, max(50.0,
+                        50.0
+                        + (max(0.0, vol_ratio - 1.35) * 20.0)
+                        + (max(0.0, breakout_pressure - 70) * 0.5)
+                        + (5.0 if curr_range >= avg_recent_range * 1.5 else 0.0)
+                    ))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+                    fno_score = round(min(88.0, max(45.0, 50.0 + ((1.0 - pcr_val) * 40.0))), 1)
+                    regime_score = 90.0 if ctx.regime == "COMPRESSION_SQUEEZE" else (75.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 50.0)
+                    overall_conf = round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1)
+
                     return SignalCandidate(
                         underlying=ctx.underlying,
                         strategy=self.name,
@@ -184,11 +208,11 @@ class VolatilityBreakoutStrategy(Strategy):
                         ttl_seconds=600,
                         time_stop_seconds=2400,
                         runner_ttl_seconds=3600,
-                        technical_score=85.0,
-                        mtf_score=float(ctx.mtf.get("alignment_score", 70.0)),
-                        fno_score=68.0,
-                        regime_score=80.0,
-                        overall_confidence=80.0,
+                        technical_score=tech_score,
+                        mtf_score=mtf_score,
+                        fno_score=fno_score,
+                        regime_score=regime_score,
+                        overall_confidence=overall_conf,
                         rationale=[
                             f"Volatility expansion breaking key support {float(key_sup):.2f}",
                             f"Expansion confirmed by volume ratio {vol_ratio:.2f} and range growth",

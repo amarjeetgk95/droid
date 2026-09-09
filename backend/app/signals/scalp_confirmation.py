@@ -1,14 +1,15 @@
 """
 Institutional Fast Scalping Confirmation Engine (Version 6.0)
 
-Enforces 7 Deterministic Pre-Execution Gates before any Scalp is ARMED/CONFIRMED:
+Enforces 8 Deterministic Pre-Execution Gates before any Scalp is ARMED/CONFIRMED:
   1. Event-Driven 1M Candle Close & Stale Data Guard (Clock skew tolerance: 250ms, max candle age: 120s)
   2. Fingerprint Deduplication (Instrument | Strategy | Direction | CandleTimestamp)
   3. Minimum Inter-Signal Cooldown per Instrument/Strategy
   4. Anti-Chase Ceiling (0.35R normal, tightened to 0.30R in High Vol / Event)
   5. Regime Compatibility Matrix (§15)
   6. India VIX Percentile Filter (suppress scalp when VIX >= 80th percentile, GAMMA_SPIKE exempt)
-  7. Liquidity & Bid-Ask Spread Validation (Spread <= 2.0 pts or <= 2.0% of premium, minimum volume)
+  7. Lunch-Session Liquidity Vacuum Filter (suppress scalp 12:00-13:30 IST, GAMMA_SPIKE exempt)
+  8. Liquidity & Bid-Ask Spread Validation (Spread <= 2.0 pts or <= 2.0% of premium, minimum volume)
 """
 from __future__ import annotations
 
@@ -255,7 +256,7 @@ class ScalpConfirmationEngine:
                 metrics={"regime": regime, "strategy": candidate.strategy},
             )
 
-        # 5. India VIX Percentile Filter — suppress scalp in extreme volatility regimes
+        # 6. India VIX Percentile Filter — suppress scalp in extreme volatility regimes
         vix_pct = getattr(candidate, "vix_percentile", None)
         if vix_pct is not None and vix_pct >= 80.0:
             if candidate.strategy != "GAMMA_SPIKE":
@@ -267,7 +268,7 @@ class ScalpConfirmationEngine:
                     metrics={"vix_percentile": vix_pct},
                 )
 
-        # 6. Lunch-Session Liquidity Vacuum Filter — suppress scalp 12:00-13:30 IST (thin liquidity)
+        # 7. Lunch-Session Liquidity Vacuum Filter — suppress scalp 12:00-13:30 IST (thin liquidity)
         lunch_session = getattr(candidate, "lunch_session", False)
         if lunch_session and candidate.strategy not in ("GAMMA_SPIKE",):
             return ScalpConfirmationResult(
@@ -278,7 +279,7 @@ class ScalpConfirmationEngine:
                 metrics={"lunch_session": True},
             )
 
-        # 7. Liquidity & Spread Validation
+        # 8. Liquidity & Spread Validation
         if option_bid is not None and option_ask is not None:
             spread = option_ask - option_bid
             if spread > self.max_spread_pts:
@@ -302,7 +303,7 @@ class ScalpConfirmationEngine:
                 metrics={"volume": option_volume, "min_volume": self.min_option_volume},
             )
 
-        # All 7 Gates Passed!
+        # All 8 Gates Passed!
         return ScalpConfirmationResult(
             passed=True,
             candidate=candidate,

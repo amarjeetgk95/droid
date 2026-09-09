@@ -56,121 +56,117 @@ class GammaSqueezeStrategy(Strategy):
         _oi_surge = oi_change >= 5.0
         _above_wall = spot >= max_pain * Decimal("0.998")
         if sum((_pcr_extreme, _oi_surge, _above_wall)) >= 2:
-            # Spot velocity check: require acceleration, not just positioning
+            # Spot velocity check: require upward acceleration, not just positioning
             spot_velocity_ok = True
             if len(ctx.candles) >= 6:
                 spot_5ago = Decimal(str(ctx.candles[-6].get("close", spot)))
-                spot_velocity = abs(spot - spot_5ago)
+                spot_velocity = spot - spot_5ago
                 if spot_velocity < (atr * Decimal("1.2")):
                     spot_velocity_ok = False
-            if not spot_velocity_ok:
-                return None
+            if spot_velocity_ok:
+                entry_min = normalize_price(spot, tick)
+                entry_max = normalize_price(spot + (atr * Decimal("0.25")), tick)
+                trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
+                trigger = normalize_price(spot + trigger_gap, tick)
+                stop_loss = normalize_price(spot - (atr * Decimal("0.9")), tick)
+                risk_pts = entry_min - stop_loss
+                if risk_pts > Decimal("0"):
+                    t1 = normalize_price(entry_min + (risk_pts * Decimal("1.8")), tick)
+                    t2 = normalize_price(entry_min + (risk_pts * Decimal("3.5")), tick)
+                    contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-            entry_min = normalize_price(spot, tick)
-            entry_max = normalize_price(spot + (atr * Decimal("0.25")), tick)
-            trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
-            trigger = normalize_price(spot + trigger_gap, tick)
-            stop_loss = normalize_price(spot - (atr * Decimal("0.9")), tick)
-            risk_pts = entry_min - stop_loss
-            if risk_pts > Decimal("0"):
-                t1 = normalize_price(entry_min + (risk_pts * Decimal("1.8")), tick)
-                t2 = normalize_price(entry_min + (risk_pts * Decimal("3.5")), tick)
-                contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
+                    tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                    fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+                    regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
 
-                tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
-                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-                fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
-                regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
-
-                return SignalCandidate(
-                    underlying=ctx.underlying,
-                    strategy=self.name,
-                    direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
-                    entry_min=entry_min,
-                    entry_max=entry_max,
-                    trigger=trigger,
-                    stop_loss=stop_loss,
-                    target_1=t1,
-                    target_2=t2,
-                    risk_points=risk_pts,
-                    risk_reward_t1=1.8,
-                    risk_reward_t2=3.5,
-                    technical_score=tech_score,
-                    mtf_score=mtf_score,
-                    fno_score=fno_score,
-                    regime_score=regime_score,
-                    overall_confidence=round((tech_score * 0.3) + (mtf_score * 0.2) + (fno_score * 0.35) + (regime_score * 0.15), 1),
-                    rationale=[
-                        f"Call OI short covering unwinding (PCR {pcr:.2f})",
-                        f"Heavy OI momentum change ({oi_change:+.1f}%)",
-                        f"Spot above Max Pain (₹{max_pain:,.2f})",
-                        f"Rapid ATM Delta expansion velocity",
-                    ],
-                    option_contract=contract,
-                    ttl_seconds=180,  # Fast decay setup
-                )
+                    return SignalCandidate(
+                        underlying=ctx.underlying,
+                        strategy=self.name,
+                        direction="LONG_CALL",
+                        timeframe=ctx.timeframe,
+                        spot_price=spot,
+                        entry_min=entry_min,
+                        entry_max=entry_max,
+                        trigger=trigger,
+                        stop_loss=stop_loss,
+                        target_1=t1,
+                        target_2=t2,
+                        risk_points=risk_pts,
+                        risk_reward_t1=1.8,
+                        risk_reward_t2=3.5,
+                        technical_score=tech_score,
+                        mtf_score=mtf_score,
+                        fno_score=fno_score,
+                        regime_score=regime_score,
+                        overall_confidence=round((tech_score * 0.3) + (mtf_score * 0.2) + (fno_score * 0.35) + (regime_score * 0.15), 1),
+                        rationale=[
+                            f"Call OI short covering unwinding (PCR {pcr:.2f})",
+                            f"Heavy OI momentum change ({oi_change:+.1f}%)",
+                            f"Spot above Max Pain (₹{max_pain:,.2f})",
+                            f"Rapid ATM Delta expansion velocity",
+                        ],
+                        option_contract=contract,
+                        ttl_seconds=180,  # Fast decay setup
+                    )
 
         # ── BEARISH GAMMA TRAP / LONG_PUT ──
         _pcr_extreme_p = (pcr >= 1.25 or pcr <= 0.75)
         _oi_surge_p = oi_change >= 5.0
         _below_wall = spot <= max_pain * Decimal("1.002")
         if sum((_pcr_extreme_p, _oi_surge_p, _below_wall)) >= 2:
-            # Spot velocity check: require acceleration, not just positioning
+            # Spot velocity check: require downward acceleration, not just positioning
             spot_velocity_ok = True
             if len(ctx.candles) >= 6:
                 spot_5ago = Decimal(str(ctx.candles[-6].get("close", spot)))
-                spot_velocity = abs(spot - spot_5ago)
+                spot_velocity = spot_5ago - spot
                 if spot_velocity < (atr * Decimal("1.2")):
                     spot_velocity_ok = False
-            if not spot_velocity_ok:
-                return None
+            if spot_velocity_ok:
+                entry_min = normalize_price(spot - (atr * Decimal("0.25")), tick)
+                entry_max = normalize_price(spot, tick)
+                trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
+                trigger = normalize_price(spot - trigger_gap, tick)
+                stop_loss = normalize_price(spot + (atr * Decimal("0.9")), tick)
+                risk_pts = stop_loss - entry_max
+                if risk_pts > Decimal("0"):
+                    t1 = normalize_price(entry_max - (risk_pts * Decimal("1.8")), tick)
+                    t2 = normalize_price(entry_max - (risk_pts * Decimal("3.5")), tick)
+                    contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-            entry_min = normalize_price(spot - (atr * Decimal("0.25")), tick)
-            entry_max = normalize_price(spot, tick)
-            trigger_gap = max(atr * Decimal("0.35"), spot * Decimal("0.0006"))
-            trigger = normalize_price(spot - trigger_gap, tick)
-            stop_loss = normalize_price(spot + (atr * Decimal("0.9")), tick)
-            risk_pts = stop_loss - entry_max
-            if risk_pts > Decimal("0"):
-                t1 = normalize_price(entry_max - (risk_pts * Decimal("1.8")), tick)
-                t2 = normalize_price(entry_max - (risk_pts * Decimal("3.5")), tick)
-                contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
+                    tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
+                    fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
+                    regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
 
-                tech_score = min(88.0, max(50.0, 50.0 + (oi_change * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
-                mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-                fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
-                regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
-
-                return SignalCandidate(
-                    underlying=ctx.underlying,
-                    strategy=self.name,
-                    direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
-                    entry_min=entry_min,
-                    entry_max=entry_max,
-                    trigger=trigger,
-                    stop_loss=stop_loss,
-                    target_1=t1,
-                    target_2=t2,
-                    risk_points=risk_pts,
-                    risk_reward_t1=1.8,
-                    risk_reward_t2=3.5,
-                    technical_score=tech_score,
-                    mtf_score=mtf_score,
-                    fno_score=fno_score,
-                    regime_score=regime_score,
-                    overall_confidence=round((tech_score * 0.3) + (mtf_score * 0.2) + (fno_score * 0.35) + (regime_score * 0.15), 1),
-                    rationale=[
-                        f"Put OI long unwinding trap (PCR {pcr:.2f})",
-                        f"Heavy OI momentum change ({oi_change:+.1f}%)",
-                        f"Spot below Max Pain (₹{max_pain:,.2f})",
-                        f"Rapid Put Delta acceleration",
-                    ],
-                    option_contract=contract,
-                    ttl_seconds=180,
-                )
+                    return SignalCandidate(
+                        underlying=ctx.underlying,
+                        strategy=self.name,
+                        direction="LONG_PUT",
+                        timeframe=ctx.timeframe,
+                        spot_price=spot,
+                        entry_min=entry_min,
+                        entry_max=entry_max,
+                        trigger=trigger,
+                        stop_loss=stop_loss,
+                        target_1=t1,
+                        target_2=t2,
+                        risk_points=risk_pts,
+                        risk_reward_t1=1.8,
+                        risk_reward_t2=3.5,
+                        technical_score=tech_score,
+                        mtf_score=mtf_score,
+                        fno_score=fno_score,
+                        regime_score=regime_score,
+                        overall_confidence=round((tech_score * 0.3) + (mtf_score * 0.2) + (fno_score * 0.35) + (regime_score * 0.15), 1),
+                        rationale=[
+                            f"Put OI long unwinding trap (PCR {pcr:.2f})",
+                            f"Heavy OI momentum change ({oi_change:+.1f}%)",
+                            f"Spot below Max Pain (₹{max_pain:,.2f})",
+                            f"Rapid Put Delta acceleration",
+                        ],
+                        option_contract=contract,
+                        ttl_seconds=180,
+                    )
 
         return None

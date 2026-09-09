@@ -84,7 +84,7 @@ class TestInstitutionalSignalCentre:
     def test_5_strategies_detection(self):
         # Versioned registry contract: renames must update this test + REGISTRY_VERSION,
         # never silently change the traded portfolio.
-        assert REGISTRY_VERSION == "2026.09.08-11+2legacy"
+        assert REGISTRY_VERSION == "2026.09.09-11+2legacy-p1"
         assert set(INTRADAY_STRATEGIES.keys()) == set(EXPECTED_INTRADAY_STRATEGIES) == {
             "REGIME_ADAPTIVE_TREND",
             "VOLATILITY_BREAKOUT",

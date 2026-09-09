@@ -27,6 +27,9 @@ from app.signals.risk.cross_desk_arbiter import cross_desk_arbiter
 
 logger = structlog.get_logger()
 
+# Strategies exempt from the opening pre-market gap filter (valuable on gap days)
+GAP_EXEMPT_STRATEGIES = {"GAMMA_SPIKE", "GAMMA_SQUEEZE", "ORB"}
+
 
 class ScanDiagnostics(BaseModel):
     """Per-underlying scan health — explains WHY a scan is empty instead of silent []."""
@@ -366,6 +369,17 @@ class SignalScanner:
         ist_minute_of_day = now_ist.hour * 60 + now_ist.minute
         lunch_session = 720 <= ist_minute_of_day <= 810
 
+        # Resolve India VIX Percentile from F&O context or TA volatility metrics
+        vix_pct_val = None
+        if fno_data:
+            vix_pct_val = fno_data.get("india_vix_percentile") or fno_data.get("vix_percentile") or fno_data.get("vix_pct")
+        if vix_pct_val is None and ta_analysis:
+            vix_pct_val = ta_analysis.get("volatility", {}).get("vix_percentile") or ta_analysis.get("volatility", {}).get("vix_pct")
+        try:
+            vix_percentile_val = float(vix_pct_val) if vix_pct_val is not None else None
+        except (ValueError, TypeError):
+            vix_percentile_val = None
+
         feat_snap = compute_feature_snapshot(
             underlying=u,
             spot_price=float(spot),
@@ -396,7 +410,7 @@ class SignalScanner:
             vwap_degraded=vwap_degraded,
             vwap_coverage_pct=vwap_coverage_pct,
             timestamp_ms=int(time.time() * 1000),
-            vix_percentile=None,
+            vix_percentile=vix_percentile_val,
             lunch_session=lunch_session,
             pre_market_gap_pct=float(gap_pct),
             feature_snapshot=feat_snap,
@@ -423,9 +437,9 @@ class SignalScanner:
                     candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
                     candidate.lunch_session = getattr(ctx, "lunch_session", False)
 
-                    # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles
+                    # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles (except gap-exempt strategies)
                     gap_pct_val = float(getattr(ctx, "pre_market_gap_pct", 0.0) or 0.0)
-                    if gap_pct_val > 0.5 and len(ctx.candles) <= 3:
+                    if gap_pct_val > 0.5 and len(ctx.candles) <= 3 and strat_name not in GAP_EXEMPT_STRATEGIES:
                         rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
                         logger.info("candidate_rejected_gap", strategy=strat_name, underlying=u, gap_pct=gap_pct_val)
                         continue

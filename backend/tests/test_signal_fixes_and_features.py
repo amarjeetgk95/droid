@@ -274,3 +274,215 @@ def test_strategy_robustness_against_null_and_scalar_data():
     g_spike = GammaSpikeStrategy()
     g_spike.detect(ctx)
 
+
+def test_breakout_put_indentation_fix():
+    """Verify BreakoutStrategy PUT branch handles positive risk and doesn't leak or crash on non-positive risk."""
+    from app.signals.strategies.base import StrategyContext
+    from app.signals.strategies.breakout import BreakoutStrategy
+
+    bo = BreakoutStrategy()
+
+    candles = [
+        {"open": 24100.0, "high": 24110.0, "low": 24040.0, "close": 24045.0, "volume": 10000},
+        {"open": 24045.0, "high": 24050.0, "low": 23990.0, "close": 23995.0, "volume": 15000},
+        {"open": 23995.0, "high": 24000.0, "low": 23980.0, "close": 23985.0, "volume": 20000},
+    ]
+    ctx = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("23985.0"),
+        timeframe="5M",
+        indicators={
+            "support_resistance": {"support": [24000.0], "resistance": [24150.0]},
+            "volatility": {"atr": 30.0},
+            "volume_ratio": 2.0,
+            "breakout_pressure": 80.0,
+        },
+        mtf={"alignment_score": 75.0, "overall_bias": "BEARISH"},
+        fno={"pcr": 0.7},
+        regime="TREND_DOWN",
+        candles=candles,
+    )
+    cand = bo.detect(ctx)
+    assert cand is not None
+    assert cand.direction == "LONG_PUT"
+    assert cand.target_1 is not None
+    assert cand.target_2 is not None
+    assert cand.risk_points > Decimal("0")
+    assert cand.target_1 < cand.trigger
+
+
+def test_gamma_squeeze_dual_side_velocity_fix():
+    """Verify CALL velocity failure does not short-circuit PUT branch evaluation."""
+    from app.signals.strategies.base import StrategyContext
+    from app.signals.strategies.gamma_squeeze import GammaSqueezeStrategy
+
+    gs = GammaSqueezeStrategy()
+
+    flat_candles = [
+        {"open": 24000.0, "high": 24005.0, "low": 23995.0, "close": 24000.0, "volume": 5000}
+        for _ in range(10)
+    ]
+    ctx_low_vel = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("24000.0"),
+        timeframe="5M",
+        indicators={"volatility": {"atr": 50.0}},
+        candles=flat_candles,
+        fno={"pcr": 0.75, "oi_change_pct": 8.0, "max_pain": 24000.0},
+        regime="HIGH_VOL",
+        mtf={"alignment_score": 70.0},
+    )
+    cand = gs.detect(ctx_low_vel)
+    assert cand is None
+
+    moving_down_candles = [
+        {"open": 24100.0, "high": 24110.0, "low": 24090.0, "close": 24100.0, "volume": 5000}
+        for _ in range(4)
+    ] + [
+        {"open": 24050.0, "high": 24060.0, "low": 23980.0, "close": 23990.0, "volume": 12000},
+        {"open": 23990.0, "high": 23995.0, "low": 23910.0, "close": 23920.0, "volume": 15000},
+    ]
+    ctx_put = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("23920.0"),
+        timeframe="5M",
+        indicators={"volatility": {"atr": 50.0}},
+        candles=moving_down_candles,
+        fno={"pcr": 0.75, "oi_change_pct": 8.0, "max_pain": 24000.0},
+        regime="HIGH_VOL",
+        mtf={"alignment_score": 70.0},
+    )
+    cand_put = gs.detect(ctx_put)
+    assert cand_put is not None
+    assert cand_put.direction == "LONG_PUT"
+    assert cand_put.strategy == "GAMMA_SQUEEZE"
+
+
+def test_volatility_breakout_dynamic_scores_and_compression_regime():
+    """Verify VolatilityBreakoutStrategy computes dynamic scores and boosts COMPRESSION_SQUEEZE."""
+    from app.signals.strategies.base import StrategyContext
+    from app.signals.strategies.volatility_breakout import VolatilityBreakoutStrategy
+
+    vb = VolatilityBreakoutStrategy()
+
+    candles = [
+        {"open": 24000.0, "high": 24010.0, "low": 23990.0, "close": 24005.0, "volume": 1000},
+        {"open": 24005.0, "high": 24015.0, "low": 23995.0, "close": 24010.0, "volume": 1000},
+        {"open": 24010.0, "high": 24020.0, "low": 24000.0, "close": 24015.0, "volume": 1000},
+        {"open": 24015.0, "high": 24090.0, "low": 24010.0, "close": 24085.0, "volume": 5000},
+    ]
+
+    ctx_comp = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("24085.0"),
+        timeframe="5M",
+        indicators={
+            "support_resistance": {"resistance": [24080.0]},
+            "volatility": {"atr": 25.0},
+            "volume_ratio": 2.5,
+            "breakout_pressure": 85.0,
+        },
+        mtf={"alignment_score": 80.0, "overall_bias": "BULLISH"},
+        fno={"pcr": 1.3},
+        regime="COMPRESSION_SQUEEZE",
+        candles=candles,
+    )
+    cand_comp = vb.detect(ctx_comp)
+    assert cand_comp is not None
+    assert cand_comp.regime_score == 90.0
+    assert cand_comp.technical_score > 70.0
+    assert cand_comp.overall_confidence > 75.0
+
+    ctx_range = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("24085.0"),
+        timeframe="5M",
+        indicators={
+            "support_resistance": {"resistance": [24080.0]},
+            "volatility": {"atr": 25.0},
+            "volume_ratio": 1.4,
+            "breakout_pressure": 72.0,
+        },
+        mtf={"alignment_score": 60.0, "overall_bias": "NEUTRAL"},
+        fno={"pcr": 1.0},
+        regime="RANGE",
+        candles=candles,
+    )
+    cand_range = vb.detect(ctx_range)
+    assert cand_range is not None
+    assert cand_range.regime_score == 50.0
+
+
+def test_scalp_confirmation_lunch_session_and_vix():
+    """Verify ScalpConfirmationEngine suppresses lunch session and extreme VIX, exempting GAMMA_SPIKE."""
+    from app.signals.scalp_confirmation import scalp_confirmation_engine
+    from app.signals.strategies.base import SignalCandidate
+
+    vwap_cand = SignalCandidate(
+        underlying="NIFTY",
+        strategy="VWAP_SCALP",
+        direction="LONG_CALL",
+        timeframe="1M",
+        spot_price=Decimal("24000.0"),
+        entry_min=Decimal("24000.0"),
+        entry_max=Decimal("24010.0"),
+        trigger=Decimal("24005.0"),
+        stop_loss=Decimal("23980.0"),
+        target_1=Decimal("24030.0"),
+        target_2=Decimal("24050.0"),
+        risk_points=Decimal("25.0"),
+        risk_reward_t1=1.2,
+        risk_reward_t2=2.0,
+        lunch_session=True,
+    )
+    res_lunch = scalp_confirmation_engine.validate(
+        candidate=vwap_cand,
+        current_spot=Decimal("24005.0"),
+        regime="RANGE",
+    )
+    assert res_lunch.passed is False
+    assert res_lunch.reason_code == "REJECTED_LUNCH_SESSION"
+
+    gamma_cand = SignalCandidate(
+        underlying="NIFTY",
+        strategy="GAMMA_SPIKE",
+        direction="LONG_CALL",
+        timeframe="1M",
+        spot_price=Decimal("24000.0"),
+        entry_min=Decimal("24000.0"),
+        entry_max=Decimal("24010.0"),
+        trigger=Decimal("24005.0"),
+        stop_loss=Decimal("23980.0"),
+        target_1=Decimal("24030.0"),
+        target_2=Decimal("24050.0"),
+        risk_points=Decimal("25.0"),
+        risk_reward_t1=1.5,
+        risk_reward_t2=3.0,
+        lunch_session=True,
+    )
+    res_gamma = scalp_confirmation_engine.validate(
+        candidate=gamma_cand,
+        current_spot=Decimal("24005.0"),
+        regime="VOLATILE_EXPANSION",
+    )
+    assert res_gamma.passed is True
+
+    vwap_cand.lunch_session = False
+    vwap_cand.vix_percentile = 85.0
+    res_vix = scalp_confirmation_engine.validate(
+        candidate=vwap_cand,
+        current_spot=Decimal("24005.0"),
+        regime="RANGE",
+    )
+    assert res_vix.passed is False
+    assert res_vix.reason_code == "REJECTED_VIX_EXTREME"
+
+
+def test_scanner_gap_exempt_strategies():
+    """Verify GAP_EXEMPT_STRATEGIES includes GAMMA_SPIKE, GAMMA_SQUEEZE, and ORB."""
+    from app.signals.scanner import GAP_EXEMPT_STRATEGIES
+    assert "GAMMA_SPIKE" in GAP_EXEMPT_STRATEGIES
+    assert "GAMMA_SQUEEZE" in GAP_EXEMPT_STRATEGIES
+    assert "ORB" in GAP_EXEMPT_STRATEGIES
+
+

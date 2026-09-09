@@ -59,7 +59,7 @@ STRATEGY_REGISTRY: dict[str, Strategy] = {
 
 # Versioned registry contract — bump on any add/rename/remove so tests and
 # consumers detect drift instead of silently trading a changed portfolio.
-REGISTRY_VERSION = "2026.09.08-11+2legacy"
+REGISTRY_VERSION = "2026.09.09-11+2legacy-p1"
 EXPECTED_INTRADAY_STRATEGIES = frozenset(INTRADAY_STRATEGIES.keys())
 EXPECTED_SCALP_STRATEGIES = frozenset(SCALP_STRATEGIES.keys())
 
