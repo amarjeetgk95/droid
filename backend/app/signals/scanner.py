@@ -583,8 +583,17 @@ class SignalScanner:
                 logger.info("candidate_rejected_active_trade_exists", underlying=cand.underlying, strategy=cand.strategy, desk=desk_lbl)
                 continue
 
-            # Reject if underlying already has an in-flight signal in the same direction on the SAME desk
-            same_dir_stacked = [s for s in same_desk_in_flight if s.direction == cand.direction]
+            # Reject if underlying already has an actionable in-flight signal in
+            # the same direction on the SAME desk. VALIDATED/DETECTED are
+            # watch-only (never executable) so they must NOT block a new,
+            # potentially stronger ARMED setup — otherwise one weak 09:30
+            # VALIDATED would suppress every better setup until it expires,
+            # leaving the desk blank for an hour.
+            same_dir_stacked = [
+                s for s in same_desk_in_flight
+                if s.direction == cand.direction
+                and s.fsm_state in ("ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT")
+            ]
             if same_dir_stacked:
                 reason = f"STACKING_BLOCKED_EXISTING_{same_dir_stacked[0].strategy}_{same_dir_stacked[0].direction}"
                 rejected_gates.append(f"{cand.strategy}:{reason}")
@@ -809,8 +818,25 @@ class SignalScanner:
             fused_score = confluence_engine.fuse(cand, ai_result=ai_advice, ml_prediction=ml_pred)
             cand.overall_confidence = fused_score
 
-            # Convert to FSM instance with Version 6.0 fields
+            # Convert to FSM instance with Version 6.0 fields.
+            # VALIDATED is watch-only (never auto-executed) — it is the
+            # "armed but waiting" shelf the desk watches. Give it a 30-min
+            # visibility window so the board is not blank 1hr after open
+            # when nothing is executable yet. ARMED keeps the short
+            # execution TTL (300/600s) so stale triggers still die fast.
             fsm_init_state = "VALIDATED" if fno_is_degraded else ("ARMED" if fused_score >= ARMED_THRESHOLD else "VALIDATED")
+            watch_ttl_seconds = cand.ttl_seconds
+            if fsm_init_state == "VALIDATED":
+                try:
+                    watch_ttl_seconds = max(int(cand.ttl_seconds or 0), 1800)
+                except Exception:
+                    watch_ttl_seconds = 1800
+                try:
+                    cand.rationale.append(
+                        f"WATCH only (score {fused_score:.1f} < ARMED {ARMED_THRESHOLD:.0f}) — waiting for confirmation, not executable"
+                    )
+                except Exception:
+                    pass
             instance = SignalInstance(
                 underlying=cand.underlying,
                 strategy=cand.strategy,
@@ -832,7 +858,7 @@ class SignalScanner:
                 risk_points=cand.risk_points,
                 risk_reward_t1=cand.risk_reward_t1,
                 risk_reward_t2=cand.risk_reward_t2,
-                ttl_seconds=cand.ttl_seconds,
+                ttl_seconds=watch_ttl_seconds,
                 runner_ttl_seconds=cand.runner_ttl_seconds,
                 time_stop_seconds=cand.time_stop_seconds,
                 lots=risk_decision.lots,
