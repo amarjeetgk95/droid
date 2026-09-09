@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +26,59 @@ class PaperTradingService:
         self._realized_pnl: float = 0.0
         self._positions: dict[str, VirtualPosition] = {}
         self._orders: list[VirtualOrder] = []
+
+    @staticmethod
+    def _is_option_symbol(symbol: str) -> bool:
+        s = (symbol or "").upper()
+        return "CE" in s or "PE" in s
+
+    async def _resolve_live_ltp(self, pos: VirtualPosition) -> float | None:
+        """Resolve the current live LTP for a position.
+
+        - Options (CE/PE): live option-chain quote via
+          ``OptionsService.get_option_quote`` (exact contract, then
+          strike+type), with direct symbol-quote fallback. Never uses
+          the underlying spot as the option price.
+        - Futures / spot / equity: live ``get_quote`` LTP directly.
+
+        Returns ``None`` when no live price is available so callers keep
+        the last known LTP instead of fabricating / freezing P&L at zero.
+        """
+        sym = (pos.symbol or "").strip()
+        und = (pos.underlying or "").strip()
+        if not sym:
+            return None
+
+        if self._is_option_symbol(sym):
+            # 1. Direct quotable option symbol (fast path).
+            try:
+                q = await self.market_service.get_quote(sym)
+                if q and q.ltp and q.ltp > 0:
+                    return float(q.ltp)
+            except Exception:
+                pass
+            # 2. Live option-chain lookup (correct source for CE/PE MTM).
+            try:
+                from app.services.options_service import options_service
+
+                oq = await options_service.get_option_quote(sym, underlying=und or None)
+                if oq and oq.ltp and oq.ltp > 0:
+                    return float(oq.ltp)
+            except Exception:
+                pass
+            return None
+
+        # Non-option: the position LTP *is* the live spot/futures quote.
+        for candidate in (und, sym):
+            if not candidate:
+                continue
+            try:
+                q = await self.market_service.get_quote(candidate)
+                if q and q.ltp and q.ltp > 0:
+                    return float(q.ltp)
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _db_to_order(db_ord: PaperOrderDB) -> VirtualOrder:
@@ -125,24 +179,39 @@ class PaperTradingService:
             self._orders.insert(0, rejected)
             return rejected
 
-        # Determine fill price
+        # Determine fill price from LIVE market data (never fabricated).
         fill_price = payload.price
         if fill_price <= 0:
-            if "CE" in payload.symbol or "PE" in payload.symbol:
+            if self._is_option_symbol(payload.symbol):
                 try:
                     from app.services.options_service import options_service
-                    opt_quote = await options_service.get_option_quote(payload.symbol)
+
+                    opt_quote = await options_service.get_option_quote(
+                        payload.symbol, underlying=payload.underlying
+                    )
                     if opt_quote and opt_quote.ltp > 0:
                         fill_price = opt_quote.ltp
                 except Exception:
                     pass
+                # Direct symbol-quote fallback for quotable option instruments.
+                if fill_price <= 0:
+                    try:
+                        quote = await self.market_service.get_quote(payload.symbol)
+                        if quote and quote.ltp > 0:
+                            fill_price = quote.ltp
+                    except Exception:
+                        pass
             else:
-                try:
-                    quote = await self.market_service.get_quote(payload.underlying)
-                    if quote and quote.ltp > 0:
-                        fill_price = quote.ltp
-                except Exception:
-                    pass
+                for candidate in (payload.underlying, payload.symbol):
+                    if not candidate:
+                        continue
+                    try:
+                        quote = await self.market_service.get_quote(candidate)
+                        if quote and quote.ltp > 0:
+                            fill_price = quote.ltp
+                            break
+                    except Exception:
+                        continue
 
         if fill_price <= 0:
             rejected = VirtualOrder(
@@ -299,12 +368,25 @@ class PaperTradingService:
         user_id: Optional[UUID] = None,
         allow_closed_market: bool = False,
     ) -> VirtualPosition:
-        """Close an open position at current market price."""
+        """Close an open position at current live market price."""
         if position_id not in self._positions or not self._positions[position_id].is_open:
             raise ValueError(f"Open position not found: {position_id}")
 
         pos = self._positions[position_id]
         exit_side = "SELL" if pos.side == "BUY" else "BUY"
+
+        # Refresh to the live LTP first so realized P&L reflects the real
+        # exit price instead of a stale cached LTP.
+        try:
+            live = await self._resolve_live_ltp(pos)
+            if live and live > 0:
+                pos.ltp = round(float(live), 2)
+                mult = 1 if pos.side == "BUY" else -1
+                pos.unrealized_pnl = round(
+                    (pos.ltp - pos.average_price) * pos.quantity * mult, 2
+                )
+        except Exception:
+            pass
 
         exit_order = OrderPayload(
             symbol=pos.symbol,
@@ -438,18 +520,66 @@ class PaperTradingService:
         session: Optional[AsyncSession] = None,
         user_id: Optional[UUID] = None,
     ) -> list[VirtualPosition]:
-        """Retrieve all active and closed positions."""
-        # Refresh MTM against current prices
-        for pos in self._positions.values():
-            if pos.is_open:
+        """Retrieve all positions with real-time MTM refresh.
+
+        - Hydrates in-memory state from Supabase when the process restarted
+          (memory empty but DB has positions) so P&L survives restarts.
+        - Refreshes every open position's LTP concurrently from LIVE quotes:
+          option-chain LTP for CE/PE, spot/futures LTP otherwise.
+        - Keeps the last known LTP when live data is unavailable instead of
+          fabricating a drift-based price (honest stale > fake live).
+        """
+        # Hydrate from DB when memory is empty (process restart / new worker).
+        if session is not None and user_id is not None and not self._positions:
+            try:
+                db_positions = await PaperTradingRepository.get_positions(session, user_id)
+                for db_pos in db_positions:
+                    try:
+                        vp = self._db_to_position(db_pos)
+                        self._positions[vp.position_id] = vp
+                    except Exception:
+                        continue
                 try:
-                    quote = await self.market_service.get_quote(pos.underlying)
-                    drift = (quote.change / quote.previous_close) * 0.5
-                    pos.ltp = round(max(0.5, pos.average_price * (1.0 + drift)), 2)
-                    mult = 1 if pos.side == "BUY" else -1
-                    pos.unrealized_pnl = round((pos.ltp - pos.average_price) * pos.quantity * mult, 2)
+                    db_port = await PaperTradingRepository.get_or_create_portfolio(
+                        session, user_id
+                    )
+                    if db_port is not None and db_port.realized_pnl is not None:
+                        self._realized_pnl = float(db_port.realized_pnl or 0.0)
+                    if db_port is not None and db_port.virtual_capital:
+                        self._initial_capital = float(db_port.virtual_capital)
                 except Exception:
                     pass
+            except Exception as e:
+                logger.warning("paper_positions_hydrate_failed", error=str(e))
+
+        open_positions = [p for p in self._positions.values() if p.is_open]
+
+        # Concurrent live MTM refresh — one slow symbol must not stall the rest.
+        if open_positions:
+            async def _refresh_one(pos: VirtualPosition) -> None:
+                try:
+                    live = await self._resolve_live_ltp(pos)
+                    if live is not None and live > 0:
+                        pos.ltp = round(float(live), 2)
+                        mult = 1 if pos.side == "BUY" else -1
+                        pos.unrealized_pnl = round(
+                            (pos.ltp - pos.average_price) * pos.quantity * mult, 2
+                        )
+                    # else: keep last known LTP/unrealized (live unavailable).
+                except Exception:
+                    pass
+
+            await asyncio.gather(
+                *(_refresh_one(p) for p in open_positions), return_exceptions=True
+            )
+
+            # Best-effort: persist refreshed MTM so DB stays consistent.
+            if session is not None and user_id is not None:
+                for pos in open_positions:
+                    try:
+                        await PaperTradingRepository.upsert_position(session, user_id, pos)
+                    except Exception:
+                        break
 
         return list(self._positions.values())
 

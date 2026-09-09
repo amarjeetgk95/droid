@@ -29,6 +29,8 @@ class PerformanceMetrics(BaseModel):
     throttled_signals_total: int = 0
 
     win_rate_pct: float = 0.0
+    confirmation_rate_pct: float = 0.0
+    expiry_rate_pct: float = 0.0
     profit_factor: float = 0.0
     average_rr: float = 0.0
     expectancy_r: float = 0.0
@@ -583,6 +585,8 @@ class SignalOutcomeTracker:
         losses = sl_hits + pure_time_stops
 
         win_rate = (wins / completed_trades * 100.0) if completed_trades > 0 else 0.0
+        confirmation_rate = (completed_trades / total * 100.0) if total > 0 else 0.0
+        expiry_rate = (expired / total * 100.0) if total > 0 else 0.0
 
         # Completed trades list for empirical metrics (§6)
         completed_signals_list = [
@@ -803,6 +807,8 @@ class SignalOutcomeTracker:
             expired_signals=expired,
             throttled_signals_total=throttled_total,
             win_rate_pct=round(win_rate, 1),
+            confirmation_rate_pct=round(confirmation_rate, 1),
+            expiry_rate_pct=round(expiry_rate, 1),
             profit_factor=round(profit_factor, 2),
             average_rr=round(empirical_average_rr, 2),
             expectancy_r=round(empirical_expectancy, 2),

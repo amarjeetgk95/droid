@@ -232,4 +232,6 @@ class MarketService:
             self.fetch_health_raw,
             source_name=self._provider.provider_name,
         )
+        if val.data is None:
+            return await self.fetch_health_raw()
         return val.data

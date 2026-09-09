@@ -20,6 +20,7 @@ import {
   squareOffLocal,
   squareOffAllLocal,
   resetLocal,
+  applyLivePricesToLocal,
 } from '@/lib/paperLocal';
 import { PortfolioBanner } from '@/components/paper/PortfolioBanner';
 import { PositionsTable } from '@/components/paper/PositionsTable';
@@ -113,6 +114,14 @@ export default function PaperTradingPage() {
       ]);
       setSummary(sumRes.data);
       setPositions(posRes.data);
+      // Keep the Net P&L sparkline ticking on every fast poll — previously
+      // only action-triggered refreshes pushed history, so the chart looked
+      // frozen between trades even as MTM moved.
+      setPnlHistory((prev) => {
+        const last = prev[prev.length - 1];
+        if (last === sumRes.data.total_portfolio_pnl) return prev;
+        return [...prev.slice(-29), sumRes.data.total_portfolio_pnl];
+      });
       setOfflineMode(false);
       setError(null);
       setLastUpdatedMs(Date.now());
@@ -120,16 +129,39 @@ export default function PaperTradingPage() {
       if (isBackendUnreachableError(err)) {
         setSummary(getLocalPortfolio());
         setPositions(getLocalPositions());
+        setOrders(getLocalOrders());
         setOfflineMode(true);
         setError(null);
         setLastUpdatedMs(Date.now());
+        // Opportunistic offline MTM: if the quotes feed is reachable even
+        // when paper endpoints fail (partial outage), move local LTP/P&L
+        // with live prices instead of leaving it frozen.
+        void (async () => {
+          try {
+            const qRes = await api.getQuotes();
+            const quotes = (qRes as { data?: { symbol: string; ltp: number }[] }).data ?? [];
+            if (!quotes.length) return;
+            const priceMap: Record<string, number> = {};
+            for (const q of quotes) {
+              if (q && q.ltp > 0) {
+                priceMap[q.symbol] = q.ltp;
+                priceMap[q.symbol.toUpperCase()] = q.ltp;
+              }
+            }
+            const updated = applyLivePricesToLocal(priceMap);
+            setPositions(updated);
+            setSummary(getLocalPortfolio());
+          } catch {
+            /* quotes also unreachable — stay frozen but honestly OFFLINE */
+          }
+        })();
       } else {
         setError(err instanceof Error ? err.message : 'Failed to load paper trading data');
       }
     } finally {
       setInitialLoading(false);
     }
-  }, [applySnapshot]);
+  }, []);
 
   const loadSlow = useCallback(async () => {
     try {
@@ -144,14 +176,17 @@ export default function PaperTradingPage() {
   }, []);
 
   const handlePaperStreamEvent = useCallback((e: { type: string; payload: unknown }) => {
+    // Auto-executed signal fills change positions/MTM instantly — refresh fast lane.
     if (e.type === 'paper_execution') {
       void loadFast();
+      void loadSlow();
     }
-  }, [loadFast]);
+  }, [loadFast, loadSlow]);
 
   const { streamState: paperStreamState } = useSignalStream(true, handlePaperStreamEvent);
 
-  // Polling: fast lane (portfolio+positions ~10s for live MTM) + slow lane (orders 15s).
+  // Polling: fast lane (portfolio+positions ~4s for live MTM) + slow lane (orders 10s).
+  // MTM P&L is only "real time" if the fast lane ticks every few seconds.
   // Falls back to localStorage when backend unreachable. Pauses when tab hidden.
   useEffect(() => {
     let isMounted = true;
@@ -165,31 +200,34 @@ export default function PaperTradingPage() {
     let fastTimer: ReturnType<typeof setTimeout> | null = null;
     let slowTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleFast = () => {
-      const jittered = 10000 * (0.8 + Math.random() * 0.4);
+      const jittered = 4000 * (0.8 + Math.random() * 0.4);
       fastTimer = setTimeout(async () => {
-        if (!document.hidden) await loadFast();
-        scheduleFast();
+        if (isMounted && !document.hidden) await loadFast();
+        if (isMounted) scheduleFast();
       }, jittered);
     };
     const scheduleSlow = () => {
-      const jittered = 15000 * (0.8 + Math.random() * 0.4);
+      const jittered = 10000 * (0.8 + Math.random() * 0.4);
       slowTimer = setTimeout(async () => {
-        if (!document.hidden) await loadSlow();
-        scheduleSlow();
+        if (isMounted && !document.hidden) await loadSlow();
+        if (isMounted) scheduleSlow();
       }, jittered);
     };
     scheduleFast();
     scheduleSlow();
-    // Tick every 5s so "Updated Xs ago" stays honest without refetching.
-    const clockTimer = setInterval(() => setNowMs(Date.now()), 5000);
+    // Tick every 2s so "Updated Xs ago" stays honest without refetching.
+    const clockTimer = setInterval(() => setNowMs(Date.now()), 2000);
     const onVis = () => { if (!document.hidden) void loadFast(); };
+    const onFocus = () => { void loadFast(); };
     document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
     return () => {
       isMounted = false;
       if (fastTimer) clearTimeout(fastTimer);
       if (slowTimer) clearTimeout(slowTimer);
       clearInterval(clockTimer);
       document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
     };
   }, [loadFast, loadSlow]);
 
@@ -205,7 +243,8 @@ export default function PaperTradingPage() {
   };
 
   const updatedAgoSecs = lastUpdatedMs ? Math.max(0, Math.round((nowMs - lastUpdatedMs) / 1000)) : null;
-  const feedStale = offlineMode || updatedAgoSecs === null || updatedAgoSecs > 30;
+  // Fast lane ticks ~4s, so >12s without a refresh genuinely means stale MTM.
+  const feedStale = offlineMode || updatedAgoSecs === null || updatedAgoSecs > 12;
 
   const handlePlaceOrder = async (orderPayload: OrderPayload) => {
     setPlacing(true);
@@ -561,7 +600,7 @@ export default function PaperTradingPage() {
         </div>
 
         {/* Freshness indicator — MTM is only trustworthy when fresh */}
-        <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground self-start mt-1.5" title="Portfolio+positions refresh every ~5s, orders every ~15s">
+        <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground self-start mt-1.5" title="Portfolio+positions refresh every ~4s, orders every ~10s">
           <span className={`h-1.5 w-1.5 rounded-full ${feedStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
           {offlineMode ? 'OFFLINE • local' : feedStale ? 'STALE' : 'LIVE'}
           {updatedAgoSecs !== null && <span>• {updatedAgoSecs}s ago</span>}

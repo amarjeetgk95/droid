@@ -78,6 +78,38 @@ export function getLocalOrders(): VirtualOrder[] {
   return loadOrders();
 }
 
+/**
+ * Recompute offline open-position MTM from a live price map.
+ * - Options (CE/PE): only an exact-symbol quote is trusted — the underlying
+ *   spot is NEVER used as the option price.
+ * - Futures/spot: exact symbol first, then the underlying spot quote.
+ * Keeps the last known LTP when no live price exists (honest stale).
+ */
+export function applyLivePricesToLocal(prices: Record<string, number>): VirtualPosition[] {
+  const positions = loadPositions();
+  let changed = false;
+  for (const pos of positions) {
+    if (!pos.is_open) continue;
+    const sym = (pos.symbol || '').toUpperCase();
+    const und = (pos.underlying || '').toUpperCase();
+    const isOpt = sym.includes('CE') || sym.includes('PE');
+    let live: number | undefined;
+    if (isOpt) {
+      live = prices[pos.symbol] ?? prices[sym];
+    } else {
+      live = prices[pos.symbol] ?? prices[sym] ?? (und ? (prices[pos.underlying] ?? prices[und]) : undefined);
+    }
+    if (typeof live === 'number' && Number.isFinite(live) && live > 0 && live !== pos.ltp) {
+      pos.ltp = Math.round(live * 100) / 100;
+      const mult = pos.side === 'BUY' ? 1 : -1;
+      pos.unrealized_pnl = Math.round((pos.ltp - pos.average_price) * pos.quantity * mult * 100) / 100;
+      changed = true;
+    }
+  }
+  if (changed) savePositions(positions);
+  return positions;
+}
+
 export function placeLocalOrder(payload: OrderPayload): VirtualOrder {
   const positions = loadPositions();
   const orders = loadOrders();

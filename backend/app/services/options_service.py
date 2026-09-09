@@ -504,5 +504,120 @@ class OptionsService:
         )
 
 
+    async def get_option_quote(
+        self,
+        symbol: str,
+        underlying: str | None = None,
+    ):
+        """Resolve a live option quote for a paper-trading symbol.
+
+        Lookup order (all live broker data, never fabricated):
+        1. Exact contract match inside the live option chain
+           (``contract_id`` / ``instrument`` equals ``symbol``).
+        2. Strike + option-type match parsed from symbols like
+           ``NIFTY24800CE`` / ``BANKNIFTY52000PE``.
+        3. Direct ``market_service.get_quote(symbol)`` fallback for
+           providers that expose option symbols as quotable instruments.
+
+        Returns the matching :class:`NormalizedOptionQuote`, or ``None``
+        when no live quote is available (caller must keep the last known
+        LTP instead of fabricating a price).
+        """
+        import re
+
+        sym = (symbol or "").upper().strip()
+        if not sym:
+            return None
+
+        # Derive underlying hint when not supplied.
+        und = (underlying or "").upper().strip()
+        if not und:
+            for cand in ("BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTY", "SENSEX"):
+                if cand in sym:
+                    und = cand
+                    break
+            und = und or "NIFTY"
+
+        # Parse trailing strike + CE/PE, e.g. NIFTY24800CE -> (24800, CE).
+        strike: float | None = None
+        opt_type: str | None = None
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(CE|PE)\s*$", sym)
+        if m:
+            try:
+                strike = float(m.group(1))
+            except ValueError:
+                strike = None
+            opt_type = m.group(2)
+
+        # 1-2. Live option-chain lookup.
+        try:
+            chain = await self.market_service.get_option_chain(und)
+        except Exception:
+            chain = []
+        if chain:
+            # Exact contract match first.
+            for q in chain:
+                try:
+                    if (q.contract_id and q.contract_id.upper() == sym) or (
+                        getattr(q, "instrument", "") and str(q.instrument).upper() == sym
+                    ):
+                        if q.ltp and q.ltp > 0:
+                            return q
+                except Exception:
+                    continue
+            # Strike + type match (expiry-agnostic, nearest strike fallback).
+            if strike is not None and opt_type in ("CE", "PE"):
+                best = None
+                best_dist = float("inf")
+                for q in chain:
+                    try:
+                        if q.option_type != opt_type:
+                            continue
+                        if not q.ltp or q.ltp <= 0:
+                            continue
+                        d = abs(float(q.strike) - strike)
+                        if d < best_dist:
+                            best_dist = d
+                            best = q
+                    except Exception:
+                        continue
+                # Accept exact strike, else nearest within a sane band
+                # (prevents matching a far OTM quote when chain is partial).
+                if best is not None and (best_dist == 0 or best_dist <= max(500.0, strike * 0.02)):
+                    return best
+
+        # 3. Direct quote fallback (some providers quote option symbols).
+        try:
+            quote = await self.market_service.get_quote(sym)
+            if quote and quote.ltp and quote.ltp > 0:
+                from datetime import timezone as _tz
+                from datetime import datetime as _dt
+                from app.models.market import NormalizedOptionQuote as _OQ
+
+                return _OQ(
+                    timestamp=quote.timestamp,
+                    provider=quote.provider,
+                    instrument=sym,
+                    contract_id=sym,
+                    underlying=und,
+                    expiry=quote.timestamp,
+                    strike=strike or 0.0,
+                    option_type=opt_type or "CE",  # type: ignore[arg-type]
+                    ltp=float(quote.ltp),
+                    bid=None,
+                    ask=None,
+                    volume=int(quote.volume or 0),
+                    oi=int(quote.open_interest or 0),
+                    change=float(quote.change or 0.0),
+                    change_percent=float(quote.change_percent or 0.0),
+                    previous_close=float(quote.previous_close or 0.0),
+                    oi_change=0,
+                )
+        except Exception:
+            pass
+
+        return None
+
+
 options_service = OptionsService()
 

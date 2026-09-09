@@ -27,10 +27,23 @@ async def health_ready():
 
 @router.get("/api/v1/health/market-data")
 async def market_data_health():
-    """Market data health status."""
-    service = MarketService()
-    health = await service.get_health()
-    return health.model_dump()
+    """Market data health status (fail-open: never 500s on degraded feed)."""
+    from app.models.market import MarketHealthStatus
+    try:
+        service = MarketService()
+        health = await service.get_health()
+        if health is None:
+            raise ValueError("health_unavailable")
+        return health.model_dump()
+    except Exception as e:
+        fallback = MarketHealthStatus(
+            status="DEGRADED",
+            provider="fyers",
+            mode="OFFLINE",
+            last_update=datetime.now(timezone.utc),
+            message=f"Health probe degraded: {str(e)[:150]}",
+        )
+        return fallback.model_dump()
 
 
 @router.get("/api/v1/health/database")
