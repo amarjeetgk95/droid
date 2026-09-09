@@ -41,7 +41,7 @@ SCALPING_PROMPT = """You are DROID Scalping AI, a high-frequency momentum analys
 Analyze the current market context and respond with ONLY valid JSON:
 {
   "decision": "LONG|SHORT|NO_TRADE",
-  "setup_type": "BREAKOUT|MOMENTUM|PULLBACK|MEAN_REVERSION|CONTINUATION|REVERSAL",
+  "setup_type": "BREAKOUT|MOMENTUM|PULLBACK|MEAN_REVERSION|CONTINUATION|REVERSAL|NO_SETUP",
   "confidence": 0-100,
   "entry": price,
   "stop_loss": price,
@@ -54,8 +54,8 @@ Analyze the current market context and respond with ONLY valid JSON:
 
 Rules:
 - Decision must be LONG or SHORT or NO_TRADE only
-- Stop loss must be on correct side of entry
-- Target must be on correct side of entry
+- For LONG/SHORT: entry/stop_loss/target must be > 0, stop loss must be on correct side of entry, target must be on correct side of entry
+- For NO_TRADE: use setup_type NO_SETUP and entry/stop_loss/target 0 (no prices — never invent a price when there is no setup)
 - ttl_seconds must be 15-120
 - Reasons must be short tags, not prose
 - If no clear setup, return NO_TRADE

@@ -25,8 +25,25 @@ class BreakoutStrategy(Strategy):
 
         # Extract indicators
         sr = ind.get("support_resistance", {})
-        resistances = [Decimal(str(r)) for r in sr.get("resistance", []) if r]
-        supports = [Decimal(str(s)) for s in sr.get("support", []) if s]
+        raw_res = sr.get("resistance")
+        raw_sup = sr.get("support")
+        resistances = []
+        if isinstance(raw_res, (list, tuple, set)):
+            resistances = [Decimal(str(r)) for r in raw_res if r is not None]
+        elif raw_res is not None:
+            try:
+                resistances = [Decimal(str(raw_res))]
+            except Exception:
+                pass
+
+        supports = []
+        if isinstance(raw_sup, (list, tuple, set)):
+            supports = [Decimal(str(s)) for s in raw_sup if s is not None]
+        elif raw_sup is not None:
+            try:
+                supports = [Decimal(str(raw_sup))]
+            except Exception:
+                pass
 
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         vol_ratio = float(ind.get("volume_ratio", 1.2))

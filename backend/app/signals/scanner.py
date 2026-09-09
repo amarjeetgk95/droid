@@ -424,9 +424,10 @@ class SignalScanner:
                     candidate.lunch_session = getattr(ctx, "lunch_session", False)
 
                     # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles
-                    if ctx.pre_market_gap_pct > 0.5 and len(ctx.candles) <= 3:
-                        rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{ctx.pre_market_gap_pct:.2f}pct")
-                        logger.info("candidate_rejected_gap", strategy=strat_name, underlying=u, gap_pct=ctx.pre_market_gap_pct)
+                    gap_pct_val = float(getattr(ctx, "pre_market_gap_pct", 0.0) or 0.0)
+                    if gap_pct_val > 0.5 and len(ctx.candles) <= 3:
+                        rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
+                        logger.info("candidate_rejected_gap", strategy=strat_name, underlying=u, gap_pct=gap_pct_val)
                         continue
 
                     # Gating Fast Scalping setups through ScalpConfirmationEngine (§16)
@@ -499,8 +500,10 @@ class SignalScanner:
         if rejected_gates:
             diag.reasons.append(f"Scalp gates rejected: {', '.join(rejected_gates[:4])}")
         if not candidates:
+            vol_r = ta_analysis.get("volume", {}).get("ratio") if isinstance(ta_analysis.get("volume"), dict) else ta_analysis.get("volume_ratio")
+            vol_ratio_fmt = float(vol_r or 1.0)
             diag.reasons.append(
-                f"No strategy triggered on {u} {timeframe} (regime={regime}, volume_ratio≈{float(ta_analysis.get('volume_ratio', 0) or 0):.2f})"
+                f"No strategy triggered on {u} {timeframe} (regime={regime}, volume_ratio≈{vol_ratio_fmt:.2f})"
             )
         # Data quality: LIVE only when real quote + real candles + real F&O + session VWAP
         if not diag.candles_count or fno_degraded:
@@ -701,7 +704,16 @@ class SignalScanner:
                 is_call = "CALL" in cand.direction
                 if is_call and sr_data.get("resistance"):
                     # Check for immediate overhead resistance blocking CALL upside
-                    res_levels = [Decimal(str(r)) for r in sr_data.get("resistance", []) if Decimal(str(r)) > cand.spot_price]
+                    raw_res = sr_data.get("resistance")
+                    res_items = raw_res if isinstance(raw_res, (list, tuple, set)) else [raw_res] if raw_res is not None else []
+                    res_levels = []
+                    for r in res_items:
+                        try:
+                            dec_r = Decimal(str(r))
+                            if dec_r > cand.spot_price:
+                                res_levels.append(dec_r)
+                        except Exception:
+                            pass
                     if res_levels:
                         dist_to_overhead = min(lvl - cand.spot_price for lvl in res_levels)
                         if dist_to_overhead < (atr_val * Decimal("0.25")):
@@ -710,7 +722,16 @@ class SignalScanner:
                             continue
                 elif (not is_call) and sr_data.get("support"):
                     # Check for immediate support floor blocking PUT downside
-                    sup_levels = [Decimal(str(s)) for s in sr_data.get("support", []) if Decimal(str(s)) < cand.spot_price]
+                    raw_sup = sr_data.get("support")
+                    sup_items = raw_sup if isinstance(raw_sup, (list, tuple, set)) else [raw_sup] if raw_sup is not None else []
+                    sup_levels = []
+                    for s in sup_items:
+                        try:
+                            dec_s = Decimal(str(s))
+                            if dec_s < cand.spot_price:
+                                sup_levels.append(dec_s)
+                        except Exception:
+                            pass
                     if sup_levels:
                         dist_to_floor = min(cand.spot_price - lvl for lvl in sup_levels)
                         if dist_to_floor < (atr_val * Decimal("0.25")):

@@ -308,7 +308,8 @@ class DeepInsightService:
                 ttl=signal.ttl_seconds,
                 ttl_remaining=ttl_remaining,
             )
-            if signal.decision == Decision.NO_TRADE or signal.entry <= 0:
+            is_no_setup = signal.decision == Decision.NO_TRADE or signal.entry <= 0
+            if is_no_setup:
                 setup = DeepInsightSetup(
                     setup_type=SetupType.NO_SETUP,
                     entry_zone="—",
@@ -316,7 +317,16 @@ class DeepInsightService:
                     target="—",
                     risk_reward=0.0,
                 )
-                ai_summary = signal.rejection_detail or "No active trade setup. Waiting for clear confirmation."
+                # Never surface low-level validator text (e.g. "entry price
+                # must be > 0: 0.0") as the user-facing summary for a normal
+                # no-setup state. Prefer explicit AI reasons, else a friendly
+                # default.
+                if signal.decision == Decision.NO_TRADE and signal.reasons:
+                    ai_summary = " ".join(signal.reasons[:2])[:300]
+                elif signal.rejection_detail and "entry price must be" not in signal.rejection_detail and "Signal decision is NO_TRADE" not in signal.rejection_detail:
+                    ai_summary = signal.rejection_detail
+                else:
+                    ai_summary = "No active trade setup. Waiting for clear confirmation."
             else:
                 setup = DeepInsightSetup(
                     setup_type=signal.setup_type,
@@ -342,13 +352,27 @@ class DeepInsightService:
                 "positive_factors": signal.reasons[:3],
                 "main_risks": signal.invalidation[:3],
             }
-            validation = DeepInsightValidation(
-                status=signal.validation_result,
-                rejection_reason=signal.rejection_detail or None,
-            )
-            provider = DeepInsightProvider(
-                name=signal.provider or "AI Engine",
-                model=signal.model or "Configured model",
+            # A valid NO_TRADE (no setup) is not a validation failure — report
+            # ACCEPT so the System tab shows a neutral/green state instead of
+            # a red REJECT badge with a misleading price error.
+            if is_no_setup and (
+                signal.validation_result == ValidationStatus.PASS
+                or signal.validation_result == ValidationStatus.ACCEPT
+                or (signal.rejection_detail or "") in ("", "Signal decision is NO_TRADE")
+                or "entry price must be" in (signal.rejection_detail or "")
+            ):
+                validation = DeepInsightValidation(
+                    status=ValidationStatus.ACCEPT,
+                    rejection_reason=None,
+                )
+            else:
+                validation = DeepInsightValidation(
+                    status=signal.validation_result,
+                    rejection_reason=signal.rejection_detail or None,
+                )
+            provider_info = DeepInsightProvider(
+                name=signal.provider or provider or "AI Engine",
+                model=signal.model or model or "Configured model",
                 latency_ms=signal.latency_ms,
             )
             invalidation = signal.invalidation
@@ -359,7 +383,7 @@ class DeepInsightService:
             technical_evidence = {"positive": [], "supporting": []}
             risks = {"positive_factors": [], "main_risks": []}
             validation = DeepInsightValidation(status=ValidationStatus.REJECT, rejection_reason="AI evaluation failed")
-            provider = DeepInsightProvider()
+            provider_info = DeepInsightProvider()
             invalidation = []
 
         data_quality = DeepInsightDataQuality(
@@ -383,7 +407,7 @@ class DeepInsightService:
             signal_state=signal_state,
             data_quality=data_quality,
             validation=validation,
-            provider=provider,
+            provider=provider_info,
         )
 
 

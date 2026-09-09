@@ -25,7 +25,7 @@ class GammaSqueezeStrategy(Strategy):
         atr = resolve_realistic_atr(ctx.underlying, spot, ctx.indicators)
 
         # DTE filter: gamma squeeze is only valid 0DTE-2DTE (near-expiry gamma acceleration)
-        raw_dte = fno.get("dte", fno.get("days_to_expiry", None))
+        raw_dte = fno.get("dte") if fno.get("dte") is not None else fno.get("days_to_expiry")
         if raw_dte is not None:
             try:
                 if int(raw_dte) > 2:
@@ -33,8 +33,9 @@ class GammaSqueezeStrategy(Strategy):
             except Exception:
                 pass
 
-        pcr = float(fno.get("pcr", 1.0))
-        oi_change = float(fno.get("oi_change_pct", 0.0) or fno.get("oi_data", {}).get("oi_change_pct", 0.0) or 0.0)
+        raw_pcr = fno.get("pcr")
+        pcr = float(raw_pcr) if raw_pcr is not None else 1.0
+        oi_change = float(fno.get("oi_change_pct") or fno.get("oi_data", {}).get("oi_change_pct") or 0.0)
         if oi_change == 0.0 and fno.get("futures_oi_change") and fno.get("futures_oi"):
             try:
                 oi_change = abs(float(fno["futures_oi_change"]) / float(fno["futures_oi"])) * 100.0
@@ -43,8 +44,10 @@ class GammaSqueezeStrategy(Strategy):
         if oi_change == 0.0:
             oi_change = 5.5  # Standard baseline during market session
 
-        atm_iv = float(fno.get("atm_iv", 14.5))
-        max_pain = Decimal(str(fno.get("max_pain", spot)))
+        raw_iv = fno.get("atm_iv")
+        atm_iv = float(raw_iv) if raw_iv is not None else 14.5
+        raw_pain = fno.get("max_pain")
+        max_pain = Decimal(str(raw_pain)) if raw_pain is not None else spot
 
         # ── BULLISH GAMMA SQUEEZE (LONG_CALL) ──
         # Conditions: need 2-of-3 (PCR extreme, OI surge, above max-pain wall).

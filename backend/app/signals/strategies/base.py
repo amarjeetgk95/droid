@@ -30,6 +30,8 @@ SignalType = Literal["SCALP", "INTRADAY", "SWING"]
 
 
 class StrategyContext(BaseModel):
+    model_config = {"extra": "allow"}
+
     underlying: Literal["NIFTY", "BANKNIFTY", "SENSEX"]
     spot_price: Decimal
     timeframe: Timeframe = "5M"
@@ -48,6 +50,9 @@ class StrategyContext(BaseModel):
     vwap_degraded: bool = False
     vwap_coverage_pct: float = 100.0
     feature_snapshot: Optional[Any] = None
+    vix_percentile: Optional[float] = None
+    lunch_session: bool = False
+    pre_market_gap_pct: float = 0.0
 
 
 class SignalCandidate(BaseModel):

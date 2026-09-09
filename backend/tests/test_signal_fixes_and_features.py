@@ -227,3 +227,50 @@ def test_signal_delete(client: TestClient):
     # Verify removed
     assert signal_fsm.get(sid) is None
     assert signal_audit_ledger.get(sid) is None
+
+
+def test_strategy_robustness_against_null_and_scalar_data():
+    """Verify that strategies and StrategyContext do not crash on scalar S/R or null F&O fields."""
+    from app.signals.strategies.base import StrategyContext
+    from app.signals.strategies.volatility_breakout import VolatilityBreakoutStrategy
+    from app.signals.strategies.breakout import BreakoutStrategy
+    from app.signals.strategies.gamma_squeeze import GammaSqueezeStrategy
+    from app.signals.strategies.gamma_spike import GammaSpikeStrategy
+    from app.technical_analysis.support_resistance import calculate_support_resistance
+
+    candles = [
+        {"open": 24000.0, "high": 24100.0, "low": 23950.0, "close": 24050.0, "volume": 5000}
+        for _ in range(30)
+    ]
+    sr_res = calculate_support_resistance(candles, 24050.0)
+    # Confirm calculate_support_resistance returns scalar floats for support & resistance
+    assert isinstance(sr_res["support"], (float, int))
+    assert isinstance(sr_res["resistance"], (float, int))
+
+    ctx = StrategyContext(
+        underlying="NIFTY",
+        spot_price=Decimal("24050.0"),
+        timeframe="5M",
+        indicators={"support_resistance": sr_res, "volatility": {"atr": 50.0}, "volume_ratio": 1.2},
+        candles=candles,
+        pre_market_gap_pct=0.25,
+        lunch_session=False,
+        vix_percentile=45.0,
+        fno={"pcr": None, "oi_change_pct": None, "atm_iv": None, "dte": None},
+    )
+    assert ctx.pre_market_gap_pct == 0.25
+    assert ctx.vix_percentile == 45.0
+
+    # Ensure none of these raise TypeError or AttributeError
+    vb = VolatilityBreakoutStrategy()
+    vb.detect(ctx)
+
+    bo = BreakoutStrategy()
+    bo.detect(ctx)
+
+    gs = GammaSqueezeStrategy()
+    gs.detect(ctx)
+
+    g_spike = GammaSpikeStrategy()
+    g_spike.detect(ctx)
+

@@ -60,8 +60,10 @@ class GammaSpikeStrategy(Strategy):
 
         # F&O indicators check: PCR or OI acceleration
         fno = ctx.fno or {}
-        pcr = float(fno.get("pcr", 1.0))
-        oi_change_pct = float(fno.get("oi_change_pct", 0.0))
+        raw_pcr = fno.get("pcr")
+        pcr = float(raw_pcr) if raw_pcr is not None else 1.0
+        raw_oi = fno.get("oi_change_pct")
+        oi_change_pct = float(raw_oi) if raw_oi is not None else 0.0
 
         tick = Decimal("0.05")
         if ctx.underlying == "NIFTY":

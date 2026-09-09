@@ -118,9 +118,19 @@ class AIEvaluator:
             risk_state=market_context.to_risk_state(),
         )
 
-        signal.validation_result = (
-            ValidationStatus.ACCEPT if execution.decision == "PASS" else ValidationStatus.REJECT
-        )
+        # NO_TRADE is a valid schema outcome (no setup), not a validation
+        # failure. Preserve the output-validator PASS so the UI shows a neutral
+        # "no setup" state instead of a red REJECT (e.g. "entry price must be
+        # > 0" or "Signal decision is NO_TRADE"). Execution still correctly
+        # returns REJECT (nothing to execute).
+        if signal.decision == Decision.NO_TRADE and signal.validation_result == ValidationStatus.PASS:
+            pass
+        else:
+            signal.validation_result = (
+                ValidationStatus.ACCEPT if execution.decision == "PASS" else ValidationStatus.REJECT
+            )
+            if execution.decision != "PASS" and not signal.rejection_detail:
+                signal.rejection_detail = execution.reason_detail
 
         return signal, execution
 

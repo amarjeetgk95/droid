@@ -213,7 +213,12 @@ class AIOutputValidator:
             return None, f"invalid JSON: {e.msg} at {e.pos}"
 
     def _validate_required_fields(self, parsed: dict, path: str) -> Optional[str]:
-        if path == "scalping":
+        decision = str(parsed.get("decision", "")).upper()
+        # NO_TRADE is a valid "no setup" state — prices are intentionally 0,
+        # so only require the fields that are meaningful for it.
+        if decision == "NO_TRADE":
+            required = ["decision", "confidence", "ttl_seconds", "regime"]
+        elif path == "scalping":
             required = ["decision", "setup_type", "confidence", "entry", "stop_loss", "target", "ttl_seconds", "regime"]
         else:
             required = ["decision", "setup_type", "confidence", "entry", "stop_loss", "target", "ttl_seconds", "regime"]
@@ -227,6 +232,11 @@ class AIOutputValidator:
         if decision not in ALLOWED_DECISIONS:
             return f"invalid decision: {decision} (allowed: {ALLOWED_DECISIONS})"
         setup_type = parsed.get("setup_type", "")
+        # NO_TRADE without an explicit setup_type implies NO_SETUP — default it
+        # instead of rejecting, so valid no-setup responses pass validation.
+        if not setup_type and decision == "NO_TRADE":
+            parsed["setup_type"] = "NO_SETUP"
+            setup_type = "NO_SETUP"
         if setup_type not in ALLOWED_SETUP_TYPES:
             return f"invalid setup_type: {setup_type} (allowed: {ALLOWED_SETUP_TYPES})"
         regime = parsed.get("regime", "")
@@ -241,6 +251,12 @@ class AIOutputValidator:
                 return f"confidence out of range 0-100: {confidence}"
         except (ValueError, TypeError):
             return f"confidence not numeric: {parsed.get('confidence')}"
+        # NO_TRADE carries no prices by design (entry/stop/target = 0).
+        # Rejecting it here produced the misleading UI error
+        # "entry price must be > 0: 0.0" for a perfectly valid no-setup state.
+        decision = str(parsed.get("decision", "")).upper()
+        if decision == "NO_TRADE":
+            return None
         try:
             entry = float(parsed.get("entry", 0))
             if entry <= 0:
@@ -350,7 +366,10 @@ class AIOutputValidator:
             timestamp=now,
             timeframe=parsed.get("timeframe", "5M" if path == "core" else "1M"),
             decision=Decision(parsed.get("decision", Decision.NO_TRADE.value)),
-            setup_type=SetupType(parsed.get("setup_type", SetupType.CONTINUATION.value)),
+            setup_type=SetupType(
+                parsed.get("setup_type")
+                or (SetupType.NO_SETUP.value if str(parsed.get("decision", "")).upper() == "NO_TRADE" else SetupType.CONTINUATION.value)
+            ),
             regime=Regime(parsed.get("regime", Regime.UNKNOWN.value)),
             raw_confidence=int(parsed.get("confidence", 0)),
             calibrated_confidence=int(parsed.get("calibrated_confidence", parsed.get("confidence", 0))),
