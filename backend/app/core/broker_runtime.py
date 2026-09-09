@@ -160,9 +160,17 @@ def get_config() -> BrokerConfig:
 def apply_app_settings(app_settings: Optional[Dict[str, Any]]) -> bool:
     """Refresh the active broker config from persisted app_settings.
 
+    Merge strategy (Render env is the base, web Settings overlays):
+      - Provider / api_type come from saved Settings when recognizable,
+        else env.
+      - Credentials start from the env config for the RESOLVED provider and
+        any non-empty saved Settings value overwrites per-field. A blank
+        field in the web app therefore falls back to the Render env value
+        instead of wiping it — this ends the "web wants its own credential
+        while I store it in Render" fight.
+
     Returns True if the active provider changed and the caller should reset the
-    provider singleton. Credentials from saved settings take precedence over env
-    so that saving broker keys in the UI actually drives live data fetching.
+    provider singleton.
     """
     global _active
     if not app_settings:
@@ -172,17 +180,25 @@ def apply_app_settings(app_settings: Optional[Dict[str, Any]]) -> bool:
         return True
 
     provider = _provider_from_app_settings(app_settings)
+    env_cfg = _env_config()
     if not provider:
         # Saved settings exist but no recognizable broker provider — fall back.
-        _active = _env_config()
+        _active = env_cfg
         logger.info("broker_config_no_saved_provider", provider=_active.provider)
         return True
 
-    # Determine api_type from saved settings, else keep current/env default.
+    # Determine api_type from saved settings, else keep env default.
     broker = app_settings.get("broker") or {}
-    api_type = broker.get("apiType") or _env_config().api_type
+    api_type = broker.get("apiType") or env_cfg.api_type
 
-    creds = _creds_from_app_settings(app_settings)
+    saved_creds = _creds_from_app_settings(app_settings)
+    # Env base only applies when it is for the SAME provider; otherwise the
+    # resolved provider's env creds would leak across providers.
+    base_creds = dict(env_cfg.credentials) if env_cfg.provider == provider else {}
+    creds = {**base_creds, **saved_creds}
+    source = "app_settings+env" if base_creds else "app_settings"
+    if not saved_creds and base_creds:
+        source = "env"
     new_cfg = BrokerConfig(provider=provider, api_type=api_type, credentials=creds)
 
     changed = _active is None or (
@@ -196,7 +212,9 @@ def apply_app_settings(app_settings: Optional[Dict[str, Any]]) -> bool:
         provider=provider,
         api_type=api_type,
         cred_count=len(creds),
-        source="app_settings",
+        saved_cred_count=len(saved_creds),
+        env_cred_count=len(base_creds),
+        source=source,
     )
     return changed
 
