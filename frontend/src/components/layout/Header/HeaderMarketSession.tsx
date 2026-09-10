@@ -160,7 +160,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <span
               className={cn(
                 'w-1.5 h-1.5 rounded-full shrink-0',
-                countdownInfo.badgeTone === 'live' && 'bg-emerald-500 animate-live',
+                countdownInfo.badgeTone === 'live' && 'bg-emerald-500',
                 countdownInfo.badgeTone === 'amber' && 'bg-amber-500',
                 countdownInfo.badgeTone === 'closed' && 'bg-slate-400',
               )}
@@ -168,8 +168,8 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <span
               className={cn(
                 'font-semibold text-xs',
-                countdownInfo.badgeTone === 'live' && 'text-emerald-600 dark:text-emerald-400',
-                countdownInfo.badgeTone === 'amber' && 'text-amber-600 dark:text-amber-400',
+                countdownInfo.badgeTone === 'live' && 'text-emerald-600',
+                countdownInfo.badgeTone === 'amber' && 'text-amber-600',
                 countdownInfo.badgeTone === 'closed' && 'text-muted-foreground',
               )}
             >

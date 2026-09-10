@@ -1,7 +1,17 @@
 'use client';
 
-import { KeyLevelsModel } from '@/lib/types';
-import { Layers } from 'lucide-react';
+import type { KeyLevelsModel } from '@/lib/types';
+import { Card, EmptyNote, fmtINR } from '@/components/ui/desk';
+
+type PivotRow = {
+  key: string;
+  label: string;
+  classic: number | null | undefined;
+  fib: number | null | undefined;
+  cam: number | null | undefined;
+  isResistance?: boolean;
+  isSupport?: boolean;
+};
 
 export function KeyLevelsTable({
   keyLevels,
@@ -12,177 +22,105 @@ export function KeyLevelsTable({
 }) {
   if (!keyLevels) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground">
-        No key levels or pivot points available.
-      </div>
+      <Card title="Key Levels" meta="unavailable">
+        <EmptyNote>No key levels or pivot points available.</EmptyNote>
+      </Card>
     );
   }
 
-  const cp = keyLevels.classic_pivots || {} as NonNullable<typeof keyLevels.classic_pivots>;
-  const fp = keyLevels.fibonacci_pivots || {} as NonNullable<typeof keyLevels.fibonacci_pivots>;
-  const cam = keyLevels.camarilla_pivots || {} as NonNullable<typeof keyLevels.camarilla_pivots>;
+  const cp = keyLevels.classic_pivots;
+  const fp = keyLevels.fibonacci_pivots;
+  const cam = keyLevels.camarilla_pivots;
+
+  const rows: PivotRow[] = [
+    ...(cam?.r4 != null
+      ? [{ key: 'r4', label: 'Resistance 4', classic: null, fib: null, cam: cam.r4, isResistance: true } as PivotRow]
+      : []),
+    { key: 'r3', label: 'Resistance 3', classic: cp?.r3, fib: fp?.r3, cam: cam?.r3, isResistance: true },
+    { key: 'r2', label: 'Resistance 2', classic: cp?.r2, fib: fp?.r2, cam: cam?.r2, isResistance: true },
+    { key: 'r1', label: 'Resistance 1', classic: cp?.r1, fib: fp?.r1, cam: cam?.r1, isResistance: true },
+    { key: 'p', label: 'Pivot', classic: cp?.pivot, fib: fp?.pivot, cam: cam?.pivot },
+    { key: 's1', label: 'Support 1', classic: cp?.s1, fib: fp?.s1, cam: cam?.s1, isSupport: true },
+    { key: 's2', label: 'Support 2', classic: cp?.s2, fib: fp?.s2, cam: cam?.s2, isSupport: true },
+    { key: 's3', label: 'Support 3', classic: cp?.s3, fib: fp?.s3, cam: cam?.s3, isSupport: true },
+    ...(cam?.s4 != null
+      ? [{ key: 's4', label: 'Support 4', classic: null, fib: null, cam: cam.s4, isSupport: true } as PivotRow]
+      : []),
+  ];
+
+  const nearestR = keyLevels.nearest_resistance;
+  const nearestS = keyLevels.nearest_support;
+
+  const closestKey = (candidates: PivotRow[], target: unknown): string | null => {
+    const t = typeof target === 'string' ? Number(target) : (target as number);
+    if (typeof t !== 'number' || !Number.isFinite(t)) return null;
+    let best: string | null = null;
+    let bestDist = Infinity;
+    for (const row of candidates) {
+      const v = typeof row.classic === 'string' ? Number(row.classic) : row.classic;
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      const d = Math.abs(v - t);
+      if (d < bestDist) {
+        bestDist = d;
+        best = row.key;
+      }
+    }
+    return best;
+  };
+
+  const nearestRKey = closestKey(rows.filter((r) => r.isResistance), nearestR);
+  const nearestSKey = closestKey(rows.filter((r) => r.isSupport), nearestS);
+
+  const referenceRows: Array<{ label: string; value: unknown }> = [
+    { label: 'POC', value: keyLevels.poc },
+    { label: 'Value area high', value: keyLevels.vah },
+    { label: 'Value area low', value: keyLevels.val },
+    { label: 'Prior high', value: keyLevels.prior_day_high },
+    { label: 'Prior low', value: keyLevels.prior_day_low },
+    { label: 'Prior close', value: keyLevels.prior_day_close },
+  ];
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-primary" />
-          <h3 className="font-bold text-sm text-foreground">Support & Resistance Multi-Model Ladder</h3>
-        </div>
-        <div className="text-xs font-mono text-muted-foreground">
-          Current Spot: <strong className="text-foreground font-bold">₹{spotPrice.toLocaleString('en-IN')}</strong>
-        </div>
-      </div>
-
-      {/* Pivots Comparison Matrix */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs text-left border-collapse">
+    <Card title="Key Levels" meta={spotPrice ? `Spot ${fmtINR(spotPrice)}` : undefined}>
+      <div className="tbl-wrap">
+        <table className="tbl">
           <thead>
-            <tr className="border-b border-border text-muted-foreground font-semibold">
-              <th className="py-2 px-3">Level Tier</th>
-              <th className="py-2 px-3 text-right">Classic Floor</th>
-              <th className="py-2 px-3 text-right">Fibonacci</th>
-              <th className="py-2 px-3 text-right">Camarilla</th>
-              <th className="py-2 px-3 text-right">Proximity to Spot</th>
+            <tr>
+              <th>Level</th>
+              <th className="r">Classic</th>
+              <th className="r">Fib</th>
+              <th className="r">Camarilla</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border/40 font-mono">
-            {/* R4 */}
-            {cam.r4 && (
-              <tr className="hover:bg-accent/40 text-destructive/90">
-                <td className="py-2 px-3 font-sans font-bold">Resistance 4 (R4 - Breakout)</td>
-                <td className="py-2 px-3 text-right">---</td>
-                <td className="py-2 px-3 text-right">---</td>
-                <td className="py-2 px-3 text-right font-bold">₹{cam.r4}</td>
-                <td className="py-2 px-3 text-right text-muted-foreground">
-                  +{(cam.r4 - spotPrice).toFixed(1)} pts
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td>
+                  {row.label}{' '}
+                  {row.key === nearestRKey ? <span className="badge b-info">Nearest R</span> : null}
+                  {row.key === nearestSKey ? <span className="badge b-info">Nearest S</span> : null}
                 </td>
+                <td className="r num">{fmtINR(row.classic)}</td>
+                <td className="r num">{fmtINR(row.fib)}</td>
+                <td className="r num">{fmtINR(row.cam)}</td>
               </tr>
-            )}
-
-            {/* R3 */}
-            <tr className="hover:bg-accent/40 text-destructive">
-              <td className="py-2 px-3 font-sans font-bold">Resistance 3 (R3)</td>
-              <td className="py-2 px-3 text-right">₹{cp.r3}</td>
-              <td className="py-2 px-3 text-right">₹{fp.r3}</td>
-              <td className="py-2 px-3 text-right font-bold">₹{cam.r3}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                +{(cp.r3 - spotPrice).toFixed(1)} pts
+            ))}
+            <tr>
+              <td colSpan={4} className="faint">
+                Reference
               </td>
             </tr>
-
-            {/* R2 */}
-            <tr className="hover:bg-accent/40 text-destructive/80">
-              <td className="py-2 px-3 font-sans font-medium">Resistance 2 (R2)</td>
-              <td className="py-2 px-3 text-right">₹{cp.r2}</td>
-              <td className="py-2 px-3 text-right">₹{fp.r2}</td>
-              <td className="py-2 px-3 text-right">₹{cam.r2}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                +{(cp.r2 - spotPrice).toFixed(1)} pts
-              </td>
-            </tr>
-
-            {/* R1 */}
-            <tr className="hover:bg-accent/40 text-destructive/70">
-              <td className="py-2 px-3 font-sans font-medium">Resistance 1 (R1)</td>
-              <td className="py-2 px-3 text-right">₹{cp.r1}</td>
-              <td className="py-2 px-3 text-right">₹{fp.r1}</td>
-              <td className="py-2 px-3 text-right">₹{cam.r1}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                +{(cp.r1 - spotPrice).toFixed(1)} pts
-              </td>
-            </tr>
-
-            {/* Central Pivot */}
-            <tr className="bg-primary/10 hover:bg-primary/15 font-bold text-foreground">
-              <td className="py-2.5 px-3 font-sans flex items-center gap-1.5 text-primary">
-                ★ Central Pivot Point (P)
-              </td>
-              <td className="py-2.5 px-3 text-right font-extrabold text-primary">₹{cp.pivot}</td>
-              <td className="py-2.5 px-3 text-right font-extrabold text-primary">₹{fp.pivot}</td>
-              <td className="py-2.5 px-3 text-right font-extrabold text-primary">₹{cam.pivot}</td>
-              <td className="py-2.5 px-3 text-right font-sans text-xs">
-                {(spotPrice - cp.pivot) >= 0 ? `+${(spotPrice - cp.pivot).toFixed(1)} above P` : `${(spotPrice - cp.pivot).toFixed(1)} below P`}
-              </td>
-            </tr>
-
-            {/* S1 */}
-            <tr className="hover:bg-accent/40 text-success/70">
-              <td className="py-2 px-3 font-sans font-medium">Support 1 (S1)</td>
-              <td className="py-2 px-3 text-right">₹{cp.s1}</td>
-              <td className="py-2 px-3 text-right">₹{fp.s1}</td>
-              <td className="py-2 px-3 text-right">₹{cam.s1}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                -{(spotPrice - cp.s1).toFixed(1)} pts
-              </td>
-            </tr>
-
-            {/* S2 */}
-            <tr className="hover:bg-accent/40 text-success/80">
-              <td className="py-2 px-3 font-sans font-medium">Support 2 (S2)</td>
-              <td className="py-2 px-3 text-right">₹{cp.s2}</td>
-              <td className="py-2 px-3 text-right">₹{fp.s2}</td>
-              <td className="py-2 px-3 text-right">₹{cam.s2}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                -{(spotPrice - cp.s2).toFixed(1)} pts
-              </td>
-            </tr>
-
-            {/* S3 */}
-            <tr className="hover:bg-accent/40 text-success">
-              <td className="py-2 px-3 font-sans font-bold">Support 3 (S3)</td>
-              <td className="py-2 px-3 text-right">₹{cp.s3}</td>
-              <td className="py-2 px-3 text-right">₹{fp.s3}</td>
-              <td className="py-2 px-3 text-right font-bold">₹{cam.s3}</td>
-              <td className="py-2 px-3 text-right text-muted-foreground">
-                -{(spotPrice - cp.s3).toFixed(1)} pts
-              </td>
-            </tr>
-
-            {/* S4 */}
-            {cam.s4 && (
-              <tr className="hover:bg-accent/40 text-success/90">
-                <td className="py-2 px-3 font-sans font-bold">Support 4 (S4 - Breakdown)</td>
-                <td className="py-2 px-3 text-right">---</td>
-                <td className="py-2 px-3 text-right">---</td>
-                <td className="py-2 px-3 text-right font-bold">₹{cam.s4}</td>
-                <td className="py-2 px-3 text-right text-muted-foreground">
-                  -{(spotPrice - cam.s4).toFixed(1)} pts
-                </td>
+            {referenceRows.map((row) => (
+              <tr key={row.label}>
+                <td>{row.label}</td>
+                <td className="r num">{fmtINR(row.value)}</td>
+                <td className="r num">—</td>
+                <td className="r num">—</td>
               </tr>
-            )}
+            ))}
           </tbody>
         </table>
       </div>
-
-      {/* Volume Profile Value Area & Reference Levels */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-border text-xs">
-        <div className="bg-secondary/40 p-2.5 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">POC (Point of Control)</span>
-          <span className="font-bold font-mono text-primary text-sm">₹{keyLevels.poc}</span>
-          <span className="text-[10px] text-muted-foreground block">Max Executed Volume</span>
-        </div>
-
-        <div className="bg-secondary/40 p-2.5 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">Value Area High (VAH)</span>
-          <span className="font-bold font-mono text-foreground text-sm">₹{keyLevels.vah}</span>
-          <span className="text-[10px] text-muted-foreground block">70% Volume Cutoff Upper</span>
-        </div>
-
-        <div className="bg-secondary/40 p-2.5 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">Value Area Low (VAL)</span>
-          <span className="font-bold font-mono text-foreground text-sm">₹{keyLevels.val}</span>
-          <span className="text-[10px] text-muted-foreground block">70% Volume Cutoff Lower</span>
-        </div>
-
-        <div className="bg-secondary/40 p-2.5 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">Prior Day High / Low</span>
-          <span className="font-bold font-mono text-foreground text-sm">
-            ₹{keyLevels.prior_day_high} / ₹{keyLevels.prior_day_low}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">Close: ₹{keyLevels.prior_day_close}</span>
-        </div>
-      </div>
-    </div>
+    </Card>
   );
 }

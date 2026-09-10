@@ -19,7 +19,7 @@ export function ApiTypeSelector({ settings, onChange }: Props) {
     {
       id: 'indian' as ApiType,
       name: 'Indian Market (NSE / BSE)',
-      desc: 'Equity, Options & Futures via FYERS API v3 or Flattrade PiConnect (INR)',
+      desc: 'Equity, Options & Futures via FYERS API v3 (INR)',
       icon: Landmark,
     },
     {

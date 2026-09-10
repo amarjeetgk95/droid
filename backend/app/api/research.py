@@ -177,6 +177,36 @@ async def get_options_context(
 
 
 # -------------------------------------------------------------
+# 2b. Multi-timeframe directional forecast (1m / 5m / 15m / 30m / 1h)
+# -------------------------------------------------------------
+@router.get("/forecast/{horizon}")
+async def get_forecast(
+    horizon: str,
+    instrument: str = Query("NIFTY 50", description="Trading instrument"),
+    record: bool = Query(True, description="Persist forecast as an immutable prediction"),
+):
+    """Generate a point-in-time directional forecast for the requested horizon."""
+    from app.research.trend_forecast import SUPPORTED_HORIZONS, trend_forecaster
+
+    h = (horizon or "").lower()
+    if h not in SUPPORTED_HORIZONS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown forecast horizon '{horizon}'. Supported: {sorted(SUPPORTED_HORIZONS)}",
+        )
+    try:
+        return await trend_forecaster.forecast(instrument=instrument, horizon=h, record=record)
+    except ValueError as e:
+        # Transient data gaps (e.g. insufficient candles after hours) stay 503,
+        # never a synthetic forecast.
+        logger.warning("forecast_insufficient_data", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("forecast_failed", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {e}")
+
+
+# -------------------------------------------------------------
 # 3. Indicator Registry (§13, §14)
 # -------------------------------------------------------------
 @router.get("/indicators", response_model=List[IndicatorDefinition])

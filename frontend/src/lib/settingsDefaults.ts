@@ -43,13 +43,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
       redirectUri: `${REDIRECT_BASE}/fyers/callback`,
       accessToken: '',
     },
-    flattrade: {
-      userId: '',
-      apiKey: '',
-      apiSecret: '',
-      redirectUri: `${REDIRECT_BASE}/flattrade/callback`,
-      token: '',
-    },
     binance: {
       apiKey: '',
       apiSecret: '',

@@ -7,7 +7,7 @@ import {
   ArrowRight,
   Bell,
   Radio,
-  Sparkles,
+  TrendingUp,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -154,7 +154,7 @@ export function HeaderNotifications() {
         >
           <Bell className="w-3.5 h-3.5" />
           {signalCount > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-[15px] text-center tabular-nums ring-2 ring-card shadow-2xs animate-in zoom-in-75 duration-150">
+            <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-[15px] text-center tabular-nums ring-2 ring-card">
               {signalCount > 99 ? '99+' : signalCount}
             </span>
           )}
@@ -166,7 +166,7 @@ export function HeaderNotifications() {
         <DropdownMenuLabel className="font-normal px-1 py-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <span className={cn('w-2 h-2 rounded-full', signalCount > 0 ? 'bg-emerald-500 animate-live' : 'bg-slate-400')} />
+              <span className={cn('w-2 h-2 rounded-full', signalCount > 0 ? 'bg-emerald-500' : 'bg-slate-400')} />
               <span className="text-xs font-bold text-foreground">Signals & Market Alerts</span>
             </div>
 
@@ -217,7 +217,7 @@ export function HeaderNotifications() {
               return (
                 <Link
                   key={sig.id}
-                  href="/signals"
+                  href="/"
                   className="flex items-center justify-between p-2 rounded-lg bg-secondary/30 hover:bg-secondary border border-border/40 transition-colors text-xs"
                 >
                   <div className="min-w-0 flex-1">
@@ -250,14 +250,28 @@ export function HeaderNotifications() {
           /* Empty / Idle State: Quick Launchers */
           <div className="space-y-0.5">
             <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
-              <Link href="/signals">
+              <Link href="/">
                 <div className="p-1.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0 mt-0.5">
                   <Radio className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground">Active Alpha Signals</p>
+                  <p className="text-xs font-semibold text-foreground">Directional Horizon Forecast</p>
                   <p className="text-[10px] text-muted-foreground truncate">
-                    Momentum, breakout & mean-reversion scanner
+                    Multi-TF directional outlook, MTF alignment & model consensus
+                  </p>
+                </div>
+              </Link>
+            </DropdownMenuItem>
+
+            <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
+              <Link href="/markets">
+                <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200 shrink-0 mt-0.5">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground">Market Context & Levels</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    Trend regime, key pivots, volatility & breadth flows
                   </p>
                 </div>
               </Link>
@@ -269,23 +283,9 @@ export function HeaderNotifications() {
                   <Activity className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground">Options Greeks & Flow</p>
+                  <p className="text-xs font-semibold text-foreground">Derivatives & Greeks Desk</p>
                   <p className="text-[10px] text-muted-foreground truncate">
-                    PCR shifts, Max Pain migration & institutional OI
-                  </p>
-                </div>
-              </Link>
-            </DropdownMenuItem>
-
-            <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
-              <Link href="/ai-command-center?tab=research">
-                <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200 shrink-0 mt-0.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground">AI Intelligence Briefing</p>
-                  <p className="text-[10px] text-muted-foreground truncate">
-                    Probabilistic model synthesis & multi-TF bias
+                    Option chain, PCR shifts, Max Pain & institutional flow
                   </p>
                 </div>
               </Link>
@@ -297,8 +297,8 @@ export function HeaderNotifications() {
 
         {/* Footer Link */}
         <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-center justify-between text-xs font-semibold text-primary hover:bg-primary/10">
-          <Link href="/signals">
-            <span>Open Signal Centre</span>
+          <Link href="/">
+            <span>Open Forecast</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </DropdownMenuItem>

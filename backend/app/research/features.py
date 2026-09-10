@@ -247,3 +247,77 @@ class FeatureLayer:
             "options": opt_features,
             "data_quality": DataQualityStatus.LIVE.value,
         }
+
+    @classmethod
+    def compute_multi_timeframe_features(
+        cls,
+        instrument: str,
+        timeframe_candles: Dict[str, List[Dict[str, Any]]],
+        options_ctx: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Compute per-timeframe features plus a cross-timeframe alignment summary.
+
+        Each timeframe with >= 2 candles gets a full ``compute_features`` payload
+        under ``per_timeframe``. Alignment votes come from each TF's
+        supertrend direction + RSI position — no forward-looking data.
+        """
+        per_timeframe: Dict[str, Any] = {}
+        for tf, candles in (timeframe_candles or {}).items():
+            try:
+                feats = cls.compute_features(
+                    instrument=instrument,
+                    timeframe=tf,
+                    candles=candles,
+                    options_ctx=options_ctx,
+                )
+            except Exception as e:
+                logger.warning("mtf_tf_features_failed", instrument=instrument, timeframe=tf, error=str(e))
+                continue
+            if isinstance(feats, dict) and "error" not in feats:
+                per_timeframe[tf] = {"features": feats}
+
+        bull_votes = 0
+        bear_votes = 0
+        total_votes = 0
+        for tf_payload in per_timeframe.values():
+            quant = (tf_payload.get("features") or {}).get("quant", {})
+            st_dir = str(quant.get("supertrend_dir", "NEUTRAL")).upper()
+            try:
+                rsi = float(quant.get("rsi_14", 50.0))
+            except (TypeError, ValueError):
+                rsi = 50.0
+            vote: Optional[str] = None
+            if st_dir == "BULLISH" and rsi >= 50.0:
+                vote = "BULLISH"
+            elif st_dir == "BEARISH" and rsi < 50.0:
+                vote = "BEARISH"
+            if vote == "BULLISH":
+                bull_votes += 1
+                total_votes += 1
+            elif vote == "BEARISH":
+                bear_votes += 1
+                total_votes += 1
+
+        if total_votes > 0:
+            if bull_votes > bear_votes:
+                overall_bias = "BULLISH"
+            elif bear_votes > bull_votes:
+                overall_bias = "BEARISH"
+            else:
+                overall_bias = "NEUTRAL"
+            alignment_score = round(abs(bull_votes - bear_votes) / total_votes * 100.0, 2)
+        else:
+            overall_bias = "NEUTRAL"
+            alignment_score = 0.0
+
+        return {
+            "instrument": instrument,
+            "per_timeframe": per_timeframe,
+            "alignment": {
+                "overall_bias": overall_bias,
+                "alignment_score": alignment_score,
+                "bull_votes": bull_votes,
+                "bear_votes": bear_votes,
+                "total_votes": total_votes,
+            },
+        }

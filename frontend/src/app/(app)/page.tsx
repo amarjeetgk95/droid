@@ -1,504 +1,154 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import dynamic from 'next/dynamic';
-import { useMarketDataContext } from '@/context/MarketDataContext';
-import { useLiveMarketContext } from '@/context/LiveMarketContext';
-import { ErrorBoundary } from '@/components/common/ErrorBoundary';
-import { ErrorCard } from '@/components/ui/ErrorCard';
-import { safeNum } from '@/lib/utils';
-import { getQueryParam, setQueryParams } from '@/lib/url-state';
-import type { DashboardSymbol } from '@/lib/symbols';
-import { normalizeDashboardSymbol, resolveCardSymbol } from '@/lib/symbols';
-import { MarketCard } from '@/components/dashboard/MarketCard';
-import { MarketBreadth } from '@/components/dashboard/MarketBreadth';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import type { MarketRegimeOverview } from '@/lib/types';
-import {
-  RefreshCw,
-  Clock,
-  Compass,
-  TrendingUp,
-  Layers,
-  ArrowUpRight,
-  BarChart2,
-} from 'lucide-react';
-import Link from 'next/link';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
+import ForecastCard, { type HourForecast } from '@/components/research/ForecastCard';
+import { WhyStrip } from '@/components/dashboard/WhyStrip';
+import { ForecastOutcomes } from '@/components/dashboard/ForecastOutcomes';
+import { SupportingSignalsPanel } from '@/components/signals/SupportingSignalsPanel';
 
-// Lazy-load sub-panels with sleek skeleton states
-const DashboardTradingChart = dynamic(
-  () => import('@/components/dashboard/DashboardTradingChart'),
-  {
-    ssr: false,
-    loading: () => <div className="bg-card border border-border rounded-xl p-5 h-[480px] animate-pulse" />,
-  }
-);
-const MLPredictionCard = dynamic(
-  () => import('@/components/dashboard/MLPredictionCard').then((m) => m.MLPredictionCard),
-  {
-    ssr: false,
-    loading: () => <div className="bg-card border border-border rounded-xl p-5 h-72 animate-pulse" />,
-  }
-);
-const FIIPositioningCard = dynamic(
-  () => import('@/components/dashboard/FIIPositioningCard').then((m) => m.FIIPositioningCard),
-  {
-    ssr: false,
-    loading: () => <div className="bg-card border border-border rounded-xl p-5 h-72 animate-pulse" />,
-  }
-);
-const MarketIntelligencePanel = dynamic(
-  () =>
-    import('@/components/institutional/MarketIntelligencePanel').then(
-      (m) => m.MarketIntelligencePanel
-    ),
-  {
-    ssr: false,
-    loading: () => <div className="bg-card border border-border rounded-xl p-5 h-72 animate-pulse" />,
-  }
-);
-const DataHealthPanel = dynamic(
-  () => import('@/components/institutional/DataHealthPanel').then((m) => m.DataHealthPanel),
-  {
-    ssr: false,
-    loading: () => <div className="bg-card border border-border rounded-xl p-5 h-72 animate-pulse" />,
-  }
-);
+const INSTRUMENTS = ['NIFTY 50', 'BANKNIFTY', 'SENSEX'] as const;
 
-export default function DashboardPage() {
-  // Tier A live prices from LiveMarketContext (isolated re-renders);
-  // Tiers B/C/D analytical data from Dashboard (MarketData) context.
-  const { cards, streamState, ticksFresh, loading: liveLoading } = useLiveMarketContext();
-  const {
-    breadth,
-    health,
-    marketStatus,
-    regimeOverview: contextRegime,
-    loading: dashboardLoading,
-    error,
-    errors,
-    refetch,
-  } = useMarketDataContext({ useSummaryEndpoint: true });
-  const loading = liveLoading && dashboardLoading && cards.length === 0;
+const TIMEFRAMES = [
+  { id: '1m', label: '1M' },
+  { id: '5m', label: '5M' },
+  { id: '15m', label: '15M' },
+  { id: '30m', label: '30M' },
+  { id: '1h', label: '1H' },
+] as const;
 
-  const [selectedSymbol, setSelectedSymbol] = useState<DashboardSymbol>(() =>
-    normalizeDashboardSymbol(typeof window !== 'undefined' ? getQueryParam('symbol') : null),
-  );
-  const [viewMode, setViewMode] = useState<'intelligence' | 'chart'>(() =>
-    typeof window !== 'undefined' && getQueryParam('view') === 'chart' ? 'chart' : 'intelligence',
-  );
-  const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
-  const [regimeLoading, setRegimeLoading] = useState(true);
-  const [regimeError, setRegimeError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+type TimeframeId = (typeof TIMEFRAMES)[number]['id'];
 
-  const activeSymbol: DashboardSymbol = normalizeDashboardSymbol(selectedSymbol);
+export default function ForecastHomePage() {
+  const [instrument, setInstrument] = useState<string>('NIFTY 50');
+  const [timeframe, setTimeframe] = useState<TimeframeId>('1h');
+  const [forecast, setForecast] = useState<HourForecast | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(true);
+  const [forecastError, setForecastError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  // Persist selection to URL for deep-linking (best-effort, no navigation).
-  useEffect(() => {
-    setQueryParams({ symbol: activeSymbol === 'NIFTY' ? null : activeSymbol, view: viewMode === 'chart' ? 'chart' : null });
-  }, [activeSymbol, viewMode]);
+  const market = useOptionalMarketDataContext();
+  const live = useOptionalLiveMarketContext();
+  const marketStatus = market?.marketStatus ?? null;
+  const streamState = live?.streamState ?? market?.streamState ?? 'CONNECTING';
+  const ticksFresh = live?.ticksFresh ?? market?.ticksFresh ?? false;
 
-  // Sync context regime when activeSymbol is NIFTY
-  useEffect(() => {
-    if (activeSymbol === 'NIFTY' && contextRegime) {
-      setRegimeOverview(contextRegime);
-      setRegimeLoading(false);
-    }
-  }, [activeSymbol, contextRegime]);
+  const timeframeLabel = TIMEFRAMES.find((t) => t.id === timeframe)?.label ?? '1H';
 
-  const handleManualRefresh = useCallback(async () => {
-    setIsRefreshing(true);
+  const loadForecast = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    setForecastLoading(true);
+    setForecastError(null);
     try {
-      await Promise.allSettled([
-        refetch(),
-        activeSymbol !== 'NIFTY'
-          ? api.getRegimeOverview(activeSymbol).then((res) => {
-              setRegimeOverview(res.data);
-            })
-          : Promise.resolve(),
-      ]);
-      setDashboardRefreshKey((k) => k + 1);
+      const data = await api.getForecast(instrument, timeframe, true);
+      setForecast(data as HourForecast);
+      setLastUpdated(new Date());
+    } catch (err) {
+      setForecast(null);
+      setForecastError(err instanceof Error ? err.message : 'forecast unavailable');
     } finally {
-      setIsRefreshing(false);
+      setForecastLoading(false);
     }
-  }, [refetch, activeSymbol]);
+  }, [instrument, timeframe]);
 
-  const handleSelectCard = useCallback((symbol: string) => {
-    setSelectedSymbol(resolveCardSymbol(symbol));
-  }, []);
-
-  // Regime: NIFTY comes straight from shared context (no independent poll).
-  // Non-NIFTY symbols fetch once per symbol change / manual refresh only —
-  // no background interval (Tier C, 30–60s TTL served by coordinator + context).
   useEffect(() => {
-    if (activeSymbol === 'NIFTY') {
-      if (contextRegime) {
-        setRegimeOverview(contextRegime);
-        setRegimeLoading(false);
-        setRegimeError(null);
-      }
-      return;
-    }
+    void loadForecast();
+  }, [loadForecast]);
 
-    let isMounted = true;
-    setRegimeLoading(true);
-    setRegimeError(null);
-    const fetchRegime = async () => {
-      try {
-        const res = await api.getRegimeOverview(activeSymbol);
-        if (!isMounted) return;
-        setRegimeOverview(res.data);
-      } catch (err) {
-        if (!isMounted) return;
-        setRegimeError(err instanceof Error ? err.message : 'Regime unavailable');
-      } finally {
-        if (isMounted) setRegimeLoading(false);
-      }
-    };
-    fetchRegime();
-    return () => {
-      isMounted = false;
-    };
-  }, [activeSymbol, contextRegime]);
-
-  if (error && !cards.length && !breadth && !health && !marketStatus) {
-    return (
-      <ErrorCard
-        mode="full-page"
-        title="Market Feed Disconnected"
-        message={error}
-        onRetry={() => void handleManualRefresh()}
-        isRetrying={isRefreshing}
-      />
-    );
-  }
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void loadForecast();
+    }, 60000);
+    return () => clearInterval(id);
+  }, [loadForecast]);
 
   const isMarketClosed = marketStatus?.session === 'CLOSED' || marketStatus?.is_trading_day === false;
-  // LIVE requires actual ticks flowing AND open market session — an open socket
-  // with heartbeats during market close or broker outage must not display as live.
   const isStreamLive = !isMarketClosed && streamState === 'CONNECTED' && ticksFresh;
   const isStreamWaiting = !isMarketClosed && streamState === 'CONNECTED' && !ticksFresh;
+  const feedTone = isMarketClosed ? 'stale-dot' : isStreamLive ? 'live-dot' : isStreamWaiting ? 'stale-dot' : 'down-dot';
+  const feedLabel = isMarketClosed
+    ? 'Session closed'
+    : isStreamLive
+      ? 'Feed live'
+      : isStreamWaiting
+        ? 'Feed stale — retrying'
+        : 'Feed down';
+  const sessionLabel = marketStatus?.session
+    ? marketStatus.session.replace(/_/g, ' ').toLowerCase()
+    : 'session —';
 
   return (
-    <div className="space-y-4 pb-8">
-      {/* 1. Hero Live Command Bar */}
-      <div className="bg-card border border-border rounded-xl p-3.5 sm:p-4 shadow-2xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
-            <TrendingUp className="w-4 h-4" />
-          </div>
+    <div className="ds-page">
+      {/* header */}
+      <header className="page-hero">
+        <div className="toolbar">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm sm:text-base font-bold tracking-tight text-foreground">
-                Command Dashboard
-              </h1>
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-secondary text-foreground border border-border">
-                {activeSymbol === 'NIFTY' ? 'NIFTY 50' : activeSymbol}
-              </span>
+            <div className="flex items-center gap-2.5">
+              <h1>{timeframeLabel} Forecast</h1>
+              <span className="badge b-info" style={{ fontSize: 11 }}>LIVE MODEL</span>
             </div>
+            <p className="muted num">
+              {instrument} · {timeframeLabel} horizon · {sessionLabel} · <span className={feedTone} style={{ marginRight: 6 }} />{feedLabel}
+              {lastUpdated ? ` · updated ${lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+            </p>
           </div>
-        </div>
-
-        <div className="flex items-center flex-wrap gap-2 w-full md:w-auto justify-start md:justify-end border-t md:border-t-0 pt-2.5 md:pt-0 border-border/60">
-          {/* Market Session Pill */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary/80 border border-border text-xs font-medium">
-            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="capitalize text-foreground font-semibold">
-              {marketStatus?.session ? marketStatus.session.replace(/_/g, ' ').toLowerCase() : 'Active'}
-            </span>
-          </div>
-
-          {/* Realtime Status Pill — text + role, never color-only */}
-          <div
-            role="status"
-            aria-live="polite"
-            aria-label={
-              isMarketClosed
-                ? 'Market session closed'
-                : isStreamLive
-                  ? 'Live market feed connected'
-                  : isStreamWaiting
-                    ? 'Market feed stale, retrying'
-                    : 'Market feed down'
-            }
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-secondary/60 border border-border text-xs"
-          >
-            <span
-              aria-hidden="true"
-              className={`w-2 h-2 rounded-full ${
-                isMarketClosed
-                  ? 'bg-slate-400'
-                  : isStreamLive
-                    ? 'bg-emerald-500 animate-pulse'
-                    : isStreamWaiting
-                      ? 'bg-amber-400 animate-pulse'
-                      : 'bg-red-500'
-              }`}
-            />
-            <span className="font-mono font-semibold text-foreground text-[11px]">
-              {isMarketClosed
-                ? 'SESSION CLOSED'
-                : isStreamLive
-                  ? 'FEED LIVE (WS)'
-                  : isStreamWaiting
-                    ? 'FEED STALE — RETRYING'
-                    : 'FEED DOWN'}
-            </span>
-            {health?.latency_ms !== null && health?.latency_ms !== undefined && (
-              <span className="text-[10px] text-muted-foreground font-mono">
-                · {safeNum(health.latency_ms, '—', 0)}ms
-              </span>
-            )}
-          </div>
-
-          {/* View Toggle */}
-          <div className="flex items-center p-1 rounded-xl bg-secondary/80 border border-border text-xs">
-            <button
-              type="button"
-              onClick={() => setViewMode('intelligence')}
-              className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
-                viewMode === 'intelligence'
-                  ? 'bg-card text-foreground shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('chart')}
-              className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                viewMode === 'chart'
-                  ? 'bg-card text-foreground shadow-xs'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              <span>Chart</span>
-            </button>
-          </div>
-
-          {/* Manual Refresh Button */}
-          <button
-            type="button"
-            onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border rounded-xl text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
-            title="Refresh market data"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-primary' : ''}`} />
-            <span className="hidden sm:inline">Refresh</span>
-          </button>
-
-          {/* Quick Option Chain Link */}
-          <Link
-            href="/options"
-            className="flex items-center gap-1 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-xl text-xs font-semibold transition-all"
-          >
-            <span>Options Desk</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-      </div>
-
-      {/* 2. Interactive Market Index Strip */}
-      <div>
-        <div className="flex items-center justify-between mb-2.5 px-1">
-          <span className="text-xs font-bold text-muted-foreground tracking-wider uppercase flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-primary" />
-            Core Market Indices
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            Click an index to focus quant intelligence
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5">
-          {loading && !cards.length ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <div
-                key={i}
-                className="bg-card rounded-xl border border-border p-4 h-44 animate-pulse flex flex-col justify-between"
+          <span className="spacer" />
+          <div className="seg" role="group" aria-label="Forecast horizon">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf.id}
+                type="button"
+                className="seg-btn"
+                data-active={timeframe === tf.id}
+                aria-pressed={timeframe === tf.id}
+                onClick={() => setTimeframe(tf.id)}
               >
-                <div className="h-4 bg-secondary rounded w-24 mb-2" />
-                <div className="h-7 bg-secondary rounded w-32 mb-2" />
-                <div className="h-4 bg-secondary rounded w-20" />
-              </div>
-            ))
-          ) : cards.length ? (
-            cards.map((card) => {
-              const isSelected = resolveCardSymbol(card.symbol) === activeSymbol;
-
-              return (
-                <ErrorBoundary key={card.symbol} label={`MarketCard:${card.symbol}`}>
-                  <MarketCard
-                    card={card}
-                    isSelected={isSelected}
-                    onSelect={() => handleSelectCard(card.symbol)}
-                  />
-                </ErrorBoundary>
-              );
-            })
-          ) : (
-            <ErrorCard
-              title="Market cards unavailable"
-              message={errors.cards ?? 'No index data in this poll'}
-              onRetry={() => void handleManualRefresh()}
-              isRetrying={isRefreshing}
-            />
-          )}
-        </div>
-      </div>
-
-      {viewMode === 'chart' ? (
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
-                <BarChart2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-foreground tracking-tight uppercase">
-                  Interactive Trading Chart ({activeSymbol === 'NIFTY' ? 'NIFTY 50' : activeSymbol})
-                </h3>
-                <p className="text-[10px] text-muted-foreground">
-                  Multi-timeframe candlestick chart with real-time candles, pan, and zoom
-                </p>
-              </div>
-            </div>
-            <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded border border-border self-start sm:self-auto">
-              Active: {activeSymbol === 'NIFTY' ? 'NIFTY 50' : activeSymbol}
-            </span>
+                {tf.label}
+              </button>
+            ))}
           </div>
-
-          <div className="rounded-xl border border-border overflow-hidden bg-background">
-            <ErrorBoundary label="DashboardTradingChart">
-              <DashboardTradingChart
-                defaultSymbol={activeSymbol === 'NIFTY' ? 'NIFTY 50' : activeSymbol}
-                className="w-full h-[520px]"
-              />
-            </ErrorBoundary>
+          <div className="seg" role="group" aria-label="Instrument">
+            {INSTRUMENTS.map((inst) => (
+              <button
+                key={inst}
+                type="button"
+                className="seg-btn"
+                data-active={instrument === inst}
+                aria-pressed={instrument === inst}
+                onClick={() => setInstrument(inst)}
+              >
+                {inst.replace(' 50', '')}
+              </button>
+            ))}
           </div>
+          <button type="button" className="btn btn-primary" onClick={() => void loadForecast()} disabled={forecastLoading}>
+            {forecastLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
         </div>
-      ) : (
-        <>
-          {/* 3. Predictive ML & Institutional Analytics Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ErrorBoundary label="MLPredictionCard">
-              <MLPredictionCard symbol={activeSymbol} refreshKey={dashboardRefreshKey} />
-            </ErrorBoundary>
-            <ErrorBoundary label="FIIPositioningCard">
-              <FIIPositioningCard refreshKey={dashboardRefreshKey} />
-            </ErrorBoundary>
-          </div>
+      </header>
 
-          {/* 4. Market Intelligence Deep Dive & Macro Regime Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Market Intelligence Deep Dive (Instrument Selector Tab) */}
-            <div className="lg:col-span-6">
-              <ErrorBoundary label="MarketIntelligencePanel">
-                <MarketIntelligencePanel instrument={activeSymbol} refreshKey={dashboardRefreshKey} />
-              </ErrorBoundary>
-            </div>
+      {/* hero */}
+      <ForecastCard
+        forecast={forecast}
+        loading={forecastLoading}
+        error={forecastError}
+        onRetry={() => void loadForecast()}
+        updatedAt={lastUpdated}
+        timeframe={timeframe}
+        timeframeLabel={timeframeLabel}
+      />
 
-            {/* Macro Regime & Platform Telemetry Card */}
-            <div className="lg:col-span-6 flex flex-col gap-4">
-              {/* Regime Card */}
-              <div className="bg-card border border-border rounded-xl p-5 shadow-xs flex-1 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400">
-                      <Compass className="w-4 h-4" />
-                    </div>
-                    <h3 className="font-bold text-sm tracking-tight text-foreground uppercase">
-                      Market Regime Classification ({activeSymbol})
-                    </h3>
-                  </div>
-                  {regimeOverview && (
-                    <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full font-bold">
-                      {regimeOverview.regime_state.replace(/_/g, ' ')}
-                    </span>
-                  )}
-                </div>
+      {/* context */}
+      <WhyStrip instrument={instrument} />
 
-                {regimeLoading ? (
-                  <div className="animate-pulse space-y-2 py-2">
-                    <div className="h-4 bg-secondary rounded w-3/4" />
-                    <div className="h-4 bg-secondary rounded w-1/2" />
-                  </div>
-                ) : regimeOverview ? (
-                  <div className="space-y-2.5 text-xs">
-                    <p className="font-semibold text-foreground text-sm leading-snug">
-                      {regimeOverview.summary_headline}
-                    </p>
-                    <p className="text-muted-foreground leading-relaxed">
-                      {regimeOverview.institutional_rationale}
-                    </p>
-                    <div className="flex items-center gap-3 pt-2 border-t border-border/40 text-[11px]">
-                      <span className="text-muted-foreground">
-                        Confidence: <strong className="text-foreground">{safeNum(regimeOverview.confidence_score, '—', 0)}%</strong>
-                      </span>
-                      <span className="text-muted-foreground">
-                        Provider: <strong className="text-foreground">{health?.provider || '—'}</strong>
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <ErrorCard
-                    title="Regime classification unavailable"
-                    message={regimeError ?? errors.cards ?? 'No regime snapshot in this poll'}
-                    onRetry={() => void handleManualRefresh()}
-                    isRetrying={isRefreshing}
-                  />
-                )}
-              </div>
+      {/* supporting signals */}
+      <SupportingSignalsPanel />
 
-              {/* Quick Engine Telemetry */}
-              <div className="bg-card border border-border rounded-xl p-3 shadow-2xs grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
-                  <span className="text-muted-foreground text-[10px] block">Broker Feed</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">{health?.provider || '—'}</span>
-                </div>
-                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
-                  <span className="text-muted-foreground text-[10px] block">Instruments</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">
-                    {health?.active_instruments ?? 5} Active
-                  </span>
-                </div>
-                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
-                  <span className="text-muted-foreground text-[10px] block">Circuit Breaker</span>
-                  <span className={`font-mono font-bold block mt-0.5 ${health?.circuit_breaker_state === 'OPEN' ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {health?.circuit_breaker_state || 'CLOSED'}
-                  </span>
-                </div>
-                <div className="p-2 rounded-lg bg-secondary/40 border border-border/50">
-                  <span className="text-muted-foreground text-[10px] block">Feed Latency</span>
-                  <span className="font-mono font-bold text-foreground block mt-0.5">
-                    {health?.latency_ms != null ? `${safeNum(health.latency_ms, '—', 0)}ms` : '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* 5. Market Breadth & Data Health Suite */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-8">
-          <ErrorBoundary label="MarketBreadth">
-            <MarketBreadth data={breadth} loading={loading} />
-          </ErrorBoundary>
-        </div>
-        <div className="lg:col-span-4">
-          <ErrorBoundary label="DataHealthPanel">
-            <DataHealthPanel refreshKey={dashboardRefreshKey} />
-          </ErrorBoundary>
-        </div>
-      </div>
+      {/* track record */}
+      <ForecastOutcomes instrument={instrument} timeframe={timeframe} />
     </div>
   );
 }
-

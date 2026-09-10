@@ -130,8 +130,8 @@ function SidebarNavContent({
       <nav
         aria-label="Primary"
         className={cn(
-          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-0.5 py-2 px-2 [scrollbar-width:thin]',
-          rail && 'items-center px-1.5 overflow-x-hidden',
+          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-1 py-3 px-3 [scrollbar-width:thin]',
+          rail && 'items-center px-2 overflow-x-hidden',
         )}
       >
         {/* Home */}
@@ -146,6 +146,15 @@ function SidebarNavContent({
           </li>
         </ul>
 
+        {/* Section divider */}
+        <div
+          className={cn(
+            'border-t border-border/50 my-2 transition-all duration-150',
+            rail ? 'w-6 mx-auto' : 'mx-1',
+          )}
+          aria-hidden
+        />
+
         {/* Workflow groups */}
         {NAV_GROUPS.map((group) => {
           // Collapsed rail: floating flyout
@@ -158,14 +167,13 @@ function SidebarNavContent({
           }
 
           const isOpen = openGroups[group.id] !== false;
-          const groupActive = isGroupActive(pathname, group);
 
           // Expanded / mobile: collapsible section
           return (
             <section
               key={group.id}
               aria-labelledby={`sidebar-group-${group.id}`}
-              className="flex flex-col mt-3 first:mt-1.5"
+              className="flex flex-col mt-0.5"
             >
               <h2 id={`sidebar-group-${group.id}`} className="sr-only">
                 {group.label}
@@ -175,24 +183,12 @@ function SidebarNavContent({
                 onClick={() => onToggleGroup(group.id)}
                 aria-expanded={isOpen}
                 aria-controls={`sidebar-section-${group.id}`}
-                className="group flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] font-semibold tracking-[0.06em] uppercase text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
               >
-                <span className="flex items-center gap-1.5 min-w-0">
-                  <span
-                    className={cn(
-                      'h-1.5 w-1.5 rounded-full shrink-0 transition-colors',
-                      groupActive ? 'bg-primary' : 'bg-border group-hover:bg-muted-foreground/40',
-                    )}
-                    aria-hidden
-                  />
-                  <span className="truncate">{group.label}</span>
-                  <span className="text-[10px] font-mono font-medium tabular-nums px-1 rounded bg-muted/70 text-muted-foreground">
-                    {group.items.length}
-                  </span>
-                </span>
+                <span className="truncate">{group.label}</span>
                 <ChevronDown
                   className={cn(
-                    'w-3.5 h-3.5 shrink-0 opacity-50 transition-transform duration-150 group-hover:opacity-100',
+                    'w-3.5 h-3.5 shrink-0 text-muted-foreground/40 transition-transform duration-200 group-hover:text-foreground/70',
                     !isOpen && '-rotate-90',
                   )}
                   aria-hidden
@@ -200,7 +196,7 @@ function SidebarNavContent({
               </button>
 
               {isOpen && (
-                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-1">
+                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-0.5">
                   {group.items.map((item) => {
                     const active = isActivePath(pathname, item.href);
                     const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
@@ -450,7 +446,7 @@ export function Sidebar({
       <aside
         aria-label="Primary navigation"
         className={cn(
-          'hidden md:flex shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 ease-out overflow-hidden select-none',
+          'hidden md:flex shrink-0 flex-col border-r border-border bg-card/80 backdrop-blur-xl transition-[width] duration-200 ease-out overflow-hidden select-none',
           collapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]',
         )}
       >

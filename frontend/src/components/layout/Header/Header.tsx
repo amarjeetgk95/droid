@@ -68,8 +68,8 @@ function HeaderInner({
   return (
     <>
       <header
-        className="sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-card/95 backdrop-blur flex items-center justify-between px-3 md:px-4 select-none [contain:paint]"
-        style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
+        className="sticky top-0 z-30 h-16 shrink-0 border-b border-border bg-card/85 backdrop-blur-xl flex items-center justify-between px-4 md:px-6 select-none [contain:paint] shadow-[0_1px_2px_rgb(15_30_51/0.05)]"
+        style={{ contentVisibility: 'auto', containIntrinsicSize: '0 64px' } as React.CSSProperties}
       >
         {/* ================================================================= */}
         {/* LEFT ZONE: Navigation Toggle & Breadcrumb                         */}

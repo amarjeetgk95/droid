@@ -1,96 +1,55 @@
-import { Skeleton } from '@/components/ui/skeleton';
+import { Card } from '@/components/ui/desk';
 
 /**
  * OptionChainSkeleton
  *
- * High-fidelity structural skeleton that precisely matches the 13-column
- * layout of OptionChainTable (Calls CE | Strike Spine | Puts PE).
- * Eliminates Cumulative Layout Shift (CLS) when loading option chains.
+ * Structural skeleton matching the 13-column layout of OptionChainTable
+ * (Calls CE | Strike | Puts PE). Uses the sober `.skel` blocks so no
+ * layout shift occurs while the chain loads.
  */
 export function OptionChainSkeleton({ rows = 10 }: { rows?: number }) {
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading option chain">
-      {/* Top Header Controls Wireframe */}
-      <div className="bg-card border border-border rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Skeleton className="h-9 w-32 rounded-lg" />
-          <Skeleton className="h-9 w-40 rounded-lg" />
+    <div style={{ display: 'grid', gap: 12 }} aria-busy="true" aria-label="Loading option chain">
+      <section className="card" aria-hidden>
+        <div className="card-hd">
+          <h2 className="card-title">Options desk</h2>
+          <span className="card-meta">loading…</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-8 w-24 rounded-lg" />
-          <Skeleton className="h-8 w-24 rounded-lg" />
-          <Skeleton className="h-8 w-28 rounded-lg" />
+        <div className="card-bd">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="skel" style={{ height: 30, width: 220 }}>.</div>
+            <div className="skel" style={{ height: 30, width: 160 }}>.</div>
+          </div>
+          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 12 }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="skel" style={{ height: 64 }}>.</div>
+            ))}
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* Main Table Matrix Skeleton */}
-      <div className="bg-card border border-border rounded-xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left border-collapse">
-            {/* Top Super-Header */}
+      <Card title="Option chain" meta="loading…">
+        <div className="tbl-wrap">
+          <table className="tbl">
             <thead>
-              <tr className="border-b border-border/60 text-center font-bold">
-                <th colSpan={6} className="py-2.5 px-3 bg-primary/5 text-primary">
-                  CALLS (CE)
-                </th>
-                <th className="py-2.5 px-4 bg-secondary font-black border-x border-border">
-                  STRIKE
-                </th>
-                <th colSpan={6} className="py-2.5 px-3 bg-amber-500/5 text-amber-500">
-                  PUTS (PE)
-                </th>
-              </tr>
-              {/* Column Headers */}
-              <tr className="border-b border-border text-[11px] font-semibold text-muted-foreground bg-muted/40">
-                <th className="py-2 px-2 text-right">OI</th>
-                <th className="py-2 px-2 text-right">Vol</th>
-                <th className="py-2 px-2 text-right">Bid</th>
-                <th className="py-2 px-2 text-right">Ask</th>
-                <th className="py-2 px-2 text-right">LTP</th>
-                <th className="py-2 px-2 text-right">IV%</th>
-                <th className="py-2 px-4 text-center font-bold bg-secondary/80 border-x border-border">Strike</th>
-                <th className="py-2 px-2 text-right">IV%</th>
-                <th className="py-2 px-2 text-right">LTP</th>
-                <th className="py-2 px-2 text-right">Bid</th>
-                <th className="py-2 px-2 text-right">Ask</th>
-                <th className="py-2 px-2 text-right">Vol</th>
-                <th className="py-2 px-2 text-right">OI</th>
+              <tr>
+                <th colSpan={6} className="c">Calls (CE)</th>
+                <th className="c">Strike</th>
+                <th colSpan={6} className="c">Puts (PE)</th>
               </tr>
             </thead>
             <tbody>
               {Array.from({ length: rows }).map((_, i) => (
-                <tr
-                  key={i}
-                  className={`border-b border-border/40 ${
-                    i === Math.floor(rows / 2) ? 'bg-primary/5' : i % 2 === 0 ? 'bg-card' : 'bg-muted/10'
-                  }`}
-                >
-                  {/* Calls CE Skeletons */}
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-12 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3.5 w-14 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-8 ml-auto" /></td>
-
-                  {/* Strike Spine Skeleton */}
-                  <td className="py-2 px-4 text-center font-bold bg-secondary/40 border-x border-border">
-                    <Skeleton className="h-4 w-16 mx-auto" />
-                  </td>
-
-                  {/* Puts PE Skeletons */}
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-8 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3.5 w-14 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
-                  <td className="py-2 px-2 text-right"><Skeleton className="h-3 w-12 ml-auto" /></td>
+                <tr key={i}>
+                  <td colSpan={6} className="r"><div className="skel" style={{ height: 12 }}>.</div></td>
+                  <td className="c"><div className="skel" style={{ height: 14, width: 90, margin: '0 auto' }}>.</div></td>
+                  <td colSpan={6}><div className="skel" style={{ height: 12 }}>.</div></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

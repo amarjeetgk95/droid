@@ -48,7 +48,6 @@ Types after:
 ```ts
 type BrokerSettings =
  | { apiType:'indian', provider:'fyers', fyers:{...} }
- | { apiType:'indian', provider:'flattrade', flattrade:{...} }
  | { apiType:'crypto', provider:'binance', binance:{...} }
 type AISettings = 
  | { connectionMode:'OpenRouter', openRouter:{...}, routingMode, taskModels }

@@ -125,3 +125,25 @@ def test_api_financial_research_synthesize(client):
     assert data["research_status"] == "COMPLETE"
     assert len(data["supporting_evidence"]) > 0
     assert data["contradiction_analysis"]["counter_weight_score"] >= 0.0
+
+
+def test_api_greeks_rejects_invalid_payload(client):
+    bad_payload = {
+        "spot": -1.0,
+        "strike": 100.0,
+        "dte_days": 1.0,
+        "volatility": 0.2,
+        "option_type": "CE",
+    }
+    resp = client.post("/api/v1/options-intelligence/greeks", json=bad_payload)
+    assert resp.status_code == 422
+
+
+def test_api_select_contract_rejects_bad_spot(client):
+    bad_payload = {
+        "underlying": "NIFTY",
+        "spot_price": 0.0,
+        "direction": "LONG_CALL",
+    }
+    resp = client.post("/api/v1/options-intelligence/select-contract", json=bad_payload)
+    assert resp.status_code == 422

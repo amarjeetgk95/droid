@@ -6,10 +6,8 @@ import {
   Activity,
   ArrowRight,
   BarChart2,
-  Radio,
   Search,
   Settings,
-  Sparkles,
   TrendingUp,
   X,
 } from 'lucide-react';
@@ -157,24 +155,6 @@ export function CommandPalette({
             },
           ]
         : []),
-      {
-        key: 'act:signals',
-        category: 'actions',
-        section: 'Terminal Actions',
-        label: 'Live Signal Scanner',
-        sub: 'Inspect real-time quant signals, momentum triggers & audit logs',
-        href: '/signals',
-        icon: <Radio className="w-3.5 h-3.5 text-emerald-500" />,
-      },
-      {
-        key: 'act:ai',
-        category: 'actions',
-        section: 'Terminal Actions',
-        label: 'AI Command Center',
-        sub: 'Launch live AI signals, multi-TF analysis & strategy tools',
-        href: '/ai-command-center',
-        icon: <Sparkles className="w-3.5 h-3.5 text-purple-500" />,
-      },
       {
         key: 'act:settings',
         category: 'actions',

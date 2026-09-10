@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.security import AuthUser, get_current_user
 
 from app.signals.options_intelligence.greeks import BlackScholesGreeks, GreeksResult
 from app.signals.options_intelligence.path_simulator import (
@@ -44,61 +46,61 @@ simulator = PathDependentOptionSimulator()
 
 # Request / Response DTOs
 class GreeksRequest(BaseModel):
-    spot: float
-    strike: float
-    dte_days: float
-    volatility: float
+    spot: float = Field(gt=0)
+    strike: float = Field(gt=0)
+    dte_days: float = Field(ge=0, le=365)
+    volatility: float = Field(gt=0)
     option_type: Literal["CE", "PE"]
-    risk_free_rate: float = 0.065
-    dividend_yield: float = 0.012
+    risk_free_rate: float = Field(default=0.065, ge=0, le=1)
+    dividend_yield: float = Field(default=0.012, ge=0, le=1)
 
 
 class SolveIVRequest(BaseModel):
-    market_price: float
-    spot: float
-    strike: float
-    dte_days: float
+    market_price: float = Field(gt=0)
+    spot: float = Field(gt=0)
+    strike: float = Field(gt=0)
+    dte_days: float = Field(ge=0, le=365)
     option_type: Literal["CE", "PE"]
 
 
 class PathSimulateRequest(BaseModel):
     underlying: str
-    spot: float
-    strike: float
+    spot: float = Field(gt=0)
+    strike: float = Field(gt=0)
     option_type: Literal["CE", "PE"]
-    dte_days: float
-    iv: float
-    target_spot: float
-    stop_spot: float
-    quantity: int = 75
-    expected_fast_hours: float = 0.5
-    expected_slow_hours: float = 3.0
+    dte_days: float = Field(ge=0, le=365)
+    iv: float = Field(gt=0)
+    target_spot: float = Field(gt=0)
+    stop_spot: float = Field(gt=0)
+    quantity: int = Field(default=75, gt=0, le=500)
+    expected_fast_hours: float = Field(default=0.5, gt=0)
+    expected_slow_hours: float = Field(default=3.0, gt=0)
 
 
 class SelectContractRequest(BaseModel):
     underlying: Literal["NIFTY", "BANKNIFTY", "SENSEX"]
-    spot_price: float
+    spot_price: float = Field(gt=0)
     direction: Literal["LONG_CALL", "LONG_PUT"]
-    expected_move_points: Optional[float] = None
-    stop_loss_points: float = 30.0
-    target_horizon_hours: float = 1.0
-    current_iv: float = 0.16
+    expected_move_points: Optional[float] = Field(default=None, ge=0)
+    stop_loss_points: float = Field(default=30.0, gt=0)
+    target_horizon_hours: float = Field(default=1.0, gt=0)
+    current_iv: float = Field(default=0.16, gt=0)
 
 
 class ExpectedMoveRequest(BaseModel):
     underlying: str
-    spot: float
+    spot: float = Field(gt=0)
     direction: DirectionalBias
     horizon: TradingHorizon = "INTRADAY"
-    current_iv: float = 0.15
-    atr: Optional[float] = None
-    structural_target: Optional[float] = None
+    current_iv: float = Field(default=0.15, gt=0)
+    atr: Optional[float] = Field(default=None, ge=0)
+    structural_target: Optional[float] = Field(default=None, ge=0)
     regime: str = "TREND_UP"
-    hourly_theta_decay: Optional[float] = None
+    hourly_theta_decay: Optional[float] = Field(default=None, ge=0)
 
 
 @router.post("/greeks", response_model=GreeksResult)
-def calculate_greeks(req: GreeksRequest):
+def calculate_greeks(req: GreeksRequest, user: AuthUser = Depends(get_current_user)):
     """Calculate analytical Black-Scholes Greeks and theoretical pricing."""
     t_years = max(1e-6, req.dte_days / 365.0)
     return BlackScholesGreeks.calculate_greeks(
@@ -113,7 +115,7 @@ def calculate_greeks(req: GreeksRequest):
 
 
 @router.post("/solve-iv")
-def solve_implied_volatility(req: SolveIVRequest):
+def solve_implied_volatility(req: SolveIVRequest, user: AuthUser = Depends(get_current_user)):
     """Solve annualized implied volatility (IV) from option market premium."""
     t_years = max(1e-6, req.dte_days / 365.0)
     iv = BlackScholesGreeks.solve_iv(
@@ -127,7 +129,7 @@ def solve_implied_volatility(req: SolveIVRequest):
 
 
 @router.post("/simulate-path", response_model=PathSimulationReport)
-def simulate_option_path(req: PathSimulateRequest):
+def simulate_option_path(req: PathSimulateRequest, user: AuthUser = Depends(get_current_user)):
     """Simulate 5 path-dependent scenarios with Indian regulatory and microstructure friction."""
     if req.spot <= 0 or req.strike <= 0:
         raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot and strike required.")
@@ -147,7 +149,7 @@ def simulate_option_path(req: PathSimulateRequest):
 
 
 @router.post("/select-contract")
-def select_optimal_option_contract(req: SelectContractRequest):
+def select_optimal_option_contract(req: SelectContractRequest, user: AuthUser = Depends(get_current_user)):
     """Rank ITM, ATM, OTM candidates and select the best risk-adjusted contract."""
     if req.spot_price <= 0:
         raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot price required.")
@@ -166,7 +168,7 @@ def select_optimal_option_contract(req: SelectContractRequest):
 
 
 @router.post("/expected-move", response_model=ExpectedMoveProjection)
-def project_expected_move(req: ExpectedMoveRequest):
+def project_expected_move(req: ExpectedMoveRequest, user: AuthUser = Depends(get_current_user)):
     """Project underlying expected move magnitude, timing, and velocity vs option theta."""
     if req.spot <= 0:
         raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot price required.")
@@ -184,7 +186,7 @@ def project_expected_move(req: ExpectedMoveRequest):
 
 
 @router.get("/portfolio-greeks/summary", response_model=PortfolioGreeksSummary)
-def get_portfolio_greeks_summary():
+def get_portfolio_greeks_summary(user: AuthUser = Depends(get_current_user)):
     """Retrieve consolidated portfolio Greeks ledger (Delta, Gamma, Theta, Vega) across horizons."""
     return portfolio_greeks_ledger.get_summary()
 
@@ -194,6 +196,7 @@ def get_financial_research_context(
     underlying: str,
     horizon: TradingHorizon = Query(default="INTRADAY"),
     direction: Literal["BULLISH", "BEARISH"] = Query(default="BULLISH"),
+    user: AuthUser = Depends(get_current_user),
 ):
     """Retrieve active or deterministic fallback AI financial research and contradiction analysis (§42)."""
     return ai_context_store.get_or_fallback_default(underlying=underlying, horizon=horizon, direction=direction)
@@ -206,7 +209,7 @@ class SynthesizeResearchRequest(BaseModel):
 
 
 @router.post("/financial-research/synthesize", response_model=FinancialResearchReport)
-def synthesize_financial_research(req: SynthesizeResearchRequest):
+def synthesize_financial_research(req: SynthesizeResearchRequest, user: AuthUser = Depends(get_current_user)):
     """Dynamically synthesize fresh AI financial research and contradiction analysis for given underlying."""
     return financial_research_engine.generate_index_intelligence(
         underlying=req.underlying,

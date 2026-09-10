@@ -34,34 +34,38 @@ export function SidebarHeader({
   return (
     <div
       className={cn(
-        'flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-3 transition-all duration-150 select-none',
+        'flex h-16 shrink-0 items-center justify-between border-b border-border/70 px-4 transition-all duration-150 select-none',
         collapsed && !isMobile && 'justify-center px-2',
       )}
     >
       {/* Expanded / Mobile: Brand Title + Status Dot */}
       {!collapsed || isMobile ? (
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
           {/* Logo icon with live pulse dot */}
           <div
-            className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-extrabold text-sm tracking-tight shadow-sm"
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white font-extrabold text-[15px] tracking-tight shadow-[0_6px_18px_-8px_rgb(36_86_230/0.6)]"
+            style={{ background: 'var(--ds-accent-gradient)' }}
             aria-hidden
           >
             <span>D</span>
-            <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5" title={`Feed ${statusLabel}`}>
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3" title={`Feed ${statusLabel}`}>
               {isLive && (
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               )}
-              <span className={cn('relative inline-flex rounded-full h-2.5 w-2.5 ring-2 ring-card', dotColor)} />
+              <span className={cn('relative inline-flex rounded-full h-3 w-3 ring-2 ring-card', dotColor)} />
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="font-bold tracking-tight text-[13px] text-foreground uppercase leading-none">
-              Droid
-            </span>
-            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-px rounded-md bg-primary/10 text-primary border border-primary/20 leading-none">
-              Pro
-            </span>
+          <div className="flex flex-col min-w-0 leading-none">
+            <div className="flex items-center gap-1.5">
+              <span className="font-extrabold tracking-tight text-[15px] text-foreground leading-none">
+                Droid
+              </span>
+              <span className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-full text-white leading-none" style={{ background: 'var(--ds-accent-gradient)' }}>
+                Pro
+              </span>
+            </div>
+            <span className="text-[11px] font-medium text-muted-foreground mt-1">F&O Intelligence</span>
           </div>
         </div>
       ) : (
@@ -73,7 +77,8 @@ export function SidebarHeader({
               onClick={onToggleCollapse}
               aria-label="Expand sidebar (⌘B)"
               title="Expand sidebar (⌘B)"
-              className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-extrabold text-sm tracking-tight shadow-sm cursor-pointer hover:brightness-105 active:brightness-95 transition"
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-white font-extrabold text-[15px] tracking-tight shadow-sm cursor-pointer hover:brightness-105 active:brightness-95 transition"
+              style={{ background: 'var(--ds-accent-gradient)' }}
             >
               <span>D</span>
               <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">

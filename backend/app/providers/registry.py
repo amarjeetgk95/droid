@@ -1,6 +1,5 @@
 from app.providers.base import MarketDataProvider
 from app.providers.fyers import FyersProvider
-from app.providers.flattrade import FlattradeProvider
 from app.providers.binance_provider import BinanceProvider
 from app.core.broker_runtime import get_config
 import asyncio
@@ -8,7 +7,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-INDIAN_PROVIDERS = ("fyers", "flattrade")
+INDIAN_PROVIDERS = ("fyers",)
 CRYPTO_PROVIDERS = ("binance",)
 
 _provider_instance: MarketDataProvider | None = None
@@ -153,14 +152,6 @@ def _create_provider() -> MarketDataProvider:
             app_id=creds.get("app_id"),
             secret_key=creds.get("secret_key"),
             access_token=creds.get("access_token"),
-        )
-    if provider_name == "flattrade":
-        logger.info("provider_init", api_type=api_type, provider="flattrade", live=bool(creds))
-        return FlattradeProvider(
-            user_id=creds.get("user_id"),
-            api_key=creds.get("api_key"),
-            api_secret=creds.get("api_secret"),
-            token=creds.get("token") or creds.get("access_token"),
         )
     if provider_name == "binance":
         logger.info("provider_init", api_type=api_type, provider="binance", live=bool(creds))

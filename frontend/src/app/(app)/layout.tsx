@@ -57,7 +57,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
           onToggleTicker={handleToggleTicker}
         />
         {tickerVisible && <MarketTicker />}
-        <main className="flex-1 overflow-auto p-4">
+        <main className="flex-1 overflow-auto px-4 py-5 md:px-6 md:py-6">
           {children}
         </main>
       </div>

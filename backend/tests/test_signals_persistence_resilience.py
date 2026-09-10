@@ -10,12 +10,12 @@ import pytest
 
 from app.signals.fsm import signal_fsm, SignalInstance
 from app.signals.audit_ledger import signal_audit_ledger
+from app.signals import signals_persistence as sp
 from app.signals.signals_persistence import (
     save_signals_state_local,
     restore_signals_state_local,
     restore_signals_from_db,
     persist_executed_signal,
-    SIGNALS_STATE_FILE,
 )
 @pytest.fixture(autouse=True)
 def _open_market(mock_market_open):
@@ -71,7 +71,7 @@ async def test_signals_persistence_resilience():
     # 3. Explicitly verify save_signals_state_local and persist_executed_signal work
     saved = save_signals_state_local()
     assert saved is True
-    assert SIGNALS_STATE_FILE.exists()
+    assert sp.SIGNALS_STATE_FILE.exists()
     await persist_executed_signal(sig)
 
     # 4. SIMULATE REDEPLOYMENT / RESTART (Memory wiped clean)

@@ -300,7 +300,6 @@ async def execute_tool(name: str, arguments: dict[str, Any] | str) -> dict[str, 
             spot = float(args.get("spot_price") or 0.0)
             if spot <= 0:
                 try:
-                    from app.services.market_service import MarketService
                     market_svc = MarketService()
                     quote = await market_svc.get_quote(symbol)
                     if quote and quote.ltp > 0:

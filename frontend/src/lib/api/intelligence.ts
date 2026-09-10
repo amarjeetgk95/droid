@@ -34,6 +34,14 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
   },
 
+    async getForecast(instrument: string, horizon: string = '1h', record = true) {
+    return core.request<any>(`/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+  },
+
+    async getHourForecast(instrument: string, record = true) {
+    return core.request<any>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+  },
+
     async getPortfolioGreeksSummary() {
     return core.request<any>('/api/v1/options-intelligence/portfolio-greeks/summary');
   },

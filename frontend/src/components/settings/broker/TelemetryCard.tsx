@@ -92,9 +92,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
       const creds =
         settings.provider === 'fyers'
           ? settings.fyers
-          : settings.provider === 'flattrade'
-            ? (settings as unknown as { flattrade: Record<string, unknown> }).flattrade
-            : (settings as unknown as Record<string, unknown>)[settings.provider] || {};
+          : (settings as unknown as Record<string, unknown>)[settings.provider] || {};
       const res = await api.testBrokerConnection({ provider: settings.provider, credentials: creds as Record<string, unknown> });
       setTestResult(res.data as unknown as typeof testResult);
     } catch (err: unknown) {

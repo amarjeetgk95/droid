@@ -49,7 +49,7 @@ function resolveSystemStatus(
       label: 'OFFLINE',
       mobileLabel: 'OFFLINE',
       dot: 'bg-rose-500',
-      badge: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25 hover:bg-rose-500/20',
+      badge: 'bg-rose-500/10 text-rose-600 border-rose-500/25 hover:bg-rose-500/20',
       animate: false,
     };
   }
@@ -61,7 +61,7 @@ function resolveSystemStatus(
       label: 'SYNCING…',
       mobileLabel: 'SYNC',
       dot: 'bg-amber-500',
-      badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20',
+      badge: 'bg-amber-500/10 text-amber-700 border-amber-500/30 hover:bg-amber-500/20',
       animate: true,
     };
   }
@@ -117,7 +117,7 @@ function resolveSystemStatus(
       label: `AUTH ${brokerName}`,
       mobileLabel: 'AUTH',
       dot: 'bg-amber-500',
-      badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20',
+      badge: 'bg-amber-500/10 text-amber-700 border-amber-500/30 hover:bg-amber-500/20',
       animate: true,
     };
   }

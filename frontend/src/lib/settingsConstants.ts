@@ -23,8 +23,6 @@ export const SECRET_FIELDS: Record<string, string[]> = {
   broker: [
     'fyers.secret',
     'fyers.accessToken',
-    'flattrade.apiSecret',
-    'flattrade.token',
     'binance.apiSecret',
   ],
   ai: [

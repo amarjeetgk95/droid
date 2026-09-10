@@ -1,7 +1,7 @@
 'use client';
 
 import React, { memo, useCallback, useMemo } from 'react';
-import { TrendingUp, Landmark, Bitcoin, Check } from 'lucide-react';
+import { TrendingUp, Bitcoin, Check } from 'lucide-react';
 import type { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
 
 type ProviderCard = {
@@ -21,14 +21,6 @@ const INDIAN_PROVIDERS: ProviderCard[] = [
     desc: 'Official REST & WebSocket Gateway with tick-level data',
     apiType: 'indian',
     icon: TrendingUp,
-  },
-  {
-    id: 'flattrade',
-    name: 'Flattrade PiConnect',
-    badge: 'Zero Brokerage',
-    desc: 'WallConnect API with real-time websocket feed',
-    apiType: 'indian',
-    icon: Landmark,
   },
 ];
 

@@ -1,5 +1,5 @@
 export type ApiType = 'indian' | 'crypto';
-export type IndianProviderId = 'fyers' | 'flattrade';
+export type IndianProviderId = 'fyers';
 export type CryptoProviderId = 'binance';
 export type BrokerProviderId = IndianProviderId | CryptoProviderId;
 
@@ -8,14 +8,6 @@ export interface FyersCredentials {
   secret: string;
   redirectUri: string;
   accessToken?: string;
-}
-
-export interface FlattradeCredentials {
-  userId: string;
-  apiKey: string;
-  apiSecret: string;
-  redirectUri: string;
-  token?: string;
 }
 
 export interface BinanceCredentials {
@@ -27,7 +19,6 @@ export interface BrokerSettings {
   apiType: ApiType;
   provider: BrokerProviderId;
   fyers: FyersCredentials;
-  flattrade: FlattradeCredentials;
   binance: BinanceCredentials;
 }
 

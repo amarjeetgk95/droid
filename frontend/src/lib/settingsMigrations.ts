@@ -139,11 +139,11 @@ export function migrateSchemaVersion(settings: AppSettings): AppSettings {
   if (v >= CURRENT_SCHEMA_VERSION) {
     return { ...settings, schemaVersion: CURRENT_SCHEMA_VERSION };
   }
-  // v1 → v2: add schemaVersion, ensure broker.flattrade exists, ensure taskModels etc.
+  // v1 → v2: add schemaVersion, ensure broker.binance exists, ensure taskModels etc.
   let out = { ...settings, schemaVersion: CURRENT_SCHEMA_VERSION } as AppSettings;
-  // Ensure flattrade branch exists (some v1 exports lacked it)
-  if (!out.broker.flattrade) {
-    out = { ...out, broker: { ...out.broker, flattrade: DEFAULT_SETTINGS.broker.flattrade } };
+  // If legacy settings had flattrade as provider, migrate to fyers
+  if ((out.broker?.provider as string) === 'flattrade') {
+    out = { ...out, broker: { ...out.broker, provider: 'fyers' } };
   }
   if (!out.broker.binance) {
     out = { ...out, broker: { ...out.broker, binance: DEFAULT_SETTINGS.broker.binance } };

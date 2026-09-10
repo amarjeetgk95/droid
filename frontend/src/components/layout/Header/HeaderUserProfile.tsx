@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { BarChart2, ChevronDown, LogOut, Settings } from 'lucide-react';
+import { ChevronDown, LogOut, Settings } from 'lucide-react';
 
 export function HeaderUserProfile() {
   const { user, signOut } = useAuth();
@@ -80,14 +80,6 @@ export function HeaderUserProfile() {
         >
           <Settings className="w-3.5 h-3.5 text-muted-foreground" />
           <span>Terminal & Broker Settings</span>
-        </DropdownMenuItem>
-
-        <DropdownMenuItem
-          onClick={() => router.push('/paper-trading')}
-          className="cursor-pointer text-xs flex items-center gap-2 py-2 rounded-md hover:bg-secondary"
-        >
-          <BarChart2 className="w-3.5 h-3.5 text-muted-foreground" />
-          <span>Paper Trading Portfolio</span>
         </DropdownMenuItem>
 
         <DropdownMenuSeparator className="bg-border my-1.5" />

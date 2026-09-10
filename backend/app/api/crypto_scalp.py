@@ -510,6 +510,9 @@ async def bulk_delete_crypto_trades(
     """
     from app.crypto_scalp.persistence import delete_execution_record
 
+    if req.delete_all and not req.confirm_all and not req.trade_ids and not req.before_ms:
+        raise HTTPException(status_code=400, detail="Bulk delete-all needs confirm_all=true.")
+
     ids: list[str] = []
     seen: set[str] = set()
 
@@ -547,8 +550,6 @@ async def bulk_delete_crypto_trades(
 
     if not ids:
         raise HTTPException(status_code=400, detail="Nothing selected: pass trade_ids or a filter (before_ms/symbol/position_state/outcome/delete_all).")
-    if req.delete_all and not req.confirm_all and not req.trade_ids and not req.before_ms:
-        raise HTTPException(status_code=400, detail="Bulk delete-all needs confirm_all=true.")
     ids = ids[:500]
 
     deleted: list[str] = []

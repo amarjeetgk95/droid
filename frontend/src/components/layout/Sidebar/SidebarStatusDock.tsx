@@ -116,12 +116,12 @@ export function SidebarStatusDock({
 
   // Expanded Mode Dock — status card + full-width Settings
   return (
-    <div className="flex flex-col gap-1.5 p-2 border-t border-border/70 shrink-0 select-none">
+    <div className="flex flex-col gap-2 p-3 border-t border-border/70 shrink-0 select-none bg-gradient-to-b from-transparent to-muted/40">
       {/* Gateway status line */}
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <div
-            className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 border border-border/50 cursor-default min-h-8"
+            className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-card border border-border shadow-[0_1px_2px_rgb(15_30_51/0.05)] cursor-default min-h-9"
             role="status"
             aria-label={`${gatewayLabel} feed ${statusText}`}
           >

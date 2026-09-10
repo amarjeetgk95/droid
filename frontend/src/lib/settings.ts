@@ -14,7 +14,6 @@ export * from './settingsSupabase';
 export {
   BrokerSettingsSchema,
   FyersCredentialsSchema,
-  FlattradeCredentialsSchema,
   BinanceCredentialsSchema,
   QuantitativeSettingsSchema,
   AISettingsSchema,

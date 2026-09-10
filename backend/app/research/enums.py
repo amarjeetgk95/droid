@@ -30,6 +30,7 @@ class Direction(str, Enum):
 
 
 class ForecastHorizon(str, Enum):
+    HORIZON_1M = "1m"
     HORIZON_5M = "5m"
     HORIZON_15M = "15m"
     HORIZON_30M = "30m"

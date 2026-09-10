@@ -1,7 +1,7 @@
 'use client';
 
+import { Card, fmtNum } from '@/components/ui/desk';
 import { OptionChainStrikeRow } from '@/lib/types';
-import { Activity } from 'lucide-react';
 
 export function IVSmileChart({
   strikes,
@@ -32,63 +32,39 @@ export function IVSmileChart({
   const maxIv = Math.ceil(Math.max(...allIvs, 25)) + 2;
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-xs">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          <h3 className="font-bold text-sm text-foreground">Implied Volatility Smile & Skew</h3>
-        </div>
-        <div className="flex items-center gap-4 text-xs">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-primary" /> Call IV (CE)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-warning" /> Put IV (PE)
-          </span>
-        </div>
-      </div>
-
-      {/* SVG Line / Dot Plot */}
-      <div className="h-56 w-full flex items-end gap-1 pt-4 pb-6 px-2 overflow-x-auto border-b border-border">
+    <Card
+      title="IV smile & skew"
+      meta={`ATM ${atmStrike} · IV ${minIv}%–${maxIv}%`}
+    >
+      <div
+        style={{ height: 224, display: 'flex', alignItems: 'flex-end', gap: 4, padding: '16px 8px 28px', overflowX: 'auto', borderBottom: '1px solid var(--ds-border)' }}
+      >
         {validPoints.map((pt) => {
           const ceHeight = pt.ce_iv ? ((pt.ce_iv - minIv) / (maxIv - minIv)) * 100 : null;
           const peHeight = pt.pe_iv ? ((pt.pe_iv - minIv) / (maxIv - minIv)) * 100 : null;
 
           return (
-            <div key={pt.strike} className="flex-1 min-w-[28px] h-full flex flex-col justify-end items-center relative group">
-              {/* Tooltip */}
-              <div className="absolute -top-12 z-30 hidden group-hover:flex flex-col items-center bg-popover text-popover-foreground text-[10px] px-2 py-1 rounded shadow-md pointer-events-none whitespace-nowrap border border-border">
-                <span>Strike: {pt.strike}</span>
-                {pt.ce_iv && <span className="text-primary">Call IV: {pt.ce_iv}%</span>}
-                {pt.pe_iv && <span className="text-warning">Put IV: {pt.pe_iv}%</span>}
-              </div>
-
-              {/* ATM Reference Line */}
+            <div
+              key={pt.strike}
+              title={`Strike ${pt.strike}${pt.ce_iv ? ` · Call IV ${fmtNum(pt.ce_iv, 1)}%` : ''}${pt.pe_iv ? ` · Put IV ${fmtNum(pt.pe_iv, 1)}%` : ''}`}
+              style={{ flex: 1, minWidth: 28, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', position: 'relative' }}
+            >
               {pt.is_atm && (
-                <div className="absolute inset-0 w-0.5 bg-primary/40 mx-auto border-dashed" />
+                <div style={{ position: 'absolute', inset: 0, width: 1, margin: '0 auto', background: 'var(--ds-border-strong)' }} />
               )}
-
-              {/* CE IV Dot */}
               {ceHeight !== null && (
                 <div
-                  style={{ bottom: `${Math.min(95, Math.max(5, ceHeight))}%` }}
-                  className="absolute w-2 h-2 rounded-full bg-primary ring-1 ring-primary/60"
+                  style={{ position: 'absolute', bottom: `${Math.min(95, Math.max(5, ceHeight))}%`, width: 8, height: 8, borderRadius: 999, background: 'var(--ds-accent)' }}
                 />
               )}
-
-              {/* PE IV Dot */}
               {peHeight !== null && (
                 <div
-                  style={{ bottom: `${Math.min(95, Math.max(5, peHeight))}%` }}
-                  className="absolute w-2 h-2 rounded-full bg-warning ring-1 ring-warning/60"
+                  style={{ position: 'absolute', bottom: `${Math.min(95, Math.max(5, peHeight))}%`, width: 8, height: 8, borderRadius: 999, background: 'var(--ds-warn)' }}
                 />
               )}
-
-              {/* Label */}
               <span
-                className={`text-[9px] font-mono absolute -bottom-5 transform -rotate-45 origin-top-left ${
-                  pt.is_atm ? 'text-primary font-bold' : 'text-muted-foreground'
-                }`}
+                className="mono"
+                style={{ fontSize: 9, position: 'absolute', bottom: -20, transform: 'rotate(-45deg)', transformOrigin: 'top left', color: pt.is_atm ? 'var(--ds-accent-ink)' : 'var(--ds-ink-3)', fontWeight: pt.is_atm ? 700 : 400 }}
               >
                 {pt.strike}
               </span>
@@ -97,10 +73,18 @@ export function IVSmileChart({
         })}
       </div>
 
-      <div className="flex justify-between text-[11px] text-muted-foreground px-2">
-        <span>ATM Strike: {atmStrike}</span>
-        <span>IV Range: {minIv}% — {maxIv}%</span>
+      <div className="toolbar" style={{ marginTop: 8 }}>
+        <span className="faint" style={{ fontSize: 11 }}>
+          <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: 'var(--ds-accent)', marginRight: 5 }} />
+          Call IV (CE)
+        </span>
+        <span className="faint" style={{ fontSize: 11 }}>
+          <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: 'var(--ds-warn)', marginRight: 5 }} />
+          Put IV (PE)
+        </span>
+        <span className="spacer" />
+        <span className="faint num" style={{ fontSize: 11 }}>ATM {atmStrike}</span>
       </div>
-    </div>
+    </Card>
   );
 }

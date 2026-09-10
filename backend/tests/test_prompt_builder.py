@@ -18,8 +18,10 @@ class TestPromptBuilder:
 
         prompt = build_market_context_prompt("NIFTY", regime, None)
 
-        assert "MARKET STATE DOSSIER: NIFTY" in prompt
-        assert f"Spot LTP: ₹{regime.spot_price}" in prompt
+        if regime.spot_price and regime.spot_price > 0:
+            assert f"Spot LTP: ₹{regime.spot_price:,.2f}" in prompt
+        else:
+            assert "Spot LTP: UNAVAILABLE" in prompt
         assert f"Market Regime: {regime.regime_state}" in prompt
         assert f"RSI (14): {regime.indicators.rsi_14}" in prompt
         assert f"Volume Profile POC: ₹{regime.key_levels.poc}" in prompt

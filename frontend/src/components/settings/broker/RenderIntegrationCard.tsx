@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Server, Copy, Check, ExternalLink, Loader2 } from 'lucide-react';
 import type { BrokerSettings } from '@/lib/settings';
-import { REDIRECT_BASE, FYERS_LOGIN_URL, FLATTRADE_LOGIN_URL } from './constants';
+import { REDIRECT_BASE, FYERS_LOGIN_URL } from './constants';
 import { SettingSection, SettingRow } from '../ui/SettingPrimitives';
 import { openBrokerAuth } from '@/lib/brokerAuth';
 import { cn } from '@/lib/utils';
@@ -27,8 +27,8 @@ export function RenderIntegrationCard({ settings }: Props) {
     return () => window.removeEventListener('broker:authenticated', handleAuth);
   }, []);
 
-  const handleCopyRedirect = (provider: 'fyers' | 'flattrade') => {
-    const uri = `${REDIRECT_BASE}/${provider}/callback`;
+  const handleCopyRedirect = () => {
+    const uri = `${REDIRECT_BASE}/fyers/callback`;
     navigator.clipboard.writeText(uri);
     setCopiedRedirect(true);
     setTimeout(() => setCopiedRedirect(false), 2000);
@@ -36,23 +36,16 @@ export function RenderIntegrationCard({ settings }: Props) {
 
   if (settings.apiType !== 'indian') return null;
 
-  const fyersServerLoginUrl = FYERS_LOGIN_URL;
-  const flattradeServerLoginUrl = FLATTRADE_LOGIN_URL;
-  const providerKey = settings.provider === 'fyers' ? 'fyers' : 'flattrade';
-  const portalUrl =
-    settings.provider === 'fyers'
-      ? 'https://myapi.fyers.in/dashboard'
-      : 'https://wallconnect.flattrade.in/';
-  const portalName = settings.provider === 'fyers' ? 'Fyers Portal' : 'WallConnect Portal';
+  const portalUrl = 'https://myapi.fyers.in/dashboard';
+  const portalName = 'Fyers Portal';
 
   const handleAuthorize = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsAuthorizing(true);
     setAuthSuccess(false);
-    const loginUrl = settings.provider === 'fyers' ? fyersServerLoginUrl : flattradeServerLoginUrl;
     openBrokerAuth({
-      provider: settings.provider,
-      loginUrl,
+      provider: 'fyers',
+      loginUrl: FYERS_LOGIN_URL,
       onSuccess: () => {
         setIsAuthorizing(false);
         setAuthSuccess(true);
@@ -86,15 +79,15 @@ export function RenderIntegrationCard({ settings }: Props) {
     >
       <SettingRow
         label="OAuth Redirect URL"
-        description={`Set this exact callback URI in your ${settings.provider === 'fyers' ? 'Fyers' : 'Flattrade'} developer app console.`}
+        description="Set this exact callback URI in your Fyers developer app console."
       >
         <div className="flex items-center gap-2">
           <code className="text-xs font-mono bg-secondary px-2 py-1 rounded border border-border/50 text-foreground">
-            {REDIRECT_BASE}/{providerKey}/callback
+            {REDIRECT_BASE}/fyers/callback
           </code>
           <button
             type="button"
-            onClick={() => handleCopyRedirect(providerKey)}
+            onClick={handleCopyRedirect}
             className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-secondary/80 text-foreground rounded text-xs font-medium transition-colors border border-border/60 cursor-pointer"
           >
             {copiedRedirect ? (
@@ -132,16 +125,16 @@ export function RenderIntegrationCard({ settings }: Props) {
           {authSuccess ? (
             <>
               <Check className="w-3.5 h-3.5" />
-              <span>{settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'} Connected!</span>
+              <span>FYERS Connected!</span>
             </>
           ) : isAuthorizing ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Authorizing {settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'}…</span>
+              <span>Authorizing FYERS…</span>
             </>
           ) : (
             <>
-              <span>Authorize with {settings.provider === 'fyers' ? 'FYERS' : 'Flattrade'}</span>
+              <span>Authorize with FYERS</span>
               <ExternalLink className="w-3 h-3" />
             </>
           )}

@@ -1,7 +1,7 @@
 'use client';
 
+import { Card, Stat, fmtINR, fmtNum } from '@/components/ui/desk';
 import { OptionsAnalytics } from '@/lib/types';
-import { Target, Calendar, ShieldCheck } from 'lucide-react';
 
 export function OptionsHeader({
   analytics,
@@ -25,129 +25,105 @@ export function OptionsHeader({
   const symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-4 shadow-sm">
-      {/* Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Symbol Selector */}
-        <div className="flex items-center gap-2">
+    <Card
+      title="Options desk"
+      meta={`${selectedSymbol}${selectedExpiry ? ` · ${selectedExpiry}` : ''}`}
+    >
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="Underlying">
           {symbols.map((sym) => (
             <button
               key={sym}
+              type="button"
+              className="seg-btn"
+              data-active={selectedSymbol === sym}
+              aria-pressed={selectedSymbol === sym}
               onClick={() => onSelectSymbol(sym)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                selectedSymbol === sym
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground'
-              }`}
             >
               {sym}
             </button>
           ))}
         </div>
-
-        {/* Expiry & View Controls */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs bg-secondary px-2.5 py-1 rounded-lg border border-border">
-            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground">Expiry:</span>
-            <select
-              value={selectedExpiry}
-              onChange={(e) => onSelectExpiry(e.target.value)}
-              className="bg-transparent text-foreground font-semibold focus:outline-hidden cursor-pointer"
-            >
-              {expiries.map((exp) => (
-                <option key={exp} value={exp} className="bg-card text-foreground">
-                  {exp}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center bg-secondary p-0.5 rounded-lg border border-border text-xs">
-            <button
-              onClick={() => onToggleViewMode('standard')}
-              className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
-                viewMode === 'standard' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
-              }`}
-            >
-              Standard
-            </button>
-            <button
-              onClick={() => onToggleViewMode('greeks')}
-              className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
-                viewMode === 'greeks' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
-              }`}
-            >
-              Greeks (Δ, Γ, Θ, V)
-            </button>
-          </div>
+        <span className="spacer" />
+        <label className="muted" style={{ fontSize: 12 }} htmlFor="options-expiry">
+          Expiry
+        </label>
+        <select
+          id="options-expiry"
+          value={selectedExpiry}
+          onChange={(e) => onSelectExpiry(e.target.value)}
+          className="btn"
+          style={{ fontWeight: 600 }}
+        >
+          {expiries.map((exp) => (
+            <option key={exp} value={exp}>
+              {exp}
+            </option>
+          ))}
+        </select>
+        <div className="seg" role="group" aria-label="Chain view">
+          <button
+            type="button"
+            className="seg-btn"
+            data-active={viewMode === 'standard'}
+            aria-pressed={viewMode === 'standard'}
+            onClick={() => onToggleViewMode('standard')}
+          >
+            Standard
+          </button>
+          <button
+            type="button"
+            className="seg-btn"
+            data-active={viewMode === 'greeks'}
+            aria-pressed={viewMode === 'greeks'}
+            onClick={() => onToggleViewMode('greeks')}
+          >
+            Greeks
+          </button>
         </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">Spot LTP</span>
-          <span className="text-base font-bold text-foreground font-mono">
-            {analytics?.spot_price ? `₹${analytics.spot_price.toLocaleString('en-IN')}` : '---'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">
-            Fut: ₹{analytics?.futures_price ? analytics.futures_price.toLocaleString('en-IN') : '---'}
-          </span>
-        </div>
-
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">ATM Strike</span>
-          <span className="text-base font-bold text-primary font-mono">
-            {analytics?.atm_strike ? analytics.atm_strike.toLocaleString('en-IN') : '---'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">
-            IV: {analytics?.atm_iv ? `${analytics.atm_iv}%` : '---'}
-          </span>
-        </div>
-
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">PCR (OI)</span>
-          <span className={`text-base font-bold font-mono ${
-            (analytics?.pcr_oi ?? 1) >= 1.2 ? 'text-success' : (analytics?.pcr_oi ?? 1) <= 0.8 ? 'text-destructive' : 'text-foreground'
-          }`}>
-            {analytics?.pcr_oi ?? '---'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">
-            Vol PCR: {analytics?.pcr_volume ?? '---'}
-          </span>
-        </div>
-
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <Target className="w-3 h-3 text-warning" /> Max Pain
-          </span>
-          <span className="text-base font-bold text-warning font-mono">
-            {analytics?.max_pain_strike ? analytics.max_pain_strike.toLocaleString('en-IN') : '---'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">Least Option Payout</span>
-        </div>
-
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground block">Days To Expiry</span>
-          <span className="text-base font-bold text-foreground font-mono">
-            {analytics?.time_to_expiry_days !== undefined ? `${analytics.time_to_expiry_days}d` : '---'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block">ACT/365 Precision</span>
-        </div>
-
-        <div className="bg-secondary/60 p-3 rounded-lg border border-border">
-          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3 text-primary" /> Risk-Free Rate
-          </span>
-          <span className="text-base font-bold text-foreground font-mono">
-            {analytics?.risk_free_rate ? `${(analytics.risk_free_rate * 100).toFixed(2)}%` : '6.75%'}
-          </span>
-          <span className="text-[10px] text-muted-foreground block truncate" title={analytics?.rate_source}>
-            IN Benchmark
-          </span>
-        </div>
+      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 12 }}>
+        <Stat
+          label="Spot LTP"
+          value={analytics?.spot_price ? fmtINR(analytics.spot_price) : '—'}
+          sub={analytics?.futures_price ? `Fut ${fmtINR(analytics.futures_price)}` : 'Fut —'}
+        />
+        <Stat
+          label="ATM strike"
+          value={analytics?.atm_strike ? Number(analytics.atm_strike).toLocaleString('en-IN') : '—'}
+          sub={analytics?.atm_iv ? `IV ${fmtNum(analytics.atm_iv, 1)}%` : 'IV —'}
+        />
+        <Stat
+          label="PCR (OI)"
+          value={analytics?.pcr_oi ?? '—'}
+          sub={analytics?.pcr_volume != null ? `Vol PCR ${analytics.pcr_volume}` : 'Vol PCR —'}
+          tone={
+            analytics?.pcr_oi == null
+              ? 'neut'
+              : analytics.pcr_oi >= 1.2
+                ? 'bull'
+                : analytics.pcr_oi <= 0.8
+                  ? 'bear'
+                  : 'neut'
+          }
+        />
+        <Stat
+          label="Max pain"
+          value={analytics?.max_pain_strike ? Number(analytics.max_pain_strike).toLocaleString('en-IN') : '—'}
+          sub="Least option payout"
+        />
+        <Stat
+          label="Days to expiry"
+          value={analytics?.time_to_expiry_days !== undefined ? `${analytics.time_to_expiry_days}d` : '—'}
+          sub="ACT/365"
+        />
+        <Stat
+          label="Risk-free rate"
+          value={analytics?.risk_free_rate ? `${(analytics.risk_free_rate * 100).toFixed(2)}%` : '6.75%'}
+          sub={analytics?.rate_source ? String(analytics.rate_source) : 'IN benchmark'}
+        />
       </div>
-    </div>
+    </Card>
   );
 }

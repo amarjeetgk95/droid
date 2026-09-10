@@ -92,30 +92,23 @@ export const SidebarNavItem = memo(function SidebarNavItem({
       onMouseEnter={handleMouseEnter}
       onFocus={handleMouseEnter}
       className={cn(
-        'group relative flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors duration-150 ease-out',
+        'group relative flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ease-out select-none',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0',
-        collapsed ? 'justify-center w-9 h-9 mx-auto' : 'w-full px-2.5 py-2 min-h-9',
+        collapsed ? 'justify-center w-10 h-10 mx-auto' : 'w-full px-2.5 py-2 min-h-9',
         active
           ? collapsed
-            ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30'
-            : 'bg-primary/[0.10] text-primary font-semibold ring-1 ring-primary/20'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground active:bg-accent',
+            ? 'text-white shadow-[0_4px_14px_-4px_rgb(36_86_230/0.5)]'
+            : 'bg-primary/[0.08] dark:bg-primary/[0.14] text-primary font-semibold ring-1 ring-primary/15 dark:ring-primary/25 shadow-[0_1px_2px_rgba(36_86_230,0.04)]'
+          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground active:bg-accent/80',
       )}
+      style={active && collapsed ? { background: 'var(--ds-accent-gradient)' } : undefined}
     >
-      {/* Active left indicator pill when expanded */}
-      {active && !collapsed && (
-        <span
-          className="absolute left-1 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary"
-          aria-hidden
-        />
-      )}
-
       <Icon
         className={cn(
           'shrink-0 w-4 h-4 transition-colors duration-150',
           active
             ? collapsed
-              ? 'text-primary-foreground'
+              ? 'text-white'
               : 'text-primary'
             : 'opacity-70 group-hover:opacity-100 group-hover:text-foreground',
         )}

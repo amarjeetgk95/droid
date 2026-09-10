@@ -2,9 +2,32 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from app.main import app
+from datetime import datetime, timezone
+from app.models.market import NormalizedQuote, DataStatus
 from app.ai.schemas import AISignal, Decision, SetupType, Regime, ValidationStatus, ExecutionDecision
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_market_quote():
+    quote = NormalizedQuote(
+        symbol="NIFTY 50",
+        display_name="NIFTY 50",
+        timestamp=datetime.now(timezone.utc),
+        ltp=24100.0,
+        open=24000.0,
+        high=24200.0,
+        low=23950.0,
+        previous_close=24000.0,
+        change=100.0,
+        change_percent=0.42,
+        volume=1000000,
+        status=DataStatus.LIVE,
+        provider="fyers",
+    )
+    with patch("app.services.market_service.MarketService.get_quote", new_callable=AsyncMock, return_value=quote):
+        yield
 
 
 def test_deep_insight_without_keys():

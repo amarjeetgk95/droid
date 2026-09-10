@@ -13,6 +13,7 @@ from datetime import date, datetime
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 import structlog
+import threading
 
 logger = structlog.get_logger()
 
@@ -88,57 +89,64 @@ class PortfolioGreeksLedger:
     def __init__(self, limits: Optional[PortfolioRiskLimits] = None):
         self.limits = limits or PortfolioRiskLimits()
         self._positions: dict[str, PortfolioGreekPosition] = {}
+        self._lock = threading.RLock()
 
     def clear(self) -> None:
         """Reset ledger (primarily for testing)."""
-        self._positions.clear()
+        with self._lock:
+            self._positions.clear()
 
     def add_position(self, position: PortfolioGreekPosition) -> None:
-        self._positions[position.position_id] = position
-        logger.info(
-            "portfolio_greek_position_added",
-            position_id=position.position_id,
-            underlying=position.underlying,
-            horizon=position.horizon,
-            delta=position.total_delta,
-            theta=position.total_theta_day,
-        )
+        with self._lock:
+            if position.position_id in self._positions:
+                logger.warning("portfolio_position_overwritten", position_id=position.position_id)
+            self._positions[position.position_id] = position
+            logger.info(
+                "portfolio_greek_position_added",
+                position_id=position.position_id,
+                underlying=position.underlying,
+                horizon=position.horizon,
+                delta=position.total_delta,
+                theta=position.total_theta_day,
+            )
 
     def remove_position(self, position_id: str) -> Optional[PortfolioGreekPosition]:
-        return self._positions.pop(position_id, None)
+        with self._lock:
+            return self._positions.pop(position_id, None)
 
     def get_summary(self) -> PortfolioGreeksSummary:
-        total_delta = 0.0
-        total_gamma = 0.0
-        total_theta = 0.0
-        total_vega = 0.0
-        by_und: dict[str, float] = {}
-        by_horiz: dict[str, int] = {}
-        by_exp: dict[str, int] = {}
+        with self._lock:
+            total_delta = 0.0
+            total_gamma = 0.0
+            total_theta = 0.0
+            total_vega = 0.0
+            by_und: dict[str, float] = {}
+            by_horiz: dict[str, int] = {}
+            by_exp: dict[str, int] = {}
 
-        for p in self._positions.values():
-            total_delta += p.total_delta
-            total_gamma += p.total_gamma
-            total_theta += p.total_theta_day
-            total_vega += p.total_vega
+            for p in self._positions.values():
+                total_delta += p.total_delta
+                total_gamma += p.total_gamma
+                total_theta += p.total_theta_day
+                total_vega += p.total_vega
 
-            by_und[p.underlying] = round(by_und.get(p.underlying, 0.0) + p.total_delta, 2)
-            by_horiz[p.horizon] = by_horiz.get(p.horizon, 0) + 1
-            by_exp[p.expiry_date] = by_exp.get(p.expiry_date, 0) + p.quantity
+                by_und[p.underlying] = round(by_und.get(p.underlying, 0.0) + p.total_delta, 2)
+                by_horiz[p.horizon] = by_horiz.get(p.horizon, 0) + 1
+                by_exp[p.expiry_date] = by_exp.get(p.expiry_date, 0) + p.quantity
 
-        total_qty = sum(by_exp.values())
-        exp_pct = {k: round(v / total_qty * 100.0, 1) for k, v in by_exp.items()} if total_qty > 0 else {}
+            total_qty = sum(by_exp.values())
+            exp_pct = {k: round(v / total_qty * 100.0, 1) for k, v in by_exp.items()} if total_qty > 0 else {}
 
-        return PortfolioGreeksSummary(
-            total_delta=round(total_delta, 2),
-            total_gamma=round(total_gamma, 4),
-            total_theta_day=round(total_theta, 2),
-            total_vega=round(total_vega, 2),
-            net_exposure_by_underlying=by_und,
-            positions_by_horizon=by_horiz,
-            expiry_concentrations=exp_pct,
-            total_open_positions=len(self._positions),
-        )
+            return PortfolioGreeksSummary(
+                total_delta=round(total_delta, 2),
+                total_gamma=round(total_gamma, 4),
+                total_theta_day=round(total_theta, 2),
+                total_vega=round(total_vega, 2),
+                net_exposure_by_underlying=by_und,
+                positions_by_horizon=by_horiz,
+                expiry_concentrations=exp_pct,
+                total_open_positions=len(self._positions),
+            )
 
     def evaluate_marginal_trade(
         self,

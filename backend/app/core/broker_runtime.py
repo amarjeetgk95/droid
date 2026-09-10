@@ -31,7 +31,6 @@ logger = structlog.get_logger()
 # mapping of provider-constructor arg -> saved field name.
 _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "fyers": "fyers",
-    "flattrade": "flattrade",
     "binance": "binance",
 }
 
@@ -46,12 +45,6 @@ _PROVIDER_CRED_ALIASES: Dict[str, Dict[str, tuple[str, ...]]] = {
         "secret_key": ("secret", "secret_key", "secretKey", "secretId", "secretID"),
         "access_token": ("access_token", "accessToken", "token", "access_token_key"),
     },
-    "flattrade": {
-        "user_id": ("userId", "user_id"),
-        "api_key": ("apiKey", "api_key"),
-        "api_secret": ("apiSecret", "api_secret"),
-        "token": ("token", "access_token", "accessToken", "session_token"),
-    },
     "binance": {
         "api_key": ("apiKey", "api_key"),
         "api_secret": ("apiSecret", "api_secret"),
@@ -60,7 +53,6 @@ _PROVIDER_CRED_ALIASES: Dict[str, Dict[str, tuple[str, ...]]] = {
 
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
-    "flattrade": {"user_id": "userId", "api_key": "apiKey", "api_secret": "apiSecret", "token": "token"},
     "binance": {"api_key": "apiKey", "api_secret": "apiSecret"},
 }
 
@@ -94,15 +86,6 @@ def _env_config() -> BrokerConfig:
             creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
         if cfg.fyers_access_token:
             creds["access_token"] = cfg.fyers_access_token.strip().strip("\"'")
-    elif provider == "flattrade":
-        if cfg.flattrade_user_id:
-            creds["user_id"] = cfg.flattrade_user_id.strip().strip("\"'")
-        if cfg.flattrade_api_key:
-            creds["api_key"] = cfg.flattrade_api_key.strip().strip("\"'")
-        if cfg.flattrade_api_secret:
-            creds["api_secret"] = cfg.flattrade_api_secret.strip().strip("\"'")
-        if cfg.flattrade_token:
-            creds["token"] = cfg.flattrade_token.strip().strip("\"'")
 
     return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
 
