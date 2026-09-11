@@ -9,13 +9,14 @@ import { api } from '@/lib/api';
 import { useSignalsStream } from '@/hooks/useSignalsStream';
 import {
   type ActiveRow,
-  type AuditRow,
+  type LedgerRow,
+  type LedgerSummary,
   asNum,
   asStr,
   getObj,
   isHiddenTab,
   toActiveRow,
-  toAuditRow,
+  toLedgerRow,
 } from './signalsNormalize';
 
 export type DeskFilter = 'ALL' | 'SCALP' | 'INTRADAY';
@@ -76,7 +77,8 @@ export function useSignalsData() {
   const [perfError, setPerfError] = useState<string | null>(null);
 
   /* audit ledger */
-  const [auditRows, setAuditRows] = useState<AuditRow[]>([]);
+  const [auditRows, setAuditRows] = useState<LedgerRow[]>([]);
+  const [auditSummary, setAuditSummary] = useState<LedgerSummary | null>(null);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [sanitizeBusy, setSanitizeBusy] = useState(false);
@@ -171,9 +173,18 @@ export function useSignalsData() {
     setAuditError(null);
     try {
       const res = await api.getSignalsAudit({ limit: 50 });
-      const raw = (res as unknown as Record<string, unknown>)?.trades;
+      const body = res as unknown as Record<string, unknown>;
+      const raw = body?.trades;
+      const sum = getObj(body?.summary);
       const list = Array.isArray(raw) ? raw : [];
-      setAuditRows(list.map(toAuditRow).filter((r): r is AuditRow => r !== null));
+      setAuditRows(list.map(toLedgerRow).filter((r): r is LedgerRow => r !== null));
+      setAuditSummary({
+        closed: asNum(sum?.total_closed ?? sum?.closed),
+        winRate: asNum(sum?.win_rate),
+        realized: asNum(sum?.net_realized_pnl),
+        unrealized: asNum(sum?.net_unrealized_pnl),
+        total: asNum(sum?.total_pnl),
+      });
     } catch (e) {
       setAuditRows([]);
       setAuditError(e instanceof Error ? e.message : 'audit unavailable');
@@ -236,13 +247,14 @@ export function useSignalsData() {
     const poll = setInterval(() => {
       if (isHiddenTab()) return;
       void loadActive();
+      void loadAudit();
     }, 15000);
     const clock = setInterval(() => setNow(Date.now()), 5000);
     return () => {
       clearInterval(poll);
       clearInterval(clock);
     };
-  }, [loadActive]);
+  }, [loadActive, loadAudit]);
 
   const sseRefresh = useCallback(() => {
     if (isHiddenTab()) return;
@@ -369,8 +381,9 @@ export function useSignalsData() {
     perf,
     perfLoading,
     perfError,
-    // history
+    // ledger
     auditRows,
+    auditSummary,
     auditLoading,
     auditError,
     sanitizeBusy,
@@ -390,7 +403,6 @@ export function useSignalsData() {
 }
 
 export default useSignalsData;
-
 
 
 

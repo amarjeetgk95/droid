@@ -11,7 +11,7 @@ import {
   Eraser,
   Gauge,
   BrainCircuit,
-  History,
+  Wallet,
   Play,
   Plus,
   RefreshCw,
@@ -103,6 +103,7 @@ export function SignalsDesk() {
     perfLoading,
     perfError,
     auditRows,
+    auditSummary,
     auditLoading,
     auditError,
     sanitizeBusy,
@@ -385,59 +386,93 @@ export function SignalsDesk() {
       <EmptyNote>No performance data yet.</EmptyNote>
     );
 
-  /* ---- compact history body (defensive) ---- */
+/* ---- P&L ledger (realized + live MTM) ---- */
 
-  const historyBody =
+  const pnlSigned = (v: number | null): string => {
+    if (v === null) return '-';
+    const sign = v > 0 ? '+' : '';
+    return `${sign}${fmtINR(v)}`;
+  };
+
+  const ledgerBody =
     auditLoading && auditRows.length === 0 ? (
       <Skeletons rows={5} />
     ) : auditError && auditRows.length === 0 ? (
       <div>
-        <EmptyNote>History unavailable - {auditError}</EmptyNote>
+        <EmptyNote>Ledger unavailable - {auditError}</EmptyNote>
         <div style={{ marginTop: 10 }}>
           <RetryButton onRetry={refreshAll} />
         </div>
       </div>
     ) : auditRows.length === 0 ? (
       <div className="sig-empty">
-        <History size={22} />
-        <p className="muted" style={{ margin: 0 }}>No completed paper trades yet.</p>
+        <Wallet size={22} />
+        <p className="muted" style={{ margin: 0 }}>No trades yet - the ledger fills as signals execute and square off.</p>
       </div>
     ) : (
-      <div className="tbl-scroll">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Closed</th>
-              <th>Symbol</th>
-              <th>Strategy</th>
-              <th>Dir</th>
-              <th>Status</th>
-              <th className="r">P&L</th>
-            </tr>
-          </thead>
-          <tbody>
-            {auditRows.map((r, i) => {
-              const t = asNum(r?.timeMs);
-              const sym = typeof r?.underlying === 'string' ? r.underlying : '-';
-              const strat = typeof r?.strategy === 'string' ? prettyKey(r.strategy) : '-';
-              const dir = typeof r?.direction === 'string' ? r.direction : '-';
-              const st = typeof r?.status === 'string' ? r.status : '-';
-              const pnl = asNum(r?.pnl);
-              return (
-                <tr key={typeof r?.id === 'string' ? r.id : `audit-${i}`}>
-                  <td className="num">{t === null ? '-' : fmtTimeMs(t)}</td>
-                  <td style={{ fontWeight: 700 }}>{sym}</td>
-                  <td style={{ fontSize: 12.5 }}>{strat}</td>
-                  <td><DirectionBadge direction={dir} /></td>
-                  <td><StateBadge state={st} /></td>
-                  <td className={`r num ${pnlTone(pnl)}`}>{pnl === null ? '-' : fmtINR(pnl)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div style={{ display: 'grid', gap: 14 }}>
+        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+          <div className="stat">
+            <div className="stat-l">Realised</div>
+            <div className={`stat-v num ${pnlTone(auditSummary?.realized ?? null)}`}>{pnlSigned(auditSummary?.realized ?? null)}</div>
+            <div className="stat-s num">{auditSummary ? `${auditSummary.closed ?? '-'} closed` : '-'}</div>
+          </div>
+          <div className="stat">
+            <div className="stat-l">Unrealised / live MTM</div>
+            <div className={`stat-v num ${pnlTone(auditSummary?.unrealized ?? null)}`}>{pnlSigned(auditSummary?.unrealized ?? null)}</div>
+            <div className="stat-s">open positions - live</div>
+          </div>
+          <div className="stat">
+            <div className="stat-l">Net P&L</div>
+            <div className={`stat-v num ${pnlTone(auditSummary?.total ?? null)}`}>{pnlSigned(auditSummary?.total ?? null)}</div>
+            <div className="stat-s num">{auditSummary ? (auditSummary.winRate === null ? '-' : `${auditSummary.winRate}% win rate`) : '-'}</div>
+          </div>
+        </div>
+
+        <div className="tbl-scroll">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Strategy</th>
+                <th>Dir</th>
+                <th>Status</th>
+                <th className="r">Entry</th>
+                <th className="r">Live / Exit</th>
+                <th className="r">Realised</th>
+                <th className="r">Unrealised</th>
+                <th className="r">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditRows.map((r, i) => {
+                const isOpen = !/(WON|LOST|CLOSED|SQUARED|STOP|TARGET_2|RUNNER)/.test(r.status.toUpperCase());
+                const livePrice = r.current ?? r.exit;
+                return (
+                  <tr key={typeof r.id === 'string' ? r.id : `ledger-${i}`}>
+                    <td className="num">{r.timeMs === null ? '-' : fmtTimeMs(r.timeMs)}</td>
+                    <td style={{ fontWeight: 700 }}>{r.underlying}</td>
+                    <td style={{ fontSize: 12.5 }}>{prettyKey(r.strategy)}</td>
+                    <td><DirectionBadge direction={r.direction} /></td>
+                    <td><StateBadge state={r.status} /></td>
+                    <td className="r num">{r.entry === null ? '-' : fmtINR(r.entry)}</td>
+                    <td className="r num" style={{ whiteSpace: 'nowrap' }}>
+                      {isOpen ? <span className="live-dot" style={{ width: 7, height: 7, marginRight: 6, verticalAlign: 'middle' }} /> : null}
+                      {livePrice === null ? '-' : fmtINR(livePrice)}
+                    </td>
+                    <td className={`r num ${pnlTone(r.realized)}`}>{pnlSigned(r.realized)}</td>
+                    <td className={`r num ${pnlTone(r.unrealized)}`}>{isOpen ? pnlSigned(r.unrealized) : '-'}</td>
+                    <td className={`r num ${pnlTone(r.total)}`}>{pnlSigned(r.total)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
+
 
   /* ---- confined layout: command header -> tabs -> single panel ---- */
 
@@ -534,7 +569,7 @@ export function SignalsDesk() {
           className={tab === 'history' ? 'tab is-active' : 'tab'}
           onClick={() => setTab('history')}
         >
-          <History size={13} />&nbsp;History
+          <Wallet size={13} />&nbsp;P&L ledger
         </button>
         <span className="spacer" />
         {tab === 'history' ? (
@@ -560,7 +595,7 @@ export function SignalsDesk() {
           ) : null}
           {tab === 'live' ? liveBody : null}
           {tab === 'performance' ? perfBody : null}
-          {tab === 'history' ? historyBody : null}
+          {tab === 'history' ? ledgerBody : null}
         </div>
       </section>
 

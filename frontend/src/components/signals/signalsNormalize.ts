@@ -1,4 +1,4 @@
-/* Defensive parsing + formatting shared by the signals desk.
+﻿/* Defensive parsing + formatting shared by the signals desk.
    Backend payloads vary across deploy versions; every field is coerced
    to a safe shape so the UI never crashes on partial data. */
 
@@ -52,9 +52,9 @@ export function pickMs(o: Record<string, unknown>, ...keys: string[]): number | 
 /* ---------------- formatting ---------------- */
 
 export function fmtTimeMs(ms: number | null): string {
-  if (ms === null) return '—';
+  if (ms === null) return 'â€”';
   const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
+  if (Number.isNaN(d.getTime())) return 'â€”';
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -62,7 +62,7 @@ export type TtlTone = 'ok' | 'warn' | 'expired';
 
 /** TTL countdown with a warning band under 2 minutes. */
 export function fmtTtl(expiresMs: number | null, now: number): { label: string; tone: TtlTone } {
-  if (expiresMs === null) return { label: '—', tone: 'ok' };
+  if (expiresMs === null) return { label: 'â€”', tone: 'ok' };
   const s = Math.round((expiresMs - now) / 1000);
   if (s <= 0) return { label: 'expired', tone: 'expired' };
   if (s < 60) return { label: `${s}s`, tone: s < 45 ? 'warn' : 'ok' };
@@ -73,16 +73,16 @@ export function fmtTtl(expiresMs: number | null, now: number): { label: string; 
 
 /** Distance of the trigger from the current spot. */
 export function fmtDist(trigger: number | null, spot: number | null): string {
-  if (trigger === null || spot === null || spot === 0) return '—';
+  if (trigger === null || spot === null || spot === 0) return 'â€”';
   const diff = trigger - spot;
   const pct = (diff / Math.abs(spot)) * 100;
   const sign = diff > 0 ? '+' : '';
   return `${sign}${diff.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
 }
 
-/** Confidence arrives as 0..1 or 0..100 depending on source — normalise to text. */
+/** Confidence arrives as 0..1 or 0..100 depending on source â€” normalise to text. */
 export function fmtConf(conf: number | null): string {
-  if (conf === null) return '—';
+  if (conf === null) return 'â€”';
   return conf > 1 ? `${conf.toFixed(1)}%` : `${Math.round(conf * 100)}%`;
 }
 
@@ -94,7 +94,7 @@ export function confPct(conf: number | null): number {
 }
 
 export function shortId(id: string): string {
-  return id.length > 10 ? `${id.slice(0, 8)}…` : id;
+  return id.length > 10 ? `${id.slice(0, 8)}â€¦` : id;
 }
 
 /** SCALP_BREAKOUT -> "scalp breakout" style labels. */
@@ -137,10 +137,10 @@ export function toActiveRow(s: unknown): ActiveRow | null {
     raw: o,
     id,
     timeMs: pickMs(o, 'created_at_ms', 'created_at', 'timestamp_ms', 'timestamp', 'created_at_iso'),
-    symbol: pickStr(o, 'underlying', 'instrument', 'symbol') ?? '—',
-    strategy: pickStr(o, 'strategy') ?? '—',
+    symbol: pickStr(o, 'underlying', 'instrument', 'symbol') ?? 'â€”',
+    strategy: pickStr(o, 'strategy') ?? 'â€”',
     direction: o.direction ?? o.bias ?? 'NEUTRAL',
-    state: pickStr(o, 'status', 'state', 'fsm_state') ?? '—',
+    state: pickStr(o, 'status', 'state', 'fsm_state') ?? 'â€”',
     confidence: pickNum(o, 'confidence', 'score'),
     trigger: pickNum(o, 'trigger_price', 'entry_price', 'trigger', 'entry'),
     sl: pickNum(o, 'stop_loss', 'sl', 'stop'),
@@ -153,33 +153,57 @@ export function toActiveRow(s: unknown): ActiveRow | null {
   };
 }
 
-export type AuditRow = {
+export type LedgerRow = {
   id: string;
   underlying: string;
   strategy: string;
   direction: unknown;
   status: string;
-  confidence: number | null;
-  pnl: number | null;
+  outcomeLabel: string | null;
+  isWinner: boolean | null;
+  side: string | null;
+  qty: number | null;
+  entry: number | null;
+  exit: number | null;
+  current: number | null;
+  realized: number | null;
+  unrealized: number | null;
+  total: number | null;
   timeMs: number | null;
 };
 
-export function toAuditRow(t: unknown): AuditRow | null {
+export function toLedgerRow(t: unknown): LedgerRow | null {
   const o = getObj(t);
   if (!o) return null;
   const id = pickStr(o, 'signal_id', 'id');
   if (!id) return null;
   return {
     id,
-    underlying: pickStr(o, 'underlying', 'instrument', 'symbol') ?? '—',
-    strategy: pickStr(o, 'strategy') ?? '—',
+    underlying: pickStr(o, 'underlying', 'instrument', 'symbol') ?? 'â€”',
+    strategy: pickStr(o, 'strategy') ?? 'â€”',
     direction: o.direction ?? 'NEUTRAL',
-    status: pickStr(o, 'status', 'state', 'fsm_state') ?? '—',
-    confidence: pickNum(o, 'confidence', 'score'),
-    pnl: pickNum(o, 'pnl', 'net_pnl', 'realized_pnl', 'pnl_points', 'profit_loss'),
-    timeMs: pickMs(o, 'closed_at_ms', 'closed_at', 'created_at_ms', 'created_at', 'timestamp_ms', 'timestamp'),
+    status: pickStr(o, 'status', 'state', 'fsm_state') ?? 'â€”',
+    outcomeLabel: pickStr(o, 'outcome_label', 'outcome'),
+    isWinner: typeof o.is_winner === 'boolean' ? o.is_winner : null,
+    side: pickStr(o, 'paper_side', 'side'),
+    qty: pickNum(o, 'quantity', 'qty'),
+    entry: pickNum(o, 'actual_fill_price', 'fill_price', 'entry_price', 'trigger_price'),
+    exit: pickNum(o, 'exit_price'),
+    current: pickNum(o, 'current_price', 'ltp'),
+    realized: pickNum(o, 'actual_pnl_inr', 'realized_pnl', 'pnl'),
+    unrealized: pickNum(o, 'unrealized_pnl_inr'),
+    total: pickNum(o, 'total_pnl_inr', 'net_pnl'),
+    timeMs: pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at', 'updated_at_utc', 'created_at_utc'),
   };
 }
+
+export type LedgerSummary = {
+  closed: number | null;
+  winRate: number | null;
+  realized: number | null;
+  unrealized: number | null;
+  total: number | null;
+};
 
 /* ---------------- semantic state tones ---------------- */
 
