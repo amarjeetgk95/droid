@@ -10,6 +10,7 @@ import {
   fmtSigned,
   toneFor,
 } from '@/components/ui/desk';
+import WhyPanel from '@/components/forecast/WhyPanel';
 
 export type HourForecastDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
@@ -33,6 +34,8 @@ export type HourForecast = {
   ml_forecast?: unknown;
   indicator_outputs?: unknown;
   prediction_id?: string;
+  explain?: unknown;
+  component_values?: Record<string, unknown> | null;
 };
 
 type ForecastCardProps = {
@@ -97,7 +100,7 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
     );
   }
 
-  if (error || !forecast) {
+  if (!forecast) {
     return (
       <section className="card" aria-label={outlookLabel}>
         <div className="card-hd">
@@ -105,7 +108,9 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
           <span className="card-meta">unavailable</span>
         </div>
         <div className="card-bd">
-          <EmptyNote>Forecast unavailable — the feed or model did not respond.</EmptyNote>
+          <EmptyNote>
+            Forecast unavailable — {error ? String(error) : 'the feed or model did not respond.'}
+          </EmptyNote>
           <div style={{ marginTop: 12 }}>
             <RetryButton onRetry={onRetry} />
           </div>
@@ -137,6 +142,27 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
             </span>
           ) : null}
         </div>
+        {error ? (
+          <div
+            role="alert"
+            className="muted"
+            style={{
+              marginBottom: 14,
+              padding: '8px 12px',
+              borderRadius: 10,
+              border: '1px solid var(--ds-border)',
+              background: 'var(--ds-inset)',
+              fontSize: 12.5,
+              display: 'flex',
+              gap: 10,
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>Showing last good forecast — refresh failed: {String(error)}</span>
+            <RetryButton onRetry={onRetry}>Retry</RetryButton>
+          </div>
+        ) : null}
 
         {/* verdict row */}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 28 }}>
@@ -236,6 +262,35 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
             );
           })}
         </div>
+
+        <hr className="divider" />
+
+        {/* explainability */}
+        <details
+          style={{
+            marginTop: 16,
+            border: '1px solid var(--ds-border)',
+            borderRadius: 12,
+            background: 'var(--ds-inset)',
+            padding: '10px 14px',
+          }}
+        >
+          <summary style={{ cursor: 'pointer', fontSize: 13.5, fontWeight: 750 }}>
+            Why this forecast? How &amp; why
+          </summary>
+          <WhyPanel
+            explain={
+              (forecast.explain as unknown) ??
+              (forecast.component_values?.explain as unknown) ??
+              null
+            }
+            fallbackLayerScores={forecast.layer_scores}
+            direction={forecast.direction}
+            confidence={forecast.confidence}
+            invalidationPrice={forecast.invalidation_price ?? null}
+            targetPrice={forecast.target_price ?? null}
+          />
+        </details>
       </div>
     </section>
   );

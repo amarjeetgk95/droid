@@ -240,7 +240,9 @@ class FyersProvider(MarketDataProvider):
             "15m": "15", "15": "15",
             "30m": "30", "30": "30",
             "1h": "60", "60m": "60", "60": "60",
+            "4h": "240", "240m": "240", "240": "240",
             "1D": "D", "1d": "D", "D": "D",
+            "1W": "W", "1w": "W", "W": "W",
         }
         res_str = res_map.get(resolution, "5")
 

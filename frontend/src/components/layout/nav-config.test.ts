@@ -17,8 +17,8 @@ describe('nav-config navigation layout', () => {
     expect(findNavItemByHref('/options')?.label).toBe('Derivatives');
   });
 
-  it('contains only forecast-first routes plus settings', () => {
-    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/markets', '/options', '/settings']);
+  it('contains only forecast-first routes plus signals and settings', () => {
+    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/markets', '/options', '/settings', '/signals']);
     for (const dead of [
       '/crypto',
       '/paper-trading',

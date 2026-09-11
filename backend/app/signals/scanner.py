@@ -6,24 +6,29 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone, time as dt_time
-from zoneinfo import ZoneInfo
+from datetime import UTC
+from datetime import time as dt_time
 from decimal import Decimal
-from typing import Optional, Any
+from typing import Any
+
 import structlog
 from pydantic import BaseModel, Field
 
+from app.signals.confluence import ARMED_THRESHOLD, confluence_engine
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying
-from app.signals.strategies.base import StrategyContext, SignalCandidate
-from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGIES, INTRADAY_STRATEGIES
-from app.signals.confluence import confluence_engine, ARMED_THRESHOLD
-from app.signals.fsm import signal_fsm, SignalInstance
-from app.signals.scalp_confirmation import scalp_confirmation_engine
 from app.signals.features.engine import compute_feature_snapshot
-from app.signals.participation.oi_volume_engine import participation_engine
+from app.signals.fsm import SignalInstance, signal_fsm
 from app.signals.orthogonal_confluence import orthogonal_confluence_engine
-from app.signals.risk.friction_gate import friction_gate
+from app.signals.participation.oi_volume_engine import participation_engine
 from app.signals.risk.cross_desk_arbiter import cross_desk_arbiter
+from app.signals.risk.friction_gate import friction_gate
+from app.signals.scalp_confirmation import scalp_confirmation_engine
+from app.signals.strategies import (
+    INTRADAY_STRATEGIES,
+    SCALP_STRATEGIES,
+    STRATEGY_REGISTRY,
+)
+from app.signals.strategies.base import SignalCandidate, StrategyContext
 
 logger = structlog.get_logger()
 
@@ -37,13 +42,13 @@ class ScanDiagnostics(BaseModel):
     data_quality: str = "UNKNOWN"  # LIVE | DEGRADED | OFFLINE
     quote_status: str = "UNKNOWN"
     provider: str = "UNKNOWN"
-    spot_price: Optional[float] = None
+    spot_price: float | None = None
     candles_count: int = 0
     strategies_evaluated: int = 0
     candidates_found: int = 0
     registered: int = 0
     reasons: list[str] = Field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
     duration_ms: int = 0
     throttled_signals_count: int = 0
     fno_degraded: bool = False
@@ -90,7 +95,7 @@ class SignalScanner:
         self,
         underlying: str,
         timeframe: str = "5M",
-        desk: Optional[str] = None,
+        desk: str | None = None,
     ) -> list[SignalCandidate]:
         started = time.time()
         u = validate_underlying(underlying)
@@ -106,13 +111,13 @@ class SignalScanner:
             self._last_diagnostics[f"{u}:{timeframe}"] = diag
             return []
 
-        from app.technical_analysis.analyzer import analyze_timeframe
         from app.multi_timeframe.alignment import compute_alignment
+        from app.technical_analysis.analyzer import analyze_timeframe
 
         market_svc = self._get_market_svc()
         try:
             quote = await asyncio.wait_for(market_svc.get_quote(u), timeout=8.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             diag.data_quality = "OFFLINE"
             diag.error = "quote_timeout_after_8s"
             diag.reasons.append("Quote fetch timed out — feed unreachable")
@@ -159,12 +164,13 @@ class SignalScanner:
         # ── Staleness gate: reject quotes older than scanner threshold ──
         if getattr(quote, "timestamp", None):
             try:
-                from datetime import datetime, timezone
+                from datetime import datetime
+
                 from app.core.config import settings
                 q_ts = quote.timestamp
                 if q_ts.tzinfo is None:
-                    q_ts = q_ts.replace(tzinfo=timezone.utc)
-                age_sec = (datetime.now(timezone.utc) - q_ts).total_seconds()
+                    q_ts = q_ts.replace(tzinfo=UTC)
+                age_sec = (datetime.now(UTC) - q_ts).total_seconds()
                 if age_sec > settings.scanner_quote_age_seconds:
                     diag.data_quality = "DEGRADED"
                     diag.error = f"stale_quote_{round(age_sec, 1)}s"
@@ -213,7 +219,7 @@ class SignalScanner:
                 timeout=8.0,
             )
             candles_dict = {tf_k: c_arr for tf_k, c_arr in tf_results if c_arr}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             diag.reasons.append("Candle fetch timed out — indicators degraded")
         except Exception as e:
             diag.reasons.append(f"Candle fetch failed: {str(e)[:120]}")
@@ -255,7 +261,7 @@ class SignalScanner:
         try:
             from app.fno.context import get_fno_context
             fno_data = await asyncio.wait_for(get_fno_context(u), timeout=6.0) or {}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             fno_degraded = True
             diag.reasons.append("F&O context timed out — PCR/OI degraded")
         except Exception as e:
@@ -546,9 +552,9 @@ class SignalScanner:
             logger.info("process_candidates_rejected_market_closed", reason=perm.reason)
             return [], [f"MARKET_CLOSED_{perm.reason}"]
 
-        from app.signals.trigger_gate import check_trigger_integrity
-        from app.signals.risk_engine import central_risk_engine, StrategySetup
         from app.algo.signal_fusion import conflict_resolver
+        from app.signals.risk_engine import StrategySetup, central_risk_engine
+        from app.signals.trigger_gate import check_trigger_integrity
 
         registered_signals: list[SignalInstance] = []
         rejected_gates: list[str] = []
@@ -662,8 +668,8 @@ class SignalScanner:
             # ── Centralized Risk Engine Validation with Event Risk Overlay (§28) ──
             overlay = None
             try:
-                from app.event_engine.service import event_engine_service
                 from app.event_engine.risk_overlay import event_risk_overlay_service
+                from app.event_engine.service import event_engine_service
                 events = event_engine_service.get_today_events()
                 overlay = event_risk_overlay_service.evaluate_overlay(cand.underlying, events)
             except Exception as ev_err:
@@ -832,6 +838,67 @@ class SignalScanner:
             fused_score = confluence_engine.fuse(cand, ai_result=ai_advice, ml_prediction=ml_pred)
             cand.overall_confidence = fused_score
 
+            # ── Immutable explain bundle (§explainability): pure, never throws ──
+            _explain = None
+            try:
+                from app.signals.confluence import ARMED_THRESHOLD as _armed_thr
+                from app.signals.confluence import DEFAULT_WEIGHTS as _wts
+                from app.signals.explain import build_signal_explain as _build_explain
+                _c_snap = getattr(cand, "context_snapshot", {}) or {}
+                _ind = _c_snap.get("indicators", {}) or {}
+                _fno = _c_snap.get("fno", {}) or {}
+                _mtf = _c_snap.get("mtf", {}) or {}
+                _inputs_snapshot = {
+                    "spot": float(_c_snap.get("spot_price") or cand.spot_price),
+                    "vwap": float(_c_snap.get("vwap") or cand.spot_price),
+                    "rsi": None,
+                    "adx": None,
+                    "volume_ratio": None,
+                    "pcr": None,
+                    "atm_iv": None,
+                    "regime": _c_snap.get("regime"),
+                    "mtf_bias": _mtf.get("overall_bias", _mtf.get("bias")),
+                    "indicators": _ind,
+                    "fno": _fno,
+                    "mtf": _mtf,
+                }
+                try:
+                    _inputs_snapshot["rsi"] = float(_ind.get("rsi") or (_ind.get("momentum") or {}).get("rsi"))
+                except Exception:
+                    pass
+                try:
+                    _inputs_snapshot["adx"] = float((_ind.get("momentum") or {}).get("adx") or _ind.get("adx"))
+                except Exception:
+                    pass
+                try:
+                    _inputs_snapshot["volume_ratio"] = float(
+                        _ind.get("volume_ratio") or (_ind.get("volume") or {}).get("ratio") or 1.0
+                    )
+                except Exception:
+                    pass
+                try:
+                    _inputs_snapshot["pcr"] = float(_fno.get("pcr", 1.0))
+                except Exception:
+                    pass
+                try:
+                    _inputs_snapshot["atm_iv"] = float(_fno.get("atm_iv", 14.5))
+                except Exception:
+                    pass
+                _data_health = {
+                    "fno_degraded": bool(fno_is_degraded),
+                    "vwap_degraded": bool(getattr(cand, "vwap_degraded", False)),
+                    "vwap_coverage_pct": float(getattr(cand, "vwap_coverage_pct", 100.0) or 100.0),
+                }
+                _weights_cfg = {"weights_fraction": dict(_wts), "version": 2}
+                _thr_cfg = {"armed": float(_armed_thr)}
+                _explain = _build_explain(
+                    cand, fused_score, ai_advice, ml_pred, overlay,
+                    _weights_cfg, _thr_cfg, rejected_gates,
+                    _inputs_snapshot, _data_health,
+                )
+            except Exception as _ex:
+                logger.debug("signal_explain_build_skipped", error=str(_ex))
+
             # Convert to FSM instance with Version 6.0 fields.
             # VALIDATED is watch-only (never auto-executed) — it is the
             # "armed but waiting" shelf the desk watches. Give it a 30-min
@@ -893,6 +960,7 @@ class SignalScanner:
                     "fno_degraded": fno_is_degraded,
                 },
                 rationale=cand.rationale,
+                explain=_explain,
                 option_contract=cand.option_contract.model_dump() if cand.option_contract else None,
                 greeks=cand.greeks,
                 expected_move=cand.expected_move,
@@ -927,7 +995,10 @@ class SignalScanner:
 
             # Enqueue Telegram notification
             try:
-                from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
+                from app.institutional.telegram_notifications import (
+                    SignalEvent,
+                    telegram_notification_queue,
+                )
                 ev = SignalEvent(
                     event_type="POSSIBLE_SETUP",
                     signal_id=instance.signal_id,
@@ -949,7 +1020,7 @@ class SignalScanner:
 
         return registered_signals, rejected_gates
 
-    def _cache_get(self, key: str) -> Optional[dict[str, Any]]:
+    def _cache_get(self, key: str) -> dict[str, Any] | None:
         entry = self._scan_cache.get(key)
         if not entry:
             return None
@@ -998,7 +1069,7 @@ class SignalScanner:
             return "DEGRADED", sorted(set(degraded))
         return "LIVE", []
 
-    async def scan_scalp(self, underlying: Optional[str] = None) -> dict[str, Any]:
+    async def scan_scalp(self, underlying: str | None = None) -> dict[str, Any]:
         """Scans 1M candles for Scalping setups (VWAP, Micro-Momentum, EMA Ribbon, Gamma Spike)."""
         if underlying:
             u = validate_underlying(underlying)
@@ -1031,7 +1102,7 @@ class SignalScanner:
         self._cache_put(cache_key, result)
         return result
 
-    async def scan_intraday(self, underlying: Optional[str] = None) -> dict[str, Any]:
+    async def scan_intraday(self, underlying: str | None = None) -> dict[str, Any]:
         """Scans 5M candles for Core Intraday setups (Breakout, Mean Rev, Trend Pullback, Gamma, ORB)."""
         if underlying:
             u = validate_underlying(underlying)

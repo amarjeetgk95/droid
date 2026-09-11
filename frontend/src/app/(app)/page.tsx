@@ -46,7 +46,9 @@ export default function ForecastHomePage() {
       setForecast(data as HourForecast);
       setLastUpdated(new Date());
     } catch (err) {
-      setForecast(null);
+      // Keep the last good forecast on screen (stale) instead of wiping to
+      // "unavailable" on every transient blip (cold start, rate limit, token
+      // expiry). Do NOT clear forecast here.
       setForecastError(err instanceof Error ? err.message : 'forecast unavailable');
     } finally {
       setForecastLoading(false);
@@ -56,6 +58,33 @@ export default function ForecastHomePage() {
   useEffect(() => {
     void loadForecast();
   }, [loadForecast]);
+
+  // Clear stale data when the user switches instrument/horizon so a 1H
+  // forecast is never shown mislabeled as 5M. Auto-refresh failures (same
+  // instrument/timeframe) keep the last good forecast via loadForecast.
+  useEffect(() => {
+    setForecast(null);
+    setForecastError(null);
+    setLastUpdated(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrument, timeframe]);
+
+  useEffect(() => {
+    const handleSelect = (e: Event) => {
+      const custom = e as CustomEvent<{ symbol?: string; displayName?: string }>;
+      const sym = custom.detail?.symbol;
+      if (!sym) return;
+      if (sym === 'NIFTY' || sym === 'NIFTY 50') {
+        setInstrument('NIFTY 50');
+      } else if (sym === 'BANKNIFTY') {
+        setInstrument('BANKNIFTY');
+      } else if (sym === 'SENSEX') {
+        setInstrument('SENSEX');
+      }
+    };
+    window.addEventListener('droid:select-instrument', handleSelect);
+    return () => window.removeEventListener('droid:select-instrument', handleSelect);
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {

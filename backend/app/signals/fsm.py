@@ -6,13 +6,14 @@ Terminal states: TARGET_2_HIT, STOP_LOSS_HIT, INVALIDATED, EXPIRED, CLOSED
 """
 from __future__ import annotations
 
+import threading
 import time
 import uuid
-import threading
 from decimal import Decimal
-from typing import Literal, Optional
-from pydantic import BaseModel, Field, computed_field
+from typing import Literal
+
 import structlog
+from pydantic import BaseModel, Field, computed_field
 
 logger = structlog.get_logger()
 
@@ -54,7 +55,7 @@ class FSMTransitionAudit(BaseModel):
     signal_id: str
     from_state: SignalFSMState
     to_state: SignalFSMState
-    market_price: Optional[Decimal] = None
+    market_price: Decimal | None = None
     reason_code: str = "STATE_UPDATE"
     processed_timestamp: int = Field(default_factory=lambda: int(time.time() * 1000))
     guard_snapshot: dict = Field(default_factory=dict)
@@ -108,7 +109,7 @@ def compute_option_friction_r(
     return round(friction_r, 4), breakdown
 
 
-def _spot_be_reference(sig: SignalInstance) -> Optional[Decimal]:
+def _spot_be_reference(sig: SignalInstance) -> Decimal | None:
     """
     Spot-domain breakeven reference for stop-loss ratchets.
 
@@ -123,7 +124,7 @@ def _spot_be_reference(sig: SignalInstance) -> Optional[Decimal]:
     try:
         trig = Decimal(str(sig.trigger or "0"))
     except Exception:
-        trig = Decimal("0")
+        trig = Decimal(0)
     # Prefer true fills only when they share the trigger's scale (spot fills
     # for spot-tracked signals). A premium fill is orders of magnitude below
     # an index trigger — reject it and fall through to the spot entry zone.
@@ -169,51 +170,52 @@ class SignalInstance(BaseModel):
     confidence: float
     confluence_breakdown: dict = Field(default_factory=dict)
     rationale: list[str] = Field(default_factory=list)
-    option_contract: Optional[dict] = None
+    explain: dict | None = None
+    option_contract: dict | None = None
 
     # Version 6.0 Desk & Risk Fields
     signal_type: str = "INTRADAY"  # SCALP, INTRADAY, SWING
     is_scalp: bool = False
-    initial_stop_loss: Optional[Decimal] = None
-    current_stop_loss: Optional[Decimal] = None
-    risk_r: Optional[Decimal] = None
+    initial_stop_loss: Decimal | None = None
+    current_stop_loss: Decimal | None = None
+    risk_r: Decimal | None = None
 
     # Breakeven Ratchet (+0.8R)
     breakeven_activated: bool = False
-    breakeven_trigger_price: Optional[Decimal] = None
-    breakeven_activation_price: Optional[Decimal] = None
+    breakeven_trigger_price: Decimal | None = None
+    breakeven_activation_price: Decimal | None = None
 
     # Two-Clock Lifecycles (§6, §20)
-    time_stop_seconds: Optional[int] = None
-    time_stop_at_utc: Optional[int] = None
-    runner_time_stop_at_utc: Optional[int] = None
-    runner_ttl_seconds: Optional[int] = None
+    time_stop_seconds: int | None = None
+    time_stop_at_utc: int | None = None
+    runner_time_stop_at_utc: int | None = None
+    runner_ttl_seconds: int | None = None
 
     # Position Sizing & Capital Allocation
-    lots: Optional[int] = None
-    quantity: Optional[int] = None
-    max_rupee_loss: Optional[float] = None
+    lots: int | None = None
+    quantity: int | None = None
+    max_rupee_loss: float | None = None
 
     # Options Intelligence & Multi-Horizon Economics (§40)
-    greeks: Optional[dict] = None
-    expected_move: Optional[dict] = None
-    ai_research: Optional[dict] = None
-    path_simulation: Optional[dict] = None
+    greeks: dict | None = None
+    expected_move: dict | None = None
+    ai_research: dict | None = None
+    path_simulation: dict | None = None
 
     # Staged Target Execution (§18, §25)
-    t1_price: Optional[Decimal] = None
-    t2_price: Optional[Decimal] = None
+    t1_price: Decimal | None = None
+    t2_price: Decimal | None = None
     t1_hit: bool = False
-    t1_fill_timestamp: Optional[int] = None
+    t1_fill_timestamp: int | None = None
     t2_hit: bool = False
 
     # Fill Reconciliation & Residual Quantity Tracking (§24, §25)
-    entry_price: Optional[Decimal] = None
-    actual_fill_price: Optional[Decimal] = None
-    remaining_qty: Decimal = Decimal("0")
-    intended_qty: Decimal = Decimal("0")
-    t1_realized_qty: Optional[Decimal] = None
-    regime_at_confirmation: Optional[str] = None
+    entry_price: Decimal | None = None
+    actual_fill_price: Decimal | None = None
+    remaining_qty: Decimal = Decimal(0)
+    intended_qty: Decimal = Decimal(0)
+    t1_realized_qty: Decimal | None = None
+    regime_at_confirmation: str | None = None
 
     # State & Lifecycle
     fsm_state: SignalFSMState = "DETECTED"
@@ -226,28 +228,28 @@ class SignalInstance(BaseModel):
     @property
     def created_at_str(self) -> str:
         try:
-            from zoneinfo import ZoneInfo
             from datetime import datetime
+            from zoneinfo import ZoneInfo
             dt = datetime.fromtimestamp(self.created_at_utc / 1000.0, tz=ZoneInfo("Asia/Kolkata"))
             return dt.strftime("%d %b %Y, %H:%M:%S IST")
         except Exception:
             return ""
 
     # Realized Execution & Outcomes
-    triggered_at_utc: Optional[int] = None
-    confirmed_at_utc: Optional[int] = None
-    exit_price: Optional[Decimal] = None
-    realized_rr: Optional[float] = None
-    realized_rr_gross: Optional[float] = None
-    realized_rr_net: Optional[float] = None
-    cost_breakdown_r: Optional[dict] = None
-    terminal_outcome: Optional[str] = None  # FULL_WIN, PARTIAL_WIN, BREAKEVEN, TIME_STOP_LOSS, STOP_LOSS_HIT, EXPIRED, INVALIDATED
-    outcome_status: Optional[str] = None  # WIN_T1, WIN_T2, LOSS_SL, TIME_STOP, RUNNER_TIME_STOP, EXPIRED, INVALIDATED
-    paper_order: Optional[dict] = None
+    triggered_at_utc: int | None = None
+    confirmed_at_utc: int | None = None
+    exit_price: Decimal | None = None
+    realized_rr: float | None = None
+    realized_rr_gross: float | None = None
+    realized_rr_net: float | None = None
+    cost_breakdown_r: dict | None = None
+    terminal_outcome: str | None = None  # FULL_WIN, PARTIAL_WIN, BREAKEVEN, TIME_STOP_LOSS, STOP_LOSS_HIT, EXPIRED, INVALIDATED
+    outcome_status: str | None = None  # WIN_T1, WIN_T2, LOSS_SL, TIME_STOP, RUNNER_TIME_STOP, EXPIRED, INVALIDATED
+    paper_order: dict | None = None
 
     state_history: list[FSMTransitionAudit] = Field(default_factory=list)
 
-    def is_expired(self, now_ms: Optional[int] = None) -> bool:
+    def is_expired(self, now_ms: int | None = None) -> bool:
         ts = now_ms or int(time.time() * 1000)
         return ts > self.expires_at_utc and self.fsm_state in ("DETECTED", "VALIDATED", "ARMED")
 
@@ -262,7 +264,7 @@ class SignalInstance(BaseModel):
         return max(0, int((self.expires_at_utc - now_ms) / 1000))
 
 
-def _exit_premium_for_friction(sig: SignalInstance, market_price: Optional[Decimal]) -> float:
+def _exit_premium_for_friction(sig: SignalInstance, market_price: Decimal | None) -> float:
     """
     Exit premium in the option domain for friction math.
 
@@ -360,7 +362,11 @@ class SignalFSMManager:
             # Persist newly registered signal locally and to PostgreSQL
             try:
                 import asyncio
-                from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+
+                from app.signals.signals_persistence import (
+                    persist_executed_signal,
+                    save_signals_state_local,
+                )
                 save_signals_state_local()
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
@@ -370,7 +376,7 @@ class SignalFSMManager:
 
             return signal
 
-    def get(self, signal_id: str) -> Optional[SignalInstance]:
+    def get(self, signal_id: str) -> SignalInstance | None:
         with self._lock:
             return self._signals.get(signal_id)
 
@@ -389,7 +395,7 @@ class SignalFSMManager:
                 return True
             return False
 
-    def sweep_expired(self, now_ms: Optional[int] = None) -> dict[str, int]:
+    def sweep_expired(self, now_ms: int | None = None) -> dict[str, int]:
         """Expire stale pre-trigger signals and stale runners; prune terminal overflow.
 
         Returns counts {expired, runner_stopped, pruned} so callers can log/broadcast.
@@ -399,9 +405,10 @@ class SignalFSMManager:
             now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
             expired = 0
             runner_stopped = 0
-            from app.services.calendar_service import calendar_service
-            from zoneinfo import ZoneInfo
             from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from app.services.calendar_service import calendar_service
             ist_tz = ZoneInfo("Asia/Kolkata")
             now_ist = datetime.fromtimestamp(now_ms / 1000.0, tz=ist_tz)
             today_ist = now_ist.date()
@@ -472,7 +479,7 @@ class SignalFSMManager:
                 logger.info("fsm_sweep", expired=expired, runner_stopped=runner_stopped, pruned=pruned)
             return {"expired": expired, "runner_stopped": runner_stopped, "pruned": pruned}
 
-    def list_active(self, underlying: Optional[str] = None, strategy: Optional[str] = None, include_terminal: bool = False) -> list[SignalInstance]:
+    def list_active(self, underlying: str | None = None, strategy: str | None = None, include_terminal: bool = False) -> list[SignalInstance]:
         with self._lock:
             self.sweep_expired()
             res = []
@@ -508,10 +515,10 @@ class SignalFSMManager:
         self,
         signal_id: str,
         to_state: SignalFSMState,
-        market_price: Optional[Decimal] = None,
+        market_price: Decimal | None = None,
         reason: str = "STATE_UPDATE",
-        guard_snapshot: Optional[dict] = None,
-    ) -> tuple[bool, Optional[str]]:
+        guard_snapshot: dict | None = None,
+    ) -> tuple[bool, str | None]:
         with self._lock:
             sig = self._signals.get(signal_id)
             if not sig:
@@ -557,7 +564,7 @@ class SignalFSMManager:
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
                 exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
-                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
                 sig.cost_breakdown_r = bdown
@@ -587,7 +594,7 @@ class SignalFSMManager:
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
                 exit_p = _exit_premium_for_friction(sig, market_price or sig.target_2 or 200.0)
-                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
                 sig.cost_breakdown_r = bdown
@@ -604,7 +611,7 @@ class SignalFSMManager:
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
                 exit_p = _exit_premium_for_friction(sig, market_price or sig.stop_loss or 80.0)
-                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
                 sig.cost_breakdown_r = bdown
@@ -617,7 +624,7 @@ class SignalFSMManager:
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
                 exit_p = _exit_premium_for_friction(sig, market_price) if market_price is not None else float(entry_p)
-                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
                 sig.cost_breakdown_r = bdown
@@ -630,7 +637,7 @@ class SignalFSMManager:
                 sig.realized_rr_gross = gross_r
                 entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
                 exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
-                risk_pts = float(abs((sig.trigger or Decimal("100")) - (sig.stop_loss or Decimal("80"))))
+                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
                 f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
                 sig.realized_rr_net = round(gross_r - f_r, 4)
                 sig.cost_breakdown_r = bdown
@@ -668,7 +675,11 @@ class SignalFSMManager:
             # Persist updated SignalInstance locally and to PostgreSQL
             try:
                 import asyncio
-                from app.signals.signals_persistence import persist_executed_signal, save_signals_state_local
+
+                from app.signals.signals_persistence import (
+                    persist_executed_signal,
+                    save_signals_state_local,
+                )
                 save_signals_state_local()
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
@@ -736,8 +747,8 @@ class SignalFSMManager:
         self,
         sig: SignalInstance,
         tick_price: Decimal,
-        tick_timestamp_ms: Optional[int] = None,
-    ) -> Optional[str]:
+        tick_timestamp_ms: int | None = None,
+    ) -> str | None:
         """Convenience method delegating to deterministic evaluate_tick."""
         action, reason = evaluate_tick(sig, tick_price, tick_timestamp_ms)
         if reason == "BE_ACTIVATED":
@@ -749,8 +760,8 @@ class SignalFSMManager:
 def evaluate_tick(
     sig: SignalInstance,
     tick_price: Decimal,
-    tick_timestamp_ms: Optional[int] = None,
-) -> tuple[Optional[SignalFSMState], str]:
+    tick_timestamp_ms: int | None = None,
+) -> tuple[SignalFSMState | None, str]:
     """
     Deterministic Tick Evaluation (§21)
     Ordered Priority:
@@ -764,22 +775,18 @@ def evaluate_tick(
     curr_sl = sig.current_stop_loss or sig.stop_loss
 
     # Reject non-positive or corrupted prices immediately
-    if tick_price <= Decimal("0"):
+    if tick_price <= Decimal(0):
         return None, "INVALID_PRICE"
 
     # 1. Stop Loss Check (Highest Priority)
-    if direction == "LONG_CALL" and tick_price <= curr_sl:
-        return "STOP_LOSS_HIT", "STOP_LOSS_BREACHED"
-    elif direction == "LONG_PUT" and tick_price >= curr_sl:
+    if direction == "LONG_CALL" and tick_price <= curr_sl or direction == "LONG_PUT" and tick_price >= curr_sl:
         return "STOP_LOSS_HIT", "STOP_LOSS_BREACHED"
 
     # 2. RUNNER State Evaluation (Position already achieved T1)
     if sig.fsm_state == "TARGET_1_HIT":
         t2 = sig.t2_price or sig.target_2
         # Check T2 Hit
-        if direction == "LONG_CALL" and tick_price >= t2:
-            return "TARGET_2_HIT", "TARGET_2_ACHIEVED"
-        elif direction == "LONG_PUT" and tick_price <= t2:
+        if direction == "LONG_CALL" and tick_price >= t2 or direction == "LONG_PUT" and tick_price <= t2:
             return "TARGET_2_HIT", "TARGET_2_ACHIEVED"
 
         # Check Runner Time-Stop (Original TTL is structurally unreachable)
@@ -799,9 +806,7 @@ def evaluate_tick(
     if sig.fsm_state == "CONFIRMED":
         t1 = sig.t1_price or sig.target_1
         # Check T1 Hit
-        if direction == "LONG_CALL" and tick_price >= t1:
-            return "TARGET_1_HIT", "TARGET_1_ACHIEVED"
-        elif direction == "LONG_PUT" and tick_price <= t1:
+        if direction == "LONG_CALL" and tick_price >= t1 or direction == "LONG_PUT" and tick_price <= t1:
             return "TARGET_1_HIT", "TARGET_1_ACHIEVED"
 
         # Check Active Time-Stop

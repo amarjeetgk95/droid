@@ -28,7 +28,13 @@ class IndicatorRegistry:
     def __new__(cls) -> "IndicatorRegistry":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._indicators = {}
+            # Do NOT reset _indicators here: built-in indicators are registered
+            # at import time (app.research.indicators) via classmethods before
+            # any instance exists. Resetting would wipe those registrations,
+            # and _ensure_discovered() cannot recover because the module is
+            # already in sys.modules (import becomes a no-op).
+            if not isinstance(cls._indicators, dict):
+                cls._indicators = {}
         return cls._instance
 
     @classmethod
@@ -49,6 +55,16 @@ class IndicatorRegistry:
                 import app.research.indicators  # noqa: F401
             except Exception as e:
                 logger.warning("indicator_autodiscovery_failed", error=str(e))
+            # If the package was already imported (e.g. registry was cleared
+            # after import), a plain import is a no-op — force re-registration.
+            if not cls._indicators:
+                try:
+                    import importlib
+                    import app.research.indicators as _ind_mod
+
+                    importlib.reload(_ind_mod)
+                except Exception as e:
+                    logger.warning("indicator_autodiscovery_reload_failed", error=str(e))
 
     @classmethod
     def get(cls, indicator_id: str) -> Optional[IndicatorBase]:

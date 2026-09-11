@@ -6,6 +6,7 @@ import {
   Layers,
   TrendingUp,
   Compass,
+  Zap,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -69,6 +70,15 @@ export const STANDALONE_ITEMS: NavItem[] = [
     description: 'Next-hour direction forecast',
     shortcut: '⌘1',
     keywords: ['forecast', 'home', '1-hour', 'prediction', 'overview'],
+  },
+  {
+    id: 'signals',
+    href: '/signals',
+    label: 'Signals',
+    icon: Zap,
+    description: 'Active setups & paper trades',
+    badgeKey: 'signals',
+    keywords: ['signals', 'setups', 'paper', 'trades', 'desk', 'scalp', 'intraday'],
   },
 ];
 

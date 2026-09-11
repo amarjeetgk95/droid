@@ -113,7 +113,7 @@ function SidebarNavContent({
   streamState,
 }: SidebarNavContentProps) {
   const rail = collapsed && !isMobile;
-  const dashboardItem = STANDALONE_ITEMS[0];
+  const standaloneItems = STANDALONE_ITEMS;
 
   return (
     <div className="flex h-full min-h-0 flex-col select-none">
@@ -134,16 +134,19 @@ function SidebarNavContent({
           rail && 'items-center px-2 overflow-x-hidden',
         )}
       >
-        {/* Home */}
+        {/* Home + standalone (Forecast, Signals, ...) */}
         <ul className={cn('flex flex-col gap-0.5', rail && 'items-center w-full')}>
-          <li className={cn(rail && 'w-full flex justify-center')}>
-            <SidebarNavItem
-              item={dashboardItem}
-              active={isActivePath(pathname, dashboardItem.href)}
-              collapsed={rail}
-              onNavigate={onNavigate}
-            />
-          </li>
+          {standaloneItems.map((standaloneItem) => (
+            <li key={standaloneItem.href} className={cn(rail && 'w-full flex justify-center')}>
+              <SidebarNavItem
+                item={standaloneItem}
+                active={isActivePath(pathname, standaloneItem.href)}
+                collapsed={rail}
+                onNavigate={onNavigate}
+                badgeData={standaloneItem.badgeKey ? telemetryBadges[standaloneItem.badgeKey] : undefined}
+              />
+            </li>
+          ))}
         </ul>
 
         {/* Section divider */}

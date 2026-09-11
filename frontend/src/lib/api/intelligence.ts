@@ -38,6 +38,12 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
   },
 
+    async getForecastExplain(instrument: string, horizon: string = '1h') {
+    return core.request<any>(
+      `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=false&include_explain=true`,
+    );
+  },
+
     async getHourForecast(instrument: string, record = true) {
     return core.request<any>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
   },

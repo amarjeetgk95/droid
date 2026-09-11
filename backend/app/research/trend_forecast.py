@@ -122,17 +122,116 @@ class TrendForecaster:
         instrument: str,
         timeframes: Optional[List[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
-        """Fetch candles for all required timeframes in parallel-ish sequence."""
+        """Fetch candles for all required timeframes concurrently.
+
+        Previously sequential (7 x up-to-6s history calls + rate limiter), so a
+        slow backend or cold start could push total latency past the frontend's
+        60s timeout and surface as "Forecast unavailable". Concurrent fetch with
+        a per-timeframe timeout keeps p95 latency to a single slow call.
+        """
+        import asyncio
+
         timeframes = timeframes or FORECAST_TIMEFRAMES
-        result: Dict[str, List[Dict[str, Any]]] = {}
-        for tf in timeframes:
+
+        async def _fetch_one(tf: str) -> tuple[str, List[Dict[str, Any]]]:
             try:
-                raw = await self.market_service.get_candles(instrument, timeframe=tf)
-                result[tf] = [_candle_to_dict(c) for c in raw] if raw else []
+                raw = await asyncio.wait_for(
+                    self.market_service.get_candles(instrument, timeframe=tf),
+                    timeout=12.0,
+                )
+                return tf, [_candle_to_dict(c) for c in raw] if raw else []
             except Exception as e:
                 logger.warning("forecast_candle_fetch_failed", instrument=instrument, timeframe=tf, error=str(e))
-                result[tf] = []
+                return tf, []
+
+        results = await asyncio.gather(*[_fetch_one(tf) for tf in timeframes])
+        result: Dict[str, List[Dict[str, Any]]] = dict(results)
+
+        # Fallback: if the primary timeframe came back empty (transient history
+        # miss / rate limit) but 1m is available, resample locally so we return
+        # a degraded forecast instead of a hard 503 "Insufficient ... data".
+        # Resampling map covers every supported horizon.
+        _resample_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1D": 1440}
+        base_1m = result.get("1m") or []
+        if base_1m:
+            for tf in timeframes:
+                if not result.get(tf) and tf in _resample_minutes and tf != "1m":
+                    try:
+                        resampled = self._resample_dict_candles(base_1m, _resample_minutes[tf])
+                        if resampled:
+                            result[tf] = resampled
+                            logger.info(
+                                "forecast_candle_resampled_fallback",
+                                instrument=instrument,
+                                timeframe=tf,
+                                source_candles=len(base_1m),
+                                resampled=len(resampled),
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "forecast_resample_fallback_failed",
+                            instrument=instrument,
+                            timeframe=tf,
+                            error=str(e),
+                        )
         return result
+
+    @staticmethod
+    def _resample_dict_candles(candles_1m: List[Dict[str, Any]], minutes: int) -> List[Dict[str, Any]]:
+        """Aggregate 1m dict-candles into a higher timeframe (OHLCV)."""
+        if not candles_1m or minutes <= 1:
+            return list(candles_1m)
+        from datetime import datetime as _dt
+
+        def _parse_ts(v: Any) -> Optional[_dt]:
+            if isinstance(v, _dt):
+                return v
+            if isinstance(v, str):
+                try:
+                    return _dt.fromisoformat(v.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        buckets: Dict[str, List[Dict[str, Any]]] = {}
+        order: List[str] = []
+        for c in candles_1m:
+            ts = _parse_ts(c.get("timestamp"))
+            if ts is None:
+                continue
+            bucket_start = ts.replace(
+                minute=(ts.minute // minutes) * minutes if minutes < 60 else 0,
+                second=0,
+                microsecond=0,
+            )
+            # For multi-hour buckets, also floor the hour.
+            if minutes >= 60:
+                bucket_start = bucket_start.replace(hour=(ts.hour // (minutes // 60)) * (minutes // 60))
+            key = bucket_start.isoformat()
+            if key not in buckets:
+                buckets[key] = []
+                order.append(key)
+            buckets[key].append(c)
+
+        out: List[Dict[str, Any]] = []
+        for key in order:
+            bucket = buckets[key]
+            if not bucket:
+                continue
+            try:
+                out.append(
+                    {
+                        "open": float(bucket[0]["open"]),
+                        "high": float(max(float(x["high"]) for x in bucket)),
+                        "low": float(min(float(x["low"]) for x in bucket)),
+                        "close": float(bucket[-1]["close"]),
+                        "volume": float(sum(float(x.get("volume", 0.0) or 0.0) for x in bucket)),
+                        "timestamp": key,
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
 
     async def run_research_indicators(
         self,
@@ -149,10 +248,9 @@ class TrendForecaster:
             return outputs
 
         current_price = float(candles[-1]["close"])
-        registry = IndicatorRegistry()
 
         for ind_id in ENSEMBLE_INDICATOR_IDS:
-            indicator = registry.get(ind_id)
+            indicator = IndicatorRegistry.get(ind_id)
             if indicator is None:
                 continue
             try:
@@ -339,7 +437,7 @@ class TrendForecaster:
             target_price = None
             invalidation_price = None
 
-        return {
+        result = {
             "instrument": mtf_features.get("instrument"),
             "timeframe": timeframe,
             "forecast_horizon": forecast_horizon.value,
@@ -363,6 +461,18 @@ class TrendForecaster:
             "options_context": options_ctx,
         }
 
+        # Immutable explain bundle (pure, never throws — local import avoids cycle)
+        try:
+            from app.signals.explain import build_forecast_explain
+
+            result["explain"] = build_forecast_explain(
+                result, mtf_features, indicator_outputs, ml_forecast, options_ctx, current_price
+            )
+        except Exception as e:
+            logger.debug("forecast_explain_build_skipped", error=str(e))
+            result["explain"] = None
+        return result
+
     async def forecast(
         self,
         instrument: str,
@@ -384,7 +494,12 @@ class TrendForecaster:
         mtf_candles = await self.fetch_multi_timeframe_candles(instrument)
         primary_candles = mtf_candles.get(timeframe, [])
         if not primary_candles:
-            raise ValueError(f"Insufficient {timeframe} candle data for {instrument}")
+            available = sorted([tf for tf, cs in mtf_candles.items() if cs])
+            raise ValueError(
+                f"Insufficient {timeframe} candle data for {instrument} "
+                f"(available: {available or 'none'}). The broker history API returned "
+                f"no candles — re-auth FYERS if the daily token expired, then Retry."
+            )
 
         # 2. Options context
         options_ctx = await ResearchOptionsContext.get_context(instrument)
@@ -437,6 +552,7 @@ class TrendForecaster:
                     "layer_scores": result["layer_scores"],
                     "ml_forecast": ml_forecast,
                     "indicator_ids": [out.indicator_id for out in indicator_outputs],
+                    "explain": result.get("explain"),
                 },
                 forecast_horizon=forecast_horizon,
                 horizon_candles=horizon_candles,

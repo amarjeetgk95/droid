@@ -4,37 +4,40 @@ Institutional-Grade Endpoints for Indian Index Options (NIFTY, BANKNIFTY, SENSEX
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
-import asyncio
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, Query, HTTPException, Request, Depends
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
-from app.core.security import get_current_user, AuthUser
 from app.core.database import get_db_session
-
+from app.core.security import AuthUser, get_current_user
+from app.services.market_service import MarketService
+from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.contract_resolver import (
     APPROVED_UNDERLYINGS,
-    validate_underlying,
-    resolve_option_contract,
     calculate_position_sizing,
     normalize_price,
+    resolve_option_contract,
+    validate_underlying,
 )
-from app.signals.strategies import STRATEGY_REGISTRY, SCALP_STRATEGY_NAMES, INTRADAY_STRATEGY_NAMES
-from app.signals.fsm import signal_fsm, SignalInstance
-from app.signals.audit_ledger import signal_audit_ledger
-from app.signals.scanner import scanner_engine
+from app.signals.fsm import SignalInstance, signal_fsm
+from app.signals.market_guard import ensure_market_open_or_raise_http
 from app.signals.outcome_tracker import outcome_tracker
 from app.signals.paper_engine import signal_paper_engine
+from app.signals.scanner import scanner_engine
 from app.signals.sse import signal_sse_hub
-from app.signals.market_guard import ensure_market_open_or_raise_http
-from app.services.market_service import MarketService
+from app.signals.strategies import (
+    INTRADAY_STRATEGY_NAMES,
+    SCALP_STRATEGY_NAMES,
+    STRATEGY_REGISTRY,
+)
 
 logger = structlog.get_logger()
 
@@ -44,30 +47,30 @@ router = APIRouter(prefix="/api/v1/signals", tags=["signals"])
 # ── Request / Response Models ──────────────────────────────────────────
 
 class GenerateSignalRequest(BaseModel):
-    underlying: Optional[str] = Field(default=None, description="NIFTY / BANKNIFTY / SENSEX")
-    instrument_id: Optional[str] = Field(default=None, description="Compatibility alias for underlying")
+    underlying: str | None = Field(default=None, description="NIFTY / BANKNIFTY / SENSEX")
+    instrument_id: str | None = Field(default=None, description="Compatibility alias for underlying")
     strategy: str = "BREAKOUT"
     direction: str = "LONG_CALL"
-    timeframe: Optional[str] = Field(default=None, description="1M, 3M, 5M, 15M, 1H, 1D")
-    candle_timeframe: Optional[str] = Field(default=None, description="Compatibility alias for timeframe")
-    status: Optional[str] = None
-    signal_type: Optional[str] = Field(default="INTRADAY", description="SCALP or INTRADAY")
+    timeframe: str | None = Field(default=None, description="1M, 3M, 5M, 15M, 1H, 1D")
+    candle_timeframe: str | None = Field(default=None, description="Compatibility alias for timeframe")
+    status: str | None = None
+    signal_type: str | None = Field(default="INTRADAY", description="SCALP or INTRADAY")
     is_scalp: bool = Field(default=False, description="Flag indicating high-frequency scalp setup")
-    time_stop_seconds: Optional[int] = None
-    runner_ttl_seconds: Optional[int] = None
-    entry_min: Optional[float] = None
-    entry_max: Optional[float] = None
-    trigger: Optional[float] = None
-    trigger_level: Optional[float] = None
-    current_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    target_1: Optional[float] = None
-    target_2: Optional[float] = None
-    confidence: Optional[float] = 80.0
+    time_stop_seconds: int | None = None
+    runner_ttl_seconds: int | None = None
+    entry_min: float | None = None
+    entry_max: float | None = None
+    trigger: float | None = None
+    trigger_level: float | None = None
+    current_price: float | None = None
+    stop_loss: float | None = None
+    target_1: float | None = None
+    target_2: float | None = None
+    confidence: float | None = 80.0
     execute_paper: bool = Field(default=False, description="Auto-execute paper order")
-    lots: Optional[int] = Field(default=None, description="Optional custom lots")
+    lots: int | None = Field(default=None, description="Optional custom lots")
     notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification")
-    rationale: Optional[list[str]] = None
+    rationale: list[str] | None = None
     allow_closed_market: bool = Field(default=False, description="Allow generating signal when market is closed (for testing/demo)")
 
 
@@ -79,26 +82,26 @@ class AutoDetectRequest(BaseModel):
 
 
 class ExecutePaperRequest(BaseModel):
-    lots: Optional[int] = Field(default=None, description="Optional custom lots override")
-    quantity: Optional[int] = Field(default=None, description="Optional custom quantity override")
+    lots: int | None = Field(default=None, description="Optional custom lots override")
+    quantity: int | None = Field(default=None, description="Optional custom quantity override")
     risk_percent: float = Field(default=2.0, description="Risk capital % for sizing")
 
 
 class PreviewSignalRequest(BaseModel):
-    instrument_id: Optional[str] = None
-    underlying: Optional[str] = None
-    candle_timeframe: Optional[str] = "5M"
-    timeframe: Optional[str] = None
+    instrument_id: str | None = None
+    underlying: str | None = None
+    candle_timeframe: str | None = "5M"
+    timeframe: str | None = None
     direction: str = "BULLISH"
     status: str = "CONFIRMED"
-    trigger_level: Optional[float] = None
-    trigger: Optional[float] = None
-    stop_loss: Optional[float] = None
-    target_1: Optional[float] = None
-    target_2: Optional[float] = None
-    confidence: Optional[float] = None
-    setup_type: Optional[str] = "BREAKOUT"
-    strategy: Optional[str] = None
+    trigger_level: float | None = None
+    trigger: float | None = None
+    stop_loss: float | None = None
+    target_1: float | None = None
+    target_2: float | None = None
+    confidence: float | None = None
+    setup_type: str | None = "BREAKOUT"
+    strategy: str | None = None
 
 
 class PaperWalletCapitalRequest(BaseModel):
@@ -122,11 +125,11 @@ def _quote_is_fallback(quote: Any) -> bool:
 
 @router.get("/active")
 async def list_active_signals(
-    instrument: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
-    strategy: Optional[str] = Query(None, description="Filter by strategy name"),
-    status: Optional[str] = Query(None, description="Filter by FSM state"),
-    desk: Optional[str] = Query(None, description="Filter by desk: SCALP, INTRADAY, or ALL"),
-    is_scalp: Optional[bool] = Query(None, description="Filter specifically for scalp signals"),
+    instrument: str | None = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
+    strategy: str | None = Query(None, description="Filter by strategy name"),
+    status: str | None = Query(None, description="Filter by FSM state"),
+    desk: str | None = Query(None, description="Filter by desk: SCALP, INTRADAY, or ALL"),
+    is_scalp: bool | None = Query(None, description="Filter specifically for scalp signals"),
 ):
     """
     Returns active signals with live price distance, contract specs, R:R metrics, and desk categorization.
@@ -162,7 +165,7 @@ async def list_active_signals(
                 degraded_underlyings.append(u)
                 return
             quotes[u] = q
-        except asyncio.TimeoutError:
+        except TimeoutError:
             quote_errors[u] = "quote_timeout_after_6s"
             degraded_underlyings.append(u)
         except Exception as e:
@@ -196,7 +199,7 @@ async def list_active_signals(
                 if trig:
                     diff = abs(curr_p - trig)
                     distance_pts = float(diff.quantize(Decimal("0.05")))
-                    distance_pct = float((diff / trig * Decimal("100")).quantize(Decimal("0.01")))
+                    distance_pct = float((diff / trig * Decimal(100)).quantize(Decimal("0.01")))
             else:
                 data_quality = "DEGRADED" if s.underlying not in quote_errors else "OFFLINE"
         except Exception:
@@ -223,7 +226,7 @@ async def list_active_signals(
 # ── 2. REAL-TIME MULTI-STRATEGY SCANNER ───────────────────────────────
 
 @router.get("/scanner")
-async def run_scanner(desk: Optional[str] = Query(None, description="SCALP, INTRADAY, or ALL")):
+async def run_scanner(desk: str | None = Query(None, description="SCALP, INTRADAY, or ALL")):
     """
     Scans NIFTY, BANKNIFTY, SENSEX across requested Desk or all strategies simultaneously.
     Partial failures degrade per-underlying (errors + diagnostics) instead of 500ing the whole scan.
@@ -301,8 +304,38 @@ async def get_signal_deep_dive(signal_id: str):
     sizing_1l = calculate_position_sizing(100000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
     sizing_5l = calculate_position_sizing(500000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
 
+    # Immutable explain bundle — build on-the-fly for old signals so UI never gets null
+    explain = getattr(sig, "explain", None)
+    if not explain:
+        try:
+            from app.signals.confluence import DEFAULT_WEIGHTS
+            from app.signals.explain import build_signal_explain
+            cb = sig.confluence_breakdown or {}
+            ai_adv = {"status": cb.get("ai_status", "UNAVAILABLE"), "score": cb.get("ai")}
+            ml_sc = cb.get("ml_score")
+            ml_p = {"is_available": ml_sc is not None, "bullish_pct": ml_sc, "bearish_pct": ml_sc} if ml_sc is not None else None
+            inputs_snapshot = {
+                "spot": float(sig.spot_price),
+                "vwap": float(sig.spot_price),
+                "regime": sig.regime_at_confirmation or "RANGE",
+                "indicators": {},
+                "fno": {},
+                "mtf": {},
+            }
+            data_health = {"fno_degraded": bool(cb.get("fno_degraded", False)), "vwap_degraded": False, "vwap_coverage_pct": 100.0}
+            explain = build_signal_explain(
+                sig, float(sig.confidence), ai_adv, ml_p, None,
+                {"weights_fraction": dict(DEFAULT_WEIGHTS), "version": 2},
+                {"armed": 70.0}, [], inputs_snapshot, data_health,
+            )
+        except Exception:
+            explain = None
+
     return {
         "signal": sig.model_dump(),
+        "explain": explain,
+        "weights_version": 2,
+        "threshold_armed": 70,
         "current_market_price": curr_price,
         "confluence": sig.confluence_breakdown,
         "option_contract": sig.option_contract,
@@ -329,9 +362,9 @@ async def get_signal_deep_dive(signal_id: str):
 
 @router.get("/audit")
 async def get_signals_audit(
-    underlying: Optional[str] = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
-    strategy: Optional[str] = Query(None, description="Filter by strategy"),
-    status: Optional[str] = Query(None, description="Filter by status: WON, LOST, EXECUTED, ARMED, etc."),
+    underlying: str | None = Query(None, description="Filter by NIFTY / BANKNIFTY / SENSEX"),
+    strategy: str | None = Query(None, description="Filter by strategy"),
+    status: str | None = Query(None, description="Filter by status: WON, LOST, EXECUTED, ARMED, etc."),
     limit: int = Query(100, description="Max records to return"),
 ):
     """
@@ -346,8 +379,8 @@ async def get_signals_audit(
     signal_audit_ledger.sync_with_paper_service()
 
     # Fetch live quotes to compute real-time MTM only during active market sessions with valid live ticks
-    from app.services.calendar_service import calendar_service
     from app.models.market import DataStatus
+    from app.services.calendar_service import calendar_service
     if calendar_service.can_trade_now().allowed:
         market_svc = MarketService()
         quotes: dict[str, float] = {}
@@ -380,8 +413,11 @@ async def sanitize_signal_audit():
     - Bounds option buying losses to 100% of premium
     - Reconciles any mismatched spot vs premium domain levels
     """
-    from app.signals.signals_persistence import sanitize_persisted_signals, restore_signals_from_db
     from app.signals.audit_ledger import signal_audit_ledger
+    from app.signals.signals_persistence import (
+        restore_signals_from_db,
+        sanitize_persisted_signals,
+    )
 
     db_count = await restore_signals_from_db()
     mem_count = sanitize_persisted_signals()
@@ -457,10 +493,10 @@ async def _delete_signal_core(signal_id: str) -> dict:
 
 class BulkDeleteRequest(BaseModel):
     signal_ids: list[str] = Field(default_factory=list, description="Explicit signal IDs to delete")
-    before_ms: Optional[int] = Field(default=None, description="Delete signals created before this epoch-ms (datewise clear)")
-    underlying: Optional[str] = Field(default=None, description="Filter: NIFTY / BANKNIFTY / SENSEX")
-    strategy: Optional[str] = Field(default=None, description="Filter by strategy name")
-    status: Optional[str] = Field(default=None, description="Filter by FSM/audit status")
+    before_ms: int | None = Field(default=None, description="Delete signals created before this epoch-ms (datewise clear)")
+    underlying: str | None = Field(default=None, description="Filter: NIFTY / BANKNIFTY / SENSEX")
+    strategy: str | None = Field(default=None, description="Filter by strategy name")
+    status: str | None = Field(default=None, description="Filter by FSM/audit status")
     delete_all: bool = Field(default=False, description="Delete everything matching the filters")
     confirm_all: bool = Field(default=False, description="Required safety flag when delete_all has no other selector")
 
@@ -571,7 +607,7 @@ async def delete_signal_by_id(signal_id: str):
 # ── 6. 1-CLICK PAPER TRADING EXECUTION ────────────────────────────────
 
 @router.post("/{signal_id}/execute-paper")
-async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest] = None):
+async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None = None):
     """
     1-Click manual execution of any active signal into the Paper Trading Engine.
     Fails closed if the exchange session is closed.
@@ -617,7 +653,7 @@ async def execute_signal_paper(signal_id: str, req: Optional[ExecutePaperRequest
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
         logger.error("paper_execution_failed", signal_id=signal_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Paper execution failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Paper execution failed: {e!s}")
 
 
 # ── 7. AUTO-DETECT LIVE SETUP (PRE-FILL GENERATOR) ────────────────────
@@ -899,7 +935,10 @@ async def generate_signal(req: GenerateSignalRequest):
         is_real_fill = paper_result and paper_result.success and paper_result.status != "REJECTED"
         ev_type = "SIGNAL_CONFIRMED" if is_real_fill else "POSSIBLE_SETUP"
         try:
-            from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
+            from app.institutional.telegram_notifications import (
+                SignalEvent,
+                telegram_notification_queue,
+            )
             ev = SignalEvent(
                 event_type=ev_type,
                 signal_id=instance.signal_id,
@@ -993,8 +1032,8 @@ def list_strategy_engines():
 @router.post("/preview")
 def preview_signal(req: PreviewSignalRequest):
     """Generate a Telegram alert formatted preview without publishing."""
-    from app.institutional.telegram_templates import render_event_message
     from app.institutional.telegram_notifications import SignalEvent
+    from app.institutional.telegram_templates import render_event_message
 
     u = (req.underlying or req.instrument_id or "NIFTY").upper()
     tf = (req.timeframe or req.candle_timeframe or "5M").upper()
@@ -1032,12 +1071,12 @@ def preview_signal(req: PreviewSignalRequest):
 @router.post("/paper-wallet")
 async def set_signals_paper_wallet(
     req: PaperWalletCapitalRequest,
-    user: Optional[AuthUser] = Depends(get_current_user),
-    session: Optional[AsyncSession] = Depends(get_db_session),
+    user: AuthUser | None = Depends(get_current_user),
+    session: AsyncSession | None = Depends(get_db_session),
 ):
     """Set custom virtual capital for the paper trading wallet."""
-    from app.services.paper_service import paper_service
     from app.api.paper import _parse_user_uuid
+    from app.services.paper_service import paper_service
     try:
         user_uuid = _parse_user_uuid(user)
         summary = await paper_service.set_initial_capital_async(req.capital, session, user_uuid)
