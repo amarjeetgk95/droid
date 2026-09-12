@@ -73,7 +73,7 @@ class MIInputs:
     instrument_id: str
     spot: Decimal | None = None
     last_update_ms: int = 0
-    spot_source: str = "none"  # buffer | market_service | binance | cache | none
+    spot_source: str = "none"  # buffer | market_service | cache | none
     used_cache: bool = False
     vwap: Decimal | None = None
     vwap_source: str | None = None  # candle | session-derived | none
@@ -367,36 +367,6 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
         except Exception:
             spot = None
 
-    # Crypto: prefer Binance live (works without Indian broker creds)
-    if spot is None and iid == "BTCUSD":
-        try:
-            from app.services.binance_service import binance_service
-
-            ticker = await _with_timeout(binance_service.get_ticker("BTCUSDT"), timeout=4.0)
-            if ticker is not None and getattr(ticker, "price", 0) and float(ticker.price) > 0:
-                spot = D(str(ticker.price))
-                try:
-                    lu = getattr(ticker, "last_updated", None)
-                    last_update_ms = int(lu.timestamp() * 1000) if lu is not None else now_ms
-                except Exception:
-                    last_update_ms = now_ms
-                spot_source = "binance"
-                # Seed buffer so subsequent reads + cross-market see it (non-synthetic live tick)
-                try:
-                    from app.institutional.events import InstrumentEvent
-
-                    synth = InstrumentEvent.create(
-                        instrument_id=iid, asset_class="CRYPTO", symbol="BTCUSDT",
-                        price=str(spot), exchange_timestamp_utc=last_update_ms,
-                        canonical_timestamp_utc=last_update_ms, is_synthetic=False,
-                        source_id="binance_live",
-                    )
-                    synchronized_buffer.ingest_sync(synth)
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.debug("mi_binance_spot_failed", instrument=iid, error=str(e)[:150])
-
     # Indian / fallback: MarketService live quote
     quote_volume: int | None = None
     quote_ohlc: dict[str, float] | None = None
@@ -538,48 +508,7 @@ async def gather_inputs(instrument_id: str, now_ms: int | None = None) -> MIInpu
     enrich_cached: dict[str, bool] = {}
 
     if iid == "BTCUSD":
-        if funding is None:
-            try:
-                from app.services.binance_service import binance_service as _bs
-
-                deriv = await _with_timeout(_bs.get_derivatives_data("BTCUSDT"), timeout=4.0)
-                if deriv is not None and getattr(deriv, "funding_rate", None) is not None:
-                    try:
-                        funding = {"rate": float(deriv.funding_rate)}
-                    except Exception:
-                        funding = None
-            except Exception:
-                pass
-        # Candles → vwap/volumes/mtf/volatility for crypto too (fill gaps only)
-        if vwap is None or volumes is None or multi_timeframe is None:
-            try:
-                from app.services.binance_service import binance_service as _bs2
-
-                candles = await _with_timeout(_bs2.get_candles("BTCUSDT", timeframe="5m", limit=30), timeout=4.0)
-                if candles:
-                    if vwap is None:
-                        try:
-                            last = candles[-1]
-                            if getattr(last, "vwap", None):
-                                vwap = D(str(last.vwap))
-                        except Exception:
-                            pass
-                    if volumes is None:
-                        try:
-                            vols = [float(getattr(c, "volume", 0) or 0) for c in candles]
-                            if vols and sum(vols) > 0:
-                                avg = sum(vols) / len(vols)
-                                chg = (vols[-1] - avg) / avg if avg > 0 else 0.0
-                                volumes = {"volume_change": float(chg)}
-                        except Exception:
-                            pass
-                    if multi_timeframe is None:
-                        try:
-                            multi_timeframe = {"5m": _bias_from_candles(candles[-15:]), "15m": _bias_from_candles(candles)}
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+        pass
     else:
         # Parallel enrichment: the old serial chain (key-levels → indicators →
         # options-chain → 1m/5m/15m candles) took 20s+ worst case on a cold cache,

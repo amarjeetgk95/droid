@@ -1,6 +1,5 @@
 from app.providers.base import MarketDataProvider
 from app.providers.fyers import FyersProvider
-from app.providers.binance_provider import BinanceProvider
 from app.core.broker_runtime import get_config
 import asyncio
 import structlog
@@ -8,7 +7,6 @@ import structlog
 logger = structlog.get_logger()
 
 INDIAN_PROVIDERS = ("fyers",)
-CRYPTO_PROVIDERS = ("binance",)
 
 _provider_instance: MarketDataProvider | None = None
 _previous_provider: MarketDataProvider | None = None
@@ -57,9 +55,7 @@ def suppress_autostart() -> _AutostartGuard:
 def get_provider() -> MarketDataProvider:
     """Get the configured market data provider (singleton).
 
-    Provider selection is gated by api_type:
-      - "indian"  -> fyers
-      - "crypto"  -> binance
+    Provider selection defaults to fyers (Indian F&O).
 
     The active provider comes from app.core.broker_runtime, which honors the
     saved user settings (app_settings.broker.provider) and falls back to the
@@ -118,46 +114,14 @@ def _create_provider() -> MarketDataProvider:
     The runtime config (provider + api_type + credentials) is sourced from
     app.core.broker_runtime, populated from the persisted user settings and
     falling back to env-driven configuration. Invalid provider selections are
-    normalized to a safe default (fyers for indian, binance for crypto) so the
+    normalized to a safe default (fyers) so the
     backend never crashes on startup.
     """
     cfg = get_config()
-    provider_name = cfg.provider
-    api_type = cfg.api_type
-
-    if api_type == "crypto":
-        if provider_name != "binance":
-            logger.warning(
-                "api_type_crypto_fallback",
-                api_type=api_type,
-                requested=provider_name,
-                using="binance",
-            )
-            provider_name = "binance"
-    else:
-        if provider_name not in INDIAN_PROVIDERS:
-            logger.warning(
-                "api_type_indian_fallback",
-                api_type=api_type,
-                requested=provider_name,
-                using="fyers",
-            )
-            provider_name = "fyers"
-
     creds = cfg.credentials or {}
-
-    if provider_name == "fyers":
-        logger.info("provider_init", api_type=api_type, provider="fyers", live=bool(creds))
-        return FyersProvider(
-            app_id=creds.get("app_id"),
-            secret_key=creds.get("secret_key"),
-            access_token=creds.get("access_token"),
-        )
-    if provider_name == "binance":
-        logger.info("provider_init", api_type=api_type, provider="binance", live=bool(creds))
-        return BinanceProvider(
-            api_key=creds.get("api_key"),
-            api_secret=creds.get("api_secret"),
-        )
-
-    raise ValueError(f"Unknown market data provider: {provider_name}")
+    logger.info("provider_init", api_type="indian", provider="fyers", live=bool(creds))
+    return FyersProvider(
+        app_id=creds.get("app_id"),
+        secret_key=creds.get("secret_key"),
+        access_token=creds.get("access_token"),
+    )

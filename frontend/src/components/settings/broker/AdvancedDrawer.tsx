@@ -45,21 +45,6 @@ export function AdvancedDrawer({ settings, onChange }: Props) {
               </div>
             </div>
           )}
-          {settings.provider === 'binance' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">Custom Binance API Key (Override)</label>
-                <input type="text" placeholder="Enter Binance API Key" value={settings.binance?.apiKey || ''} onChange={(e) => onChange({ binance: { ...settings.binance, apiKey: e.target.value.trim() } })} className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">Custom Binance API Secret (Override)</label>
-                <div className="flex gap-2">
-                  <input type={showSecret ? 'text' : 'password'} placeholder="Enter Binance API Secret" value={settings.binance?.apiSecret || ''} onChange={(e) => onChange({ binance: { ...settings.binance, apiSecret: e.target.value.trim() } })} className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-hidden focus:border-primary font-mono" />
-                  <button type="button" onClick={() => setShowSecret(!showSecret)} className="text-[11px] px-2 py-1 border border-border rounded-lg hover:bg-secondary cursor-pointer bg-card">{showSecret ? 'Hide' : 'Show'}</button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

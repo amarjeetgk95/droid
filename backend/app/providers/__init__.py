@@ -3,7 +3,6 @@ from app.providers.registry import (
     reset_provider,
     get_active_provider_name,
     INDIAN_PROVIDERS,
-    CRYPTO_PROVIDERS,
 )
 
 __all__ = [
@@ -11,5 +10,4 @@ __all__ = [
     "reset_provider",
     "get_active_provider_name",
     "INDIAN_PROVIDERS",
-    "CRYPTO_PROVIDERS",
 ]

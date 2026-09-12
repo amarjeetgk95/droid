@@ -82,10 +82,10 @@ export function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
       merged.broker = { ...merged.broker, fyers: { ...merged.broker.fyers, redirectUri: legacy.fyersRedirectUri } };
     }
     if (legacy.binanceApiKey) {
-      merged.broker = { ...merged.broker, binance: { ...merged.broker.binance, apiKey: legacy.binanceApiKey } };
+      merged.broker = { ...merged.broker, binance: { apiKey: legacy.binanceApiKey, apiSecret: merged.broker.binance?.apiSecret || '' } };
     }
     if (legacy.binanceSecretKey) {
-      merged.broker = { ...merged.broker, binance: { ...merged.broker.binance, apiSecret: legacy.binanceSecretKey } };
+      merged.broker = { ...merged.broker, binance: { apiKey: merged.broker.binance?.apiKey || '', apiSecret: legacy.binanceSecretKey } };
     }
 
     try { localStorage.removeItem(LEGACY_DEV_CONFIG_KEY); } catch {}

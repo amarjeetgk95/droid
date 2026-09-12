@@ -35,10 +35,6 @@ class Settings(BaseSettings):
     fyers_access_token: str = ""
 
 
-    # Binance (Crypto) Settings
-    binance_api_key: str = ""
-    binance_api_secret: str = ""
-
     # WebSocket & Reconnect Settings (Phase 2)
     ws_reconnect_initial_seconds: float = 1.0
     ws_reconnect_max_seconds: float = 60.0
@@ -134,54 +130,29 @@ class Settings(BaseSettings):
     scanner_quote_age_seconds: float = 10.0      # Stricter quote age threshold for signal scanner
     stale_data_age_seconds: float = 5.0          # Threshold to mark a quote as STALE
 
-    # Crypto Scalping Engine Settings
-    crypto_scalp_scan_interval_seconds: int = 30
-    crypto_scalp_telegram_enabled: bool = True
-
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
         import structlog
         indian_providers = ("fyers",)
-        crypto_providers = ("binance",)
-        # Legacy/demo values from early deployments (Render dashboard may still
-        # carry MARKET_DATA_PROVIDER=mock). Treat as unset → quiet default.
         legacy_values = ("", "mock", "mock_ai", "demo", "paper", "none")
         requested = (self.market_data_provider or "").strip().lower()
 
-        if self.api_type == "crypto":
-            if self.market_data_provider not in crypto_providers:
-                if requested in legacy_values:
-                    structlog.get_logger().info(
-                        "config_provider_default",
-                        api_type=self.api_type,
-                        legacy_value=self.market_data_provider,
-                        using="binance",
-                    )
-                else:
-                    structlog.get_logger().warning(
-                        "config_provider_fallback",
-                        api_type=self.api_type,
-                        requested=self.market_data_provider,
-                        using="binance",
-                    )
-                self.market_data_provider = "binance"
-        else:
-            if self.market_data_provider not in indian_providers:
-                if requested in legacy_values:
-                    structlog.get_logger().info(
-                        "config_provider_default",
-                        api_type=self.api_type,
-                        legacy_value=self.market_data_provider,
-                        using="fyers",
-                    )
-                else:
-                    structlog.get_logger().warning(
-                        "config_provider_fallback",
-                        api_type=self.api_type,
-                        requested=self.market_data_provider,
-                        using="fyers",
-                    )
-                self.market_data_provider = "fyers"
+        if self.market_data_provider not in indian_providers:
+            if requested in legacy_values:
+                structlog.get_logger().info(
+                    "config_provider_default",
+                    api_type=self.api_type,
+                    legacy_value=self.market_data_provider,
+                    using="fyers",
+                )
+            else:
+                structlog.get_logger().warning(
+                    "config_provider_fallback",
+                    api_type=self.api_type,
+                    requested=self.market_data_provider,
+                    using="fyers",
+                )
+            self.market_data_provider = "fyers"
         return self
 
     model_config = {

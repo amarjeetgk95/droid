@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 /* Signals terminal — institutional order-desk presentation over useSignalsData().
    Flat hairline surfaces, mono numerals, semantic color only on data. */
@@ -19,6 +19,7 @@ import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
 import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 import { SignalCreateDialog } from '@/components/signals/SignalCreateDialog';
+import { ScalperTerminal } from '@/components/scalp/ScalperTerminal';
 import {
   DESK_FILTERS,
   INSTRUMENT_FILTERS,
@@ -40,7 +41,7 @@ import {
   type ActiveRow,
 } from '@/components/signals/signalsNormalize';
 
-type TabKey = 'live' | 'performance' | 'history';
+type TabKey = 'live' | 'scalp' | 'performance' | 'history';
 
 export type SignalsDeskProps = {
   /** URL-driven initial values (Phase 5). URL wins over internal defaults. */
@@ -171,7 +172,9 @@ export function SignalsDesk({
     initialInstrumentFilter,
   });
 
-  const [tab, setTabInternal] = useState<TabKey>(initialTab ?? 'live');
+  const [tab, setTabInternal] = useState<TabKey>(
+    initialTab ?? (initialDeskFilter === 'SCALP' ? 'scalp' : 'live')
+  );
   const setTab = useCallback(
     (v: TabKey) => {
       setTabInternal(v);
@@ -596,6 +599,15 @@ export function SignalsDesk({
           <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')}>
             ORDERS <span className="n">{kpis.active ?? '—'}</span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'scalp'}
+            onClick={() => setTab('scalp')}
+            className={tab === 'scalp' ? 'text-amber-400 font-bold' : ''}
+          >
+            ⚡ SCALPER TERMINAL
+          </button>
           <button type="button" role="tab" aria-selected={tab === 'performance'} onClick={() => setTab('performance')}>
             ATTRIBUTION
           </button>
@@ -664,6 +676,11 @@ export function SignalsDesk({
             <p className="sg-note sg-pad">{sanitizeNote}</p>
           ) : null}
           {tab === 'live' ? liveBody : null}
+          {tab === 'scalp' ? (
+            <div className="p-3">
+              <ScalperTerminal />
+            </div>
+          ) : null}
           {tab === 'performance' ? perfBody : null}
           {tab === 'history' ? ledgerBody : null}
         </div>

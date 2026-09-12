@@ -31,7 +31,6 @@ logger = structlog.get_logger()
 # mapping of provider-constructor arg -> saved field name.
 _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "fyers": "fyers",
-    "binance": "binance",
 }
 
 # Canonical ctor arg -> ALL accepted saved-field aliases (camelCase from the
@@ -45,15 +44,10 @@ _PROVIDER_CRED_ALIASES: Dict[str, Dict[str, tuple[str, ...]]] = {
         "secret_key": ("secret", "secret_key", "secretKey", "secretId", "secretID"),
         "access_token": ("access_token", "accessToken", "token", "access_token_key"),
     },
-    "binance": {
-        "api_key": ("apiKey", "api_key"),
-        "api_secret": ("apiSecret", "api_secret"),
-    },
 }
 
 _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
     "fyers": {"app_id": "appId", "secret_key": "secret", "access_token": "access_token"},
-    "binance": {"api_key": "apiKey", "api_secret": "apiSecret"},
 }
 
 
@@ -71,23 +65,18 @@ def _env_config() -> BrokerConfig:
     """Build a config from static env-driven settings (fallback / startup)."""
     from app.core.config import settings as cfg
 
-    provider = cfg.market_data_provider
-    if cfg.api_type == "crypto" and provider != "binance":
-        provider = "binance"
-    elif cfg.api_type != "crypto" and provider not in _PROVIDER_CRED_KEYS:
-        provider = "fyers"
+    provider = "fyers"
 
     # Populate credentials from env so provider starts LIVE without needing Settings UI save
     creds: Dict[str, Any] = {}
-    if provider == "fyers":
-        if cfg.fyers_app_id:
-            creds["app_id"] = cfg.fyers_app_id.strip().strip("\"'")
-        if cfg.fyers_secret_key:
-            creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
-        if cfg.fyers_access_token:
-            creds["access_token"] = cfg.fyers_access_token.strip().strip("\"'")
+    if cfg.fyers_app_id:
+        creds["app_id"] = cfg.fyers_app_id.strip().strip("\"'")
+    if cfg.fyers_secret_key:
+        creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
+    if cfg.fyers_access_token:
+        creds["access_token"] = cfg.fyers_access_token.strip().strip("\"'")
 
-    return BrokerConfig(provider=provider, api_type=cfg.api_type, credentials=creds)
+    return BrokerConfig(provider=provider, api_type="indian", credentials=creds)
 
 
 def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:

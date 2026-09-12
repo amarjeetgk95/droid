@@ -1,7 +1,7 @@
 'use client';
 
-import React, { memo, useCallback, useMemo } from 'react';
-import { TrendingUp, Bitcoin, Check } from 'lucide-react';
+import React, { memo, useCallback } from 'react';
+import { TrendingUp, Check } from 'lucide-react';
 import type { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
 
 type ProviderCard = {
@@ -24,27 +24,13 @@ const INDIAN_PROVIDERS: ProviderCard[] = [
   },
 ];
 
-const CRYPTO_PROVIDERS: ProviderCard[] = [
-  {
-    id: 'binance',
-    name: 'Binance Gateway',
-    badge: 'Public Feed',
-    desc: 'Direct Spot & USDT-M Futures market data stream',
-    apiType: 'crypto',
-    icon: Bitcoin,
-  },
-];
-
 interface Props {
   settings: BrokerSettings;
   onChange: (updates: Partial<BrokerSettings>) => void;
 }
 
 export const ProviderGrid = memo(function ProviderGrid({ settings, onChange }: Props) {
-  const visibleProviders = useMemo(
-    () => (settings.apiType === 'crypto' ? CRYPTO_PROVIDERS : INDIAN_PROVIDERS),
-    [settings.apiType]
-  );
+  const visibleProviders = INDIAN_PROVIDERS;
   const handleProviderSelect = useCallback(
     (providerId: BrokerProviderId) => onChange({ provider: providerId }),
     [onChange]

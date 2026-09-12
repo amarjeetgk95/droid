@@ -1,7 +1,6 @@
-export type ApiType = 'indian' | 'crypto';
+export type ApiType = 'indian';
 export type IndianProviderId = 'fyers';
-export type CryptoProviderId = 'binance';
-export type BrokerProviderId = IndianProviderId | CryptoProviderId;
+export type BrokerProviderId = IndianProviderId;
 
 export interface FyersCredentials {
   appId: string;
@@ -19,7 +18,7 @@ export interface BrokerSettings {
   apiType: ApiType;
   provider: BrokerProviderId;
   fyers: FyersCredentials;
-  binance: BinanceCredentials;
+  binance?: BinanceCredentials;
 }
 
 export interface QuantitativeSettings {

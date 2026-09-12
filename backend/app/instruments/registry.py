@@ -75,55 +75,8 @@ _reg(InstrumentConfig(
     supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
     fno_available=True, options_available=True, futures_available=True,
 ))
-
-# Crypto Derivatives — canonical symbols are BTC/ETH/SOL (plain).  BTCUSD/BTCUSDT
-# etc. are retained as ALIASES only so external feeds can still resolve.
-_reg(InstrumentConfig(
-    symbol="BTC",
-    display_name="Bitcoin",
-    aliases=["bitcoin", "btcusd", "btc usd", "btc-usd", "btc-usd", "btcusdt", "btc usdt", "btc-usdt", "xbt", "binance:btcusdt"],
-    asset_class="CRYPTO",
-    exchange="BINANCE",
-    data_provider_symbol="BINANCE:BTCUSDT",
-    instrument_type="SPOT",
-    currency="USDT",
-    price_precision=2,
-    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
-    fno_available=False, options_available=False, futures_available=True,
-    trading_session="24x7", timezone="UTC",
-))
-
-_reg(InstrumentConfig(
-    symbol="ETH",
-    display_name="Ethereum",
-    aliases=["ethereum", "ethusd", "eth usd", "eth-usd", "ethusdt", "eth usdt", "eth-usdt", "binance:ethusdt"],
-    asset_class="CRYPTO",
-    exchange="BINANCE",
-    data_provider_symbol="BINANCE:ETHUSDT",
-    instrument_type="SPOT",
-    currency="USDT",
-    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
-    fno_available=False, options_available=False, futures_available=True,
-    trading_session="24x7", timezone="UTC",
-))
-
-_reg(InstrumentConfig(
-    symbol="SOL",
-    display_name="Solana",
-    aliases=["solana", "sol", "solusd", "sol usd", "sol-usd", "solusdt", "sol usdt", "sol-usdt", "binance:solusdt"],
-    asset_class="CRYPTO",
-    exchange="BINANCE",
-    data_provider_symbol="BINANCE:SOLUSDT",
-    instrument_type="SPOT",
-    currency="USDT",
-    price_precision=2,
-    supported_timeframes=CHART_ANALYSIS_TIMEFRAMES,
-    fno_available=False, options_available=False, futures_available=True,
-    trading_session="24x7", timezone="UTC",
-))
-
-# Fixed universe constant — chart_analysis must not expose anything else.
-CHART_ANALYSIS_UNIVERSE: list[str] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BTC", "ETH", "SOL"]
+# Fixed universe constant — Indian Index Derivatives only.
+CHART_ANALYSIS_UNIVERSE: list[str] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]
 
 def get_all_instruments() -> list[InstrumentConfig]:
     return list(INSTRUMENT_REGISTRY.values())

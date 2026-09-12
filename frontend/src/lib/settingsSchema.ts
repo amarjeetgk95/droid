@@ -17,25 +17,10 @@ export const BinanceCredentialsSchema = z.object({
 });
 
 export const BrokerSettingsSchema = z.object({
-  apiType: z.enum(['indian', 'crypto']),
-  provider: z.enum(['fyers', 'binance']),
+  apiType: z.enum(['indian', 'crypto']).catch('indian').transform(() => 'indian' as const),
+  provider: z.enum(['fyers', 'binance']).catch('fyers').transform(() => 'fyers' as const),
   fyers: FyersCredentialsSchema,
-  binance: BinanceCredentialsSchema,
-}).superRefine((data, ctx) => {
-  if (data.apiType === 'indian' && data.provider === 'binance') {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['provider'],
-      message: 'Binance is a crypto provider — set API type to "crypto" first',
-    });
-  }
-  if (data.apiType === 'crypto' && data.provider !== 'binance') {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['provider'],
-      message: 'Indian broker (FYERS) requires API type "indian"',
-    });
-  }
+  binance: BinanceCredentialsSchema.optional(),
 });
 
 // --- Quantitative Settings ---

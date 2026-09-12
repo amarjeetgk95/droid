@@ -31,10 +31,7 @@ export function SidebarStatusDock({
   const isStreamLive = streamState === 'CONNECTED';
   const isSyncing = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
 
-  const gatewayLabel =
-    apiType === 'crypto'
-      ? 'BINANCE'
-      : `${(provider || 'fyers').toUpperCase()}`;
+  const gatewayLabel = (provider || 'fyers').toUpperCase();
 
   const statusText = isStreamLive ? 'Live' : isSyncing ? 'Sync' : 'Off';
   const statusDot = isStreamLive ? 'bg-emerald-500' : isSyncing ? 'bg-amber-500' : 'bg-rose-500';

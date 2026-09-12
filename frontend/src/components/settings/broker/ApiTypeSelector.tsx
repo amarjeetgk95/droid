@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Landmark, Bitcoin } from 'lucide-react';
-import type { BrokerSettings, ApiType, BrokerProviderId } from '@/lib/settings';
+import { Landmark } from 'lucide-react';
+import type { BrokerSettings, ApiType } from '@/lib/settings';
 
 interface Props {
   settings: BrokerSettings;
@@ -11,8 +11,7 @@ interface Props {
 
 export function ApiTypeSelector({ settings, onChange }: Props) {
   const handleApiTypeChange = (next: ApiType) => {
-    const defaultProvider: BrokerProviderId = next === 'crypto' ? 'binance' : 'fyers';
-    onChange({ apiType: next, provider: defaultProvider });
+    onChange({ apiType: next, provider: 'fyers' });
   };
 
   const options = [
@@ -22,16 +21,10 @@ export function ApiTypeSelector({ settings, onChange }: Props) {
       desc: 'Equity, Options & Futures via FYERS API v3 (INR)',
       icon: Landmark,
     },
-    {
-      id: 'crypto' as ApiType,
-      name: 'Crypto Market (Binance)',
-      desc: 'Real-time Spot & Futures order book data (USDT quoted)',
-      icon: Bitcoin,
-    },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-5">
+    <div className="grid grid-cols-1 gap-3 p-5">
       {options.map((t) => {
         const isSelected = settings.apiType === t.id;
         const Icon = t.icon;

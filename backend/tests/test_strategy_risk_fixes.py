@@ -394,7 +394,7 @@ class TestSensex1mScalpEnvelope:
 
 class TestContractResolverPostMarketExpiry:
     def test_expiry_day_intraday_vs_postmarket(self):
-        # Test Thursday (weekday 3)
+        # Test Thursday (weekday 3) for SENSEX
         thursday = date(2026, 9, 3)
         assert thursday.weekday() == 3
 
@@ -403,7 +403,7 @@ class TestContractResolverPostMarketExpiry:
         with patch("app.signals.contract_resolver.datetime") as mock_dt:
             mock_dt.now.return_value = market_time
             mock_dt.strptime = datetime.strptime
-            expiry, exp_type = resolve_nearest_expiry("NIFTY", ref_date=None)
+            expiry, exp_type = resolve_nearest_expiry("SENSEX", ref_date=None)
             assert expiry == thursday
             assert exp_type == "EXPIRING_TODAY"
 
@@ -412,6 +412,6 @@ class TestContractResolverPostMarketExpiry:
         with patch("app.signals.contract_resolver.datetime") as mock_dt:
             mock_dt.now.return_value = post_market_time
             mock_dt.strptime = datetime.strptime
-            expiry, exp_type = resolve_nearest_expiry("NIFTY", ref_date=None)
+            expiry, exp_type = resolve_nearest_expiry("SENSEX", ref_date=None)
             assert expiry == thursday + timedelta(days=7)
             assert exp_type != "EXPIRING_TODAY"

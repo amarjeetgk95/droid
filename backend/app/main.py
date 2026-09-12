@@ -4,8 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, crypto, instruments, futures, strategy
-from app.api import crypto_scalp as crypto_scalp_api
+from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, instruments, futures, strategy
 from app.api import settings as settings_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
@@ -141,15 +140,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("forecast_scheduler_start_failed", error=str(e))
 
-    # Auto-provision Crypto Scalp Signals table in Supabase & start 24/7 background worker
-    try:
-        from app.crypto_scalp import ensure_crypto_scalp_tables, crypto_scalp_worker
-        await ensure_crypto_scalp_tables()
-        await crypto_scalp_worker.start()
-        logger.info("crypto_scalp_engine_initialized")
-    except Exception as e:
-        logger.warning("crypto_scalp_init_failed", error=str(e))
-
     # Initialize Event Intelligence Engine baseline (§2 Phase 1)
     try:
         from app.event_engine import event_engine_service
@@ -172,11 +162,6 @@ async def lifespan(app: FastAPI):
         try:
             from app.signals.worker import automated_signal_worker
             await automated_signal_worker.stop()
-        except Exception:
-            pass
-        try:
-            from app.crypto_scalp import crypto_scalp_worker
-            await crypto_scalp_worker.stop()
         except Exception:
             pass
         try:
@@ -261,8 +246,6 @@ def create_app() -> FastAPI:
     app.include_router(paper.router)
     app.include_router(ml.router)
     app.include_router(fii_dii.router)
-    app.include_router(crypto.router)
-    app.include_router(crypto_scalp_api.router)
     app.include_router(settings_api.router)
     app.include_router(instruments.router)
     app.include_router(pipeline_api.router)

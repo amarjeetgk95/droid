@@ -132,9 +132,9 @@ async def get_settings_schema(user: AuthUser = Depends(require_auth)):
         "schemaVersion": 2,
         "sections": ["broker", "quantitative", "ai", "paper", "preferences"],
         "broker": {
-            "apiType": ["indian", "crypto"],
-            "providers": ["fyers", "binance"],
-            "fields": {"fyers": ["appId", "secret", "redirectUri"], "binance": ["apiKey", "apiSecret"]},
+            "apiType": ["indian"],
+            "providers": ["fyers"],
+            "fields": {"fyers": ["appId", "secret", "redirectUri"]},
         },
         "ai": {
             "connectionModes": ["OpenRouter", "Direct Provider", "Local Ollama"],

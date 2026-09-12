@@ -23,7 +23,6 @@ export const SECRET_FIELDS: Record<string, string[]> = {
   broker: [
     'fyers.secret',
     'fyers.accessToken',
-    'binance.apiSecret',
   ],
   ai: [
     'geminiApiKey',

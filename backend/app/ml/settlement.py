@@ -33,26 +33,8 @@ async def fetch_nse_candles(symbol: str, start: datetime, end: datetime) -> list
 
 
 async def fetch_crypto_candles(symbol: str, start: datetime, end: datetime) -> list[Any]:
-    """1m Binance klines; wrapper supports most-recent-N only, so take 500
-    (≈8h) and filter to the window. Older windows stay INSUFFICIENT_DATA."""
-    from app.services.binance_service import binance_service
-
-    candles = await binance_service.get_candles(symbol, timeframe="1m", limit=500)
-
-    def _ts(c: Any) -> datetime | None:
-        ts = getattr(c, "timestamp", None)
-        if ts is None:
-            return None
-        if isinstance(ts, str):
-            try:
-                ts = datetime.fromisoformat(ts)
-            except ValueError:
-                return None
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts
-
-    return [c for c in candles if (_ts(c) is not None and start <= _ts(c) <= end)]
+    """Stub: crypto data source decommissioned."""
+    return []
 
 
 def plan_row(

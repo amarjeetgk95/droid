@@ -19,9 +19,6 @@ export function getProviderMeta(
   apiType: ApiType,
   tokenStatus: Record<string, unknown> | null
 ): ProviderMeta {
-  if (provider === 'binance') {
-    return { connected: true, label: 'CONNECTED', sub: 'Public WebSocket (Zero auth needed)', tone: 'emerald', hasCreds: true };
-  }
   const tokenConnected = (tokenStatus as Record<string, unknown> | null)?.is_token_valid === true;
   const state = (tokenStatus as unknown as { state?: string })?.state;
   if (provider === 'fyers') {

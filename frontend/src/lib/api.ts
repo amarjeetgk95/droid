@@ -6,7 +6,6 @@ import { createSystemApi, type SystemApi } from './api/system';
 import { createOptionsApi, type OptionsApi } from './api/options';
 import { createAiApi, type AiApi } from './api/ai';
 import { createPaperApi, type PaperApi } from './api/paper';
-import { createCryptoApi, type CryptoApi } from './api/crypto';
 import { createAccountApi, type AccountApi } from './api/account';
 import { createInstitutionalApi, type InstitutionalApi } from './api/institutional';
 import { createSignalsApi, type SignalsApi } from './api/signals';
@@ -19,7 +18,6 @@ export type Api = ApiCore &
   OptionsApi &
   AiApi &
   PaperApi &
-  CryptoApi &
   AccountApi &
   InstitutionalApi &
   SignalsApi &
@@ -35,7 +33,6 @@ export const api: Api = Object.assign(
   createOptionsApi(core),
   createAiApi(core),
   createPaperApi(core),
-  createCryptoApi(core),
   createAccountApi(core),
   createInstitutionalApi(core),
   createSignalsApi(core),

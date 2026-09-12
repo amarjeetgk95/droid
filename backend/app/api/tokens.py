@@ -698,40 +698,6 @@ async def test_connection(payload: dict = Body(...)):
                 "meta": _make_meta().model_dump(),
             }
 
-
-    elif prov_name == "binance":
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-                latency = round((time.time() - start) * 1000, 1)
-                data = r.json() if r.status_code == 200 else None
-                return {
-                    "data": {
-                        "success": r.status_code == 200,
-                        "provider": "binance",
-                        "latency_ms": latency,
-                        "token_valid": True,
-                        "quote": {"symbol": "BTC/USDT", "ltp": float(data["price"])} if data else None,
-                        "raw_response": data,
-                        "error": None if r.status_code == 200 else f"HTTP {r.status_code}",
-                    },
-                    "error": None,
-                    "meta": _make_meta().model_dump(),
-                }
-        except Exception as e:
-            latency = round((time.time() - start) * 1000, 1)
-            return {
-                "data": {
-                    "success": False,
-                    "provider": "binance",
-                    "latency_ms": latency,
-                    "token_valid": False,
-                    "error": str(e),
-                },
-                "error": str(e),
-                "meta": _make_meta().model_dump(),
-            }
-
     # Generic fallback
     latency = round((time.time() - start) * 1000, 1)
     return {

@@ -168,7 +168,7 @@ export function HeaderBrokerGateway({
 
   const [isIndian, setIsIndian] = useState<boolean>(() => {
     try {
-      return getStoredSettings()?.broker?.apiType !== 'crypto';
+      return (getStoredSettings()?.broker?.apiType as string) !== 'crypto';
     } catch {
       return true;
     }
@@ -181,7 +181,7 @@ export function HeaderBrokerGateway({
         const stored = getStoredSettings();
         if (stored?.broker) {
           setActiveBroker(stored.broker.provider || 'fyers');
-          setIsIndian(stored.broker.apiType !== 'crypto');
+          setIsIndian((stored.broker.apiType as string) !== 'crypto');
         }
       } catch {}
     };
