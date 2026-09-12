@@ -90,10 +90,10 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
     <div className="space-y-4">
       {msg && (
         <div
-          className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
+          className={`card card-pad flex items-center gap-2.5 text-xs ${
             msg.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-              : 'bg-destructive/10 text-destructive border border-destructive/20'
+              ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+              : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
           }`}
         >
           {msg.type === 'success' ? (
@@ -101,11 +101,11 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
           ) : (
             <AlertCircle className="w-4 h-4 shrink-0" />
           )}
-          <span>{msg.text}</span>
+          <span className="font-medium">{msg.text}</span>
           <button
             type="button"
             onClick={() => setMsg(null)}
-            className="ml-auto text-muted-foreground hover:text-foreground text-[11px]"
+            className="ml-auto text-xs opacity-70 hover:opacity-100 cursor-pointer"
           >
             Dismiss
           </button>
@@ -114,7 +114,7 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
 
       {/* 1. Account Summary & Status */}
       <SettingSection
-        title="Virtual portfolio & capital"
+        title="Virtual Portfolio & Capital Allocation"
         description="Simulated capital allocation, available intraday margin, and cumulative P&L."
         icon={Wallet}
         action={
@@ -122,15 +122,15 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
             type="button"
             onClick={handleResetAccount}
             disabled={resetting}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)]"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${resetting ? 'animate-spin' : ''}`} />
-            <span>Reset account</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${resetting ? 'animate-spin' : ''}`} />
+            <span>Reset Account</span>
           </button>
         }
       >
-        <div className="p-5">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="card-pad">
+          <div className="stat-grid grid-cols-2 sm:grid-cols-4">
             <StatTile label="Virtual capital" value={`₹${virtualCapital.toLocaleString('en-IN')}`} />
             <StatTile
               label="Available margin"

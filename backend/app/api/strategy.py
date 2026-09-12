@@ -4,18 +4,16 @@ Exposes Strategy Builder, Templates, Payoff Curve calculation, and Multi-factor 
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from app.models.market import ApiMeta, DataStatus
+from app.api.envelope import envelope
 
 router = APIRouter(prefix="/api/v1/strategy", tags=["strategy"])
 
-
-def _meta() -> ApiMeta:
-    return ApiMeta(provider="strategy_engine", timestamp=datetime.now(timezone.utc), status=DataStatus.LIVE)
+_PROVIDER = "strategy_engine"
 
 
 TEMPLATES = [
@@ -73,7 +71,7 @@ def _compute_payoff(spot_price: float, legs: List[StrategyLeg]) -> List[Dict[str
 
 @router.get("/templates")
 async def get_templates():
-    return {"data": TEMPLATES, "error": None, "meta": _meta().model_dump()}
+    return envelope(TEMPLATES, provider=_PROVIDER)
 
 
 @router.post("/build-template")
@@ -96,7 +94,7 @@ async def build_template(template_id: str = Query(...), symbol: str = Query(defa
         "pop_percent": 54.5,
         "payoff_curve": payoff,
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return envelope(data, provider=_PROVIDER)
 
 
 @router.post("/payoff")
@@ -108,7 +106,7 @@ async def calculate_payoff(payload: PayoffRequest):
         "payoff_curve": curve,
         "legs_count": len(payload.legs),
     }
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return envelope(data, provider=_PROVIDER)
 
 
 @router.get("/scanner")
@@ -133,4 +131,4 @@ async def get_strategy_scanner(min_pop: float = Query(default=20.0)):
             "recommendation": "NEUTRAL_INCOME",
         },
     ]
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
+    return envelope(data, provider=_PROVIDER)

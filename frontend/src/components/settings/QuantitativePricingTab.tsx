@@ -166,17 +166,17 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
 
       {/* 3. Live Cost Breakdown Simulator */}
       <SettingSection
-        title="Round-trip cost estimator"
+        title="Round-Trip Cost Breakdown"
         description="Simulated 1-lot NIFTY option trade (75 qty @ ₹120 buy, ₹160 sell, ₹3,000 gross P&L)."
         icon={Calculator}
         action={
-          <span className="text-xs px-2.5 py-1 rounded-md bg-secondary border border-border/60 font-mono text-muted-foreground">
-            Break-even: <span className="text-foreground font-medium">+{simulatedCost.breakEvenPts.toFixed(2)} pts</span>
+          <span className="badge b-info font-mono" style={{ fontSize: '11px' }}>
+            Break-even: +{simulatedCost.breakEvenPts.toFixed(2)} pts
           </span>
         }
       >
-        <div className="p-5">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        <div className="card-pad">
+          <div className="stat-grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
             <StatTile label="Brokerage" value={`₹${simulatedCost.brokerage.toFixed(2)}`} />
             <StatTile label="STT (Sell)" value={`₹${simulatedCost.stt.toFixed(2)}`} />
             <StatTile label="Exchange" value={`₹${simulatedCost.exchangeCharge.toFixed(2)}`} />

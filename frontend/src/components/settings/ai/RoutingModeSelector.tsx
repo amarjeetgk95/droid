@@ -22,7 +22,7 @@ export function RoutingModeSelector({ settings, onChange }: Props) {
         label="Routing Strategy"
         description="Dynamic dispatch algorithm to select the best model for options structuring and trade validation."
       >
-        <div className="flex items-center gap-1 p-0.5 bg-secondary/80 border border-border/60 rounded-md">
+        <div className="seg" role="group" aria-label="Routing strategy">
           {(['Manual', 'Task Optimized', 'Best Available', 'Cost Optimized'] as AIRoutingMode[]).map(
             (rm) => {
               const active = routingMode === rm;
@@ -31,11 +31,9 @@ export function RoutingModeSelector({ settings, onChange }: Props) {
                   key={rm}
                   type="button"
                   onClick={() => handleRoutingMode(rm)}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-card text-foreground shadow-2xs font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  data-active={active}
+                  aria-pressed={active}
+                  className="seg-btn"
                 >
                   {rm}
                 </button>

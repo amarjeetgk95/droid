@@ -35,6 +35,7 @@ import uuid
 from app.ml.predictor import MLPredictor
 from app.ml.targets import TARGET_SPEC_VERSION
 from app.ml.targets_v2 import TARGET_SPEC_VERSION_V2
+from app.research.cache import IDEMPOTENCY, MinuteBucketReplay
 from app.research.enums import Direction, ForecastHorizon
 from app.research.features import FeatureLayer, classify_session_ist
 from app.research.models import IndicatorContext, IndicatorOutput, ResearchPrediction, ResearchSnapshot
@@ -55,30 +56,14 @@ logger = structlog.get_logger(__name__)
 # stored result (same prediction_id) is replayed instead of minting a new
 # uuid, and the duplicate fresh rows are dropped from the in-mem stores.
 # ---------------------------------------------------------------------------
-_IDEMPOTENCY: Dict[Tuple[str, str, str, str, str], Tuple[str, Optional[str], Dict[str, Any]]] = {}
-_IDEMPOTENCY_MAX = 500
-
-
-def _idempotency_key(
-    instrument: str,
-    horizon: str,
-    now_utc: Any,
-    weights_version: str,
-    model_flag: str,
-) -> Tuple[str, str, str, str, str]:
-    try:
-        from app.research.cache import minute_bucket_str as _mb
-
-        bucket = _mb(now_utc)
-    except Exception:
-        bucket = "unknown-minute"
-    return (
-        str(instrument or "UNKNOWN"),
-        str(horizon or "1h"),
-        str(bucket),
-        str(weights_version or ""),
-        str(model_flag or ""),
-    )
+# ---------------------------------------------------------------------------
+# P3-3 idempotency: minute-bucket replay lives in app.research.cache
+# (MinuteBucketReplay). The key is (instrument, horizon, minute_bucket_UTC,
+# weights_version, model_flag); a hit replays the same prediction_id instead
+# of minting a new uuid, and the duplicate fresh rows are dropped from the
+# in-mem stores.
+# ---------------------------------------------------------------------------
+_IDEMPOTENCY = IDEMPOTENCY
 
 
 def clear_forecast_idempotency() -> None:
@@ -1760,7 +1745,7 @@ class TrendForecaster:
             try:
                 _wv = str(result.get("weights_version") or _forecast_weights_version())
                 _mf = _forecast_v2_model_flag()
-                _ikey = _idempotency_key(instrument, horizon, now_utc, _wv, _mf)
+                _ikey = MinuteBucketReplay.make_key(instrument, horizon, now_utc, _wv, _mf)
                 _old = _IDEMPOTENCY.get(_ikey)
                 if _old is not None:
                     _old_pid, _old_sid, _old_res = _old
@@ -1815,12 +1800,7 @@ class TrendForecaster:
                         except Exception:
                             _store_res = dict(result)
                         _store_res["idempotent_replay"] = False
-                        _IDEMPOTENCY[_ikey] = (prediction_id, snapshot_id, _store_res)
-                        while len(_IDEMPOTENCY) > _IDEMPOTENCY_MAX:
-                            try:
-                                _IDEMPOTENCY.pop(next(iter(_IDEMPOTENCY)), None)
-                            except Exception:
-                                break
+                        _IDEMPOTENCY.put(_ikey, prediction_id, snapshot_id, _store_res)
                     except Exception:
                         pass
             except Exception:

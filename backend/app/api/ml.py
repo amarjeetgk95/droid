@@ -1,6 +1,8 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.envelope import envelope
 from app.core.database import get_db_session
 from app.core.security import AuthUser, get_current_user
 from app.ml.predictor import ml_predictor
@@ -10,31 +12,11 @@ from app.ml.targets import (
     TARGET_SPEC_VERSION,
     describe_target,
 )
-from app.models.market import ApiMeta, DataStatus
+from app.models.market import DataStatus
 
 router = APIRouter(prefix="/api/v1/ml", tags=["ml"])
 
-
-def _make_meta() -> ApiMeta:
-    try:
-        from app.ml.trainer import META_PATH
-
-        if META_PATH.exists():
-            return ApiMeta(
-                provider="xgboost_lightgbm_ensemble",
-                timestamp=datetime.now(timezone.utc),
-                status=DataStatus.OFFLINE,
-            )
-    except Exception:
-        pass
-    return ApiMeta(
-        provider="xgboost_lightgbm_ensemble",
-        timestamp=datetime.now(timezone.utc),
-        status=DataStatus.OFFLINE,
-    )
-
-
-from pydantic import BaseModel, Field
+_PROVIDER = "xgboost_lightgbm_ensemble"
 
 
 class TrainRequest(BaseModel):
@@ -72,11 +54,9 @@ async def train_ml_ensemble(
             horizon_minutes=request.horizon_minutes,
             target_spec_version=request.target_spec_version,
         )
-        return {"data": meta, "error": None, "meta": _make_meta().model_dump()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return envelope(meta, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/model-info")
@@ -86,7 +66,11 @@ async def get_model_info():
     import json
 
     if not META_PATH.exists():
-        return {"data": {"trained": False, "message": "No trained ensemble found. Use POST /api/v1/ml/train"}, "error": None, "meta": _make_meta().model_dump()}
+        return envelope(
+            {"trained": False, "message": "No trained ensemble found. Use POST /api/v1/ml/train"},
+            provider=_PROVIDER,
+            status=DataStatus.OFFLINE,
+        )
     meta = json.loads(META_PATH.read_text())
     meta["artifacts"] = {
         "xgb_exists": XGB_PATH.exists(),
@@ -94,7 +78,7 @@ async def get_model_info():
         "xgb_size_bytes": XGB_PATH.stat().st_size if XGB_PATH.exists() else 0,
         "lgb_size_bytes": LGB_PATH.stat().st_size if LGB_PATH.exists() else 0,
     }
-    return {"data": meta, "error": None, "meta": _make_meta().model_dump()}
+    return envelope(meta, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/predict/{symbol}")
@@ -113,30 +97,24 @@ async def get_ml_prediction(
     """
     try:
         prediction = await ml_predictor.predict_probabilities(symbol, horizon_minutes=horizon_minutes)
-        return {
-            "data": prediction.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return envelope(prediction, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/targets")
 async def get_target_specs():
     """Versioned label definitions per horizon (auditability for training)."""
-    return {
-        "data": {
+    return envelope(
+        {
             "target_spec_version": TARGET_SPEC_VERSION,
             "supported_horizons": list(SUPPORTED_HORIZONS),
             "default_horizon_minutes": DEFAULT_HORIZON_MINUTES,
             "specs": [describe_target(h) for h in SUPPORTED_HORIZONS],
         },
-        "error": None,
-        "meta": _make_meta().model_dump(),
-    }
+        provider=_PROVIDER,
+        status=DataStatus.OFFLINE,
+    )
 
 
 @router.post("/outcomes/settle")
@@ -166,16 +144,16 @@ async def settle_ml_outcome(
         raise HTTPException(status_code=400, detail=str(e))
     if rec is None:
         raise HTTPException(status_code=404, detail="Prediction not found")
-    return {
-        "data": {
+    return envelope(
+        {
             "id": str(rec.id),
             "outcome_label": rec.outcome_label,
             "outcome_spot": rec.outcome_spot,
             "settled_at": rec.settled_at.isoformat() if rec.settled_at else None,
         },
-        "error": None,
-        "meta": _make_meta().model_dump(),
-    }
+        provider=_PROVIDER,
+        status=DataStatus.OFFLINE,
+    )
 
 
 @router.get("/calibration/{symbol}")
@@ -190,24 +168,16 @@ async def get_ml_calibration(
     Hit-rate on <30 samples is noise — check n before trusting a cell.
     """
     from app.ml.calibration import summarize_calibration
+    from app.ml.targets import validate_horizon
     from app.repositories.ml_repository import MLRepository
 
     if horizon_minutes is not None:
         try:
-            from app.ml.targets import validate_horizon
-
             validate_horizon(horizon_minutes)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    try:
-        rows = await MLRepository.get_settled_rows(session, symbol, horizon_minutes)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)[:300])
-    return {
-        "data": summarize_calibration(rows),
-        "error": None,
-        "meta": _make_meta().model_dump(),
-    }
+    rows = await MLRepository.get_settled_rows(session, symbol, horizon_minutes)
+    return envelope(summarize_calibration(rows), provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.post("/settle/run")
@@ -224,8 +194,5 @@ async def run_ml_settlement(
     """
     from app.ml.settlement import settle_due
 
-    try:
-        summary = await settle_due(session, symbol=symbol, limit=limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)[:300])
-    return {"data": summary, "error": None, "meta": _make_meta().model_dump()}
+    summary = await settle_due(session, symbol=symbol, limit=limit)
+    return envelope(summary, provider=_PROVIDER, status=DataStatus.OFFLINE)

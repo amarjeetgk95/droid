@@ -110,68 +110,95 @@ export function LiveVerification({ settings }: Props) {
   };
 
   return (
-    <div className="bg-card border border-border/60 rounded-lg p-5 space-y-3 overflow-hidden">
-      <div className="flex flex-col gap-2">
-        <h3 className="text-[13px] font-semibold flex flex-wrap items-center gap-2 text-foreground">
-          <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-muted-foreground" /> Live provider verification</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary text-muted-foreground border border-border/60 font-mono whitespace-nowrap">No mock fallback</span>
-        </h3>
-        <p className="text-xs text-muted-foreground leading-relaxed">Resolves <span className="font-mono">auto</span> to current eligible free model, uses real live NIFTY context, measures latency, validates JSON schema. Fails honestly if key missing/invalid. Free-only guard hard-fails paid models with hint; catalog falls back to cached list.</p>
-        {connectionMode === 'Local Ollama' && (
-          <div className="text-[11px] p-2.5 rounded-md bg-secondary/40 border border-border/60 text-muted-foreground space-y-1">
-            <p className="font-medium text-foreground">Ollama local-only behavior</p>
-            <p className="leading-relaxed">
-              Ollama runs on <span className="font-mono">http://localhost:11434</span> on your machine. The hosted backend on Render <strong>cannot</strong> reach <span className="font-mono">localhost</span>/<span className="font-mono">127.0.0.1</span>.
-              This verification performs a <strong>direct browser fetch</strong> to <span className="font-mono">{settings.ollamaBaseUrl}/api/tags</span> <em>before</em> calling the backend — gating the backend call. If the browser check fails, ensure <span className="font-mono">ollama serve</span> is running, the model is pulled (<span className="font-mono">ollama pull {settings.ollamaModel}</span>), and CORS is allowed. Use a remote Ollama URL for hosted inference.
-            </p>
+    <div className="card">
+      <div className="card-hd">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 muted" />
+          <h3 className="card-title">Inference Engine Diagnostics</h3>
+        </div>
+        <span className="badge b-info" style={{ fontSize: '10px' }}>
+          {connectionMode === 'OpenRouter' ? 'OpenRouter' : connectionMode === 'Direct Provider' ? directProvider : 'Local Ollama'}
+        </span>
+      </div>
+
+      <div className="card-bd space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs muted leading-normal max-w-xl">
+            Verify active model credentials, measure network round-trip latency, and validate structured JSON output schema without mock fallbacks.
+          </div>
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={testing}
+            className="btn btn-sm btn-primary flex items-center gap-1.5 shrink-0"
+          >
+            <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+            <span>{testing ? 'Testing…' : 'Run Diagnostics'}</span>
+          </button>
+        </div>
+
+        {!testing && !testResult && (
+          <div className="pt-1">
+            {connectionMode === 'OpenRouter' && !settings.openRouterApiKey && (
+              <div className="badge b-bear" style={{ fontSize: '11px' }}>
+                <AlertCircle className="w-3 h-3" />
+                <span>OpenRouter API key missing — enter key and Save</span>
+              </div>
+            )}
+            {connectionMode === 'Local Ollama' && !settings.ollamaBaseUrl && (
+              <div className="badge b-bear" style={{ fontSize: '11px' }}>
+                <AlertCircle className="w-3 h-3" />
+                <span>Ollama host URL missing</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {testResult && (
+          <div
+            className={`card card-pad text-xs space-y-2.5 ${
+              testResult.success
+                ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+                : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
+            }`}
+          >
+            <div className="flex items-start gap-2 font-semibold">
+              {testResult.success ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              )}
+              <span className="leading-relaxed flex-1">{testResult.message}</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] mono">
+              <div className="stat" style={{ padding: '6px 10px' }}>
+                <div className="stat-l">Latency</div>
+                <div className="stat-v" style={{ fontSize: '13px' }}>{testResult.latency ?? '—'} ms</div>
+              </div>
+              <div className="stat" style={{ padding: '6px 10px' }}>
+                <div className="stat-l">Schema</div>
+                <div className="stat-v" style={{ fontSize: '13px' }}>{testResult.schemaValid ? '✓ Valid' : testResult.success ? '✓ Valid' : '✗ Failed'}</div>
+              </div>
+              <div className="stat" style={{ padding: '6px 10px' }}>
+                <div className="stat-l">Model</div>
+                <div className="stat-v truncate" style={{ fontSize: '13px' }}>{testResult.model || '-'}</div>
+              </div>
+              <div className="stat" style={{ padding: '6px 10px' }}>
+                <div className="stat-l">Execution</div>
+                <div className="stat-v" style={{ fontSize: '13px' }}>{testResult.isMock ? 'Mock' : 'Live Gateway'}</div>
+              </div>
+            </div>
+
+            {testResult.data && testResult.success && (
+              <div className="p-2.5 rounded bg-[var(--ds-surface)] border border-[var(--ds-border-subtle)] text-[var(--ds-ink)] mono text-[11px] space-y-1">
+                <div><strong>Market Bias:</strong> {testResult.data.market_bias} ({testResult.data.confidence}% confidence)</div>
+                <div><strong>Summary:</strong> {testResult.data.executive_summary}</div>
+              </div>
+            )}
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-3 pt-3 border-t border-border/50">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 items-start">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono min-w-0">
-            <div className="flex items-center gap-1.5 shrink-0"><span className="text-muted-foreground whitespace-nowrap">Provider:</span><span className="px-2 py-1 rounded bg-secondary border text-foreground font-semibold whitespace-nowrap">{connectionMode === 'OpenRouter' ? 'OpenRouter' : connectionMode === 'Direct Provider' ? directProvider : 'Ollama'}</span></div>
-            <div className="flex items-center gap-1.5 min-w-0 flex-1"><span className="text-muted-foreground whitespace-nowrap shrink-0">Model:</span>
-              <span className="px-2 py-1 rounded bg-secondary border text-foreground truncate max-w-[380px]" title={connectionMode === 'OpenRouter' ? ((settings as unknown as { openRouterSelectedModel: string }).openRouterSelectedModel === 'auto' ? 'Auto — Best Free' : (settings as unknown as { openRouterSelectedModel: string }).openRouterSelectedModel) : connectionMode === 'Direct Provider' ? ((directProvider === 'OpenAI' ? (settings as unknown as { openaiModel: string }).openaiModel : directProvider === 'Novita AI' ? (settings as unknown as { novitaModel: string }).novitaModel : directProvider === 'NVIDIA' ? (settings as unknown as { nvidiaModel: string }).nvidiaModel : directProvider === 'Google Gemini' ? settings.geminiModel : (settings as unknown as { customOpenaiModel: string }).customOpenaiModel) ) : settings.ollamaModel}>
-                {connectionMode === 'OpenRouter' ? (((settings as unknown as { openRouterSelectedModel: string }).openRouterSelectedModel || 'auto') === 'auto' ? 'Auto — Best Free' : (settings as unknown as { openRouterSelectedModel: string }).openRouterSelectedModel) : connectionMode === 'Direct Provider' ? (directProvider === 'OpenAI' ? (settings as unknown as { openaiModel: string }).openaiModel : directProvider === 'Novita AI' ? (settings as unknown as { novitaModel: string }).novitaModel : directProvider === 'NVIDIA' ? (settings as unknown as { nvidiaModel: string }).nvidiaModel : directProvider === 'Google Gemini' ? settings.geminiModel : (settings as unknown as { customOpenaiModel: string }).customOpenaiModel) : settings.ollamaModel}
-              </span>
-            </div>
-          </div>
-          <button type="button" onClick={handleTest} disabled={testing} className="flex items-center justify-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-xs w-full lg:w-auto shrink-0">
-            <Play className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-            <span>{testing ? 'Testing…' : 'Run Live Test'}</span>
-          </button>
-        </div>
-      </div>
-      {!testing && !testResult && (
-        <div className="space-y-1">
-          {connectionMode === 'OpenRouter' && !settings.openRouterApiKey && <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />OpenRouter key missing — enter sk-or-v1-... above and Save.</div>}
-          {connectionMode === 'Direct Provider' && (() => {
-            const keyMap: Record<string, string> = { OpenAI: (settings as unknown as { openaiApiKey: string }).openaiApiKey, 'Novita AI': (settings as unknown as { novitaApiKey: string }).novitaApiKey, NVIDIA: (settings as unknown as { nvidiaApiKey: string }).nvidiaApiKey, 'Google Gemini': settings.geminiApiKey, 'Custom OpenAI-Compatible': (settings as unknown as { customOpenaiApiKey: string }).customOpenaiApiKey };
-            return !keyMap[directProvider] ? <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{directProvider} key missing.</div> : <div className="text-[11px] text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Key present — Save then Test.</div>;
-          })()}
-          {connectionMode === 'Local Ollama' && !settings.ollamaBaseUrl && <div className="text-[11px] text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />Ollama URL missing.</div>}
-        </div>
-      )}
-      {testResult && (
-        <div className={`p-3.5 rounded-lg text-xs space-y-3 border ${testResult.success ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' : 'bg-destructive/10 text-destructive border-destructive/20'}`}>
-          <div className="flex items-start gap-2 font-semibold">{testResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}<span className="leading-relaxed flex-1">{testResult.message}</span></div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
-            <div className="bg-card/60 p-2 rounded border"><div className="text-muted-foreground">Latency</div><div className="font-semibold text-foreground">{testResult.latency ?? '—'} ms</div>{testResult.clientLatency && <div className="text-[10px] text-muted-foreground">client {testResult.clientLatency}ms</div>}</div>
-            <div className="bg-card/60 p-2 rounded border"><div className="text-muted-foreground">Schema</div><div className="font-semibold">{testResult.schemaValid ? '✓ Valid' : testResult.success ? '✓ Valid' : '✗ Failed'}</div></div>
-            <div className="bg-card/60 p-2 rounded border"><div className="text-muted-foreground">Provider</div><div className="font-semibold truncate">{testResult.model || '-'}</div></div>
-            <div className="bg-card/60 p-2 rounded border"><div className="text-muted-foreground">Mock?</div><div className="font-semibold">{testResult.isMock ? 'Yes (offline)' : 'No – live'}</div></div>
-          </div>
-          {testResult.hint && <div className="text-[11px] p-2 rounded bg-card/60 border text-foreground"><strong>Hint:</strong> {testResult.hint}</div>}
-          {testResult.data && testResult.success && (
-            <div className="bg-card/80 p-3 rounded border text-foreground font-mono text-[11px] space-y-1">
-              <div><strong>Bias:</strong> {testResult.data.market_bias} ({testResult.data.confidence}% confidence)</div>
-              <div><strong>Executive Summary:</strong> {testResult.data.executive_summary}</div>
-              <div><strong>Framework:</strong> {testResult.data.recommended_strategy_framework}</div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

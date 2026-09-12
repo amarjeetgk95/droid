@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 import time
+from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from app.api.envelope import envelope
 from app.core.security import AuthUser, get_current_user
 from app.services.ai_service import ai_service
 from app.services.ai_copilot_service import ai_copilot_service
@@ -17,7 +19,7 @@ from app.models.ai import (
     AIDailyBriefingResponse,
 )
 from app.services.openrouter_catalog import get_model_catalog, validate_model_or_raise, get_cache_status
-from app.models.market import ApiMeta, DataStatus
+from app.models.market import DataStatus
 from app.core.config import settings
 
 logger = structlog.get_logger()
@@ -26,13 +28,16 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
 # Compat alias for spec: GET /api/ai/models
 compat_router = APIRouter(prefix="/api/ai", tags=["ai"])
 
+_PROVIDER = "ai_insights_engine"
 
-def _make_meta() -> ApiMeta:
-    return ApiMeta(
-        provider="ai_insights_engine",
-        timestamp=datetime.now(timezone.utc),
-        status=DataStatus.OFFLINE,
-    )
+
+def _ai_envelope(data: Any, error: Any = None, **extra: Any) -> dict:
+    """Standard {data, error, meta} envelope; extra keys are merged at top level."""
+    resp = envelope(data, provider=_PROVIDER, status=DataStatus.OFFLINE)
+    if error is not None:
+        resp["error"] = error
+    resp.update(extra)
+    return resp
 
 
 class AITestRequest(BaseModel):
@@ -102,13 +107,9 @@ async def test_ai_provider(
             customBaseUrl=payload.customBaseUrl,
         )
         # Always return 200 with success flag, so frontend can show detailed diagnostics
-        return {
-            "data": result,
-            "error": None if result.get("success") else result.get("error"),
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _ai_envelope(result, error=None if result.get("success") else result.get("error"))
+    except Exception:
+        raise
 
 
 @router.post("/analyze/{symbol}")
@@ -140,21 +141,13 @@ async def generate_market_analysis(
                 insight = await ai_service.generate_market_analysis(symbol, provider, openrouter_model=model, allow_paid=allow_paid, openrouter_api_key=effective_key)
             else:
                 insight = await ai_service.generate_market_analysis(symbol, provider)
-        return {
-            "data": insight.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope(insight)
     except ValueError as e:
         msg = str(e)
         if "Paid models are disabled" in msg:
             raise HTTPException(status_code=403, detail=msg)
         # Configuration / connectivity errors → 400 with clear message
         raise HTTPException(status_code=400, detail=msg)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 class AIV2EvaluateRequest(BaseModel):
@@ -196,31 +189,20 @@ async def evaluate_v2(
             context_overrides=req.context_overrides,
         )
 
-        return {
-            "data": {
-                "signal": signal.model_dump(mode="json"),
-                "execution": execution.model_dump(mode="json"),
-            },
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope({
+            "signal": signal.model_dump(mode="json"),
+            "execution": execution.model_dump(mode="json"),
+        })
     except Exception as e:
         logger.error("v2_evaluate_failed", symbol=symbol, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
 
 @router.get("/history/{symbol}")
 async def get_analysis_history(symbol: str):
     """Retrieve historical market intelligence reports for a symbol."""
-    try:
-        history = await ai_service.get_history_async(symbol)
-        return {
-            "data": [h.model_dump(mode="json") for h in history],
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    history = await ai_service.get_history_async(symbol)
+    return _ai_envelope(history)
 
 
 # ---------------------------------------------------------------------------
@@ -338,12 +320,11 @@ async def list_ai_models_v1(
 ):
     """Dynamic OpenRouter model catalog — free detection via pricing. Cached 5-15min."""
     data = await _handle_models_list(free_only=free_only, pricing=pricing, force_refresh=refresh)
-    return {
-        "data": data,
-        "error": None if not data.get("cache_error") or data.get("using_cached") else data.get("cache_error"),
-        "meta": _make_meta().model_dump(),
-        "using_cached": data.get("using_cached"),
-    }
+    return _ai_envelope(
+        data,
+        error=None if not data.get("cache_error") or data.get("using_cached") else data.get("cache_error"),
+        using_cached=data.get("using_cached"),
+    )
 
 
 @compat_router.get("/models")
@@ -353,44 +334,29 @@ async def list_ai_models_compat(
     refresh: bool = Query(default=False),
 ):
     data = await _handle_models_list(free_only=free_only, pricing=pricing, force_refresh=refresh)
-    return {
-        "data": data,
-        "error": None if not data.get("cache_error") or data.get("using_cached") else data.get("cache_error"),
-        "meta": _make_meta().model_dump(),
-        "using_cached": data.get("using_cached"),
-    }
+    return _ai_envelope(
+        data,
+        error=None if not data.get("cache_error") or data.get("using_cached") else data.get("cache_error"),
+        using_cached=data.get("using_cached"),
+    )
 
 
 @router.post("/models/refresh")
 async def refresh_ai_models():
     """Manual refresh trigger for UI."""
     data = await _handle_models_list(force_refresh=True)
-    return {
-        "data": data,
-        "error": None,
-        "meta": _make_meta().model_dump(),
-        "using_cached": data.get("using_cached"),
-    }
+    return _ai_envelope(data, using_cached=data.get("using_cached"))
 
 
 @compat_router.post("/models/refresh")
 async def refresh_ai_models_compat():
     data = await _handle_models_list(force_refresh=True)
-    return {
-        "data": data,
-        "error": None,
-        "meta": _make_meta().model_dump(),
-        "using_cached": data.get("using_cached"),
-    }
+    return _ai_envelope(data, using_cached=data.get("using_cached"))
 
 
 @router.get("/models/cache-status")
 async def models_cache_status():
-    return {
-        "data": get_cache_status(),
-        "error": None,
-        "meta": _make_meta().model_dump(),
-    }
+    return _ai_envelope(get_cache_status())
 
 
 @router.post("/analyze")
@@ -597,13 +563,7 @@ async def analyze_with_model(
             latency_ms=latency_ms,
             success=True,
         )
-        return {
-            "data": insight.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-            "model_used": effective_model,
-            "latency_ms": latency_ms,
-        }
+        return _ai_envelope(insight, model_used=effective_model, latency_ms=latency_ms)
     except ValueError as e:
         latency_ms = int((time.perf_counter() - start) * 1000)
         msg = str(e)
@@ -635,7 +595,7 @@ async def analyze_with_model(
             error=str(e)[:400],
             success=False,
         )
-        raise HTTPException(status_code=500, detail=str(e)[:500])
+        raise
 
 
 # Enhanced analyze/{symbol} with model validation — also Settings-driven
@@ -712,14 +672,10 @@ async def recommend_options_strategy(
 
     try:
         rec = await ai_strategy_service.recommend_strategy(payload)
-        return {
-            "data": rec.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope(rec)
     except Exception as e:
         logger.error("strategy_recommend_endpoint_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -741,14 +697,10 @@ async def validate_trade_setup(
 
     try:
         val = await ai_validation_service.validate_trade(payload)
-        return {
-            "data": val.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope(val)
     except Exception as e:
         logger.error("trade_validate_endpoint_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -789,14 +741,10 @@ async def get_market_briefing(
             ],
             provider_used="droid_quant_engine",
         )
-        return {
-            "data": briefing.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope(briefing)
     except Exception as e:
         logger.error("briefing_endpoint_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -835,12 +783,8 @@ async def get_deep_insight(
             openrouter_api_key=effective_openrouter_key,
             gemini_api_key=effective_gemini_key,
         )
-        return {
-            "data": payload.model_dump(mode="json"),
-            "error": payload.error,
-            "meta": _make_meta().model_dump(),
-        }
+        return _ai_envelope(payload, error=payload.error)
     except Exception as e:
         logger.error("deep_insight_error", symbol=symbol, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 

@@ -28,20 +28,17 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
     <div className="space-y-4">
       {/* 1. Inference Gateway & Architecture */}
       <SettingSection
-        title="Inference gateway & routing"
-        description="AI execution runtime and dispatch policy for strategies and signals."
+        title="Inference Gateway & Routing"
+        description="AI execution runtime and model dispatch policy for strategies and signals."
         icon={Brain}
       >
         <ConnectionModeSelector settings={settings} onChange={onChange} />
-        <div className="divide-y divide-border/40 border-t border-border/40">
+        <div className="divide-y divide-[var(--ds-border-subtle)] border-t border-[var(--ds-border-subtle)]">
           <RoutingModeSelector settings={settings} onChange={onChange} />
         </div>
       </SettingSection>
 
-      {/* 2. Specialized Task Routing */}
-      <TaskRoutingGrid settings={settings} onChange={onChange} />
-
-      {/* 3. Provider Credentials & Catalog */}
+      {/* 2. Provider Credentials & Catalog */}
       {connectionMode === 'OpenRouter' && (
         <OpenRouterPanel settings={settings} onChange={onChange} errors={errors} />
       )}
@@ -50,6 +47,11 @@ export function AIEngineTab({ settings, onChange, errors = [] }: Props) {
       )}
       {connectionMode === 'Local Ollama' && (
         <OllamaPanel settings={settings} onChange={onChange} errors={errors} />
+      )}
+
+      {/* 3. Manual Task Routing (Only when Manual routing mode is active) */}
+      {(settings as unknown as { routingMode: string }).routingMode === 'Manual' && (
+        <TaskRoutingGrid settings={settings} onChange={onChange} />
       )}
 
       {/* 4. Persona & Sampling Controls */}

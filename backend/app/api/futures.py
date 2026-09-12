@@ -5,22 +5,16 @@ Enforces The Truth of Wall: Never fabricates synthetic futures contracts or fake
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from fastapi import APIRouter
 
-from app.models.market import ApiMeta, DataStatus
+from app.api.envelope import envelope
+from app.models.market import DataStatus
 from app.services.market_service import MarketService
 
 router = APIRouter(prefix="/api/v1/futures", tags=["futures"])
 market_service = MarketService()
 
-
-def _meta(is_live: bool = False) -> ApiMeta:
-    return ApiMeta(
-        provider="futures_engine",
-        timestamp=datetime.now(timezone.utc),
-        status=DataStatus.LIVE if is_live else DataStatus.OFFLINE,
-    )
+_PROVIDER = "futures_engine"
 
 
 @router.get("/{symbol}/overview")
@@ -58,7 +52,7 @@ async def get_futures_overview(symbol: str):
             "previous_month_rollover": None,
         },
     }
-    return {"data": data, "error": None, "meta": _meta(is_live=is_live).model_dump()}
+    return envelope(data, provider=_PROVIDER, status=DataStatus.LIVE if is_live else DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/term-structure")
@@ -69,7 +63,7 @@ async def get_term_structure(symbol: str):
         "curve_state": "UNAVAILABLE",
         "contracts": [],
     }
-    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
+    return envelope(data, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/buildup")
@@ -82,7 +76,7 @@ async def get_oi_buildup(symbol: str):
         "oi_change_pct": 0.0,
         "interpretation": "Authentic broker futures data offline or unavailable.",
     }
-    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
+    return envelope(data, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/rollover")
@@ -94,5 +88,4 @@ async def get_rollover(symbol: str):
         "rollover_pace": "UNAVAILABLE",
         "previous_month_rollover": None,
     }
-    return {"data": data, "error": None, "meta": _meta(is_live=False).model_dump()}
-
+    return envelope(data, provider=_PROVIDER, status=DataStatus.OFFLINE)

@@ -63,25 +63,31 @@ def _uid(user: Optional[AuthUser]) -> UUID | None:
         return None
 
 
-_synthetic_account_cache: dict[UUID, dict | AlgoAccount] = {}
+_synthetic_account_cache: dict[UUID, AlgoAccount] = {}
 _kill_cache: dict[UUID, dict] = {}
 
-async def _get_or_create_account(session: AsyncSession | None, user_id: UUID) -> AlgoAccount | dict:
-    """Get or create algo account — deterministic per user_id, DB-backed when available, synthetic fallback."""
+
+def _synthetic_account(user_id: UUID, mode: str = "OFF") -> AlgoAccount:
+    """Detached, non-persisted account with a deterministic id (the user_id itself)."""
+    return AlgoAccount(id=user_id, user_id=user_id, mode=mode, is_active=True)
+
+
+async def _get_or_create_account(session: AsyncSession | None, user_id: UUID) -> AlgoAccount:
+    """Get or create algo account — deterministic per user_id, DB-backed when available, synthetic fallback.
+
+    Always returns an :class:`AlgoAccount`. Callers never need isinstance/
+    dict-narrowing anymore: the no-DB and DB-error paths return a detached
+    synthetic instance whose id equals the user_id.
+    """
     # In dev / PAPER without DB persistence, always use deterministic synthetic to keep account_id stable across requests
     # This is the correct behavior for §3 isolation when DB table not yet migrated
     if not settings.database_url or session is None:
-        if user_id in _synthetic_account_cache:
-            return _synthetic_account_cache[user_id]
-        acct = {"id": user_id, "user_id": user_id, "mode": "OFF", "is_active": True}
-        _synthetic_account_cache[user_id] = acct
-        return acct
-    # DB path — but also check cache first to avoid duplicate creation when DB transaction not yet visible
+        if user_id not in _synthetic_account_cache:
+            _synthetic_account_cache[user_id] = _synthetic_account(user_id)
+        return _synthetic_account_cache[user_id]
+    # DB path — cache hit returns the previously loaded instance for stability
     if user_id in _synthetic_account_cache:
-        cached = _synthetic_account_cache[user_id]
-        if isinstance(cached, dict):
-            # Verify it still matches DB; but return cached for stability
-            return cached
+        return _synthetic_account_cache[user_id]
     try:
         # Check if user_id exists in profiles; if dev user not in profiles, map to existing active profile
         target_uid = user_id
@@ -113,13 +119,10 @@ async def _get_or_create_account(session: AsyncSession | None, user_id: UUID) ->
             await session.rollback()
         except Exception:
             pass
-        return {"id": user_id, "user_id": user_id, "mode": "OFF", "is_active": True}
+        if user_id not in _synthetic_account_cache:
+            _synthetic_account_cache[user_id] = _synthetic_account(user_id)
+        return _synthetic_account_cache[user_id]
 
-
-def _acct_id(acct) -> UUID:
-    if isinstance(acct, dict):
-        return acct["id"]
-    return acct.id
 
 # ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -276,7 +279,7 @@ async def get_account(
     capital = None
     kill = None
     consent_ok = False
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
         cfg = res.scalar_one_or_none()
         capital = {
@@ -297,10 +300,10 @@ async def get_account(
 
     return {
         "data": {
-            "account_id": str(_acct_id(acct)),
+            "account_id": str(acct.id),
             "user_id": str(uid),
-            "mode": acct.mode if not isinstance(acct, dict) else acct["mode"],
-            "is_active": acct.is_active if not isinstance(acct, dict) else acct["is_active"],
+            "mode": acct.mode,
+            "is_active": acct.is_active,
             "capital": capital,
             "kill_switch": kill,
             "consent_ok": consent_ok,
@@ -326,7 +329,6 @@ async def set_mode(
     if session is None:
         return {"data": {"mode": mode, "note": "no DB — synthetic"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # LIVE requires consent §4
     if mode == "LIVE":
         res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id, AlgoConsent.disclosure_version == DISCLOSURE_VERSION, AlgoConsent.is_revoked == False))
@@ -364,7 +366,6 @@ async def get_consent(
     if session is None:
         return {"data": {"disclosure": disclosure, "consents": []}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id).order_by(AlgoConsent.created_at.desc()))
     consents = res.scalars().all()
     return {
@@ -395,7 +396,6 @@ async def post_consent(
     if session is None:
         return {"data": {"acknowledged": True, "version": DISCLOSURE_VERSION}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
     consent = AlgoConsent(account_id=acct.id, user_id=uid, disclosure_version=DISCLOSURE_VERSION, ip_address=ip, user_agent=ua)
@@ -418,7 +418,6 @@ async def revoke_consent(
     if session is None:
         return {"data": {"revoked": True}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id, AlgoConsent.is_revoked == False))
     for c in res.scalars().all():
         c.is_revoked = True  # type: ignore
@@ -443,9 +442,6 @@ async def get_capital(
         return {"data": {"limit": "3000", "deployed": "0", "reserved": "0", "available": "3000", "utilization_pct": "0", "config": {"investment_limit": "3000", "max_capital_per_trade": "1000", "max_daily_loss": "500", "max_loss_per_trade": "200", "max_open_positions": 5, "max_trades_per_day": 20, "max_position_quantity": 500, "max_slippage_pct": "0.3", "max_spread_pct": "0.5"}}, "error": None, "meta": _meta().model_dump()}
     try:
         acct = await _get_or_create_account(session, uid)
-        if isinstance(acct, dict):
-            # synthetic fallback when DB not available
-            return {"data": {"limit": "3000", "deployed": "0", "reserved_pending": "0", "available": "3000", "utilization_pct": "0", "config": {"investment_limit": "3000", "max_capital_per_trade": "1000", "max_daily_loss": "500", "max_loss_per_trade": "200", "max_open_positions": 5, "max_trades_per_day": 20, "max_position_quantity": 500, "max_slippage_pct": "0.3", "max_spread_pct": "0.5"}}, "error": None, "meta": _meta().model_dump()}
         snap = await capital_engine.get_snapshot(session, acct.id)
         res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
         cfg = res.scalar_one_or_none()
@@ -494,7 +490,6 @@ async def update_capital(
     if session is None:
         return {"data": {"updated": False, "reason": "no DB"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # Live changes require explicit confirmation §76
     is_critical_change = payload.investment_limit is not None
     if is_critical_change and not payload.confirm:
@@ -543,7 +538,6 @@ async def list_strategies(
     if session is None:
         return {"data": [], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoStrategy).where(AlgoStrategy.account_id == acct.id).order_by(AlgoStrategy.updated_at.desc()))
     strats = res.scalars().all()
     return {"data": [{"strategy_id": s.strategy_id, "config_version": s.config_version, "name": s.name, "status": s.status, "ai_mode": s.ai_mode, "is_active": s.is_active, "weights": s.weights, "parameters": s.parameters, "conflict_policy": s.conflict_policy, "priority_rank": s.priority_rank} for s in strats], "error": None, "meta": _meta().model_dump()}
@@ -561,7 +555,6 @@ async def upsert_strategy(
     if session is None:
         return {"data": {"strategy_id": payload.strategy_id, "config_version": 1}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # Versioned: never mutate in place — bump config_version
     res = await session.execute(select(AlgoStrategy).where(AlgoStrategy.account_id == acct.id, AlgoStrategy.strategy_id == payload.strategy_id).order_by(AlgoStrategy.config_version.desc()))
     existing = res.scalars().first()
@@ -609,7 +602,6 @@ async def promote_strategy(
     if session is None:
         return {"data": {"strategy_id": strategy_id, "promoted_to": target}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoStrategy).where(AlgoStrategy.account_id == acct.id, AlgoStrategy.strategy_id == strategy_id).order_by(AlgoStrategy.config_version.desc()))
     strat = res.scalars().first()
     if not strat:
@@ -673,11 +665,11 @@ async def post_ai_decision(
     uid = _uid(user)
     if not uid:
         raise HTTPException(status_code=401, detail="Authentication required")
-    acct = await _get_or_create_account(session, uid) if session else {"id": uuid.uuid4()}
+    acct = await _get_or_create_account(session, uid) if session else _synthetic_account(uid)
     dec = AIDecision(provider=payload.provider, model_id=payload.model_id, model_version=payload.model_version, prompt_version=payload.prompt_version, market_snapshot_id=payload.market_snapshot_id, output=payload.output, confidence=D(payload.confidence) if payload.confidence is not None else None, latency_ms=payload.latency_ms, schema_valid=bool(payload.schema_valid))
     ai_governance.record_decision(dec)
     # Persist to DB if available would go here (algo_ai_decisions)
-    audit_trail.append(AuditRecord(account_id=_acct_id(acct), event_type="AI_DECISION", ai_result=payload.output, model_id=payload.model_id, model_version=payload.model_version, details={"confidence": payload.confidence}))
+    audit_trail.append(AuditRecord(account_id=acct.id, event_type="AI_DECISION", ai_result=payload.output, model_id=payload.model_id, model_version=payload.model_version, details={"confidence": payload.confidence}))
     return {"data": {"id": dec.id, "recorded": True}, "error": None, "meta": _meta().model_dump()}
 
 
@@ -692,11 +684,11 @@ async def create_signal(
     uid = _uid(user)
     if not uid:
         raise HTTPException(status_code=401, detail="Authentication required")
-    acct = await _get_or_create_account(session, uid) if session else {"id": uuid.uuid4()}
-    aid = _acct_id(acct)
+    acct = await _get_or_create_account(session, uid) if session else _synthetic_account(uid)
+    aid = acct.id
     # Determine weights from strategy config if exists
     weights = None
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         res = await session.execute(select(AlgoStrategy).where(AlgoStrategy.account_id == aid, AlgoStrategy.strategy_id == payload.strategy_id).order_by(AlgoStrategy.config_version.desc()))
         strat = res.scalars().first()
         if strat and strat.weights:
@@ -711,12 +703,12 @@ async def create_signal(
     # Override direction if explicitly supplied and fused is not NO_TRADE? No — fused is authoritative
     # Dedup check: repeated evaluation of same event must not create duplicate executable signals §27
     is_dup = False
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         # Check recent signal with same market_snapshot_id + strategy
         # Simplified: if same symbol+direction within 1s window
         pass
     # Persist
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         try:
             d_norm = signal.direction
             if "CALL" in d_norm or "BUY" in d_norm:
@@ -764,8 +756,6 @@ async def list_signals(
     if session is None:
         return {"data": [], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    if isinstance(acct, dict):
-        return {"data": [], "error": None, "meta": _meta().model_dump()}
     q = select(AlgoSignalDB).where(AlgoSignalDB.account_id == acct.id).order_by(AlgoSignalDB.created_at.desc()).limit(limit)
     if strategy_id:
         q = q.where(AlgoSignalDB.strategy_id == strategy_id)
@@ -817,8 +807,6 @@ async def get_exposure(
         return {"data": {"gross": "0", "net": "0", "margin_utilization": "0", "gross_exposure": 0, "net_exposure": 0, "long_exposure": 0, "short_exposure": 0, "margin_used": 0, "by_underlying": {}, "by_strategy": {}, "greeks": {"delta": 0, "gamma": 0, "theta": 0, "vega": 0}, "open_positions": 0, "limits": {}}, "error": None, "meta": _meta().model_dump()}
     try:
         acct = await _get_or_create_account(session, uid)
-        if isinstance(acct, dict):
-            return {"data": {"gross": "0", "net": "0", "margin_utilization": "0", "gross_exposure": 0, "net_exposure": 0, "long_exposure": 0, "short_exposure": 0, "margin_used": 0, "by_underlying": {}, "by_strategy": {}, "greeks": {"delta": 0, "gamma": 0, "theta": 0, "vega": 0}, "open_positions": 0, "limits": {}}, "error": None, "meta": _meta().model_dump()}
         # Aggregate from algo_positions
         res = await session.execute(select(AlgoPositionDB).where(AlgoPositionDB.account_id == acct.id, AlgoPositionDB.is_open == True))
         positions = res.scalars().all()
@@ -1002,9 +990,9 @@ async def create_order(
     uid = _uid(user)
     if not uid:
         raise HTTPException(status_code=401, detail="Authentication required")
-    acct = await _get_or_create_account(session, uid) if session else {"id": uuid.uuid4(), "mode": "PAPER"}
-    aid = _acct_id(acct)
-    mode = acct.mode if not isinstance(acct, dict) else acct["mode"]
+    acct = await _get_or_create_account(session, uid) if session else _synthetic_account(uid, mode="PAPER")
+    aid = acct.id
+    mode = acct.mode
     is_paper = mode != "LIVE"
     # Kill switch check early — check in-memory cache first (synthetic fallback) then DB
     kill_active = False
@@ -1017,7 +1005,7 @@ async def create_order(
         kill_active = True
         kill_level = _kill_cache[aid]["kill_level"]
         raise HTTPException(status_code=403, detail=f"KILL_SWITCH_ACTIVE:{kill_level}")
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         try:
             ks_res = await session.execute(select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == aid))
             ks = ks_res.scalar_one_or_none()
@@ -1046,7 +1034,7 @@ async def create_order(
             logger.warning("idempotency_cross_account_collision", cid=str(cid), existing_account=str(bare.account_id), new_account=str(aid))
         return {"data": {"client_order_id": str(bare.client_order_id), "status": bare.status, "broker_order_id": bare.broker_order_id, "fill_price": str(bare.fill_price) if bare.fill_price else None, "note": "IDEMPOTENT_EXISTING"}, "error": None, "meta": _meta().model_dump()}
     # Idempotency: DB check (§49)
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         existing = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == aid, AlgoOrderDB.client_order_id == cid))
         ex = existing.scalar_one_or_none()
         if ex:
@@ -1078,7 +1066,7 @@ async def create_order(
     approved, reason, checks = await _evaluate_full_stack(aid, intent, session, signal_id=None)
     if not approved:
         # Also create a REJECTED order record for audit
-        if session is not None and not isinstance(acct, dict):
+        if session is not None:
             try:
                 rej = AlgoOrderDB(account_id=aid, client_order_id=cid, symbol=payload.symbol, side=payload.side.upper(), quantity=payload.quantity, price=price, order_type=payload.order_type or "LIMIT", product=payload.product or "INTRADAY", status="REJECTED", rejection_reason=reason, is_paper=is_paper, instrument_id=payload.instrument_id, strategy_id=payload.strategy_id)
                 session.add(rej)
@@ -1093,7 +1081,7 @@ async def create_order(
 
     # Reserve capital atomically before OrderManager
     reservation_id = None
-    if session is not None and not isinstance(acct, dict) and intent.estimated_margin:
+    if session is not None and intent.estimated_margin:
         ok, rreason, rid = await capital_engine.reserve(session, aid, cid, intent.estimated_margin)
         if not ok:
             if rreason == "LOCK_CONTENTION":
@@ -1109,7 +1097,7 @@ async def create_order(
     except Exception:
         pass
     # Persist to DB before submission (intent persisted before or atomically with execution §49)
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         try:
             db_ord = AlgoOrderDB(account_id=aid, client_order_id=cid, symbol=payload.symbol, side=payload.side.upper(), quantity=payload.quantity, price=price, order_type=payload.order_type or "LIMIT", product=payload.product or "INTRADAY", status="RISK_APPROVED", is_paper=is_paper, instrument_id=payload.instrument_id, strategy_id=payload.strategy_id, spread_id=UUID(payload.spread_id) if payload.spread_id else None, expected_price=price)
             session.add(db_ord)
@@ -1141,7 +1129,7 @@ async def create_order(
     # Submit to broker (paper simulator by default)
     submitted = await order_manager.submit(rec)
     # Update DB status
-    if session is not None and not isinstance(acct, dict):
+    if session is not None:
         try:
             res = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == aid, AlgoOrderDB.client_order_id == cid))
             dbrow = res.scalar_one_or_none()
@@ -1187,7 +1175,6 @@ async def list_orders(
         # fallback to in-memory OrderManager filtered by account — no DB
         return {"data": [], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     q = select(AlgoOrderDB).where(AlgoOrderDB.account_id == acct.id).order_by(AlgoOrderDB.created_at.desc()).limit(limit)
     if status:
         q = q.where(AlgoOrderDB.status == status)
@@ -1219,7 +1206,6 @@ async def reconcile_order(
     if session is not None:
         try:
             acct = await _get_or_create_account(session, uid)
-            assert not isinstance(acct, dict)
             res = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == acct.id, AlgoOrderDB.client_order_id == cid))
             row = res.scalar_one_or_none()
             if row:
@@ -1251,7 +1237,6 @@ async def cancel_order(
     if session is not None:
         try:
             acct = await _get_or_create_account(session, uid)
-            assert not isinstance(acct, dict)
             res = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == acct.id, AlgoOrderDB.client_order_id == cid))
             row = res.scalar_one_or_none()
             if row:
@@ -1320,7 +1305,6 @@ async def list_positions(
     if session is None:
         return {"data": [], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     q = select(AlgoPositionDB).where(AlgoPositionDB.account_id == acct.id).order_by(AlgoPositionDB.updated_at.desc())
     if is_open is not None:
         q = q.where(AlgoPositionDB.is_open == is_open)
@@ -1342,7 +1326,6 @@ async def exit_position(
     if session is None:
         raise HTTPException(status_code=500, detail="DB required for exit")
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoPositionDB).where(AlgoPositionDB.account_id == acct.id, AlgoPositionDB.position_id == position_id))
     row = res.scalar_one_or_none()
     if not row or not row.is_open:
@@ -1381,7 +1364,6 @@ async def exit_all_positions(
     if session is None:
         raise HTTPException(status_code=500, detail="DB required")
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoPositionDB).where(AlgoPositionDB.account_id == acct.id, AlgoPositionDB.is_open == True))
     rows = res.scalars().all()
     results = []
@@ -1406,13 +1388,12 @@ async def set_kill_switch(
     _kill_cache[uid] = {"is_killed": payload.kill_level != "NONE", "kill_level": payload.kill_level, "reason": payload.reason}
     # Also key by account id if known
     if uid in _synthetic_account_cache:
-        aid = _synthetic_account_cache[uid].get("id", uid) if isinstance(_synthetic_account_cache[uid], dict) else getattr(_synthetic_account_cache[uid], "id", uid)
+        aid = _synthetic_account_cache[uid].id
         _kill_cache[aid] = _kill_cache[uid]
     if session is None:
         audit_trail.append(AuditRecord(account_id=uid, event_type="KILL_SWITCH_CHANGED", details={"kill_level": payload.kill_level, "reason": payload.reason}))
         return {"data": {"account_id": str(uid), "kill_level": payload.kill_level, "is_killed": payload.kill_level != "NONE"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     res = await session.execute(select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id))
     ks = res.scalar_one_or_none()
     if not ks:
@@ -1462,15 +1443,14 @@ async def get_kill_switch(
     if session is None:
         return {"data": {"is_killed": False, "kill_level": "NONE"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     try:
         res = await session.execute(select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id))
         ks = res.scalar_one_or_none()
         return {"data": {"is_killed": ks.is_killed if ks else False, "kill_level": ks.kill_level if ks else "NONE", "reason": ks.reason if ks else None}, "error": None, "meta": _meta().model_dump()}
     except Exception:
         # fallback to cache
-        if _acct_id(acct) in _kill_cache:
-            return {"data": _kill_cache[_acct_id(acct)], "error": None, "meta": _meta().model_dump()}
+        if acct.id in _kill_cache:
+            return {"data": _kill_cache[acct.id], "error": None, "meta": _meta().model_dump()}
         return {"data": {"is_killed": False, "kill_level": "NONE"}, "error": None, "meta": _meta().model_dump()}
 
 
@@ -1558,7 +1538,6 @@ async def get_audit(
         records = audit_trail.query(acct["id"], limit=limit, event_type=event_type)  # type: ignore
         return {"data": [r.to_dict() for r in records], "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # Try DB first, fallback to in-mem
     q = select(AlgoAuditLog).where(AlgoAuditLog.account_id == acct.id).order_by(AlgoAuditLog.timestamp.desc()).limit(limit)
     if event_type:
@@ -1589,7 +1568,6 @@ async def run_reconciliation(
     if session is None:
         return {"data": {"status": "MATCHED", "note": "no DB"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # Gather internal state
     ores = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == acct.id))
     internal_orders = [{"client_order_id": str(o.client_order_id), "broker_order_id": o.broker_order_id, "status": o.status, "quantity": o.quantity, "symbol": o.symbol} for o in ores.scalars().all()]
@@ -1632,7 +1610,6 @@ async def restart_recovery(
     if session is None:
         return {"data": {"recovered": True, "note": "no DB — nothing to recover"}, "error": None, "meta": _meta().model_dump()}
     acct = await _get_or_create_account(session, uid)
-    assert not isinstance(acct, dict)
     # 1. Load persistent already done via _get_or_create_account
     # 2-4. Query broker & reconcile
     rec = await run_reconciliation(user, session)

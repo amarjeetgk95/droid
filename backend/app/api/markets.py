@@ -1,27 +1,22 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.services.market_service import MarketService
-from app.models.market import (
-    ApiMeta, DataStatus,
-)
-from datetime import datetime, timezone
+
 import structlog
+
+from app.api.envelope import envelope
+from app.models.market import DataStatus
+from app.services.market_service import MarketService
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/markets", tags=["markets"])
 
+_FALLBACK_PROVIDER = "market_data"
 
-def _make_meta(provider: str | None = None, status: DataStatus = DataStatus.LIVE) -> ApiMeta:
-    if provider is None:
-        from app.providers.registry import get_provider
-        try:
-            provider = get_provider().provider_name
-        except Exception:
-            provider = "market_data"
-    return ApiMeta(
-        provider=provider,
-        timestamp=datetime.now(timezone.utc),
-        status=status,
-    )
+
+def _active_provider(service: MarketService) -> str:
+    try:
+        return service._provider.provider_name
+    except Exception:
+        return _FALLBACK_PROVIDER
 
 
 @router.get("/quotes")
@@ -30,16 +25,11 @@ async def get_all_quotes():
     service = MarketService()
     try:
         quotes = await service.get_quotes()
-        active_p = service._provider.provider_name
-        active_status = quotes[0].status if quotes else DataStatus.OFFLINE
-        return {
-            "data": [q.model_dump() for q in quotes],
-            "error": None,
-            "meta": _make_meta(provider=active_p, status=active_status).model_dump(),
-        }
     except Exception as e:
         logger.error("get_quotes_failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
+    active_status = quotes[0].status if quotes else DataStatus.OFFLINE
+    return envelope([q.model_dump() for q in quotes], provider=_active_provider(service), status=active_status)
 
 
 @router.get("/{symbol}/quote")
@@ -48,16 +38,9 @@ async def get_quote(symbol: str):
     service = MarketService()
     try:
         quote = await service.get_quote(symbol)
-        return {
-            "data": quote.model_dump(),
-            "error": None,
-            "meta": _make_meta(provider=quote.provider, status=quote.status).model_dump(),
-        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error("get_quote_failed", symbol=symbol, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    return envelope(quote.model_dump(), provider=quote.provider, status=quote.status)
 
 
 @router.get("/{symbol}/candles")
@@ -69,43 +52,32 @@ async def get_candles(
     service = MarketService()
     try:
         candles = await service.get_candles(symbol, timeframe)
-        active_p = service._provider.provider_name
-        return {
-            "data": [c.model_dump() for c in candles],
-            "error": None,
-            "meta": _make_meta(provider=active_p, status=DataStatus.LIVE if candles else DataStatus.OFFLINE).model_dump(),
-        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("get_candles_failed", symbol=symbol, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    return envelope(
+        [c.model_dump() for c in candles],
+        provider=_active_provider(service),
+        status=DataStatus.LIVE if candles else DataStatus.OFFLINE,
+    )
 
 
 @router.get("/status")
 async def get_market_status():
     """Get current market session status."""
     service = MarketService()
-    try:
-        status = await service.get_market_status()
-    except Exception as e:
-        logger.error("get_market_status_failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    status = await service.get_market_status()
     # Coordinator cache may hold a plain dict from an older deployment /
     # Redis pickle — accept both instead of 500ing (which the header pill
     # renders as broker-gateway OFFLINE).
     if isinstance(status, dict):
         try:
             from app.models.market import MarketStatusResponse
+
             status = MarketStatusResponse(**status)
         except Exception as e:
             logger.error("get_market_status_shape_invalid", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
-    return {
-        "data": status.model_dump(),
-        "error": None,
-        "meta": _make_meta(provider=status.provider, status=status.data_status).model_dump(),
-    }
+    return envelope(status.model_dump(), provider=status.provider, status=status.data_status)
 
 
 @router.get("/breadth")
@@ -113,11 +85,7 @@ async def get_market_breadth():
     """Get market breadth data."""
     service = MarketService()
     breadth = await service.get_market_breadth()
-    return {
-        "data": breadth.model_dump(),
-        "error": None,
-        "meta": _make_meta(provider=service._provider.provider_name, status=breadth.status).model_dump(),
-    }
+    return envelope(breadth.model_dump(), provider=_active_provider(service), status=breadth.status)
 
 
 @router.get("/cards")
@@ -125,10 +93,5 @@ async def get_index_cards():
     """Get dashboard index cards."""
     service = MarketService()
     cards = await service.get_index_cards()
-    active_p = service._provider.provider_name
     active_status = cards[0].status if cards else DataStatus.OFFLINE
-    return {
-        "data": [c.model_dump() for c in cards],
-        "error": None,
-        "meta": _make_meta(provider=active_p, status=active_status).model_dump(),
-    }
+    return envelope([c.model_dump() for c in cards], provider=_active_provider(service), status=active_status)

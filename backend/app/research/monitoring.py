@@ -297,7 +297,7 @@ def rolling_window_metrics(
             if not has_outcome:
                 continue
             usable.append(r)
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             continue
 
     decorated = [(_row_timestamp(r), i, r) for i, r in enumerate(usable)]
@@ -314,7 +314,7 @@ def rolling_window_metrics(
         try:
             lab = _row_label(r)
             probs = _row_probs(r)
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             lab, probs = None, None
         if lab is not None and probs is not None:
             y_true.append(lab)
@@ -340,7 +340,7 @@ def rolling_window_metrics(
         try:
             ca = _row_age_sec(r, "candle_age_sec", ("candle_ts", "candle_timestamp"), now)
             fa = _row_age_sec(r, "fno_age_sec", ("fno_ts", "fno_timestamp"), now)
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             ca, fa = None, None
         if ca is not None:
             candle_ages.append(ca)
@@ -364,7 +364,7 @@ def rolling_window_metrics(
         try:
             miss = _row_list(r, "missing_tfs", "missing_timeframes", "missing_tf")
             res = _row_list(r, "resampled_tfs", "resampled_timeframes")
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             miss, res = None, None
         if miss is not None:
             miss_flags.append(len(miss) > 0)
@@ -377,7 +377,7 @@ def rolling_window_metrics(
     for r in picked:
         try:
             ml = _row_ml_available(r)
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             ml = None
         if ml is not None:
             ml_flags.append(bool(ml))
@@ -388,7 +388,7 @@ def rolling_window_metrics(
         try:
             if _row_mismatch(r):
                 mismatch_count += 1
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             continue
 
     return {
@@ -438,11 +438,11 @@ def check_degrade(
     try:
         thr = dict(DEFAULT_THRESHOLDS)
         thr.update(dict(thresholds or {}))
-    except Exception:
+    except (TypeError, ValueError):
         thr = dict(DEFAULT_THRESHOLDS)
     try:
         base = dict(baseline or {})
-    except Exception:
+    except (TypeError, ValueError):
         base = {}
 
     reasons: List[str] = []

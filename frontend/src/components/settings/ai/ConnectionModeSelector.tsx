@@ -48,7 +48,7 @@ export function ConnectionModeSelector({ settings, onChange }: Props) {
   ];
 
   return (
-    <div className="p-5">
+    <div className="card-pad">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {modes.map((m) => {
           const Icon = m.icon;
@@ -58,26 +58,26 @@ export function ConnectionModeSelector({ settings, onChange }: Props) {
               key={m.id}
               type="button"
               onClick={() => handleConnectionMode(m.id)}
-              className={`flex flex-col text-left p-4 rounded-lg border transition-all cursor-pointer ${
+              className={`flex flex-col text-left p-3.5 rounded-[var(--radius-md)] border transition-all cursor-pointer ${
                 selected
-                  ? 'border-foreground/30 bg-secondary/50 shadow-2xs'
-                  : 'border-border/60 bg-card hover:bg-secondary/30'
+                  ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-wash)] shadow-xs'
+                  : 'border-[var(--ds-border)] bg-[var(--ds-surface)] hover:bg-[var(--ds-hover)]'
               }`}
             >
               <div className="flex items-center justify-between w-full">
-                <span className="flex items-center gap-2 font-medium text-xs text-foreground">
-                  <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className={`flex items-center gap-2 font-semibold text-xs ${selected ? 'text-[var(--ds-accent)]' : 'text-[var(--ds-ink)]'}`}>
+                  <Icon className="w-3.5 h-3.5" />
                   {m.name}
                 </span>
                 {selected ? (
-                  <Check className="w-3.5 h-3.5 text-foreground shrink-0" />
+                  <Check className="w-3.5 h-3.5 text-[var(--ds-accent)] shrink-0" />
                 ) : (
-                  <span className="text-[10px] font-mono text-muted-foreground px-1 py-0.5 rounded bg-secondary">
+                  <span className="badge b-neut" style={{ fontSize: '9px', padding: '1px 5px' }}>
                     {m.badge}
                   </span>
                 )}
               </div>
-              <span className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
+              <span className="text-[11px] muted mt-1.5 leading-normal">
                 {m.desc}
               </span>
             </button>
