@@ -396,11 +396,47 @@ async def get_signals_audit(
             signal_audit_ledger.update_live_quotes_batch(quotes)
 
     trades = signal_audit_ledger.list_trades(underlying=underlying, strategy=strategy, status=status, limit=limit)
+    # Never serve test/demo scaffolding or voided (quarantined) trades as history.
+    def _is_test_trade(t: Any) -> bool:
+        sid = str(getattr(t, "signal_id", "") or "").lower()
+        if str(getattr(t, "status", "") or "").upper() == "VOID":
+            return True
+        return sid.startswith(("sig-test-", "sig-wallet-", "test-", "sig-persist-sanitize"))
+    trades = [t for t in trades if not _is_test_trade(t)]
     summary = signal_audit_ledger.get_summary_metrics()
     return {
         "trades": [t.model_dump() for t in trades],
         "count": len(trades),
         "summary": summary,
+        "timestamp_ms": int(time.time() * 1000),
+    }
+
+
+class VoidTradesRequest(BaseModel):
+    signal_ids: list[str] = Field(default_factory=list, description="Trade IDs to quarantine")
+    reason: str = Field(default="VOID_CORRUPT_HISTORY", description="Quarantine reason kept on the record")
+
+
+@router.post("/audit/void")
+async def void_audit_trades(req: VoidTradesRequest):
+    """Quarantine trades: kept as evidence, excluded from P&L and ledger.
+    Use for demonstrably corrupt history instead of deleting it."""
+    from app.signals.audit_ledger import signal_audit_ledger
+
+    if not req.signal_ids:
+        raise HTTPException(status_code=400, detail="Pass signal_ids to void.")
+    voided: list[str] = []
+    for sid in req.signal_ids[:100]:
+        try:
+            if signal_audit_ledger.void_trade(str(sid), req.reason):
+                voided.append(str(sid))
+        except Exception as e:
+            logger.warning("void_trade_failed", signal_id=sid, error=str(e))
+    return {
+        "status": "success",
+        "voided_count": len(voided),
+        "voided_ids": voided,
+        "summary": signal_audit_ledger.get_summary_metrics(),
         "timestamp_ms": int(time.time() * 1000),
     }
 
@@ -682,10 +718,16 @@ async def auto_detect_setup(req: AutoDetectRequest):
                 "message": f"Detected {selected.strategy} {selected.direction} on {req.underlying}",
             }
         
-        # Fallback to current price baseline if no active breakout
+        # Baseline levels require a live quote — never invent them off a
+        # hardcoded spot (truth-of-wall: no 24800-style fallbacks).
         market_svc = MarketService()
         quote = await market_svc.get_quote(req.underlying)
-        spot = Decimal(str(quote.ltp if quote and quote.ltp else 24800.0))
+        if quote is None or getattr(quote, "ltp", None) is None or _quote_is_fallback(quote):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Live price for {u} is unavailable (feed degraded). Auto-detect needs a live quote.",
+            )
+        spot = Decimal(str(quote.ltp))
         tick = Decimal("0.05")
         contract = resolve_option_contract(req.underlying, spot, "CE", strike_offset=0)
 
@@ -1105,6 +1147,37 @@ def get_portfolio_strategies():
     }
 
 
+# ── 12.6 SAFETY & GOVERNANCE CONTROLS (v3.0) ──────────────────────────
+
+class KillSwitchToggleRequest(BaseModel):
+    active: bool
+    reason: str = "Operator manual control"
+
+
+@router.get("/kill-switch")
+def get_kill_switch_status():
+    """Returns the current state of the global emergency execution kill switch."""
+    from app.signals.safety.kill_switch import kill_switch
+    return kill_switch.status()
+
+
+@router.post("/kill-switch")
+def toggle_kill_switch(req: KillSwitchToggleRequest, user: AuthUser = Depends(get_current_user)):
+    """Toggles the global emergency execution kill switch."""
+    from app.signals.safety.kill_switch import kill_switch
+    by = getattr(user, "email", "operator") or "operator"
+    if req.active:
+        return kill_switch.activate(reason=req.reason, by=by)
+    return kill_switch.deactivate(by=by)
+
+
+@router.get("/feed-health")
+def get_feed_health():
+    """Returns per-instrument feed circuit health states."""
+    from app.signals.safety.feed_circuit import feed_circuit
+    return {"states": feed_circuit.all_states()}
+
+
 # ── 13. SINGLE SIGNAL QUERY (FALLTHROUGH) ─────────────────────────────
 
 @router.get("/{signal_id}")
@@ -1112,4 +1185,22 @@ def get_signal_by_id(signal_id: str):
     sig = signal_fsm.get(signal_id)
     if not sig:
         raise HTTPException(status_code=404, detail="Signal not found")
-    return sig.model_dump()
+    data = sig.model_dump()
+
+    # Enrich with v3.0 ExecutionIntent and Position if available
+    from app.signals.execution_intent import intent_ledger
+    from app.signals.position import position_registry
+
+    if sig.execution_intent_id:
+        intent = intent_ledger.get(sig.execution_intent_id)
+        if intent:
+            data["execution_intent"] = intent.model_dump()
+    if sig.position_id:
+        pos = position_registry.get(sig.position_id)
+        if pos:
+            data["position"] = pos.model_dump()
+
+    return data
+
+
+# touch 2026-09-11T16:14:20.4211765+05:30

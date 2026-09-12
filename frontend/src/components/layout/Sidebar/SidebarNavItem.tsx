@@ -92,25 +92,24 @@ export const SidebarNavItem = memo(function SidebarNavItem({
       onMouseEnter={handleMouseEnter}
       onFocus={handleMouseEnter}
       className={cn(
-        'group relative flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ease-out select-none',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0',
-        collapsed ? 'justify-center w-10 h-10 mx-auto' : 'w-full px-2.5 py-2 min-h-9',
+        'group relative flex items-center gap-2.5 text-[12.5px] font-medium transition-colors duration-120 select-none',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
+        collapsed ? 'justify-center w-8 h-8 mx-auto rounded-[4px]' : 'w-full px-2.5 py-1.5 min-h-[34px] rounded-[4px]',
         active
           ? collapsed
-            ? 'text-white shadow-[0_4px_14px_-4px_rgb(36_86_230/0.5)]'
-            : 'bg-primary/[0.08] dark:bg-primary/[0.14] text-primary font-semibold ring-1 ring-primary/15 dark:ring-primary/25 shadow-[0_1px_2px_rgba(36_86_230,0.04)]'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground active:bg-accent/80',
+            ? 'text-white bg-primary shadow-xs'
+            : 'bg-[#edf4fc] text-[#387ed1] font-semibold border-l-2 border-[#387ed1] rounded-r-[4px] rounded-l-none'
+          : 'text-[#666666] hover:bg-[#f7f7f7] hover:text-[#333333] active:bg-[#f0f0f0]',
       )}
-      style={active && collapsed ? { background: 'var(--ds-accent-gradient)' } : undefined}
     >
       <Icon
         className={cn(
-          'shrink-0 w-4 h-4 transition-colors duration-150',
+          'shrink-0 w-4 h-4 transition-colors duration-120',
           active
             ? collapsed
               ? 'text-white'
-              : 'text-primary'
-            : 'opacity-70 group-hover:opacity-100 group-hover:text-foreground',
+              : 'text-[#387ed1]'
+            : 'text-[#888888] group-hover:text-[#333333]',
         )}
         aria-hidden
       />

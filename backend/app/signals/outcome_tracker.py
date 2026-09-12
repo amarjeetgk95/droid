@@ -482,17 +482,60 @@ class SignalOutcomeTracker:
                             except Exception:
                                 _domain_ok = True
                             if _domain_ok:
-                                sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
-                                sq_rec.total_pnl_inr = recon.net_realized_pnl_inr
-                                _qty = sq_rec.quantity or recon.intended_qty or 0
-                                if _qty:
+                                _recon_synthetic = bool(getattr(recon, "synthetic", False))
+                                _recon_booked_nothing = (
+                                    recon.net_realized_pnl_inr == 0 and recon.gross_realized_pnl == 0
+                                )
+                                _audit_has_economics = (sq_rec.actual_pnl_inr or 0.0) != 0.0
+                                if _recon_synthetic and _audit_has_economics:
+                                    # Rebuilt after memory loss: prior stage splits
+                                    # unknown — the ledger's own fill-based P&L
+                                    # is more complete than residual-only sums.
+                                    logger.info(
+                                        "audit_recon_synthetic_skip_overwrite",
+                                        signal_id=sig.signal_id,
+                                        audit_pnl=sq_rec.actual_pnl_inr,
+                                        recon_pnl=recon.net_realized_pnl_inr,
+                                    )
+                                elif _recon_booked_nothing and _audit_has_economics:
+                                    # Reconciler computed no economics on a trade
+                                    # the ledger priced — keep the ledger, flag it.
+                                    sq_rec.outcome_label = f"{sq_rec.exit_reason or eval_action} :: ZERO_RECON_REVIEW"
+                                    sq_rec.is_winner = None
+                                    logger.warning(
+                                        "audit_recon_zero_booking_flagged",
+                                        signal_id=sig.signal_id,
+                                        audit_pnl=sq_rec.actual_pnl_inr,
+                                        recon_exit=recon.final_fill_price,
+                                    )
+                                    signal_audit_ledger._schedule_persist(sq_rec)
+                                else:
+                                    sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr
+                                    sq_rec.total_pnl_inr = recon.net_realized_pnl_inr
+                                    _qty = sq_rec.quantity or recon.intended_qty or 0
+                                    if _qty:
+                                        try:
+                                            sq_rec.actual_pnl_points = round(recon.gross_realized_pnl / _qty, 2)
+                                        except Exception:
+                                            pass
+                                    sq_rec.is_winner = recon.net_realized_pnl_inr > 0
+                                    sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
+                                    signal_audit_ledger._schedule_persist(sq_rec)
+                                # Keep the displayed exit in the premium domain:
+                                # a spot-scale exit (e.g. 74561) next to a
+                                # premium entry (e.g. 417) reads as fake data.
+                                # Skipped when the reconciler booked nothing —
+                                # a zero/empty fill must never touch the exit.
+                                if not _recon_booked_nothing or not _audit_has_economics:
                                     try:
-                                        sq_rec.actual_pnl_points = round(recon.gross_realized_pnl / _qty, 2)
+                                        _final_px = float(recon.final_fill_price or 0.0)
+                                        _exit_px = float(sq_rec.exit_price or 0.0)
+                                        if _final_px > 0 and (_exit_px <= 0 or (_exit_px > 5000.0) != (_final_px > 5000.0)):
+                                            sq_rec.exit_price = round(_final_px, 2)
+                                            sq_rec.current_price = round(_final_px, 2)
+                                            signal_audit_ledger._schedule_persist(sq_rec)
                                     except Exception:
                                         pass
-                                sq_rec.is_winner = recon.net_realized_pnl_inr > 0
-                                sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
-                                signal_audit_ledger._schedule_persist(sq_rec)
                             else:
                                 logger.warning(
                                     "audit_recon_domain_mismatch_skip_overwrite",
@@ -555,7 +598,7 @@ class SignalOutcomeTracker:
         demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
         all_signals = [
             s for s in signal_fsm._signals.values()
-            if not str(s.signal_id).lower().startswith(("sig-test-", "test-", "sig-persist-sanitize"))
+            if not str(s.signal_id).lower().startswith(("sig-test-", "sig-wallet-", "test-", "sig-persist-sanitize"))
             and s.signal_id not in demo_ids
         ]
         total = len(all_signals)

@@ -64,6 +64,16 @@ class FillReconciliationRecord(BaseModel):
     fills: list[OptionStageFill] = Field(default_factory=list)
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
     updated_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
+    # True when rebuilt from ledger fills after the in-memory record was lost
+    # (e.g. restart). Economics before the rebuild are unknown — consumers
+    # must prefer the audit ledger's own P&L over this record's partial sums.
+    synthetic: bool = False
+
+    # v3.0 Decoupled Domain Links & Reconciliation Status
+    execution_intent_id: Optional[str] = None
+    position_id: Optional[str] = None
+    reconciliation_status: str = "RECONCILED"  # RECONCILED | PARTIAL | RECONCILIATION_REQUIRED | AMBIGUOUS
+    reconciliation_notes: Optional[str] = None
 
 
 class OptionFillReconciler:
@@ -156,6 +166,8 @@ class OptionFillReconciler:
             ],
             created_at_utc=now_ms,
             updated_at_utc=now_ms,
+            execution_intent_id=getattr(sig, "execution_intent_id", None),
+            position_id=getattr(sig, "position_id", None),
         )
         self._records[sig.signal_id] = rec
         logger.info(

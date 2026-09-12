@@ -7,6 +7,7 @@ import {
   TrendingUp,
   Compass,
   Zap,
+  Bot,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -79,6 +80,16 @@ export const STANDALONE_ITEMS: NavItem[] = [
     description: 'Active setups & paper trades',
     badgeKey: 'signals',
     keywords: ['signals', 'setups', 'paper', 'trades', 'desk', 'scalp', 'intraday'],
+  },
+  {
+    id: 'ai',
+    href: '/ai',
+    label: 'AI Copilot',
+    icon: Bot,
+    description: 'Chat, analysis, strategy & trade audit',
+    shortcut: '⌘4',
+    badgeKey: 'ai',
+    keywords: ['ai', 'copilot', 'chat', 'analysis', 'strategy', 'briefing', 'deep insight', 'validator'],
   },
 ];
 

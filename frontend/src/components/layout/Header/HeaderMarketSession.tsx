@@ -144,7 +144,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="hidden md:flex items-center gap-2 h-8 px-2.5 rounded-lg border border-border/70 bg-card hover:bg-secondary/70 transition-all text-xs cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs"
+          className="hidden md:flex items-center gap-2 h-[30px] px-2.5 rounded-[4px] border border-border bg-card hover:bg-[#f7f7f7] transition-colors text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-ring"
           title="Market session schedule & world clocks"
           aria-label={`Market state: ${countdownInfo.label}, ${countdownInfo.countdown}`}
         >

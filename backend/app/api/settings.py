@@ -142,7 +142,7 @@ async def get_settings_schema(user: AuthUser = Depends(require_auth)):
             "routingModes": ["Manual", "Task Optimized", "Best Available", "Cost Optimized"],
         },
         "quantitative": {"fields": ["riskFreeRate", "timeConvention", "defaultPricingModel", "ivMethod", "brokeragePerOrder", "slippagePct"]},
-        "paper": {"fields": ["initialCapital", "autoSquareOffTime", "maxCapitalPerTradePct", "maxDailyDrawdownHaltPct"]},
+        "paper": {"fields": ["initialCapital", "autoSquareOffTime", "maxCapitalPerTradePct", "maxDailyDrawdownHaltPct", "requireOrderConfirm", "allowOvernightPositions"]},
         "preferences": {"fields": ["theme", "numberFormat", "defaultIndexSymbol"]},
         "max_bytes": 16 * 1024,
     }

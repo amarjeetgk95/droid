@@ -8,6 +8,7 @@ import { RegimeBanner } from '@/components/markets/RegimeBanner';
 import { KeyLevelsTable } from '@/components/markets/KeyLevelsTable';
 import { IndicatorsGrid } from '@/components/markets/IndicatorsGrid';
 import { VixRegimeCard } from '@/components/markets/VixRegimeCard';
+import { AIAnalysisCard, AIDeepInsightCard } from '@/components/ai';
 import { ErrorCard } from '@/components/ui/ErrorCard';
 import { Card, EmptyNote, Stat, fmtINR, fmtNum } from '@/components/ui/desk';
 
@@ -83,6 +84,9 @@ function BreadthFlowsStrip() {
     fii && Number.isFinite(Number(fii.fii_long_short_ratio))
       ? `${fmtNum(fii.fii_long_short_ratio, 2)}x`
       : '—';
+  // Truth-of-wall: FII feed has no live source — label the snapshot as such.
+  const fiiLive = fii?.live_available === true;
+  const fiiSub = !fii ? '—' : fiiLive ? 'live' : `snapshot ${fii.as_of ?? ''} · offline`.trim();
 
   return (
     <Card title="Breadth & Flows" meta={sentiment !== '—' ? sentiment : undefined}>
@@ -91,7 +95,7 @@ function BreadthFlowsStrip() {
         <Stat label="Declines" value={breadth ? fmtNum(breadth.declining, 0) : '—'} />
         <Stat label="A/D ratio" value={breadth ? fmtNum(breadth.advance_decline_ratio, 2) : '—'} />
         <Stat label="Sentiment" value={sentiment} />
-        <Stat label="FII long/short" value={fiiLS} />
+        <Stat label="FII long/short" value={fiiLS} sub={fiiSub} tone={fiiLive ? undefined : 'neut'} />
       </div>
     </Card>
   );
@@ -225,6 +229,12 @@ export default function MarketsPage() {
           </section>
           <section aria-label="Volatility regime">
             <VixRegimeCard vixInfo={overview?.vix_regime || null} />
+          </section>
+          <section aria-label="AI analysis">
+            <AIAnalysisCard symbol={selectedSymbol} contextPage="markets" />
+          </section>
+          <section aria-label="AI deep insight">
+            <AIDeepInsightCard symbol={selectedSymbol} />
           </section>
         </>
       )}

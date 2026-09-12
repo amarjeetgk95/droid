@@ -98,6 +98,8 @@ export interface TickEvent {
   open_interest?: number | null;
   bid?: number | null;
   ask?: number | null;
+  bid_qty?: number | null;
+  ask_qty?: number | null;
   sequence_number?: number | null;
   provider: string;
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -540,6 +542,7 @@ export interface OrderPayload {
   quantity: number;
   price: number;
   trigger_price?: number | null;
+  client_order_id?: string | null;
 }
 
 export interface BasketOrderPayload {
@@ -561,6 +564,10 @@ export interface VirtualOrder {
   status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'REJECTED';
   fill_price?: number | null;
   rejection_reason?: string | null;
+  client_order_id?: string | null;
+  fill_source?: string | null;
+  estimated_costs?: Record<string, number> | null;
+  filled_at?: string | null;
 }
 
 export interface VirtualPosition {
@@ -633,6 +640,9 @@ export interface CashMarketFlow {
 
 export interface FIIDIIOverviewResponse {
   timestamp: string;
+  source?: string;
+  as_of?: string;
+  live_available?: boolean;
   fii_long_short_ratio: number;
   fii_futures_net_contracts: number;
   dii_futures_net_contracts: number;

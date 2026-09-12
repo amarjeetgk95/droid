@@ -5,7 +5,7 @@
    panel. A dialog keeps the desk clean while preserving the capability. */
 
 import { useCallback, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { ShieldCheck, Sparkles } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { asStr, getObj, pickStr, prettyKey } from './signalsNormalize';
+import { resolveAISettings, toBackendSymbol, useAISettings } from '@/lib/aiPayload';
+import type { AITradeValidationResponse } from '@/lib/types';
 
 const UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
 const TIMEFRAMES = ['1M', '3M', '5M', '15M'];
@@ -77,9 +79,53 @@ export function SignalCreateDialog({
   const [form, setForm] = useState<CreateForm>(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; msg: string } | null>(null);
+  const aiSettings = useAISettings();
+  const [thesis, setThesis] = useState('');
+  const [audit, setAudit] = useState<AITradeValidationResponse | null>(null);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditErr, setAuditErr] = useState<string | null>(null);
 
   const set = (key: keyof CreateForm, value: string | boolean) =>
     setForm((p) => ({ ...p, [key]: value }));
+
+  const canAudit = (() => {
+    const e = Number(form.trigger);
+    const s = Number(form.sl);
+    const t = Number(form.t1 || form.t2);
+    return Number.isFinite(e) && e > 0 && Number.isFinite(s) && s > 0 && Number.isFinite(t) && t > 0;
+  })();
+
+  const runAudit = useCallback(async () => {
+    if (!canAudit) {
+      setAuditErr('Enter trigger / stop / target to pre-check.');
+      return;
+    }
+    setAuditBusy(true);
+    setAuditErr(null);
+    setAudit(null);
+    try {
+      const resolved = resolveAISettings(aiSettings);
+      const dir = form.direction === 'LONG_PUT' ? 'SELL' as const : 'BUY' as const;
+      const res = await api.validateTradeSetup({
+        symbol: toBackendSymbol(form.underlying),
+        direction: dir,
+        entry_price: Number(form.trigger),
+        stop_loss: Number(form.sl),
+        target_price: Number(form.t1 || form.t2),
+        thesis_notes: thesis.trim() || null,
+        provider: resolved.provider,
+        model: resolved.model,
+        allow_paid: resolved.allow_paid,
+        openrouter_api_key: resolved.openRouterApiKey || null,
+        gemini_api_key: resolved.geminiApiKey || null,
+      });
+      setAudit(res.data);
+    } catch (e) {
+      setAuditErr(e instanceof Error ? e.message : 'Pre-check failed');
+    } finally {
+      setAuditBusy(false);
+    }
+  }, [form, thesis, aiSettings, canAudit]);
 
   const submit = useCallback(async () => {
     setBusy(true);
@@ -240,6 +286,39 @@ export function SignalCreateDialog({
                 Execute paper on create
               </label>
             </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--ds-border)', paddingTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={SECTION_LABEL}>AI pre-check — thesis vs live walls &amp; regime</span>
+              <span style={{ marginLeft: 'auto' }} />
+              <button type="button" className="btn btn-ic" disabled={auditBusy || !canAudit} onClick={() => void runAudit()} title={canAudit ? 'Validate setup against live market' : 'Enter trigger / stop / target first'}>
+                <ShieldCheck size={14} />
+                {auditBusy ? 'Checking…' : 'Pre-check'}
+              </button>
+            </div>
+            <input
+              value={thesis}
+              onChange={(e) => setThesis(e.target.value)}
+              placeholder="Thesis (optional) — e.g. breakout above VWAP with PCR support"
+              style={{ width: '100%', background: 'var(--ds-inset)', border: '1px solid var(--ds-border)', borderRadius: 10, padding: '8px 12px', fontSize: 12.5 }}
+            />
+            {auditErr ? <p style={{ margin: 0, fontSize: 12, color: 'var(--ds-bear-strong)' }}>{auditErr}</p> : null}
+            {audit ? (
+              <div style={{ display: 'grid', gap: 8, background: 'var(--ds-inset)', border: '1px solid var(--ds-border)', borderRadius: 10, padding: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className={`badge ${audit.decision === 'CONFIRM' ? 'b-bull' : audit.decision === 'REJECT' ? 'b-bear' : audit.decision === 'WATCH' ? 'b-warn' : 'b-neut'}`}>{audit.decision}</span>
+                  <span style={{ fontSize: 12, fontFamily: 'var(--sg-mono)' }}>score {audit.score} · RR {Number(audit.risk_reward_calculated).toFixed(2)}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>{audit.executive_verdict}</p>
+                {audit.invalidation_conditions?.length ? (
+                  <div style={{ fontSize: 12 }}><strong>Invalidate if:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>{audit.invalidation_conditions.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+                ) : null}
+                {audit.warning_traps?.length ? (
+                  <div style={{ fontSize: 12 }} className="muted"><strong>Traps:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>{audit.warning_traps.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 

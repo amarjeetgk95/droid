@@ -6,6 +6,7 @@ import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import ForecastCard, { type HourForecast } from '@/components/research/ForecastCard';
 import { WhyStrip } from '@/components/dashboard/WhyStrip';
+import { AIDeepInsightCard } from '@/components/ai';
 import { ForecastOutcomes } from '@/components/dashboard/ForecastOutcomes';
 import { SupportingSignalsPanel } from '@/components/signals/SupportingSignalsPanel';
 
@@ -172,6 +173,9 @@ export default function ForecastHomePage() {
 
       {/* context */}
       <WhyStrip instrument={instrument} />
+
+      {/* AI deep signal (regime + MTF + AI setup for this instrument) */}
+      <AIDeepInsightCard symbol={instrument} />
 
       {/* supporting signals */}
       <SupportingSignalsPanel />

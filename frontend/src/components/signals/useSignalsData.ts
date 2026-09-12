@@ -17,6 +17,7 @@ import {
   isHiddenTab,
   toActiveRow,
   toLedgerRow,
+  toLedgerSummary,
 } from './signalsNormalize';
 
 export type DeskFilter = 'ALL' | 'SCALP' | 'INTRADAY';
@@ -81,8 +82,10 @@ export function useSignalsData() {
   const [auditSummary, setAuditSummary] = useState<LedgerSummary | null>(null);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [lastPnlAt, setLastPnlAt] = useState<number | null>(null);
   const [sanitizeBusy, setSanitizeBusy] = useState(false);
   const [sanitizeNote, setSanitizeNote] = useState<string | null>(null);
+  const lastAuditRefetchRef = useRef(0);
 
   /* engines (strategy universe for manual creation) */
   const [strategies, setStrategies] = useState<string[]>(FALLBACK_STRATEGIES);
@@ -178,13 +181,8 @@ export function useSignalsData() {
       const sum = getObj(body?.summary);
       const list = Array.isArray(raw) ? raw : [];
       setAuditRows(list.map(toLedgerRow).filter((r): r is LedgerRow => r !== null));
-      setAuditSummary({
-        closed: asNum(sum?.total_closed ?? sum?.closed),
-        winRate: asNum(sum?.win_rate),
-        realized: asNum(sum?.net_realized_pnl),
-        unrealized: asNum(sum?.net_unrealized_pnl),
-        total: asNum(sum?.total_pnl),
-      });
+      setAuditSummary(toLedgerSummary(sum));
+      setLastPnlAt(Date.now());
     } catch (e) {
       setAuditRows([]);
       setAuditError(e instanceof Error ? e.message : 'audit unavailable');
@@ -192,6 +190,36 @@ export function useSignalsData() {
       setAuditLoading(false);
     }
   }, []);
+
+  /** Merge an `audit_pnl_update` SSE delta into the ledger without refetch. */
+  const applyPnlDelta = useCallback((data: unknown) => {
+    const obj = getObj(data);
+    if (!obj) return;
+    const sum = getObj(obj.summary);
+    if (sum) setAuditSummary(toLedgerSummary(sum));
+    const rawTrades = obj.trades;
+    if (Array.isArray(rawTrades) && rawTrades.length) {
+      const deltas = rawTrades.map(toLedgerRow).filter((r): r is LedgerRow => r !== null);
+      if (deltas.length) {
+        setAuditRows((prev) => {
+          if (!prev.length) return deltas;
+          const byId = new Map(prev.map((r) => [r.id, r]));
+          for (const d of deltas) byId.set(d.id, { ...(byId.get(d.id) ?? d), ...d });
+          return [...byId.values()];
+        });
+      }
+    }
+    setLastPnlAt(typeof obj.timestamp_ms === 'number' ? obj.timestamp_ms : Date.now());
+    setAuditError(null);
+  }, []);
+
+  /** Throttled full ledger refetch for P0 lifecycle events (max 1 / 2s). */
+  const requestAuditRefetch = useCallback(() => {
+    const nowMs = Date.now();
+    if (nowMs - lastAuditRefetchRef.current < 2000) return;
+    lastAuditRefetchRef.current = nowMs;
+    void loadAudit();
+  }, [loadAudit]);
 
   const loadEngines = useCallback(async () => {
     if (isHiddenTab()) return;
@@ -242,16 +270,23 @@ export function useSignalsData() {
     void loadActive();
   }, [deskFilter, instrumentFilter, loadActive]);
 
-  // 15s poll for the active list; 5s clock keeps TTL countdowns honest.
+  // 15s poll for the active list + ledger fallback; 5s clock keeps TTL honest.
+  // When SSE is offline the ledger would go stale for 15s, so poll it faster.
+  const connectedRef = useRef(false);
   useEffect(() => {
     const poll = setInterval(() => {
       if (isHiddenTab()) return;
       void loadActive();
       void loadAudit();
     }, 15000);
+    const fastLedgerPoll = setInterval(() => {
+      if (isHiddenTab() || connectedRef.current) return;
+      void loadAudit();
+    }, 5000);
     const clock = setInterval(() => setNow(Date.now()), 5000);
     return () => {
       clearInterval(poll);
+      clearInterval(fastLedgerPoll);
       clearInterval(clock);
     };
   }, [loadActive, loadAudit]);
@@ -263,13 +298,34 @@ export function useSignalsData() {
   }, [loadActive, loadStatus]);
 
   const handleStreamEvent = useCallback(
-    (evt: string) => {
+    (evt: string, data: unknown) => {
+      // Realtime P&L path (~3s cadence): merge MTM deltas, no refetch.
+      if (evt === 'audit_pnl_update') {
+        if (!isHiddenTab()) applyPnlDelta(data);
+        return;
+      }
+      // Lifecycle events change ledger membership (fill / T1 / outcome) —
+      // refresh active list immediately, ledger throttled.
+      if (
+        evt === 'paper_execution' ||
+        evt === 'signal_confirmed' ||
+        evt === 'signal_staged_exit' ||
+        evt === 'signal_outcome' ||
+        evt === 'signal_breakeven'
+      ) {
+        sseRefresh();
+        requestAuditRefetch();
+        return;
+      }
       if (REFRESH_EVENTS.has(evt) || evt.startsWith('signal_') || evt.startsWith('fsm')) sseRefresh();
     },
-    [sseRefresh],
+    [sseRefresh, applyPnlDelta, requestAuditRefetch],
   );
 
   const { connected } = useSignalsStream({ onEvent: handleStreamEvent });
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
 
   const sortedActive = useMemo(
     () => [...activeRows].sort((a, b) => (b.timeMs ?? 0) - (a.timeMs ?? 0)),
@@ -386,6 +442,7 @@ export function useSignalsData() {
     auditSummary,
     auditLoading,
     auditError,
+    lastPnlAt,
     sanitizeBusy,
     sanitizeNote,
     // engines

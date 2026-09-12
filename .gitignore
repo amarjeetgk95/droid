@@ -66,6 +66,8 @@ market_snapshot.json
 backend/market_snapshot.json
 signals_state.json
 backend/signals_state.json
+live_contracts_cache.json
+backend/live_contracts_cache.json
 crypto_scalp_signals_state.json
 backend/crypto_scalp_signals_state.json
 

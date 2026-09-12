@@ -324,7 +324,8 @@ def sanitize_persisted_signals() -> int:
             s_lower = s_id.lower()
             return (
                 s_id in demo_ids
-                or s_lower.startswith("sig-test-")
+                or                 s_lower.startswith("sig-test-")
+                or s_lower.startswith("sig-wallet-")
                 or s_lower.startswith("test-")
                 or s_lower.startswith("sig-persist-sanitize")
             )
@@ -424,6 +425,7 @@ async def ensure_signals_tables() -> bool:
                 ("remaining_qty", "INT"),
                 ("intended_qty", "INT"),
                 ("net_realized_pnl_inr", "DOUBLE PRECISION"),
+                ("recon_json", "JSONB DEFAULT '{}'::jsonb"),
             ]
             for col, col_type in cols_to_add:
                 try:
@@ -462,6 +464,17 @@ async def persist_executed_signal(record: Any) -> bool:
 
         hist_json = json.dumps([h.model_dump() if hasattr(h, "model_dump") else h for h in getattr(record, "state_history", [])], default=str)
 
+        # Reconciler stage fills ride along so mid-flight economics survive
+        # restarts/redeploys (ephemeral disk loses signals_state.json).
+        recon_json = "{}"
+        try:
+            from app.signals.fill_reconciler import option_fill_reconciler
+            _recon = option_fill_reconciler._records.get(getattr(record, "signal_id", ""))
+            if _recon is not None and hasattr(_recon, "model_dump"):
+                recon_json = _recon.model_dump_json()
+        except Exception:
+            recon_json = "{}"
+
         query = text("""
             INSERT INTO executed_signals (
                 signal_id, audit_id, underlying, strategy, direction, timeframe,
@@ -474,7 +487,7 @@ async def persist_executed_signal(record: Any) -> bool:
                 is_scalp, signal_type, time_stop_seconds, runner_ttl_seconds,
                 time_stop_at_utc, runner_time_stop_at_utc, breakeven_activated,
                 current_stop_loss, t1_hit, remaining_qty, intended_qty, net_realized_pnl_inr,
-                created_at_utc, updated_at_utc
+                created_at_utc, updated_at_utc, recon_json
             ) VALUES (
                 :signal_id, :audit_id, :underlying, :strategy, :direction, :timeframe,
                 :option_symbol, :option_type, :option_strike, :lot_size, :lots, :quantity,
@@ -486,7 +499,7 @@ async def persist_executed_signal(record: Any) -> bool:
                 :is_scalp, :signal_type, :time_stop_seconds, :runner_ttl_seconds,
                 :time_stop_at_utc, :runner_time_stop_at_utc, :breakeven_activated,
                 :current_stop_loss, :t1_hit, :remaining_qty, :intended_qty, :net_realized_pnl_inr,
-                :created_at_utc, :updated_at_utc
+                :created_at_utc, :updated_at_utc, CAST(:recon_json AS JSONB)
             )
             ON CONFLICT (signal_id) DO UPDATE SET
                 status = EXCLUDED.status,
@@ -514,6 +527,7 @@ async def persist_executed_signal(record: Any) -> bool:
                 t1_hit = COALESCE(EXCLUDED.t1_hit, executed_signals.t1_hit),
                 remaining_qty = COALESCE(EXCLUDED.remaining_qty, executed_signals.remaining_qty),
                 net_realized_pnl_inr = COALESCE(EXCLUDED.net_realized_pnl_inr, executed_signals.net_realized_pnl_inr),
+                recon_json = CASE WHEN EXCLUDED.recon_json IS NOT NULL AND EXCLUDED.recon_json != '{}'::jsonb THEN EXCLUDED.recon_json ELSE COALESCE(executed_signals.recon_json, '{}'::jsonb) END,
                 updated_at_utc = EXCLUDED.updated_at_utc;
         """)
 
@@ -586,6 +600,7 @@ async def persist_executed_signal(record: Any) -> bool:
             "remaining_qty": int(getattr(record, "remaining_qty", 0) or 0),
             "intended_qty": int(getattr(record, "intended_qty", 0) or 0),
             "net_realized_pnl_inr": getattr(record, "net_realized_pnl_inr", None),
+            "recon_json": recon_json,
             "created_at_utc": getattr(record, "created_at_utc", int(__import__("time").time() * 1000)),
             "updated_at_utc": getattr(record, "updated_at_utc", int(__import__("time").time() * 1000)),
         }
@@ -644,7 +659,7 @@ async def restore_signals_from_db() -> int:
 
             async with factory() as session:
                 try:
-                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%' OR signal_id LIKE 'test-%' OR (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) OR (underlying = 'NIFTY' AND spot_price_at_creation < 22000)"))
+                    await session.execute(text("DELETE FROM executed_signals WHERE signal_id IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') OR signal_id LIKE 'SIG-TEST-%' OR signal_id LIKE 'sig-test-%' OR signal_id LIKE 'sig-wallet-%' OR signal_id LIKE 'SIG-WALLET-%' OR signal_id LIKE 'test-%' OR (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) OR (underlying = 'NIFTY' AND spot_price_at_creation < 22000)"))
                     # Repair legacy option rows where spot was saved as fill price or impossible pnl was saved
                     await session.execute(text("""
                         UPDATE executed_signals
@@ -665,7 +680,7 @@ async def restore_signals_from_db() -> int:
                 except Exception:
                     pass
 
-                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' AND signal_id NOT LIKE 'test-%' AND NOT (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) AND NOT (underlying = 'NIFTY' AND spot_price_at_creation < 22000) ORDER BY created_at_utc ASC"))
+                res = await session.execute(text("SELECT * FROM executed_signals WHERE signal_id NOT IN ('SIG-NIFTY-BKO-01', 'SIG-BNF-TRP-02', 'SIG-SNX-MRV-03', 'SIG-NIFTY-ORB-04') AND signal_id NOT LIKE 'SIG-TEST-%' AND signal_id NOT LIKE 'sig-test-%' AND signal_id NOT LIKE 'sig-wallet-%' AND signal_id NOT LIKE 'SIG-WALLET-%' AND signal_id NOT LIKE 'test-%' AND (status IS NULL OR status != 'VOID') AND NOT (underlying = 'BANKNIFTY' AND spot_price_at_creation < 40000) AND NOT (underlying = 'NIFTY' AND spot_price_at_creation < 22000) ORDER BY created_at_utc ASC"))
                 rows = res.mappings().all()
 
                 valid_fsm_states = {
@@ -751,6 +766,76 @@ async def restore_signals_from_db() -> int:
                             updated_at_utc=row["updated_at_utc"],
                         )
                         signal_audit_ledger._trades[sid] = rec
+
+                        # Rebuild fill-reconciler economics so post-restart
+                        # exits book real P&L instead of synthetic zeroes.
+                        try:
+                            from app.signals.fill_reconciler import (
+                                FillReconciliationRecord,
+                                OptionStageFill,
+                                option_fill_reconciler,
+                            )
+                            _raw_recon = None
+                            try:
+                                _raw_recon = row["recon_json"]
+                            except Exception:
+                                _raw_recon = None
+                            if isinstance(_raw_recon, str):
+                                try:
+                                    _raw_recon = json.loads(_raw_recon)
+                                except Exception:
+                                    _raw_recon = None
+                            if isinstance(_raw_recon, dict) and _raw_recon.get("signal_id"):
+                                try:
+                                    option_fill_reconciler._records[sid] = FillReconciliationRecord(**_raw_recon)
+                                except Exception:
+                                    pass
+                            elif (
+                                sid not in option_fill_reconciler._records
+                                and row_fill is not None
+                                and float(row_fill) > 0
+                                and st in ("EXECUTED", "TARGET_1_HIT", "CONFIRMED")
+                            ):
+                                # Synthetic stub: entry economics known, prior
+                                # stage splits unknown — flagged so consumers
+                                # prefer the ledger's own P&L.
+                                _intended = row_qty
+                                _remaining = int(row.get("remaining_qty") or _intended)
+                                _t1q = 0
+                                try:
+                                    _lot = int(row.get("lot_size") or 75)
+                                    _lots_n = max(1, _intended // max(1, _lot))
+                                    _t1q = min(_intended, max(1, _lots_n // 2) * max(1, _lot)) if row.get("t1_hit") else 0
+                                except Exception:
+                                    _t1q = 0
+                                option_fill_reconciler._records[sid] = FillReconciliationRecord(
+                                    signal_id=sid,
+                                    underlying=row["underlying"],
+                                    strategy=row["strategy"],
+                                    direction=row["direction"],
+                                    option_symbol=row.get("option_symbol"),
+                                    option_type=row.get("option_type"),
+                                    strike=float(row.get("option_strike")) if row.get("option_strike") else None,
+                                    lot_size=int(row.get("lot_size") or 75),
+                                    intended_qty=_intended,
+                                    remaining_qty=max(0, _remaining),
+                                    t1_qty=_t1q,
+                                    entry_fill_price=float(row_fill),
+                                    fills=[
+                                        OptionStageFill(
+                                            stage="ENTRY",
+                                            price=float(row_fill),
+                                            quantity=_intended,
+                                            timestamp_utc=int(row.get("executed_at_utc") or row["created_at_utc"]),
+                                            turnover=round(float(row_fill) * _intended, 2),
+                                        )
+                                    ],
+                                    created_at_utc=int(row["created_at_utc"]),
+                                    updated_at_utc=int(row.get("updated_at_utc") or row["created_at_utc"]),
+                                    synthetic=True,
+                                )
+                        except Exception:
+                            pass
 
                         # Reconstruct FSM instance with Version 6.0 fields
                         if not signal_fsm.get(sid):

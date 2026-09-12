@@ -12,6 +12,7 @@ import { IVSmileChart } from '@/components/options/IVSmileChart';
 import { ExpectedMoveCard, ExpectedMoveData } from '@/components/options/ExpectedMoveCard';
 import { GreeksSummaryCard, GreeksSummaryData } from '@/components/options/GreeksSummaryCard';
 import { ErrorCard } from '@/components/ui/ErrorCard';
+import { AIAnalysisCard, AIStrategyPanel, AITradeValidator } from '@/components/ai';
 import { deskCache } from '@/lib/useDeskCache';
 import { OptionChainSkeleton } from '@/components/options/OptionChainSkeleton';
 
@@ -367,7 +368,12 @@ export default function OptionsPage() {
             )}
           </Card>
 
-          {/* 5. Payoff / IV plain cards */}
+          {/* 5. AI: analysis + strategy architect + trade auditor */}
+          <AIAnalysisCard symbol={selectedSymbol} contextPage="options" />
+          <AIStrategyPanel symbol={selectedSymbol} />
+          <AITradeValidator symbol={selectedSymbol} spotPrice={spotPrice} />
+
+          {/* 6. Payoff / IV plain cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
             <PayoffChart
               data={maxPainData}

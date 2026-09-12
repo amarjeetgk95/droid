@@ -149,6 +149,12 @@ class AutomatedSignalWorker:
                                 logger.debug("worker_risk_tick_rejected_stale", underlying=u, age_sec=round(age_sec, 2))
                                 continue
 
+                        # Feed Circuit Breaker Check
+                        from app.signals.safety.feed_circuit import feed_circuit
+                        if feed_circuit.is_degraded(u):
+                            logger.warning("worker_risk_tick_skipped_feed_degraded", underlying=u)
+                            continue
+
                         curr_p = Decimal(str(ltp))
                         # Process price updates (triggers, ratchets, staged exits, time stops)
                         await outcome_tracker.process_price_update_async(u, curr_p)
@@ -156,16 +162,28 @@ class AutomatedSignalWorker:
                         # Non-critical telemetry & audit MTM update: offload to background task to protect 2500ms cycle budget
                         async def _bg_audit_and_sse(sym: str, price_val: Decimal):
                             try:
+                                import time as _time
+
                                 from app.signals.audit_ledger import signal_audit_ledger
                                 from app.signals.sse import signal_sse_hub
                                 updated_recs = signal_audit_ledger.update_live_quote(sym, float(price_val))
                                 if updated_recs:
+                                    # Include per-trade MTM deltas so the P&L ledger can
+                                    # apply SSE updates incrementally without a full
+                                    # /audit refetch every 3s. Cap payload size.
+                                    try:
+                                        deltas = [r.model_dump() for r in updated_recs[:50]]
+                                    except Exception:
+                                        deltas = []
                                     await signal_sse_hub.broadcast(
                                         "audit_pnl_update",
                                         {
                                             "underlying": sym,
                                             "ltp": float(price_val),
                                             "summary": signal_audit_ledger.get_summary_metrics(),
+                                            "trades": deltas,
+                                            "count": len(updated_recs),
+                                            "timestamp_ms": int(_time.time() * 1000),
                                         },
                                         priority="P1",
                                     )
@@ -259,6 +277,15 @@ class AutomatedSignalWorker:
                     continue
 
                 now = time.time()
+
+                # 0. Live contract symbols (FYERS chain truth, 60s cadence).
+                # Keeps broker_symbol/premium exact; resolver falls back to
+                # formula when the chain is unreachable.
+                try:
+                    from app.signals.live_contract_cache import live_contract_cache
+                    live_contract_cache.schedule_refresh(self._market_svc)
+                except Exception:
+                    pass
 
                 # 1. Fast Scalp Scanning (1M)
                 if now - last_scalp_ts >= self._scalp_interval:

@@ -17,8 +17,8 @@ describe('nav-config navigation layout', () => {
     expect(findNavItemByHref('/options')?.label).toBe('Derivatives');
   });
 
-  it('contains only forecast-first routes plus signals and settings', () => {
-    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/markets', '/options', '/settings', '/signals']);
+  it('contains only forecast-first routes plus signals, AI copilot and settings', () => {
+    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/ai', '/markets', '/options', '/settings', '/signals']);
     for (const dead of [
       '/crypto',
       '/paper-trading',
@@ -38,10 +38,11 @@ describe('nav-config navigation layout', () => {
     expect(new Set(shortcuts).size).toBe(shortcuts.length);
   });
 
-  it('assigns clean shortcuts ⌘1, ⌘2, ⌘3 and ⌘,', () => {
+  it('assigns clean shortcuts ⌘1, ⌘2, ⌘3, ⌘4 and ⌘,', () => {
     expect(findNavItemByHref('/')?.shortcut).toBe('⌘1');
     expect(findNavItemByHref('/markets')?.shortcut).toBe('⌘2');
     expect(findNavItemByHref('/options')?.shortcut).toBe('⌘3');
+    expect(findNavItemByHref('/ai')?.shortcut).toBe('⌘4');
     expect(findNavItemByHref('/settings')?.shortcut).toBe('⌘,');
   });
 });

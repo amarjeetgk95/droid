@@ -264,6 +264,49 @@ export function createAiApi(core: ApiCore) {
       body: JSON.stringify(payload),
     });
   },
+
+    async getDeepInsight(
+      symbol: string,
+      opts?: {
+        provider?: string;
+        model?: string;
+        openRouterApiKey?: string;
+        geminiApiKey?: string;
+      },
+    ) {
+      const query = new URLSearchParams();
+      if (opts?.provider) query.set('provider', opts.provider);
+      if (opts?.model) query.set('model', opts.model);
+      if (opts?.openRouterApiKey) query.set('openRouterApiKey', opts.openRouterApiKey);
+      if (opts?.geminiApiKey) query.set('geminiApiKey', opts.geminiApiKey);
+      const qs = query.toString();
+      const headers: Record<string, string> = {};
+      if (opts?.openRouterApiKey) headers['X-OpenRouter-Key'] = opts.openRouterApiKey;
+      if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey;
+      if (opts?.provider) headers['X-AI-Provider'] = opts.provider;
+      return core.request<{ data: unknown; error: string | null; meta: import('../types').ApiMeta }>(
+        `/api/v1/ai/deep-insight/${encodeURIComponent(symbol)}${qs ? `?${qs}` : ''}`,
+        { headers },
+      );
+    },
+
+    async evaluateV2(
+      symbol: string,
+      opts?: { regime_hint?: string; context_overrides?: Record<string, unknown>; allow_closed_market?: boolean },
+    ) {
+      return core.request<{ data: { signal: unknown; execution: unknown }; error: string | null; meta: import('../types').ApiMeta }>(
+        `/api/v1/ai/v2/evaluate/${encodeURIComponent(symbol)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            symbol,
+            regime_hint: opts?.regime_hint,
+            context_overrides: opts?.context_overrides,
+            allow_closed_market: opts?.allow_closed_market ?? true,
+          }),
+        },
+      );
+    },
   };
 }
 

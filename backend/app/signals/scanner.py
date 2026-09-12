@@ -565,6 +565,18 @@ class SignalScanner:
             rejected_gates.extend(dropped_conflicts)
 
         for cand in candidates:
+            # ── Global Kill Switch & Feed Circuit Breaker Checks ──
+            from app.signals.safety.kill_switch import kill_switch
+            if kill_switch.is_active():
+                rejected_gates.append(f"{cand.strategy}:GLOBAL_KILL_SWITCH_ACTIVE")
+                continue
+
+            from app.signals.safety.feed_circuit import feed_circuit
+            if feed_circuit.is_degraded(cand.underlying):
+                rejected_gates.append(f"{cand.strategy}:FEED_DEGRADED_CIRCUIT_BREAKER")
+                logger.info("candidate_rejected_feed_degraded", underlying=cand.underlying, strategy=cand.strategy)
+                continue
+
             # ── F&O Integrity Gate (§1): State-aware execution protection ──
             fno_is_degraded = getattr(cand, "fno_degraded", False)
             if fno_is_degraded:
@@ -621,6 +633,32 @@ class SignalScanner:
                 if diag:
                     diag.throttled_signals_count += 1
                 logger.info("candidate_rejected_stacking", underlying=cand.underlying, strategy=cand.strategy, blocked_by=same_dir_stacked[0].strategy)
+                continue
+
+            # Cross-desk clone guard: decoupled desks are intentional (a
+            # SCALP scalp and an INTRADAY swing may coexist), but the IDENTICAL
+            # setup (same strategy + direction) must never register twice —
+            # on 11 Sep 2026 three MEAN_REVERSION LONG clones filled in 35s.
+            # One live position per underlying+strategy+direction, all desks.
+            cross_desk_stacked = [
+                s for s in in_flight_underlying
+                if s.direction == cand.direction
+                and s.strategy == cand.strategy
+                and s.fsm_state in ("ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT")
+            ]
+            if cross_desk_stacked:
+                blocker = cross_desk_stacked[0]
+                reason = f"CROSS_DESK_STACKING_BLOCKED_{blocker.strategy}_{blocker.direction}"
+                rejected_gates.append(f"{cand.strategy}:{reason}")
+                diag = self._last_diagnostics.get(f"{cand.underlying}:{cand.timeframe}")
+                if diag:
+                    diag.throttled_signals_count += 1
+                logger.info(
+                    "candidate_rejected_cross_desk_stacking",
+                    underlying=cand.underlying,
+                    strategy=cand.strategy,
+                    blocked_by=getattr(blocker, "signal_id", "?"),
+                )
                 continue
 
             # Portfolio Concurrency Cap: Max 4 open/active trades across entire portfolio

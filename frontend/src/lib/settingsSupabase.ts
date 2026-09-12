@@ -22,6 +22,26 @@ export function mergeAppSettingsFromSupabase(raw: unknown): AppSettings {
   return applyAllMigrations(merged);
 }
 
+function resolvePreferredModel(ai: AppSettings['ai']): string {
+  switch (ai.provider) {
+    case 'openrouter':
+      return ai.openRouterSelectedModel || ai.openRouterModel || '';
+    case 'openai':
+      return ai.openaiModel || '';
+    case 'novita':
+      return ai.novitaModel || '';
+    case 'nvidia':
+      return ai.nvidiaModel || '';
+    case 'ollama':
+      return ai.ollamaModel || '';
+    case 'custom':
+      return ai.customOpenaiModel || '';
+    case 'gemini':
+    default:
+      return ai.geminiModel || '';
+  }
+}
+
 /**
  * Build the Supabase payload from AppSettings.
  * Keeps flat legacy columns in sync so old queries remain valid.
@@ -32,7 +52,7 @@ export function toSupabasePayload(settings: AppSettings): Record<string, unknown
     default_symbol: settings.preferences.defaultIndexSymbol,
     preferred_market_provider: settings.broker.provider,
     preferred_ai_provider: settings.ai.provider,
-    preferred_ai_model: settings.ai.geminiModel,
+    preferred_ai_model: resolvePreferredModel(settings.ai),
     app_settings: { ...settings, schemaVersion: 2 },
   };
 }

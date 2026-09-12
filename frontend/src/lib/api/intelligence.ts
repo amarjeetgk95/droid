@@ -1,4 +1,12 @@
 import type { ApiCore } from './client';
+import type { HourForecast } from '@/components/research/ForecastCard';
+
+/**
+ * 1H forecast v2 contract (P0): v1 keys plus optional v2 honesty fields
+ * (status, probabilities, settleable, versions, limitations, ...).
+ * All v2 keys are optional so v1 responses without new keys still render.
+ */
+export type HourForecastV2 = HourForecast;
 
 export function createIntelligenceApi(core: ApiCore) {
   return {
@@ -34,18 +42,18 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
   },
 
-    async getForecast(instrument: string, horizon: string = '1h', record = true) {
-    return core.request<any>(`/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+    async getForecast(instrument: string, horizon: string = '1h', record = true): Promise<HourForecastV2> {
+    return core.request<HourForecastV2>(`/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
   },
 
-    async getForecastExplain(instrument: string, horizon: string = '1h') {
-    return core.request<any>(
+    async getForecastExplain(instrument: string, horizon: string = '1h'): Promise<HourForecastV2> {
+    return core.request<HourForecastV2>(
       `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=false&include_explain=true`,
     );
   },
 
-    async getHourForecast(instrument: string, record = true) {
-    return core.request<any>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+    async getHourForecast(instrument: string, record = true): Promise<HourForecastV2> {
+    return core.request<HourForecastV2>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
   },
 
     async getPortfolioGreeksSummary() {

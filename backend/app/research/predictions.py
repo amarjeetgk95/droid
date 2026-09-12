@@ -15,9 +15,100 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.research.enums import Direction, ForecastHorizon
-from app.research.models import PredictionOutcome, ResearchPrediction
+from app.research.models import PredictionOutcome, ResearchPrediction, ResearchSnapshot
 
 logger = structlog.get_logger(__name__)
+
+
+class SnapshotService:
+    """Service handling point-in-time market-state snapshots (§25).
+
+    P0 (forecast 1h-v2): every persisted forecast must reference the exact
+    market state it was computed from. Operates gracefully with an optional
+    AsyncSession (Postgres ``research_snapshots``) or fallback in-memory
+    store for offline / test operation — mirroring PredictionService.
+    """
+
+    # Fallback in-memory storage for offline / test operation
+    _memory_snapshots: Dict[str, ResearchSnapshot] = {}
+
+    @classmethod
+    async def record_snapshot(
+        cls,
+        snapshot: ResearchSnapshot,
+        session: Optional[AsyncSession] = None,
+    ) -> str:
+        """Persist a point-in-time market snapshot. Never raises on DB failure
+        when a session is provided (falls back to memory); raises only when
+        the snapshot itself cannot be built/stored in memory, so callers can
+        degrade the forecast instead of persisting a prediction without one.
+        """
+        if not snapshot.snapshot_id:
+            snapshot.snapshot_id = f"snap_{uuid.uuid4().hex[:12]}"
+        if not snapshot.created_at:
+            snapshot.created_at = datetime.now(timezone.utc)
+
+        if len(cls._memory_snapshots) >= 1000:
+            oldest_key = next(iter(cls._memory_snapshots))
+            cls._memory_snapshots.pop(oldest_key, None)
+        cls._memory_snapshots[snapshot.snapshot_id] = snapshot
+
+        if session is not None:
+            try:
+                stmt = text("""
+                    INSERT INTO research_snapshots (
+                        snapshot_id, instrument, timeframe, timestamp,
+                        price, regime, session, features, options_context,
+                        data_quality, created_at
+                    ) VALUES (
+                        :id, :inst, :tf, :ts, :p, :reg, :sess,
+                        CAST(:feat AS jsonb), CAST(:opt AS jsonb), :dq, :created
+                    );
+                """)
+                await session.execute(
+                    stmt,
+                    {
+                        "id": snapshot.snapshot_id,
+                        "inst": snapshot.instrument,
+                        "tf": snapshot.timeframe,
+                        "ts": snapshot.timestamp,
+                        "p": snapshot.price,
+                        "reg": snapshot.regime,
+                        "sess": snapshot.session,
+                        "feat": json.dumps(snapshot.features),
+                        "opt": json.dumps(snapshot.options_context) if snapshot.options_context else None,
+                        "dq": snapshot.data_quality.value if hasattr(snapshot.data_quality, "value") else snapshot.data_quality,
+                        "created": snapshot.created_at,
+                    }
+                )
+                await session.commit()
+                logger.info("recorded_research_snapshot_db", snapshot_id=snapshot.snapshot_id)
+            except Exception as e:
+                await session.rollback()
+                logger.warning("failed_to_write_snapshot_db_fallback_memory", error=str(e))
+
+        return snapshot.snapshot_id
+
+    @classmethod
+    async def get_snapshot(
+        cls,
+        snapshot_id: str,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[ResearchSnapshot]:
+        """Fetch a snapshot by ID."""
+        if snapshot_id in cls._memory_snapshots:
+            return cls._memory_snapshots[snapshot_id]
+
+        if session is not None:
+            try:
+                stmt = text("SELECT * FROM research_snapshots WHERE snapshot_id = :id")
+                result = await session.execute(stmt, {"id": snapshot_id})
+                row = result.mappings().first()
+                if row:
+                    return ResearchSnapshot(**dict(row))
+            except Exception as e:
+                logger.warning("db_get_snapshot_failed", error=str(e))
+        return None
 
 
 class PredictionService:

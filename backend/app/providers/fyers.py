@@ -538,22 +538,18 @@ class FyersProvider(MarketDataProvider):
             underlying = "BANKNIFTY"
             fyers_sym = "NSE:NIFTYBANK-INDEX"
             strike_step = 100.0
-            default_spot = 52000.0
         elif "FIN" in sym_upper:
             underlying = "FINNIFTY"
             fyers_sym = "NSE:FINNIFTY-INDEX"
             strike_step = 50.0
-            default_spot = 24200.0
         elif "SENSEX" in sym_upper:
             underlying = "SENSEX"
             fyers_sym = "BSE:SENSEX-INDEX"
             strike_step = 100.0
-            default_spot = 81500.0
         else:
             underlying = "NIFTY"
             fyers_sym = "NSE:NIFTY50-INDEX"
             strike_step = 50.0
-            default_spot = 25000.0
 
         # Attempt Live Fetch from FYERS API v3
         try:

@@ -8,7 +8,14 @@ class FIIDIIService:
     """FII / DII Institutional Flow & Derivatives Positioning Service."""
 
     def get_institutional_overview(self) -> FIIDIIOverviewResponse:
-        """Calculate live FII Index Futures Long/Short ratio, Option positioning, and Cash Net Flow."""
+        """Static FII/DII positioning snapshot (NOT live).
+
+        Truth-of-wall: there is no live FII/DII feed wired — NSE publishes
+        this data in daily files and FYERS exposes no FII/DII endpoint.
+        The numbers below are a fixed representative snapshot dated
+        2026-08-29, explicitly labeled via source/as_of/live_available.
+        Render them greyed with the snapshot date, never as live flow.
+        """
         now = datetime.now(timezone.utc)
         
         # Representative Indian Institutional Derivatives Positioning
@@ -72,6 +79,9 @@ class FIIDIIService:
 
         return FIIDIIOverviewResponse(
             timestamp=now,
+            source="static_snapshot",
+            as_of="2026-08-29",
+            live_available=False,
             fii_long_short_ratio=fii_pos.long_short_ratio,
             fii_futures_net_contracts=fii_pos.index_futures_net,
             dii_futures_net_contracts=breakdown[1].index_futures_net,

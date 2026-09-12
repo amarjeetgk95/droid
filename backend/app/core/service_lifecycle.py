@@ -116,8 +116,12 @@ async def restart_provider_stream(reason: str = "config_change") -> object:
     )
 
     async with _get_provider_lock():
-        await stop_previous_provider_stream()
+        # Order matters: reset FIRST so the live instance moves into
+        # _previous_provider, THEN stop it. Stopping before the reset only
+        # stops a stale (usually None) handle and leaks the live instance —
+        # its poller keeps emitting AUTH_EXPIRED alongside the new stream.
         reset_provider()
+        await stop_previous_provider_stream()
         provider = get_provider()
         try:
             await provider.start_stream()

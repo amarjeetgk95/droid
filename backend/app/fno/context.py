@@ -4,7 +4,9 @@ async def get_fno_context(symbol: str) -> dict:
     cfg = get_by_symbol_exact(symbol.upper()) or get_instrument(symbol)
     if not cfg or not cfg.fno_available:
         return {"available": False, "reason": "F&O data is not available for this instrument"}
-    # Try to get real options/futures data via services, fallback to synthetic
+    # Try to get real options/futures data via services. Analytics-derived
+    # fields fall back to neutral defaults ONLY with degraded_fields listing
+    # them — consumers must discount flagged fields, never trade them as data.
     try:
         from app.services.options_service import options_service
         from app.services.market_service import MarketService
@@ -42,6 +44,11 @@ async def get_fno_context(symbol: str) -> dict:
         pcr = analytics.pcr_oi if analytics else 1.0
         pcr_vol = analytics.pcr_volume if analytics else 1.0
         atm_iv = analytics.atm_iv if analytics else 14.5
+        degraded_fields = [] if analytics else [
+            "pcr", "pcr_volume", "atm_iv", "iv_rank_proxy",
+            "total_call_oi", "total_put_oi", "total_call_volume", "total_put_volume",
+            "rollover_three_month_avg", "rollover_pace",
+        ]
         total_call_oi = analytics.total_call_oi if analytics else 0
         total_put_oi = analytics.total_put_oi if analytics else 0
         total_call_vol = analytics.total_call_volume if analytics else 0
@@ -120,6 +127,8 @@ async def get_fno_context(symbol: str) -> dict:
             "distance_to_expiry_days": analytics.time_to_expiry_days if analytics else near_days,
             "futures_positioning": "UNKNOWN",
             "buildup_strength": "UNKNOWN",
+            "analytics_available": analytics is not None,
+            "degraded_fields": degraded_fields,
             # Data ingestion protocol §22
             "data_ingestion": {
                 "tick_level": "Unavailable",

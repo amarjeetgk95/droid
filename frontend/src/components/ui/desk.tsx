@@ -89,7 +89,7 @@ export function DirectionBadge({ direction, big }: { direction: unknown; big?: b
   const d = normalizeDirection(direction);
   const cls = d === 'BULLISH' ? 'b-bull' : d === 'BEARISH' ? 'b-bear' : 'b-neut';
   return (
-    <span className={`badge ${cls}`} style={big ? { fontSize: 13, padding: '5px 14px' } : undefined}>
+    <span className={`badge ${cls}`} style={big ? { fontSize: 12, padding: '3px 8px' } : undefined}>
       {d}
     </span>
   );

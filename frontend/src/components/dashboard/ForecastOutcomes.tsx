@@ -11,12 +11,28 @@ type Outcome = {
   mae?: number | null;
 } | null;
 
+/** Settleable predicate: excluded only when explicitly false (top-level or component_values). */
+function isSettleablePred(p: Record<string, unknown>): boolean {
+  if (p.settleable === false) return false;
+  const cv = p.component_values;
+  if (cv !== null && typeof cv === 'object') {
+    try {
+      if ((cv as Record<string, unknown>).settleable === false) return false;
+    } catch {
+      // ignore — treat as settleable
+    }
+  }
+  return true;
+}
+
 export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument: string; timeframe?: string }) {
   const [predictions, setPredictions] = useState<Array<Record<string, unknown>>>([]);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [measuringId, setMeasuringId] = useState<string | null>(null);
+  // P3-4: settleable-only toggle, default on (unsettled/late-session excluded).
+  const [settleableOnly, setSettleableOnly] = useState(true);
 
   const load = useCallback(
     async (isInitial: boolean) => {
@@ -74,8 +90,12 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
   }, [load]);
 
   const stats = useMemo(() => {
-    const total = predictions.length;
-    const measuredEntries = Object.values(outcomes);
+    const visible = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
+    const visibleIds = new Set(visible.map((p) => String(p.prediction_id ?? '')));
+    const total = visible.length;
+    const measuredEntries = Object.entries(outcomes)
+      .filter(([pid]) => visibleIds.has(pid))
+      .map(([, o]) => o);
     const measuredCount = measuredEntries.length;
     const correctCount = measuredEntries.filter((o) => o?.is_correct).length;
     const winRate = measuredCount > 0 ? Math.round((correctCount / measuredCount) * 100) : null;
@@ -88,7 +108,7 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
     const avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null;
     const avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null;
     return { total, measuredCount, correctCount, winRate, avgMfe, avgMae };
-  }, [predictions, outcomes]);
+  }, [predictions, outcomes, settleableOnly]);
 
   const handleMeasure = useCallback(async (predictionId: string) => {
     setMeasuringId(predictionId);
@@ -126,8 +146,25 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
         </button>
       }
     >
-      <p className="muted num" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
-        {summary}
+      <div
+        className="toolbar"
+        style={{ margin: '0 0 10px', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        <p className="muted num" style={{ margin: 0, fontSize: 12.5 }}>
+          {summary}
+        </p>
+        <label className="muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={settleableOnly}
+            onChange={(e) => setSettleableOnly(e.target.checked)}
+            aria-label="Settleable only"
+          />
+          Settleable only
+        </label>
+      </div>
+      <p className="faint" style={{ margin: '0 0 10px', fontSize: 11.5 }}>
+        Reference costs ref-v1, diagnostic.
       </p>
       {loading && predictions.length === 0 ? (
         <div style={{ display: 'grid', gap: 8 }}>
@@ -135,7 +172,7 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
           <div className="skel" style={{ height: 14, width: '60%' }}>.</div>
           <div className="skel" style={{ height: 14, width: '68%' }}>.</div>
         </div>
-      ) : predictions.length === 0 ? (
+      ) : (settleableOnly ? predictions.filter(isSettleablePred) : predictions).length === 0 ? (
         <EmptyNote>No predictions recorded yet.</EmptyNote>
       ) : (
         <div className="tbl-wrap">
@@ -152,7 +189,7 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
               </tr>
             </thead>
             <tbody>
-              {predictions.map((p) => {
+              {(settleableOnly ? predictions.filter(isSettleablePred) : predictions).map((p) => {
                 const pid = String(p.prediction_id ?? '');
                 const outcome = pid ? outcomes[pid] : null;
                 const busy = measuringId === pid;

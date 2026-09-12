@@ -141,6 +141,19 @@ class DeepInsightService:
         try:
             chain = await self.options_service.get_option_chain_matrix(symbol)
             analytics = chain.analytics
+            if analytics is None:
+                # Truth-of-wall: no chain analytics means no bias call.
+                # Neutral defaults with an explicit disclaimer, never a
+                # fabricated "balanced flow" narrative.
+                return DeepInsightOptionsEvidence(
+                    bias=Direction.NEUTRAL,
+                    pcr=1.0,
+                    put_support=0.0,
+                    call_resistance=0.0,
+                    oi_trend="Stable",
+                    iv="Unknown",
+                    interpretation="Options chain unavailable — bias unknown. Ignore pcr/iv on this card.",
+                )
             pcr = analytics.pcr_oi if analytics else 1.0
             spot = analytics.spot_price if analytics else 0.0
 

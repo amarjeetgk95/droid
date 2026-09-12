@@ -270,38 +270,38 @@ function IndexCardItem({
     <button
       type="button"
       onClick={handleClick}
-      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2.5 py-1 rounded-lg border border-transparent hover:border-border hover:bg-secondary/60 active:scale-[0.99] transition-all cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-0.5 rounded-[3px] border border-transparent hover:border-border hover:bg-[#f7f7f7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
         closed ? 'opacity-80' : ''
       }`}
       title={`${displayName} • LTP: ₹${formattedLtp} (${formattedChange}) • Session: ${sessionLabel} • Vol: ${safeVol} • OI: ${safeOi} • Click to focus forecast`}
       aria-label={`${displayName} index at ${formattedLtp}, ${isPos ? 'up' : isNeg ? 'down' : 'unchanged'} by ${Math.abs(changePct || 0).toFixed(2)}%`}
     >
       {/* Symbol Name */}
-      <span className="font-bold text-foreground tracking-tight text-[11.5px] sm:text-[12.5px] whitespace-nowrap group-hover/item:text-primary transition-colors">
+      <span className="font-bold text-foreground tracking-tight text-[11.5px] sm:text-[12px] whitespace-nowrap group-hover/item:text-primary transition-colors">
         {displayName}
       </span>
 
       {/* Live LTP with directional micro-flash */}
       <span
-        className={`tabular-nums font-mono font-bold text-[12px] sm:text-[13px] px-1 py-0.5 rounded transition-colors duration-300 ${
+        className={`tabular-nums font-mono font-bold text-[12px] sm:text-[12.5px] px-1 py-0.5 rounded-[2px] transition-colors duration-200 ${
           flash === 'up'
-            ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-extrabold'
+            ? 'bg-emerald-500/15 text-emerald-700'
             : flash === 'down'
-              ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 font-extrabold'
+              ? 'bg-rose-500/15 text-rose-700'
               : 'text-foreground'
         }`}
       >
         {formattedLtp}
       </span>
 
-      {/* Modern Badge for Percentage Change */}
+      {/* Badge for Percentage Change */}
       <span
-        className={`tabular-nums inline-flex items-center gap-0.5 sm:gap-1 font-bold px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] leading-tight border transition-all shadow-2xs ${
+        className={`tabular-nums inline-flex items-center gap-0.5 sm:gap-1 font-semibold px-1 sm:px-1.5 py-0.5 rounded-[2px] text-[10px] sm:text-[10.5px] leading-tight border transition-colors ${
           isNeutral
-            ? 'text-muted-foreground bg-secondary/80 border-border'
+            ? 'text-muted-foreground bg-secondary border-border'
             : isPos
-              ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/25'
-              : 'text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/25'
+              ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/25'
+              : 'text-rose-700 bg-rose-500/10 border-rose-500/25'
         }`}
       >
         {isNeutral ? (
@@ -346,7 +346,7 @@ function IndexCardItem({
 export function MarketTickerSkeleton() {
   return (
     <div
-      className="h-11 border-b border-border bg-card/85 backdrop-blur-xl overflow-hidden flex items-center px-3 sm:px-4 md:px-6 gap-3 sm:gap-4 select-none"
+      className="h-10 border-b border-border bg-card overflow-hidden flex items-center px-3 sm:px-4 md:px-6 gap-3 sm:gap-4 select-none"
       role="status"
       aria-label="Loading live market indices"
     >
@@ -512,11 +512,11 @@ function MarketTickerInner({
     <nav
       role="region"
       aria-label="Live Market Indices Ribbon"
-      className="relative h-11 border-b border-border bg-card/85 backdrop-blur-xl flex items-center px-3 sm:px-4 md:px-6 select-none text-[13px] z-20 overflow-hidden"
+      className="relative h-10 border-b border-border bg-card flex items-center px-3 sm:px-4 md:px-6 select-none text-[12.5px] z-20 overflow-hidden"
     >
       {/* Stream Status Chip */}
       <div
-        className="flex items-center gap-1.5 px-1.5 sm:px-2 py-0.5 rounded-md bg-secondary/80 border border-border text-[10px] sm:text-[10.5px] font-semibold tracking-wide uppercase shrink-0 text-muted-foreground"
+        className="flex items-center gap-1.5 px-1.5 sm:px-2 py-0.5 rounded-[2px] bg-secondary border border-border text-[10px] sm:text-[10.5px] font-semibold tracking-wide uppercase shrink-0 text-muted-foreground"
         title={`Feed: ${streamState || 'CONNECTED'} • Session: ${marketSession || (isClosed ? 'Closed' : 'Open')}`}
       >
         {isClosed ? (

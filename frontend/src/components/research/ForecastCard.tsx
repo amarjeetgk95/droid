@@ -11,6 +11,24 @@ import {
   toneFor,
 } from '@/components/ui/desk';
 import WhyPanel from '@/components/forecast/WhyPanel';
+import {
+  ABSTAIN_VERDICT,
+  UNSETTLEABLE_NOTE,
+  asStringList,
+  calibrationLabel,
+  getDataQualityLabel,
+  getExpectedRange,
+  getForecastStatusLabel,
+  getSettlementLabel,
+  isAbstainForecast,
+  isCalibratedForecast,
+  isDegradedForecast,
+  maxProbability,
+  probabilityBars,
+  shortForecastId,
+  type ForecastV2Probabilities,
+  type ForecastV2Status,
+} from './forecastStatus';
 
 export type HourForecastDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
@@ -36,6 +54,27 @@ export type HourForecast = {
   prediction_id?: string;
   explain?: unknown;
   component_values?: Record<string, unknown> | null;
+  // — 1H forecast v2.3 (P0) honesty fields: ALL optional so v1
+  // responses without new keys still render (status defaults to RESEARCH).
+  forecast_version?: string | null;
+  status?: ForecastV2Status | null;
+  probabilities?: ForecastV2Probabilities | null;
+  raw_confidence?: number | null;
+  regime?: string | null;
+  session?: string | null;
+  settleable?: boolean | null;
+  settle_reason?: string | null;
+  data_quality?: string | null;
+  model_version?: string | null;
+  calibrator_version?: string | null;
+  snapshot_id?: string | null;
+  limitations?: string[] | null;
+  // — 1H forecast v2.3 (P3-4) prob UI: ALL optional so v1 renders as before.
+  calibrated?: boolean | null;
+  calibration?: unknown;
+  expected_range?: { lower?: number | null; mid?: number | null; upper?: number | null } | null;
+  target_basis?: string | null;
+  latency_ms?: number | null;
 };
 
 type ForecastCardProps = {
@@ -122,23 +161,78 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
   const score = Number.isFinite(forecast.score) ? forecast.score : 0;
   const tone = toneFor(score);
   const price = forecast.current_price ?? null;
-  const confPct = Math.round((Number(forecast.confidence) || 0) * 100);
+
+  // — v2.3 (P0) honesty state: all derived defensively so v1 payloads render unchanged —
+  const v2Status = getForecastStatusLabel(forecast);
+  const degraded = isDegradedForecast(forecast);
+  const abstain = isAbstainForecast(forecast);
+  const dataQuality = getDataQualityLabel(forecast);
+  const settlement = getSettlementLabel(forecast);
+  const limitations = asStringList(forecast.limitations);
+  // — P3-4 prob UI: optional; v1 payloads (no probabilities) hide these —
+  const probBars = probabilityBars(forecast);
+  const maxP = maxProbability(forecast);
+  const displayConfidence =
+    typeof maxP === 'number' && Number.isFinite(maxP) ? maxP : Number(forecast.confidence) || 0;
+  const calibLabel = calibrationLabel(forecast);
+  const calibrated = isCalibratedForecast(forecast);
+  const expectedRange = getExpectedRange(forecast);
+  const confPct = Math.round(displayConfidence * 100);
+  const settleReason =
+    typeof forecast.settle_reason === 'string' && forecast.settle_reason.trim()
+      ? forecast.settle_reason.trim()
+      : null;
+  const showModelLine =
+    forecast.model_version != null ||
+    forecast.calibrator_version != null ||
+    forecast.regime != null ||
+    forecast.session != null;
+  const statusBadgeClass =
+    v2Status === 'MVIG' ? 'badge b-bull' : v2Status === 'ABSTAIN' ? 'badge b-neut' : v2Status === 'DEGRADED' ? 'badge' : 'badge b-info';
+  const statusBadgeStyle =
+    v2Status === 'DEGRADED'
+      ? { color: '#92580a', background: '#fef3c7', borderColor: '#f59e0b' }
+      : undefined;
+  const dataChipClass =
+    dataQuality === 'HEALTHY'
+      ? 'badge b-bull'
+      : dataQuality === 'HEURISTIC'
+        ? 'badge b-info'
+        : dataQuality === 'DEGRADED'
+          ? 'badge'
+          : 'badge b-neut';
+  const dataChipStyle =
+    dataQuality === 'DEGRADED'
+      ? { color: '#92580a', background: '#fef3c7', borderColor: '#f59e0b' }
+      : undefined;
 
   return (
-    <section className="forecast-hero" data-tone={tone} aria-label={outlookLabel}>
+    <section
+      className="forecast-hero"
+      data-tone={tone}
+      data-status={v2Status}
+      aria-label={outlookLabel}
+      // Amber border for DEGRADED so it can never be mistaken for a healthy bull/bear card.
+      style={degraded ? { borderColor: '#f59e0b' } : undefined}
+    >
       <div className="forecast-hero-glow" aria-hidden />
-      <div style={{ position: 'relative', padding: '24px 26px 22px' }}>
+      <div style={{ position: 'relative', padding: '16px 20px' }}>
         {/* top meta row */}
-        <div className="toolbar" style={{ marginBottom: 18 }}>
+        <div className="toolbar" style={{ marginBottom: 14 }}>
           <DirectionBadge direction={forecast.direction} big />
           <span className="card-meta num">
             {forecast.instrument} · {forecast.timeframe || timeframe}{price != null ? ` · ${fmtINR(price)}` : ''}
             {updatedAt ? ` · ${updatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ''}
           </span>
           <span className="spacer" />
-          {forecast.prediction_id ? (
-            <span className="faint mono" title={forecast.prediction_id}>
-              #{forecast.prediction_id.replace(/^forecast_[a-z0-9]+_/, '').slice(0, 12)}
+          {shortForecastId(forecast.prediction_id) ? (
+            <span className="faint mono" title={forecast.prediction_id ?? undefined}>
+              #{shortForecastId(forecast.prediction_id)}
+            </span>
+          ) : null}
+          {shortForecastId(forecast.snapshot_id) ? (
+            <span className="faint mono" title={forecast.snapshot_id ?? undefined}>
+              snap {shortForecastId(forecast.snapshot_id)}
             </span>
           ) : null}
         </div>
@@ -147,14 +241,14 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
             role="alert"
             className="muted"
             style={{
-              marginBottom: 14,
-              padding: '8px 12px',
-              borderRadius: 10,
+              marginBottom: 12,
+              padding: '6px 10px',
+              borderRadius: 4,
               border: '1px solid var(--ds-border)',
               background: 'var(--ds-inset)',
-              fontSize: 12.5,
+              fontSize: 12,
               display: 'flex',
-              gap: 10,
+              gap: 8,
               alignItems: 'center',
               justifyContent: 'space-between',
             }}
@@ -164,47 +258,156 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
           </div>
         ) : null}
 
+        {/* v2 honesty badges — RESEARCH default until MVIG; hidden extras on v1 payloads */}
+        <div className="toolbar" style={{ marginBottom: 12, gap: 8 }} aria-label="Forecast status">
+          <span className={statusBadgeClass} style={statusBadgeStyle} title={forecast.forecast_version ? `forecast ${forecast.forecast_version}` : 'forecast v1'}>
+            {v2Status}
+          </span>
+          {dataQuality ? (
+            <span className={dataChipClass} style={dataChipStyle} title="Data quality">
+              DATA · {dataQuality}
+            </span>
+          ) : null}
+          {settlement ? (
+            <span
+              className={settlement === 'YES' ? 'badge b-bull' : 'badge'}
+              style={settlement === 'YES' ? undefined : { color: '#92580a', background: '#fef3c7', borderColor: '#f59e0b' }}
+              title={settleReason ?? 'Settlement eligibility'}
+            >
+              SETTLEMENT · {settlement}
+            </span>
+          ) : null}
+        </div>
+        {showModelLine ? (
+          <div className="faint mono" style={{ fontSize: 11, marginBottom: 12 }}>
+            model {forecast.model_version ?? '—'} · calibrator {forecast.calibrator_version ?? 'none-v0'}
+            {forecast.regime ? ` · regime ${forecast.regime}` : ''}
+            {forecast.session ? ` · session ${forecast.session}` : ''}
+          </div>
+        ) : null}
+        {forecast.settleable === false ? (
+          <div
+            role="note"
+            className="muted"
+            style={{
+              marginBottom: 12,
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: '1px solid #f59e0b',
+              background: '#fef3c7',
+              color: '#92580a',
+              fontSize: 12,
+            }}
+            title={settleReason ?? undefined}
+          >
+            {UNSETTLEABLE_NOTE}{settleReason ? ` — ${settleReason}` : ''}
+          </div>
+        ) : null}
+        {limitations.length > 0 ? (
+          <div style={{ marginBottom: 12 }}>
+            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
+              LIMITATIONS
+            </div>
+            <ul className="muted" style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12, display: 'grid', gap: 2 }}>
+              {limitations.map((l, i) => (
+                <li key={i}>{l}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {/* verdict row */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 28 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 24 }}>
           <div>
             <div
               className={`num ${tone === 'bull' ? 'v-bull' : tone === 'bear' ? 'v-bear' : ''}`}
-              style={{ fontSize: 52, fontWeight: 850, lineHeight: 1, letterSpacing: '-0.03em' }}
+              style={{ fontSize: 40, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' }}
             >
               {fmtSigned(score, 0)}
             </div>
-            <div className="faint" style={{ fontSize: 11, fontWeight: 750, letterSpacing: '0.08em', marginTop: 6 }}>
+            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', marginTop: 4 }}>
               SCORE / ±100
             </div>
           </div>
-          <div style={{ minWidth: 220, flex: 1, paddingBottom: 6 }}>
-            <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-              <span className="faint" style={{ fontSize: 11, fontWeight: 750, letterSpacing: '0.08em' }}>
+          <div style={{ minWidth: 200, flex: 1, paddingBottom: 4 }}>
+            <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+              <span className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
                 CONFIDENCE
               </span>
-              <span
-                className="num"
-                style={{
-                  fontSize: 14,
-                  fontWeight: 800,
-                  padding: '3px 12px',
-                  borderRadius: 999,
-                  background: 'var(--ds-inset)',
-                  border: '1px solid var(--ds-border)',
-                }}
-              >
-                {fmtPct01(forecast.confidence)}
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <span
+                  className="num"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 3,
+                    background: 'var(--ds-inset)',
+                    border: '1px solid var(--ds-border)',
+                  }}
+                  title={probBars ? 'Confidence = max(BULL, NEUT, BEAR)' : 'Confidence'}
+                >
+                  {fmtPct01(displayConfidence)}
+                </span>
+                <span
+                  className={calibrated ? 'badge b-bull' : 'badge b-neut'}
+                  title={
+                    calibrated
+                      ? `Calibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
+                      : `Uncalibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
+                  }
+                >
+                  {calibLabel}
+                </span>
               </span>
             </div>
-            <Meter value={forecast.confidence} />
-            <div className="faint num" style={{ fontSize: 12, marginTop: 8 }}>
-              {confPct >= 70 ? 'High conviction setup' : confPct >= 45 ? 'Moderate conviction — size accordingly' : 'Low conviction — stay light'}
+            <Meter value={displayConfidence} />
+            <div className="faint num" style={{ fontSize: 11.5, marginTop: 6 }}>
+              {abstain
+                ? ABSTAIN_VERDICT
+                : confPct >= 70
+                  ? 'High conviction setup'
+                  : confPct >= 45
+                    ? 'Moderate conviction — size accordingly'
+                    : 'Low conviction — stay light'}
             </div>
           </div>
         </div>
 
+        {/* v2 probability bars — hidden for v1 payloads without probabilities */}
+        {probBars ? (
+          <div style={{ marginTop: 14, display: 'grid', gap: 8 }} aria-label="Outcome probabilities">
+            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
+              PROBABILITIES
+            </div>
+            {probBars.map((b) => (
+              <div
+                key={b.key}
+                style={{ display: 'grid', gridTemplateColumns: '52px 48px 1fr', gap: 10, alignItems: 'center' }}
+              >
+                <div style={{ fontSize: 11.5, fontWeight: 700 }}>{b.label}</div>
+                <div className="num" style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
+                  {b.pct}%
+                </div>
+                <div className="dbar" aria-hidden>
+                  <i
+                    className={b.key === 'bullish' ? 'pos' : b.key === 'bearish' ? 'neg' : undefined}
+                    style={{
+                      left: 0,
+                      width: `${Math.min(100, Math.max(0, b.pct))}%`,
+                      ...(b.key === 'neutral'
+                        ? { background: 'var(--ds-border)' }
+                        : {}),
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {/* targets */}
-        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginTop: 20 }}>
+        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 16 }}>
           <div className="stat">
             <div className="stat-l">Target</div>
             <div className={`stat-v ${forecast.direction === 'BEARISH' ? 'v-bear' : 'v-bull'}`}>{fmtINR(forecast.target_price)}</div>
@@ -221,30 +424,54 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
             <div className="stat-s num">{forecast.forecast_horizon ? `horizon ${forecast.forecast_horizon}` : 'horizon 1h'}</div>
           </div>
         </div>
+        {/* NEUTRAL expected range — only when the backend supplies it; v1 renders targets as before */}
+        {forecast.direction === 'NEUTRAL' && expectedRange ? (
+          <div
+            className="stat-grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', marginTop: 10 }}
+            aria-label="Expected range"
+          >
+            <div className="stat">
+              <div className="stat-l">Range low</div>
+              <div className="stat-v">{fmtINR(expectedRange.lower)}</div>
+              <div className="stat-s num">{price != null ? `${distPct(expectedRange.lower, price)} from spot` : '—'}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-l">Range mid</div>
+              <div className="stat-v">{fmtINR(expectedRange.mid)}</div>
+              <div className="stat-s num">expected chop center</div>
+            </div>
+            <div className="stat">
+              <div className="stat-l">Range high</div>
+              <div className="stat-v">{fmtINR(expectedRange.upper)}</div>
+              <div className="stat-s num">{price != null ? `${distPct(expectedRange.upper, price)} from spot` : '—'}</div>
+            </div>
+          </div>
+        ) : null}
 
         <hr className="divider" />
 
         {/* layers */}
-        <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 10 }}>
           {LAYER_ROWS.map((row) => {
             const raw = forecast.layer_scores?.[row.key];
             const hint = row.key === 'ml' ? mlHint(forecast.timeframe || timeframe) : row.hint;
             const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
             const vtone = v === null ? null : toneFor(v);
             return (
-              <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '170px 64px 1fr', gap: 12, alignItems: 'center' }}>
+              <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '170px 56px 1fr', gap: 10, alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontSize: 13.5, fontWeight: 650 }}>{row.label}</div>
-                  <div className="faint" style={{ fontSize: 12 }}>{hint}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>{row.label}</div>
+                  <div className="faint" style={{ fontSize: 11 }}>{hint}</div>
                 </div>
                 <div
                   className={`num ${vtone === 'bull' ? 'v-bull' : vtone === 'bear' ? 'v-bear' : ''}`}
                   style={{
                     textAlign: 'center',
-                    fontWeight: 800,
-                    fontSize: 13,
-                    padding: '4px 0',
-                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    padding: '2px 0',
+                    borderRadius: 3,
                     background: v === null ? 'transparent' : vtone === 'bull' ? 'var(--ds-bull-wash)' : vtone === 'bear' ? 'var(--ds-bear-wash)' : 'var(--ds-neut-wash)',
                   }}
                 >
@@ -286,7 +513,7 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
             }
             fallbackLayerScores={forecast.layer_scores}
             direction={forecast.direction}
-            confidence={forecast.confidence}
+            confidence={displayConfidence}
             invalidationPrice={forecast.invalidation_price ?? null}
             targetPrice={forecast.target_price ?? null}
           />

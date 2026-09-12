@@ -341,13 +341,14 @@ async def test_live_mark_to_market_pnl_updates_on_open_trade():
     from app.signals.fill_reconciler import option_fill_reconciler
 
     # 1. Simulate spot rising by +30 points to 24880.0: MTM revalues the OPTION
-    # premium via Black76 (premium domain), never spot-minus-premium.
+    # premium via Black76 (premium domain), never spot-minus-premium. The
+    # displayed current_price is the premium estimate, never the spot index.
     updated = signal_audit_ledger.update_live_quote("NIFTY", 24880.0)
     assert len(updated) == 1
     rec = updated[0]
-    assert rec.current_price == 24880.0
     expected_prem = option_fill_reconciler.estimate_option_premium(
         spot=24880.0, strike=24850, option_type="CE")
+    assert rec.current_price == pytest.approx(expected_prem)
     assert rec.unrealized_pnl_points == pytest.approx(expected_prem - 150.0)
     assert rec.unrealized_pnl_inr == pytest.approx((expected_prem - 150.0) * 75)
     assert rec.is_winner is True
@@ -357,9 +358,9 @@ async def test_live_mark_to_market_pnl_updates_on_open_trade():
     # 2. Simulate spot falling by -20 points to 24830.0 (below fill-domain value)
     signal_audit_ledger.update_live_quote("NIFTY", 24830.0)
     rec2 = signal_audit_ledger.get(sig.signal_id)
-    assert rec2.current_price == 24830.0
     expected_prem2 = option_fill_reconciler.estimate_option_premium(
         spot=24830.0, strike=24850, option_type="CE")
+    assert rec2.current_price == pytest.approx(expected_prem2)
     assert rec2.unrealized_pnl_points == pytest.approx(expected_prem2 - 150.0)
     assert rec2.unrealized_pnl_inr == pytest.approx((expected_prem2 - 150.0) * 75)
     assert rec2.is_winner is False

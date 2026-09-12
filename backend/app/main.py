@@ -132,6 +132,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("automated_signal_worker_start_failed", error=str(e))
 
+    # Hourly 1H-forecast evidence collection (shadow + settlement). Disabled by
+    # default (FORECAST_SCHEDULER_ENABLED=on to enable); market-closed ticks
+    # are no-ops. Never breaks startup.
+    try:
+        from app.research.scheduler import start_forecast_scheduler
+        await start_forecast_scheduler()
+    except Exception as e:
+        logger.warning("forecast_scheduler_start_failed", error=str(e))
+
     # Auto-provision Crypto Scalp Signals table in Supabase & start 24/7 background worker
     try:
         from app.crypto_scalp import ensure_crypto_scalp_tables, crypto_scalp_worker
@@ -155,6 +164,11 @@ async def lifespan(app: FastAPI):
     # Only here (process teardown) are FYERS/Telegram stopped — never on
     # frontend disconnect.
     async def _shutdown_services():
+        try:
+            from app.research.scheduler import stop_forecast_scheduler
+            await stop_forecast_scheduler()
+        except Exception:
+            pass
         try:
             from app.signals.worker import automated_signal_worker
             await automated_signal_worker.stop()
@@ -262,6 +276,11 @@ def create_app() -> FastAPI:
     app.include_router(events_api.router)
     app.include_router(options_intelligence_api.router)
     app.include_router(research_api.router)
+    try:
+        from app.api import monitoring as monitoring_api
+        app.include_router(monitoring_api.router)
+    except Exception:
+        pass
     
     return app
 

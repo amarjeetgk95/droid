@@ -52,10 +52,57 @@ export function pickMs(o: Record<string, unknown>, ...keys: string[]): number | 
 /* ---------------- formatting ---------------- */
 
 export function fmtTimeMs(ms: number | null): string {
-  if (ms === null) return 'â€”';
+  if (ms === null) return '—';
   const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return 'â€”';
+  if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Expiry label from an audit row: explicit field, else FYERS option symbol. */
+export function ledgerExpiry(o: Record<string, unknown>): string {
+  const direct = pickStr(o, 'expiry');
+  if (direct) {
+    const f = fmtExpiry(direct);
+    if (f !== '—') return f;
+  }
+  const contract = getObj(o.option_contract);
+  if (contract) {
+    const f = fmtExpiry(contract.expiry_date ?? contract.expiry);
+    if (f !== '—') return f;
+  }
+  // FYERS weekly {YY}{M}{dd} / monthly {YY}{MMM} after the underlying.
+  const sym = pickStr(o, 'option_symbol', 'broker_symbol', 'symbol') ?? '';
+  const m = sym.toUpperCase().match(/^(?:NSE|BSE):(?:BANKNIFTY|NIFTY|SENSEX)(\d{2})(.+?)(CE|PE)$/);
+  if (m) {
+    const tail = m[2];
+    const mon3 = tail.slice(0, 3);
+    if (/^[A-Z]{3}$/.test(mon3)) return mon3; // monthly: no day component
+    const code = tail[0];
+    const dd = tail.slice(1, 3);
+    const rev: Record<string, string> = { '1': 'JAN', '2': 'FEB', '3': 'MAR', '4': 'APR', '5': 'MAY', '6': 'JUN', '7': 'JUL', '8': 'AUG', '9': 'SEP', O: 'OCT', N: 'NOV', D: 'DEC' };
+    if (rev[code] && /^\d{2}$/.test(dd)) return `${dd} ${rev[code]}`;
+  }
+  return '—';
+}
+export function fmtExpiry(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  const s = String(v).trim();
+  if (!s) return '—';
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime()) && /\d{4}/.test(s)) {
+    return d.toLocaleString('en-IN', { day: '2-digit', month: 'short' }).toUpperCase().replace(',', '');
+  }
+  const m = s.match(/(\d{1,2})\s*[-/]?\s*([A-Za-z]{3,9})\b/i);
+  if (m) return `${m[1].padStart(2, '0')} ${m[2].slice(0, 3).toUpperCase()}`;
+  return '—';
+}
+
+/** Full desk timestamp: 11 Sep 14:32:05. */
+export function fmtDateTimeMs(ms: number | null): string {
+  if (ms === null) return '—';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 export type TtlTone = 'ok' | 'warn' | 'expired';
@@ -170,6 +217,9 @@ export type LedgerRow = {
   unrealized: number | null;
   total: number | null;
   timeMs: number | null;
+  entryTimeMs: number | null;
+  exitTimeMs: number | null;
+  expiry: string | null;
 };
 
 export function toLedgerRow(t: unknown): LedgerRow | null {
@@ -177,24 +227,43 @@ export function toLedgerRow(t: unknown): LedgerRow | null {
   if (!o) return null;
   const id = pickStr(o, 'signal_id', 'id');
   if (!id) return null;
+  // Entry is a fill concept only. Never fall back to trigger/spot prices:
+  // that renders index levels (e.g. 24925) as if they were option premiums.
+  const entry = pickNum(o, 'actual_fill_price', 'fill_price', 'entry_price');
+  let exit = pickNum(o, 'exit_price');
+  let current = pickNum(o, 'current_price', 'ltp');
+  // Same-domain rule: a premium entry (<=5000) paired with a spot-scale
+  // exit/current (>5000) is legacy corruption — hide rather than display.
+  if (entry !== null && entry <= 5000) {
+    if (exit !== null && exit > 5000) exit = null;
+    if (current !== null && current > 5000) current = null;
+  }
   return {
     id,
-    underlying: pickStr(o, 'underlying', 'instrument', 'symbol') ?? 'â€”',
-    strategy: pickStr(o, 'strategy') ?? 'â€”',
+    underlying: pickStr(o, 'underlying', 'instrument', 'symbol') ?? '—',
+    strategy: pickStr(o, 'strategy') ?? '—',
     direction: o.direction ?? 'NEUTRAL',
-    status: pickStr(o, 'status', 'state', 'fsm_state') ?? 'â€”',
+    status: pickStr(o, 'status', 'state', 'fsm_state') ?? '—',
     outcomeLabel: pickStr(o, 'outcome_label', 'outcome'),
     isWinner: typeof o.is_winner === 'boolean' ? o.is_winner : null,
     side: pickStr(o, 'paper_side', 'side'),
     qty: pickNum(o, 'quantity', 'qty'),
-    entry: pickNum(o, 'actual_fill_price', 'fill_price', 'entry_price', 'trigger_price'),
-    exit: pickNum(o, 'exit_price'),
-    current: pickNum(o, 'current_price', 'ltp'),
+    entry,
+    exit,
+    current,
     realized: pickNum(o, 'actual_pnl_inr', 'realized_pnl', 'pnl'),
     unrealized: pickNum(o, 'unrealized_pnl_inr'),
     total: pickNum(o, 'total_pnl_inr', 'net_pnl'),
     timeMs: pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at', 'updated_at_utc', 'created_at_utc'),
+    entryTimeMs: pickMs(o, 'executed_at_utc', 'executed_at', 'created_at_utc', 'created_at_ms', 'created_at'),
+    exitTimeMs: pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at'),
+    expiry: ledgerExpiry(o),
   };
+}
+
+/** A ledger row with no fill and no exit is an unfilled setup, not a trade. */
+export function isUnfilledLedgerRow(r: LedgerRow): boolean {
+  return r.entry === null && r.exit === null;
 }
 
 export type LedgerSummary = {
@@ -204,6 +273,18 @@ export type LedgerSummary = {
   unrealized: number | null;
   total: number | null;
 };
+
+/** Backend summary keys vary (`*_inr` vs short names) — accept both. */
+export function toLedgerSummary(sum: Record<string, unknown> | null): LedgerSummary | null {
+  if (!sum) return null;
+  return {
+    closed: pickNum(sum, 'closed_trades', 'total_closed', 'closed', 'total_signals_audited'),
+    winRate: pickNum(sum, 'win_rate_pct', 'win_rate', 'winRate'),
+    realized: pickNum(sum, 'net_realized_pnl_inr', 'net_realized_pnl', 'realized', 'realized_pnl'),
+    unrealized: pickNum(sum, 'net_unrealized_pnl_inr', 'net_unrealized_pnl', 'unrealized', 'unrealized_pnl'),
+    total: pickNum(sum, 'total_pnl_inr', 'total_pnl', 'total', 'net_pnl'),
+  };
+}
 
 /* ---------------- semantic state tones ---------------- */
 

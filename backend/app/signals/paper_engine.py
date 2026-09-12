@@ -141,20 +141,28 @@ class SignalPaperEngine:
         # If signal represents an option contract, estimate option premium instead of spot price
         from app.signals.fill_reconciler import option_fill_reconciler
         if sig.option_contract:
-            strike = float(sig.option_contract.get("strike", raw_price))
-            opt_type = str(sig.option_contract.get("option_type", "CE"))
-            dte = float(sig.option_contract.get("dte", 3.0))
-            base_price = option_fill_reconciler.estimate_option_premium(
-                spot=raw_price,
-                strike=strike,
-                option_type=opt_type,
-                dte_days=dte,
-            )
+            live_prem = sig.option_contract.get("live_premium")
+            if live_prem is not None and float(live_prem) > 0:
+                # Live chain mid-price: the broker's truth, not a model estimate.
+                base_price = float(live_prem)
+            else:
+                strike = float(sig.option_contract.get("strike", raw_price))
+                opt_type = str(sig.option_contract.get("option_type", "CE"))
+                dte = float(sig.option_contract.get("dte", 3.0))
+                base_price = option_fill_reconciler.estimate_option_premium(
+                    spot=raw_price,
+                    strike=strike,
+                    option_type=opt_type,
+                    dte_days=dte,
+                )
         else:
             base_price = raw_price
 
         spread_impact = base_price * 0.0005
-        fill_price = round(base_price + spread_impact, 2) if side == "BUY" else round(base_price - spread_impact, 2)
+        raw_fill = base_price + spread_impact if side == "BUY" else base_price - spread_impact
+        from app.signals.safety.decimal_types import normalize_price_to_tick
+        tick_sz = opt.get("tick_size", "0.05") if isinstance(opt, dict) else "0.05"
+        fill_price = float(normalize_price_to_tick(raw_fill, tick_sz))
         if fill_price <= 0:
             return SignalPaperExecutionResult(
                 success=False,
@@ -240,10 +248,101 @@ class SignalPaperEngine:
                 available=live_available_margin,
             )
 
+        # ── v3.0 Execution Guard & Deterministic Intent ──
+        from app.signals.execution_intent import (
+            make_execution_intent_id,
+            make_fyers_order_tag,
+            ExecutionIntent,
+            IntentState,
+            intent_ledger,
+        )
+        from app.signals.safety.execution_guard import final_execution_guard
+        from app.signals.position import Position, position_registry
+
+        intent_id = make_execution_intent_id(
+            signal_id=sig.signal_id,
+            signal_version=getattr(sig, "strategy_version", 1),
+            action=f"BUY_{direction_label}",
+            position_id="",
+            trigger_version=1,
+        )
+        fyers_tag = make_fyers_order_tag(intent_id)
+
+        # Check existing intent for duplicate dispatch
+        existing_intent = intent_ledger.get(intent_id)
+        if existing_intent and existing_intent.state in (IntentState.SUBMITTED, IntentState.FILLED):
+            logger.warning("execution_intent_duplicate_rejected", intent_id=intent_id, signal_id=signal_id)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message=f"DUPLICATE_ORDER: Intent {intent_id} already submitted or filled",
+            )
+
+        # Run 15-check hierarchical execution guard
+        guard_res = final_execution_guard(
+            signal=sig,
+            execution_intent_id=intent_id,
+            order_price=fill_price,
+            order_quantity=final_qty,
+            latest_price=base_price,
+            market_session_state="OPEN" if allow_closed_market else ("OPEN" if perm.allowed else "CLOSED"),
+            contract_spec=sig.option_contract,
+            max_slippage_pct=0.5,
+            risk_approved=True,
+            allow_closed_market=allow_closed_market,
+        )
+        if not guard_res.passed:
+            logger.warning("execution_guard_rejected", signal_id=signal_id, reason=guard_res.reason, check=guard_res.failed_check)
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="GUARD_REJECTED",
+                message=f"GUARD_REJECTED: {guard_res.reason}",
+            )
+
+        # Register intent with GUARD_PASSED state
+        current_intent = ExecutionIntent(
+            execution_intent_id=intent_id,
+            signal_id=sig.signal_id,
+            signal_version=getattr(sig, "strategy_version", 1),
+            action=f"BUY_{direction_label}",
+            state=IntentState.GUARD_PASSED,
+            broker_client_order_id=fyers_tag,
+            instrument_symbol=broker_sym,
+            side=side,
+            intended_price=Decimal(str(fill_price)),
+            intended_quantity=final_qty,
+            guard_snapshot=guard_res.to_dict(),
+        )
+        intent_ledger.register(current_intent)
+        sig.execution_intent_id = intent_id
+
         # Place order into Paper Trading Service (final hard safety boundary).
         # Idempotency: retrying the same signal returns the original fill
         # instead of doubling the position. The service prefers the live
         # quote when available; `price` is only the fallback estimate.
+        current_intent.transition_to(IntentState.SUBMITTED, reason="DISPATCHED_TO_PAPER_SERVICE")
         order_payload = OrderPayload(
             symbol=broker_sym,
             underlying=u,
@@ -252,7 +351,7 @@ class SignalPaperEngine:
             product="INTRADAY",
             quantity=final_qty,
             price=fill_price,
-            client_order_id=f"sig-{signal_id}",
+            client_order_id=fyers_tag,
         )
         paper_order = await paper_service.place_order(order_payload, allow_closed_market=allow_closed_market)
 
@@ -304,6 +403,28 @@ class SignalPaperEngine:
         sig.remaining_qty = Decimal(str(final_qty))
         sig.lots = final_lots
         sig.quantity = final_qty
+
+        # v3.0 Update Intent & Register Position
+        current_intent.actual_fill_price = Decimal(str(actual_fill))
+        current_intent.filled_quantity = final_qty
+        current_intent.broker_order_id = paper_order.order_id
+        current_intent.transition_to(IntentState.FILLED, reason="PAPER_ORDER_FILLED")
+
+        new_pos = Position(
+            signal_id=sig.signal_id,
+            execution_intent_id=current_intent.execution_intent_id,
+            broker_order_id=paper_order.order_id,
+            underlying=u,
+            instrument_symbol=broker_sym,
+            side=side,
+            lot_size=lot_size,
+            entry_price=Decimal(str(actual_fill)),
+            entry_quantity=final_qty,
+            remaining_quantity=final_qty,
+            t1_price=sig.target_1,
+        )
+        position_registry.register(new_pos)
+        sig.position_id = new_pos.position_id
 
         # Register in Option Fill Reconciler
         try:

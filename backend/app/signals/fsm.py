@@ -246,8 +246,16 @@ class SignalInstance(BaseModel):
     terminal_outcome: str | None = None  # FULL_WIN, PARTIAL_WIN, BREAKEVEN, TIME_STOP_LOSS, STOP_LOSS_HIT, EXPIRED, INVALIDATED
     outcome_status: str | None = None  # WIN_T1, WIN_T2, LOSS_SL, TIME_STOP, RUNNER_TIME_STOP, EXPIRED, INVALIDATED
     paper_order: dict | None = None
-
     state_history: list[FSMTransitionAudit] = Field(default_factory=list)
+
+    # v3.0 Decoupled Domain Links & Auditable Metadata
+    execution_intent_id: str | None = None
+    position_id: str | None = None
+    strategy_version: int = 1
+    scoring_version: int = 1
+    feature_version: int = 1
+    prediction_status: str = "PENDING"
+    execution_eligibility: bool = True
 
     def is_expired(self, now_ms: int | None = None) -> bool:
         ts = now_ms or int(time.time() * 1000)
@@ -262,6 +270,48 @@ class SignalInstance(BaseModel):
         if self.fsm_state == "CONFIRMED" and self.time_stop_at_utc:
             return max(0, int((self.time_stop_at_utc - now_ms) / 1000))
         return max(0, int((self.expires_at_utc - now_ms) / 1000))
+
+    def to_wire_dict(self) -> dict:
+        """Standard frontend-facing serialization."""
+        return self.model_dump(mode="json")
+
+    def to_audit_dict(self) -> dict:
+        """Comprehensive audit serialization with exact decimal strings."""
+        d = self.model_dump(mode="json")
+        d.update({
+            "signal_id": self.signal_id,
+            "fsm_state": self.fsm_state,
+            "execution_intent_id": self.execution_intent_id,
+            "position_id": self.position_id,
+            "strategy_version": self.strategy_version,
+            "prediction_status": self.prediction_status,
+            "execution_eligibility": self.execution_eligibility,
+            "created_at_utc": self.created_at_utc,
+            "last_updated_utc": self.last_updated_utc,
+            "history_count": len(self.state_history),
+        })
+        return d
+
+    def to_research_dict(self) -> dict:
+        """Point-in-time reproducible research record."""
+        return {
+            "signal_id": self.signal_id,
+            "underlying": self.underlying,
+            "strategy": self.strategy,
+            "direction": self.direction,
+            "timeframe": self.timeframe,
+            "strategy_version": self.strategy_version,
+            "scoring_version": self.scoring_version,
+            "feature_version": self.feature_version,
+            "spot_price": float(self.spot_price) if self.spot_price else None,
+            "trigger": float(self.trigger) if self.trigger else None,
+            "stop_loss": float(self.stop_loss) if self.stop_loss else None,
+            "target_1": float(self.target_1) if self.target_1 else None,
+            "target_2": float(self.target_2) if self.target_2 else None,
+            "realized_rr_net": self.realized_rr_net,
+            "terminal_outcome": self.terminal_outcome,
+            "created_at_utc": self.created_at_utc,
+        }
 
 
 def _exit_premium_for_friction(sig: SignalInstance, market_price: Decimal | None) -> float:

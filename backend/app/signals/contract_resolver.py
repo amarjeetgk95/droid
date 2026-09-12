@@ -18,7 +18,23 @@ from pydantic import BaseModel
 IST = timezone(timedelta(hours=5, minutes=30))
 APPROVED_UNDERLYINGS = {"NIFTY", "BANKNIFTY", "SENSEX"}
 
+# FYERS v3 option symbology (authoritative: symbol master / fyers-skills):
+#   Monthly: {EX}:{UNDERLYING}{YY}{MMM}{STRIKE}{CE|PE}      e.g. BSE:SENSEX26SEP75200PE
+#   Weekly:  {EX}:{UNDERLYING}{YY}{M}{dd}{STRIKE}{CE|PE}    e.g. BSE:SENSEX26S1175200PE
+# M is the single-letter month code (1-9, O, N, D). A full MMM on a weekly
+# contract (e.g. ...26SEP1175200PE) is NOT a valid FYERS symbol (API -300).
+FYERS_WEEKLY_MONTH_CODE: dict[int, str] = {
+    1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8", 9: "9",
+    10: "O", 11: "N", 12: "D",
+}
+
 # Dynamic Contract specifications baseline (versioned)
+# SEBI Sep-2025 expiry harmonization (one weekly benchmark per exchange):
+#   NSE NIFTY  -> Tuesday weeklies (incl. month-end Tuesday monthlies)
+#   BSE SENSEX -> Thursday weeklies (incl. month-end Thursday monthlies)
+#   BANKNIFTY  -> NO weeklies since Nov 2024; monthlies expire last Thursday.
+# Python weekday(): Mon=0 ... Sun=6. Pre-2025 values (NIFTY Thu, SENSEX Fri)
+# mint non-existent contracts — never revert without an exchange circular.
 INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
     "NIFTY": {
         "underlying": "NIFTY",
@@ -30,8 +46,9 @@ INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
         "lot_size": 75,
         "tick_size": Decimal("0.05"),
         "contract_multiplier": Decimal("1.0"),
-        "weekly_expiry_day": 3,  # Thursday
-        "monthly_expiry_day": 3,
+        "weekly_expiry_day": 1,  # Tuesday
+        "monthly_expiry_day": 1,
+        "has_weekly": True,
     },
     "BANKNIFTY": {
         "underlying": "BANKNIFTY",
@@ -43,8 +60,9 @@ INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
         "lot_size": 30,
         "tick_size": Decimal("0.05"),
         "contract_multiplier": Decimal("1.0"),
-        "weekly_expiry_day": 2,  # Wednesday
+        "weekly_expiry_day": 3,  # Thursday (monthlies only — see has_weekly)
         "monthly_expiry_day": 3,
+        "has_weekly": False,
     },
     "SENSEX": {
         "underlying": "SENSEX",
@@ -56,8 +74,9 @@ INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
         "lot_size": 10,
         "tick_size": Decimal("0.05"),
         "contract_multiplier": Decimal("1.0"),
-        "weekly_expiry_day": 4,  # Friday
-        "monthly_expiry_day": 4,
+        "weekly_expiry_day": 3,  # Thursday
+        "monthly_expiry_day": 3,
+        "has_weekly": True,
     },
 }
 
@@ -78,6 +97,10 @@ class InstrumentMaster(BaseModel):
     strike_interval: Decimal
     contract_version: str = "v1.0"
     active: bool = True
+    # Provenance: "fyers_chain" when broker_symbol came from the live option
+    # chain cache, "formula" when derived from weekday rules (offline).
+    contract_source: str = "formula"
+    live_premium: Optional[float] = None
 
 
 def validate_underlying(underlying: str) -> str:
@@ -112,6 +135,25 @@ def resolve_nearest_expiry(underlying: str, ref_date: Optional[date] = None) -> 
     now_ist = datetime.now(IST)
     today = ref_date or now_ist.date()
     cfg = INDEX_CONTRACT_CONFIGS[u]
+    is_post_market = (now_ist.hour > 15) or (now_ist.hour == 15 and now_ist.minute >= 30)
+    is_today = ref_date is None or ref_date == now_ist.date()
+
+    if not cfg.get("has_weekly", True):
+        # No weekly series: nearest expiry is the last monthly weekday
+        # (e.g. BANKNIFTY -> last Thursday). Roll past months forward.
+        year, month = today.year, today.month
+        for _ in range(3):
+            last_day = (date(year, month, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+            while last_day.weekday() != cfg["monthly_expiry_day"]:
+                last_day -= timedelta(days=1)
+            expiry = calendar_service.adjust_expiry_if_holiday(last_day)
+            if expiry > today or (expiry == today and not (is_today and is_post_market)):
+                return expiry, "MONTHLY"
+            month += 1
+            if month > 12:
+                month, year = 1, year + 1
+        return expiry, "MONTHLY"
+
     target_weekday = cfg["weekly_expiry_day"]
     
     days_ahead = target_weekday - today.weekday()
@@ -182,11 +224,32 @@ def resolve_option_contract(
     
     strike_int = int(selected_strike)
     yy = str(expiry.year)[-2:]
-    mm = expiry.strftime("%b").upper()
-    dd = f"{expiry.day:02d}"
-    
-    fyers_symbol = f"{cfg['fyers_opt_prefix']}{yy}{mm}{dd}{strike_int}{option_type}"
+    if expiry_type == "MONTHLY":
+        # Monthly options carry no day component.
+        date_part = f"{yy}{expiry.strftime('%b').upper()}"
+    else:
+        # Weekly / expiring-today: single-letter month code + zero-padded day.
+        m_code = FYERS_WEEKLY_MONTH_CODE[expiry.month]
+        dd = f"{expiry.day:02d}"
+        date_part = f"{yy}{m_code}{dd}"
+
+    fyers_symbol = f"{cfg['fyers_opt_prefix']}{date_part}{strike_int}{option_type}"
     instr_id = f"{u}_{expiry.strftime('%Y%m%d')}_{strike_int}_{option_type}"
+
+    # Live source of truth first: the broker's own symbol for this exact
+    # (expiry, strike, type) when the chain cache has it (same session).
+    contract_source = "formula"
+    live_premium: Optional[float] = None
+    try:
+        from app.signals.live_contract_cache import live_contract_cache
+        live = live_contract_cache.lookup(u, expiry, strike_int, option_type)
+        if live is not None:
+            fyers_symbol = live.broker_symbol
+            if live.mid > 0:
+                live_premium = live.mid
+            contract_source = "fyers_chain"
+    except Exception:
+        pass
     
     return InstrumentMaster(
         instrument_id=instr_id,
@@ -204,7 +267,68 @@ def resolve_option_contract(
         strike_interval=step,
         contract_version="v1.0",
         active=True,
+        contract_source=contract_source,
+        live_premium=live_premium,
     )
+
+
+def parse_fyers_option_symbol(symbol: str) -> Optional[dict]:
+    """Parse a FYERS v3 weekly/monthly option symbol.
+
+    Returns {exchange, underlying, year, month, day|None, strike, option_type,
+    expiry_kind} or None when the symbol is not well-formed. Day is None for
+    monthly contracts (which carry no day component).
+    """
+    try:
+        head, opt = symbol.rsplit(":", 1)
+        exchange = head.strip().upper()
+        rest = opt.strip().upper()
+        underlying = None
+        for u in ("BANKNIFTY", "NIFTY", "SENSEX"):
+            if rest.startswith(u):
+                underlying = u
+                rest = rest[len(u):]
+                break
+        if underlying is None or len(rest) < 6:
+            return None
+        yy = rest[:2]
+        if not yy.isdigit():
+            return None
+        tail = rest[2:]
+        day: Optional[int] = None
+        if len(tail) >= 3 and tail[:3].isalpha():
+            # Monthly: MMM + strike + CE/PE
+            month = datetime.strptime(tail[:3], "%b").month
+            strike_type = tail[3:]
+            kind = "MONTHLY"
+        else:
+            # Weekly: M + dd + strike + CE/PE
+            m_code = tail[0]
+            rev = {v: k for k, v in FYERS_WEEKLY_MONTH_CODE.items()}
+            if m_code not in rev or not tail[1:3].isdigit():
+                return None
+            month = rev[m_code]
+            day = int(tail[1:3])
+            strike_type = tail[3:]
+            kind = "WEEKLY"
+        if not strike_type.endswith(("CE", "PE")):
+            return None
+        option_type = strike_type[-2:]
+        strike_str = strike_type[:-2]
+        if not strike_str.isdigit():
+            return None
+        return {
+            "exchange": exchange,
+            "underlying": underlying,
+            "year": 2000 + int(yy),
+            "month": month,
+            "day": day,
+            "strike": int(strike_str),
+            "option_type": option_type,
+            "expiry_kind": kind,
+        }
+    except Exception:
+        return None
 
 
 def calculate_position_sizing(

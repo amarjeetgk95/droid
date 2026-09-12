@@ -233,7 +233,7 @@ export function HeaderBrokerGateway({
         <button
           type="button"
           className={cn(
-            'inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs select-none',
+            'inline-flex items-center gap-1.5 h-[30px] px-2.5 rounded-[4px] text-xs font-semibold border transition-all cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring select-none',
             status.badge,
           )}
           title={`Broker: ${activeBroker.toUpperCase()} • Session: ${marketStatus?.session ?? '—'} • Stream: ${streamState}`}

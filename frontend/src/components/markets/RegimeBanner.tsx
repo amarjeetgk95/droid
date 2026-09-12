@@ -41,16 +41,16 @@ export function RegimeBanner({
   return (
     <section className="forecast-hero" data-tone={tone} aria-label="Regime">
       <div className="forecast-hero-glow" aria-hidden />
-      <div style={{ position: 'relative', padding: '20px 22px' }}>
-        <div className="toolbar" style={{ marginBottom: 10 }}>
+      <div style={{ position: 'relative', padding: '14px 16px' }}>
+        <div className="toolbar" style={{ marginBottom: 8 }}>
           <DirectionBadge direction={dir} />
-          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-0.01em' }}>
+          <span style={{ fontWeight: 650, fontSize: 14.5, letterSpacing: '-0.01em', color: 'var(--ds-ink)' }}>
             {overview.summary_headline || 'Market State Diagnosis'}
           </span>
           <span className="spacer" />
           <span className="card-meta num">{selectedSymbol} · confidence {overview.confidence_score}%</span>
         </div>
-        <p className="muted" style={{ margin: 0, fontSize: 13.5, maxWidth: 900 }}>
+        <p className="muted" style={{ margin: 0, fontSize: 12.5, maxWidth: 900 }}>
           {overview.institutional_rationale || 'No rationale published for this snapshot.'}
         </p>
       </div>

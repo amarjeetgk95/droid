@@ -63,8 +63,10 @@ class MasterPipeline:
     async def evaluate(
         self,
         symbol: str = "NIFTY",
-        current_price: float = 24750,
-        atr: float = 38,
+        # No defaults: a trade decision must never be produced off placeholder
+        # prices (truth-of-wall). Callers pass live current_price and atr.
+        current_price: float | None = None,
+        atr: float | None = None,
         regime: str = "TRENDING_UP",
         mtf: dict | None = None,
         technical: dict | None = None,
@@ -91,6 +93,10 @@ class MasterPipeline:
         t0 = time.perf_counter()
 
         # Observability: start
+        if current_price is None or not isinstance(current_price, (int, float)) or current_price <= 0:
+            raise ValueError("current_price (live) is required — refusing to evaluate off a placeholder")
+        if atr is None or not isinstance(atr, (int, float)) or atr <= 0:
+            raise ValueError("atr (live) is required — refusing to evaluate off a placeholder")
         log_pipeline_event(analysis_id, "VALID_LIVE_MARKET_DATA", {"symbol": symbol, "current_price": current_price})
         # Strict fail-closed feature validation (§7) — no synthetic bullish defaults
         mtf = mtf or {}

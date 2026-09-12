@@ -196,7 +196,8 @@ async def get_calls_puts_full(underlying: str = "NIFTY", expiry: str | None = No
         return {"underlying": underlying, "status": "MISSING", "reason": "no capability", "chain": []}
 
     chain = await options_service.get_option_chain_matrix(underlying, expiry)
-    # Positioning classification per strike — need prev OI/LTP for ΔOI logic; we have oi_change synthetic 5%; use volume + oi
+    # Positioning classification per strike uses live oi_change; rows without
+    # prior-OI context fall back to INSUFFICIENT_DATA (never synthesized).
     positioning = []
     max_call_oi = 0
     max_put_oi = 0

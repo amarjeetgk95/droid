@@ -321,3 +321,107 @@ class FeatureLayer:
                 "total_votes": total_votes,
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# P2-2 additive v2 helpers (pure; NO behavior change to compute_features).
+# Each returns None on missing/invalid input — never a silent 0 — so the v2
+# extractor can set its missing-mask flag. Used by
+# app.ml.feature_extractor_v2 (1H Forecast v2.3).
+# ---------------------------------------------------------------------------
+
+IST_CLOSE_MINUTES = 15 * 60 + 30  # 15:30 IST
+IST_OPEN_MINUTES = 9 * 60 + 15  # 09:15 IST
+IST_SESSION_MINUTES = IST_CLOSE_MINUTES - IST_OPEN_MINUTES  # 375
+
+
+def minutes_to_close_ist(ts: Any) -> Optional[int]:
+    """Minutes from ``ts`` to the 15:30 IST regular-session close.
+
+    0 when at/past the close (no time left in today's window — overnight is
+    never bridged); full 375 pre-open; None when ``ts`` is missing or
+    unparseable. Accepts aware/naive datetimes (naive read as UTC) or ISO
+    strings. Pure clock math — not a market input, so no lookahead.
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(ts, datetime):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    ist = ts.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    total = ist.hour * 60 + ist.minute
+    if total >= IST_CLOSE_MINUTES:
+        return 0
+    if total < IST_OPEN_MINUTES:
+        return IST_SESSION_MINUTES
+    return IST_CLOSE_MINUTES - total
+
+
+def atr_pct_1h(atr_14: Any, price: Any) -> Optional[float]:
+    """ATR as percent of price (``atr_14 / price * 100``); None when missing/non-positive."""
+    try:
+        atr = float(atr_14)  # type: ignore[arg-type]
+        px = float(price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not (atr > 0 and px > 0):
+        return None
+    return round(atr / px * 100.0, 4)
+
+
+def period_return_pct(closes: Any, lookback: int) -> Optional[float]:
+    """Percent return of last close vs ``lookback`` bars back; None when short/invalid."""
+    try:
+        n = int(lookback)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0 or not isinstance(closes, (list, tuple)) or len(closes) <= n:
+        return None
+    try:
+        last = float(closes[-1])
+        base = float(closes[-1 - n])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not base > 0:
+        return None
+    return round((last - base) / base * 100.0, 4)
+
+
+def ret_5_pct(closes: Any) -> Optional[float]:
+    """5-bar percent return (v2 ``ret_5`` raw input)."""
+    return period_return_pct(closes, 5)
+
+
+def ret_15_pct(closes: Any) -> Optional[float]:
+    """15-bar percent return (v2 ``ret_15`` raw input)."""
+    return period_return_pct(closes, 15)
+
+
+def relative_volume(current_volume: Any, avg_volume: Any) -> Optional[float]:
+    """Current / average volume ratio; None when average is missing/non-positive."""
+    try:
+        cur = float(current_volume)  # type: ignore[arg-type]
+        avg = float(avg_volume)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not avg > 0 or cur < 0:
+        return None
+    return round(cur / avg, 4)
+
+
+def vwap_distance_pct(price: Any, vwap: Any) -> Optional[float]:
+    """``(price - vwap) / vwap * 100`` in percent; None when vwap missing/non-positive."""
+    try:
+        px = float(price)  # type: ignore[arg-type]
+        vw = float(vwap)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not vw > 0:
+        return None
+    return round((px - vw) / vw * 100.0, 4)

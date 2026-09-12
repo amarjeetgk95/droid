@@ -150,7 +150,6 @@ export function PreferencesTab({
           >
             <option value="NIFTY 50">NIFTY 50</option>
             <option value="BANKNIFTY">BANKNIFTY</option>
-            <option value="FINNIFTY">FINNIFTY</option>
             <option value="SENSEX">SENSEX</option>
           </SettingSelect>
         </SettingRow>

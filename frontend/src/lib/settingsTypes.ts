@@ -82,7 +82,7 @@ export interface PaperTradingSettings {
 }
 
 export interface PreferencesSettings {
-  theme: 'light';
+  theme: 'light' | 'dark';
   numberFormat: 'INDIAN' | 'INTERNATIONAL';
   defaultIndexSymbol: string;
 }

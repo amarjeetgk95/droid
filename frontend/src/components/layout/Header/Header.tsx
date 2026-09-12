@@ -68,8 +68,7 @@ function HeaderInner({
   return (
     <>
       <header
-        className="sticky top-0 z-30 h-16 shrink-0 border-b border-border bg-card/85 backdrop-blur-xl flex items-center justify-between px-4 md:px-6 select-none [contain:paint] shadow-[0_1px_2px_rgb(15_30_51/0.05)]"
-        style={{ contentVisibility: 'auto', containIntrinsicSize: '0 64px' } as React.CSSProperties}
+        className="sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-card flex items-center justify-between px-4 md:px-6 select-none shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
       >
         {/* ================================================================= */}
         {/* LEFT ZONE: Navigation Toggle & Breadcrumb                         */}
@@ -80,7 +79,7 @@ function HeaderInner({
               type="button"
               onClick={onMenuClick}
               aria-label="Open mobile navigation"
-              className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-2xs cursor-pointer"
+              className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-[4px] border border-border bg-card text-foreground hover:bg-secondary transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
             >
               <Menu className="w-4 h-4" />
             </button>
@@ -112,7 +111,7 @@ function HeaderInner({
           />
 
           {/* Unified Toolset Pod: Ticker Toggle, Refresh, Zen Mode, Signals Bell */}
-          <div className="flex items-center gap-0.5 p-0.5 rounded-lg border border-border/70 bg-card/70 shadow-2xs">
+          <div className="flex items-center gap-0.5 p-0.5 rounded-[4px] border border-border bg-card">
             <HeaderQuickActions
               tickerVisible={tickerVisible}
               onToggleTicker={onToggleTicker}

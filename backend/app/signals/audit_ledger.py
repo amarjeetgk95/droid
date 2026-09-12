@@ -204,7 +204,7 @@ class SignalAuditLedger:
             option_symbol=opt.get("broker_symbol") or opt.get("symbol"),
             option_type=opt.get("option_type", "CE" if "CALL" in direction else "PE"),
             option_strike=float(opt.get("strike", 0.0)) if opt.get("strike") else None,
-            expiry=opt.get("expiry"),
+            expiry=str(opt.get("expiry") or opt.get("expiry_date") or "") or None,
             lot_size=lot_sz,
             lots=lots,
             quantity=qty,
@@ -473,6 +473,19 @@ class SignalAuditLedger:
         rec.status = final_status
         rec.outcome_label = exit_reason
         rec.is_winner = is_win
+        # Zero-economics guard: prices moved but nothing booked — flag loudly
+        # instead of letting a ₹0 close masquerade as a flat trade.
+        if actual_pnl_inr == 0 and qty > 0 and abs(points_diff) > 0:
+            rec.outcome_label = f"{exit_reason} :: ZERO_PNL_REVIEW"
+            rec.is_winner = None
+            logger.warning(
+                "square_off_zero_pnl_flagged",
+                signal_id=signal_id,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                qty=qty,
+                reason=exit_reason,
+            )
         rec.updated_at_utc = now_ms
 
         rec.state_history.append(
@@ -523,67 +536,83 @@ class SignalAuditLedger:
 
             if rec.status in ("ARMED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT"):
                 curr_p = round(float(current_price), 2)
-                rec.current_price = curr_p
+                side = (rec.paper_side or "BUY").upper()
+                is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
+                is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
 
                 if rec.status == "ARMED":
+                    # No capital deployed: show no MTM. For option trades keep
+                    # current_price empty so the UI never renders spot as a premium.
+                    rec.current_price = None if is_option else curr_p
                     rec.unrealized_pnl_points = 0.0
                     rec.unrealized_pnl_inr = 0.0
                     rec.unrealized_pnl_pct = 0.0
                     rec.total_pnl_inr = 0.0
                     rec.is_winner = None
                 else:
-                    # Entry reference: fill price if executed, else trigger price
-                    entry_price = rec.actual_fill_price or rec.trigger_price
-                    qty = rec.quantity or (rec.lots * rec.lot_size)
-                    side = (rec.paper_side or "BUY").upper()
-                    is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
-                    is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
+                    # No fill = no position = no MTM. Never fall back to the
+                    # spot trigger as a fake premium entry (fabricates P&L).
+                    if is_option and rec.actual_fill_price is None:
+                        rec.current_price = None
+                        rec.unrealized_pnl_points = None
+                        rec.unrealized_pnl_inr = None
+                        rec.unrealized_pnl_pct = None
+                        rec.total_pnl_inr = None
+                        rec.is_winner = None
+                    else:
+                        # Entry reference: fill price if executed, else trigger price
+                        entry_price = rec.actual_fill_price or rec.trigger_price
+                        qty = rec.quantity or (rec.lots * rec.lot_size)
 
-                    if is_option:
-                        if entry_price > 5000.0:
+                        if is_option:
+                            # Domain guard: a spot-scale "fill" is corruption, not
+                            # data — estimate instead of persisting the lie.
+                            if entry_price is None or entry_price > 5000.0:
+                                try:
+                                    from app.signals.fill_reconciler import option_fill_reconciler
+                                    est_entry = option_fill_reconciler.estimate_option_premium(
+                                        spot=rec.trigger_price or rec.spot_price_at_creation,
+                                        strike=rec.option_strike or rec.trigger_price,
+                                        option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                                    )
+                                    entry_price = est_entry if est_entry and est_entry > 0 else 250.0
+                                except Exception:
+                                    entry_price = 250.0
+
                             try:
                                 from app.signals.fill_reconciler import option_fill_reconciler
-                                est_entry = option_fill_reconciler.estimate_option_premium(
-                                    spot=rec.trigger_price or rec.spot_price_at_creation,
-                                    strike=rec.option_strike or rec.trigger_price,
-                                    option_type=rec.option_type or ("CE" if is_bullish else "PE"),
+                                opt_type = rec.option_type or ("CE" if is_bullish else "PE")
+                                strike = rec.option_strike or curr_p
+                                curr_opt_price = option_fill_reconciler.estimate_option_premium(
+                                    spot=curr_p,
+                                    strike=strike,
+                                    option_type=opt_type,
                                 )
-                                entry_price = est_entry if est_entry and est_entry > 0 else 250.0
-                                rec.actual_fill_price = entry_price
                             except Exception:
-                                entry_price = 250.0
+                                curr_opt_price = entry_price
 
-                        try:
-                            from app.signals.fill_reconciler import option_fill_reconciler
-                            opt_type = rec.option_type or ("CE" if is_bullish else "PE")
-                            strike = rec.option_strike or curr_p
-                            curr_opt_price = option_fill_reconciler.estimate_option_premium(
-                                spot=curr_p,
-                                strike=strike,
-                                option_type=opt_type,
-                            )
-                        except Exception:
-                            curr_opt_price = entry_price
+                            # Display the premium, never the spot index price.
+                            rec.current_price = round(float(curr_opt_price), 2)
+                            pts_diff = (curr_opt_price - entry_price) if side == "BUY" else (entry_price - curr_opt_price)
+                            if side == "BUY" and pts_diff < -entry_price:
+                                pts_diff = -entry_price
+                        else:
+                            rec.current_price = curr_p
+                            pts_diff = (curr_p - entry_price) if is_bullish else (entry_price - curr_p)
 
-                        pts_diff = (curr_opt_price - entry_price) if side == "BUY" else (entry_price - curr_opt_price)
-                        if side == "BUY" and pts_diff < -entry_price:
-                            pts_diff = -entry_price
-                    else:
-                        pts_diff = (curr_p - entry_price) if is_bullish else (entry_price - curr_p)
+                        unrealized_inr = round(pts_diff * qty, 2)
+                        margin = rec.margin_used or (entry_price * qty)
+                        if is_option and side == "BUY" and unrealized_inr < -margin:
+                            unrealized_inr = -margin
+                        unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
+                        if is_option and side == "BUY":
+                            unrealized_pct = max(-100.0, unrealized_pct)
 
-                    unrealized_inr = round(pts_diff * qty, 2)
-                    margin = rec.margin_used or (entry_price * qty)
-                    if is_option and side == "BUY" and unrealized_inr < -margin:
-                        unrealized_inr = -margin
-                    unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
-                    if is_option and side == "BUY":
-                        unrealized_pct = max(-100.0, unrealized_pct)
-
-                    rec.unrealized_pnl_points = round(pts_diff, 2)
-                    rec.unrealized_pnl_inr = unrealized_inr
-                    rec.unrealized_pnl_pct = unrealized_pct
-                    rec.total_pnl_inr = unrealized_inr
-                    rec.is_winner = unrealized_inr > 0
+                        rec.unrealized_pnl_points = round(pts_diff, 2)
+                        rec.unrealized_pnl_inr = unrealized_inr
+                        rec.unrealized_pnl_pct = unrealized_pct
+                        rec.total_pnl_inr = unrealized_inr
+                        rec.is_winner = unrealized_inr > 0
 
                 dur_s, dur_str = rec.compute_live_duration(now_ms)
                 rec.live_duration_seconds = dur_s
@@ -674,6 +703,36 @@ class SignalAuditLedger:
         with self._lock:
             return self._trades.get(signal_id)
 
+    def void_trade(self, signal_id: str, reason: str = "VOID_CORRUPT_HISTORY") -> bool:
+        """Quarantine a trade: kept as evidence but excluded from every P&L
+        aggregate and from the served ledger. Never deletes economics data."""
+        with self._lock:
+            rec = self._trades.get(signal_id)
+            if not rec:
+                return False
+            now_ms = int(time.time() * 1000)
+            from_state = rec.status
+            rec.status = "VOID"
+            rec.outcome_label = reason
+            rec.is_winner = None
+            rec.unrealized_pnl_inr = 0.0
+            rec.unrealized_pnl_points = 0.0
+            rec.unrealized_pnl_pct = 0.0
+            rec.total_pnl_inr = rec.actual_pnl_inr
+            rec.updated_at_utc = now_ms
+            rec.state_history.append(
+                AuditStateEvent(
+                    timestamp_utc=now_ms,
+                    from_state=from_state,
+                    to_state="VOID",
+                    market_price=rec.exit_price,
+                    reason=reason,
+                )
+            )
+        self._schedule_persist(rec)
+        logger.info("audit_trade_voided", signal_id=signal_id, from_state=from_state, reason=reason)
+        return True
+
     def delete_trade(self, signal_id: str) -> bool:
         """Delete trade record from memory and schedule deletion from Supabase."""
         with self._lock:
@@ -716,8 +775,9 @@ class SignalAuditLedger:
         demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
         all_t = [
             t for t in self._trades.values()
-            if not str(t.signal_id).lower().startswith(("sig-test-", "test-", "sig-persist-sanitize"))
+            if not str(t.signal_id).lower().startswith(("sig-test-", "sig-wallet-", "test-", "sig-persist-sanitize"))
             and t.signal_id not in demo_ids
+            and t.status != "VOID"
         ]
         closed_t = [
             t for t in all_t

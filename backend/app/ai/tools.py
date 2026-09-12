@@ -274,6 +274,8 @@ async def execute_tool(name: str, arguments: dict[str, Any] | str) -> dict[str, 
             overview = fii_service.get_institutional_overview()
             return {
                 "timestamp": overview.timestamp.isoformat(),
+                "source": "static_snapshot_2026_08_29_NOT_LIVE",
+                "warning": "FII/DII values are a static snapshot, not live flow. Do not reason about today's positioning from them.",
                 "positioning": [
                     {
                         "category": p.category,
