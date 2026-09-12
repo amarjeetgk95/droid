@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { OptionChainResponse, MaxPainResult } from '@/lib/types';
 import { Card, Stat, fmtINR, fmtNum } from '@/components/ui/desk';
+import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { OptionsHeader } from '@/components/options/OptionsHeader';
 import { OptionChainTable } from '@/components/options/OptionChainTable';
 import { PayoffChart } from '@/components/options/PayoffChart';
@@ -64,6 +65,10 @@ export default function OptionsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState<number>(0);
+  // Truth-of-data: last successful chain observation (excluded from deps intentionally;
+  // only set inside the fetch effect below).
+  const [chainFetchedAt, setChainFetchedAt] = useState<Date | null>(null);
+  const [chainFetching, setChainFetching] = useState<boolean>(true);
 
   // 1h (INTRADAY) forecast state, derived from the same symbol + chain spot.
   const [expectedMove, setExpectedMove] = useState<ExpectedMoveData | null>(null);
@@ -89,6 +94,7 @@ export default function OptionsPage() {
 
     const run = async () => {
       try {
+        setChainFetching(true);
         if (!selectedExpiry) {
           const [chainRes, mpRes] = await Promise.all([
             api.getOptionChain(selectedSymbol, undefined),
@@ -97,6 +103,7 @@ export default function OptionsPage() {
           if (!isMounted) return;
           setChainData(chainRes.data);
           setMaxPainData(mpRes.data);
+          setChainFetchedAt(new Date());
 
           if (chainRes.data.expiry) {
             setSelectedExpiry(chainRes.data.expiry);
@@ -114,13 +121,17 @@ export default function OptionsPage() {
         if (!isMounted) return;
         setChainData(chainRes.data);
         setMaxPainData(mpRes.data);
+        setChainFetchedAt(new Date());
         deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpRes.data });
         setError(null);
       } catch (err) {
         if (!isMounted) return;
         setError(err instanceof Error ? err.message : 'Failed to fetch options data');
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          setChainFetching(false);
+        }
       }
     };
 
@@ -231,6 +242,11 @@ export default function OptionsPage() {
             </p>
           </div>
           <span className="spacer" />
+          <FreshnessClock
+            lastAt={chainFetchedAt}
+            fetching={chainFetching}
+            sourceLabel="REST · on change"
+          />
           <div className="seg" role="group" aria-label="Forecast direction">
             {(['BULLISH', 'BEARISH'] as const).map((d) => (
               <button

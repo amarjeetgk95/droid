@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { MarketRegimeOverview, MarketBreadthData, FIIDIIOverviewResponse } from '@/lib/types';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { RegimeBanner } from '@/components/markets/RegimeBanner';
 import { KeyLevelsTable } from '@/components/markets/KeyLevelsTable';
 import { IndicatorsGrid } from '@/components/markets/IndicatorsGrid';
@@ -102,21 +103,28 @@ function BreadthFlowsStrip() {
 }
 
 export default function MarketsPage() {
+  const market = useOptionalMarketDataContext();
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
   const [overview, setOverview] = useState<MarketRegimeOverview | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // Truth-of-data: when did this desk last successfully observe the feed?
+  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
+  const [fetching, setFetching] = useState<boolean>(true);
 
   const fetchRegime = async () => {
     if (typeof document !== 'undefined' && document.hidden) return;
+    setFetching(true);
     try {
       const res = await api.getRegimeOverview(selectedSymbol);
       setOverview(res.data);
       setError(null);
+      setLastSuccessAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch market regime data');
     } finally {
       setLoading(false);
+      setFetching(false);
     }
   };
 
@@ -151,6 +159,9 @@ export default function MarketsPage() {
     ? overview.regime_state.replace(/_/g, ' ')
     : 'Computing regime';
 
+  // Keep the fresh pill honest when the user switches symbols: per-symbol
+  // staleness is expected to read STALE/SYNCING, never a false DOWN flash.
+
   return (
     <div className="ds-page">
       {/* header */}
@@ -166,6 +177,12 @@ export default function MarketsPage() {
             </p>
           </div>
           <span className="spacer" />
+          <FreshnessClock
+            lastAt={lastSuccessAt}
+            fetching={fetching}
+            marketClosed={market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false}
+            sourceLabel="REST · 30s"
+          />
           <div className="seg" role="group" aria-label="Symbol">
             {SYMBOLS.map((sym) => (
               <button
@@ -183,6 +200,7 @@ export default function MarketsPage() {
           <button
             type="button"
             className="btn btn-primary"
+            aria-label="Refresh market regime data"
             onClick={() => {
               setLoading(true);
               void fetchRegime();

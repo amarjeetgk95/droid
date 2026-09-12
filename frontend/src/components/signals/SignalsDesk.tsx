@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { EmptyNote, RetryButton, fmtINR } from '@/components/ui/desk';
 import { normalizeDirection } from '@/components/ui/desk';
+import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 import { SignalCreateDialog } from '@/components/signals/SignalCreateDialog';
 import {
@@ -218,6 +219,7 @@ export function SignalsDesk() {
                         <button
                           type="button"
                           className="sg-ibtn"
+                          aria-label={`Open dossier for ${r.symbol} ${prettyKey(r.strategy)} signal`}
                           title="Open signal dossier — mechanism, levels, execution"
                           onClick={() => openDossier(r.id)}
                         >
@@ -227,6 +229,13 @@ export function SignalsDesk() {
                           type="button"
                           className="sg-ibtn"
                           disabled={execDisabled}
+                          aria-label={
+                            marketClosed
+                              ? `Market closed — cannot execute ${r.symbol} signal`
+                              : confirmed
+                                ? `Already confirmed — cannot re-execute ${r.symbol} signal`
+                                : `Execute paper trade for ${r.symbol} ${prettyKey(r.strategy)} signal`
+                          }
                           title={marketClosed ? 'Market closed' : confirmed ? 'Already confirmed' : 'Execute paper trade'}
                           onClick={() => void executePaper(r)}
                         >
@@ -236,6 +245,7 @@ export function SignalsDesk() {
                           type="button"
                           className="sg-ibtn danger"
                           disabled={deletingId === r.id}
+                          aria-label={`Delete ${r.symbol} ${prettyKey(r.strategy)} signal`}
                           title="Delete signal"
                           onClick={() => void deleteSignal(r)}
                         >
@@ -412,6 +422,7 @@ export function SignalsDesk() {
                       <button
                         type="button"
                         className="sg-ibtn"
+                        aria-label={`Open trade dossier for ${r.underlying} ${prettyKey(r.strategy)}`}
                         title="Open trade dossier — mechanism, fills, lifecycle"
                         onClick={() => openDossier(r.id)}
                       >
@@ -438,9 +449,11 @@ export function SignalsDesk() {
             <span className="sg-eyebrow">NSE F&amp;O · Paper desk</span>
             <h2 className="sg-title" title="Active setups & paper trades · auto-refresh 15s · live via SSE">Signal Desk</h2>
           </span>
-          <span className={`sg-live${connected ? ' on' : ''}`} title={connected ? 'Live via SSE' : 'Reconnecting'}>
-            <i />{connected ? 'LIVE' : 'OFFLINE'}
-          </span>
+          <FreshnessClock
+            state={connected ? 'LIVE' : 'SYNCING'}
+            lastAt={connected ? now : null}
+            sourceLabel="SSE"
+          />
         </span>
         <nav className="sg-seg" role="tablist" aria-label="Signal sections">
           <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')}>
@@ -482,6 +495,7 @@ export function SignalsDesk() {
             <button
               type="button"
               className="sg-ibtn"
+              aria-label="Repair and sanitize audit ledger"
               title="Repair / sanitize audit ledger"
               disabled={sanitizeBusy}
               onClick={() => void sanitizeAudit()}
@@ -490,7 +504,14 @@ export function SignalsDesk() {
               <Eraser size={13} />
             </button>
           ) : null}
-          <button type="button" className="sg-ibtn" onClick={refreshAll} title="Refresh all" style={{ alignSelf: 'flex-end' }}>
+          <button
+            type="button"
+            className="sg-ibtn"
+            aria-label="Refresh all signal desk data"
+            onClick={refreshAll}
+            title="Refresh all"
+            style={{ alignSelf: 'flex-end' }}
+          >
             <RefreshCw size={13} />
           </button>
           <button type="button" className="sg-primary" onClick={() => setCreateOpen(true)} style={{ alignSelf: 'flex-end' }}>
