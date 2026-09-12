@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useSignalsStream } from '@/hooks/useSignalsStream';
+import { useToast } from '@/components/ui/toast';
 import {
   type ActiveRow,
   type LedgerRow,
@@ -50,6 +51,7 @@ export type SignalsKpis = { active: number | null; confirmed: number | null; arm
 
 const EMPTY_KPIS: SignalsKpis = { active: null, confirmed: null, armed: null };
 export function useSignalsData() {
+  const toast = useToast();
   /* filters */
   const [deskFilter, setDeskFilter] = useState<DeskFilter>('ALL');
   const [instrumentFilter, setInstrumentFilter] = useState<InstrumentFilter>('ALL');
@@ -337,10 +339,6 @@ export function useSignalsData() {
   const executePaper = useCallback(
     async (row: ActiveRow) => {
       if (marketClosed || row.state.toUpperCase().includes('CONFIRMED')) return;
-      if (typeof window !== 'undefined') {
-        const ok = window.confirm(`Execute paper trade for ${row.id} (${row.symbol} ${row.strategy})?`);
-        if (!ok) return;
-      }
       setExecutingId(row.id);
       setOrderNote((prev) => {
         const next = { ...prev };
@@ -354,44 +352,40 @@ export function useSignalsData() {
         const msg =
           asStr(r?.message) ??
           (r?.success
-            ? `Filled ${asStr(r?.quantity) ?? 'â€”'} @ ${asStr(r?.fill_price) ?? 'â€”'}${orderId ? ` Â· order ${orderId.slice(0, 8)}â€¦` : ''}`
+            ? `Filled ${asStr(r?.quantity) ?? '—'} @ ${asStr(r?.fill_price) ?? '—'}${orderId ? ` · order ${orderId.slice(0, 8)}…` : ''}`
             : 'executed');
         setOrderNote((prev) => ({ ...prev, [row.id]: msg }));
+        toast.success(`Paper trade executed — ${row.symbol} ${row.strategy}`, msg);
         void loadActive();
         void loadAudit();
       } catch (e) {
-        setOrderNote((prev) => ({
-          ...prev,
-          [row.id]: e instanceof Error ? e.message : 'execution failed',
-        }));
+        const msg = e instanceof Error ? e.message : 'execution failed';
+        setOrderNote((prev) => ({ ...prev, [row.id]: msg }));
+        toast.error(`Execution failed — ${row.symbol} ${row.strategy}`, msg);
       } finally {
         setExecutingId(null);
       }
     },
-    [marketClosed, loadActive, loadAudit],
+    [marketClosed, loadActive, loadAudit, toast],
   );
 
   const deleteSignal = useCallback(
     async (row: ActiveRow) => {
-      if (typeof window !== 'undefined') {
-        const ok = window.confirm(`Delete signal ${row.id}?`);
-        if (!ok) return;
-      }
       setDeletingId(row.id);
       try {
         await api.deleteSignal(row.id);
+        toast.info(`Signal deleted — ${row.symbol} ${row.strategy}`, 'Removed from the active desk.');
         void loadActive();
         void loadStatus();
       } catch (e) {
-        setOrderNote((prev) => ({
-          ...prev,
-          [row.id]: e instanceof Error ? e.message : 'delete failed',
-        }));
+        const msg = e instanceof Error ? e.message : 'delete failed';
+        setOrderNote((prev) => ({ ...prev, [row.id]: msg }));
+        toast.error(`Delete failed — ${row.symbol} ${row.strategy}`, msg);
       } finally {
         setDeletingId(null);
       }
     },
-    [loadActive, loadStatus],
+    [loadActive, loadStatus, toast],
   );
 
   const sanitizeAudit = useCallback(async () => {
@@ -400,16 +394,19 @@ export function useSignalsData() {
     try {
       const res = await api.sanitizeSignalsAudit();
       const r = res as unknown as Record<string, unknown>;
-      setSanitizeNote(
-        `Sanitized â€” db repaired ${asStr(r?.db_restored_repaired) ?? '?'}, memory ${asStr(r?.memory_sanitized) ?? '?'}.`,
-      );
+      const note =
+        `Sanitized — db repaired ${asStr(r?.db_restored_repaired) ?? '?'}, memory ${asStr(r?.memory_sanitized) ?? '?'}.`;
+      setSanitizeNote(note);
+      toast.success('Audit ledger sanitized', note);
       void loadAudit();
     } catch (e) {
-      setSanitizeNote(e instanceof Error ? e.message : 'sanitize failed');
+      const msg = e instanceof Error ? e.message : 'sanitize failed';
+      setSanitizeNote(msg);
+      toast.error('Ledger sanitize failed', msg);
     } finally {
       setSanitizeBusy(false);
     }
-  }, [loadAudit]);
+  }, [loadAudit, toast]);
 
   /** Called by the create dialog after a signal is generated. */
   const afterCreate = useCallback(() => {

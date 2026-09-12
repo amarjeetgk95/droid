@@ -16,6 +16,7 @@ import {
 import { EmptyNote, RetryButton, fmtINR } from '@/components/ui/desk';
 import { normalizeDirection } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
+import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
 import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 import { SignalCreateDialog } from '@/components/signals/SignalCreateDialog';
 import {
@@ -36,9 +37,16 @@ import {
   isUnfilledLedgerRow,
   prettyKey,
   stateTone,
+  type ActiveRow,
 } from '@/components/signals/signalsNormalize';
 
 type TabKey = 'live' | 'performance' | 'history';
+
+/** Descriptor for the single ConfirmDialog instance (execution safety §5). */
+type PendingAction =
+  | { kind: 'execute'; row: ActiveRow }
+  | { kind: 'delete'; row: ActiveRow }
+  | { kind: 'sanitize' };
 
 function Skeletons({ rows = 3 }: { rows?: number }) {
   return (
@@ -52,6 +60,33 @@ function Skeletons({ rows = 3 }: { rows?: number }) {
 
 function StateTag({ state }: { state: string }) {
   return <span className={`sg-tag ${stateTone(state) === 'bull' ? 'bull' : stateTone(state) === 'bear' ? 'bear' : stateTone(state) === 'info' ? 'info' : stateTone(state) === 'warn' ? 'warn' : 'neut'}`}>{state}</span>;
+}
+
+/** Intent block for the confirm dialog — restates exactly what will happen (EXECUTION_SAFETY.md §6). */
+function confirmIntentRows(pending: PendingAction | null): ConfirmIntentRow[] {
+  if (!pending) return [];
+  if (pending.kind === 'sanitize') {
+    return [
+      { label: 'Target', value: 'Audit ledger' },
+      { label: 'Action', value: 'Rewrite from backend truth' },
+    ];
+  }
+  const r = pending.row;
+  const dir = r.direction === 'BEARISH' ? 'SHORT' : r.direction === 'BULLISH' ? 'LONG' : '—';
+  const rows: ConfirmIntentRow[] = [
+    { label: 'Signal', value: r.id.slice(0, 8) },
+    { label: 'Instrument', value: `${r.symbol} · ${dir}` },
+    { label: 'Strategy', value: prettyKey(r.strategy) },
+  ];
+  if (pending.kind === 'execute') {
+    rows.push(
+      { label: 'Entry', value: r.trigger === null ? '—' : fmtINR(r.trigger) },
+      { label: 'Stop', value: r.sl === null ? '—' : fmtINR(r.sl) },
+      { label: 'Confidence', value: r.confidence === null ? '—' : `${Math.round(r.confidence * 100)}%` },
+      { label: 'Mode', value: 'Paper trade · qty 1' },
+    );
+  }
+  return rows;
 }
 
 function DirText({ direction }: { direction: unknown }) {
@@ -117,6 +152,12 @@ export function SignalsDesk() {
 
   const [tab, setTab] = useState<TabKey>('live');
   const [createOpen, setCreateOpen] = useState(false);
+
+  /* Execution safety (EXECUTION_SAFETY.md §5): consequential actions open an
+     explicit-intent ConfirmDialog instead of firing immediately. One pending
+     descriptor drives the single dialog instance. */
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const closePending = useCallback(() => setPending(null), []);
 
   /* Dossier (detail drawer) selection — works for live and ledger rows. */
   const [dossierId, setDossierId] = useState<string | null>(null);
@@ -237,7 +278,7 @@ export function SignalsDesk() {
                                 : `Execute paper trade for ${r.symbol} ${prettyKey(r.strategy)} signal`
                           }
                           title={marketClosed ? 'Market closed' : confirmed ? 'Already confirmed' : 'Execute paper trade'}
-                          onClick={() => void executePaper(r)}
+                          onClick={() => setPending({ kind: 'execute', row: r })}
                         >
                           <Play size={13} />
                         </button>
@@ -247,7 +288,7 @@ export function SignalsDesk() {
                           disabled={deletingId === r.id}
                           aria-label={`Delete ${r.symbol} ${prettyKey(r.strategy)} signal`}
                           title="Delete signal"
-                          onClick={() => void deleteSignal(r)}
+                          onClick={() => setPending({ kind: 'delete', row: r })}
                         >
                           <Trash2 size={13} />
                         </button>
@@ -498,7 +539,7 @@ export function SignalsDesk() {
               aria-label="Repair and sanitize audit ledger"
               title="Repair / sanitize audit ledger"
               disabled={sanitizeBusy}
-              onClick={() => void sanitizeAudit()}
+              onClick={() => setPending({ kind: 'sanitize' })}
               style={{ alignSelf: 'flex-end' }}
             >
               <Eraser size={13} />
@@ -538,6 +579,34 @@ export function SignalsDesk() {
         onOpenChange={setCreateOpen}
         strategies={strategies}
         onCreated={afterCreate}
+      />
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(open) => { if (!open) closePending(); }}
+        busy={pending?.kind === 'execute' ? executingId !== null : pending?.kind === 'delete' ? deletingId !== null : sanitizeBusy}
+        tone={pending?.kind === 'execute' ? 'primary' : 'danger'}
+        title={
+          pending?.kind === 'execute'
+            ? `Execute paper trade — ${pending.row.symbol} ${pending.row.direction === 'BEARISH' ? 'SHORT' : pending.row.direction === 'BULLISH' ? 'LONG' : ''} ${prettyKey(pending.row.strategy)}?`
+            : pending?.kind === 'delete'
+              ? `Delete ${pending.row.symbol} ${prettyKey(pending.row.strategy)} signal?`
+              : 'Repair / sanitize audit ledger?'
+        }
+        description={
+          pending?.kind === 'execute'
+            ? 'Places a simulated order at the signal entry. Visible in the ledger immediately.'
+            : pending?.kind === 'delete'
+              ? 'This removes the signal from the active desk.'
+              : 'Rewrites the audit ledger from the backend source of truth.'
+        }
+        intentRows={confirmIntentRows(pending)}
+        confirmLabel={pending?.kind === 'execute' ? 'Execute' : pending?.kind === 'delete' ? 'Delete' : 'Sanitize'}
+        onConfirm={() => {
+          if (!pending) return;
+          if (pending.kind === 'execute') void executePaper(pending.row).then(closePending);
+          else if (pending.kind === 'delete') void deleteSignal(pending.row).then(closePending);
+          else void sanitizeAudit().then(closePending);
+        }}
       />
       <SignalDetailDrawer signalId={dossierId} onClose={closeDossier} />
     </div>

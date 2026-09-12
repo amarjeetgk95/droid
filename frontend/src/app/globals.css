@@ -410,6 +410,74 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .divider { border: 0; border-top: 1px solid var(--ds-border); margin: 12px 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .spacer { flex: 1; }
+/* ---------- toasts (components/ui/toast.tsx) ---------- */
+.toast-host {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--ds-shadow-lg);
+  padding: 9px 10px 9px 12px;
+  animation: toast-in 160ms ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  margin-top: 5px;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.toast__body { display: grid; gap: 1px; min-width: 0; }
+.toast__msg { font-size: 12.5px; font-weight: 600; color: var(--ds-ink); }
+.toast__detail {
+  font-family: var(--ds-mono);
+  font-size: 11px;
+  color: var(--ds-ink-2);
+  word-break: break-word;
+}
+.toast__x {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: var(--ds-ink-3);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-left: auto;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.toast__x:hover { color: var(--ds-ink); }
+.toast--success { border-left-color: var(--ds-bull); color: var(--ds-bull-strong); }
+.toast--success .toast__msg { color: var(--ds-bull-strong); }
+.toast--error { border-left-color: var(--ds-bear-action); color: var(--ds-bear-strong); }
+.toast--error .toast__msg { color: var(--ds-bear-strong); }
+.toast--info { border-left-color: var(--ds-accent); color: var(--ds-accent); }
+.toast--info .toast__msg { color: var(--ds-accent); }
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
 /* ---------- feed-state pills (lib/feedState.ts vocabulary) ---------- */
 /* Single presentation for LIVE/SYNCING/STALE/DEGRADED/DOWN/CLOSED. */
 .feed-pill {

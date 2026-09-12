@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/auth/AuthProvider';
 import { WebVitalsReporter } from '@/components/common/WebVitalsReporter';
+import { ToastProvider } from '@/components/ui/toast';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -36,7 +37,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <body className={`${inter.className} antialiased bg-background text-foreground`}>
         <WebVitalsReporter />
-        <AuthProvider>{children}</AuthProvider>
+        <ToastProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );
