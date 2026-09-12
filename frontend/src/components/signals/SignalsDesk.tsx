@@ -3,7 +3,7 @@
 /* Signals terminal — institutional order-desk presentation over useSignalsData().
    Flat hairline surfaces, mono numerals, semantic color only on data. */
 
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Eraser,
@@ -41,6 +41,17 @@ import {
 } from '@/components/signals/signalsNormalize';
 
 type TabKey = 'live' | 'performance' | 'history';
+
+export type SignalsDeskProps = {
+  /** URL-driven initial values (Phase 5). URL wins over internal defaults. */
+  initialDeskFilter?: DeskFilter;
+  initialInstrumentFilter?: InstrumentFilter;
+  initialTab?: TabKey;
+  /** URL change callbacks — write params back (deep-linkable desk state). */
+  onDeskFilterChange?: (v: DeskFilter) => void;
+  onInstrumentFilterChange?: (v: InstrumentFilter) => void;
+  onTabChange?: (v: TabKey) => void;
+};
 
 /** Descriptor for the single ConfirmDialog instance (execution safety §5). */
 type PendingAction =
@@ -115,12 +126,19 @@ function pnlCls(v: number | null): string {
   if (v === null) return '';
   return v > 0 ? 'pos-num' : v < 0 ? 'neg-num' : '';
 }
-export function SignalsDesk() {
+export function SignalsDesk({
+  initialDeskFilter,
+  initialInstrumentFilter,
+  initialTab,
+  onDeskFilterChange,
+  onInstrumentFilterChange,
+  onTabChange,
+}: SignalsDeskProps = {}) {
   const {
     deskFilter,
-    setDeskFilter,
+    setDeskFilter: setDeskFilterInternal,
     instrumentFilter,
-    setInstrumentFilter,
+    setInstrumentFilter: setInstrumentFilterInternal,
     kpis,
     statusError,
     marketClosed,
@@ -148,9 +166,33 @@ export function SignalsDesk() {
     executingId,
     deletingId,
     orderNote,
-  } = useSignalsData();
+  } = useSignalsData({
+    initialDeskFilter,
+    initialInstrumentFilter,
+  });
 
-  const [tab, setTab] = useState<TabKey>('live');
+  const [tab, setTabInternal] = useState<TabKey>(initialTab ?? 'live');
+  const setTab = useCallback(
+    (v: TabKey) => {
+      setTabInternal(v);
+      onTabChange?.(v);
+    },
+    [onTabChange],
+  );
+  const setDeskFilter = useCallback(
+    (v: DeskFilter) => {
+      setDeskFilterInternal(v);
+      onDeskFilterChange?.(v);
+    },
+    [setDeskFilterInternal, onDeskFilterChange],
+  );
+  const setInstrumentFilter = useCallback(
+    (v: InstrumentFilter) => {
+      setInstrumentFilterInternal(v);
+      onInstrumentFilterChange?.(v);
+    },
+    [setInstrumentFilterInternal, onInstrumentFilterChange],
+  );
   const [createOpen, setCreateOpen] = useState(false);
 
   /* Execution safety (EXECUTION_SAFETY.md §5): consequential actions open an
@@ -163,6 +205,11 @@ export function SignalsDesk() {
   const [dossierId, setDossierId] = useState<string | null>(null);
   const openDossier = useCallback((id: string) => setDossierId(id), []);
   const closeDossier = useCallback(() => setDossierId(null), []);
+
+  /* Keyboard row navigation state (the effect lives below, after the row
+     collections it reads). j/k or arrows move, Enter opens the dossier,
+     x executes (through the confirm dialog), Esc clears selection. */
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
 
   /* performance formatting (defensive) */
   const perfStats = useMemo(() => {
@@ -208,15 +255,15 @@ export function SignalsDesk() {
         <table className="sg-table">
           <thead>
             <tr>
-              <th>Time</th>
+              <th className="col-hide-m">Time</th>
               <th>Symbol</th>
-              <th>Strategy</th>
+              <th className="col-hide-m">Strategy</th>
               <th>Side</th>
-              <th>State</th>
-              <th>Conf</th>
+              <th className="col-hide-m">State</th>
+              <th className="col-hide-m">Conf</th>
               <th className="r">Entry</th>
-              <th className="r">Stop</th>
-              <th className="r">Targets</th>
+              <th className="r col-hide-m">Stop</th>
+              <th className="r col-hide-m">Targets</th>
               <th className="r">TTL</th>
               <th className="r">Order</th>
             </tr>
@@ -228,7 +275,7 @@ export function SignalsDesk() {
               const ttl = fmtTtl(r.expiresMs, now);
               return (
                 <Fragment key={r.id}>
-                  <tr>
+                  <tr data-active={activeRowId === r.id}>
                     <td><span className="sg-num">{fmtTimeMs(r.timeMs)}</span></td>
                     <td><span className="sg-sym">{r.symbol}</span></td>
                     <td><span className="sg-strat">{prettyKey(r.strategy)}</span></td>
@@ -373,6 +420,55 @@ export function SignalsDesk() {
   const filledLedgerRows = useMemo(() => auditRows.filter((r) => !isUnfilledLedgerRow(r)), [auditRows]);
   const hiddenUnfilledCount = auditRows.length - filledLedgerRows.length;
 
+  /* Keyboard row navigation (plan 8.5). Row list depends on the active tab:
+     live orders on 'live', filled ledger rows on 'history'. Guarded so typing
+     in inputs never triggers row actions and overlays consume their own keys. */
+  const rowList = useMemo(
+    () =>
+      tab === 'live'
+        ? sortedActive.map((r) => r.id)
+        : tab === 'history'
+          ? filledLedgerRows.map((r) => (typeof r.id === 'string' ? r.id : null))
+          : [],
+    [tab, sortedActive, filledLedgerRows],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (dossierId !== null || createOpen) return; // overlay open — it handles its own keys
+
+      const ids = rowList.filter((x): x is string => x !== null);
+      if (ids.length === 0) return;
+
+      const idx = activeRowId === null ? -1 : ids.indexOf(activeRowId);
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveRowId(ids[Math.min(ids.length - 1, idx + 1)]);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveRowId(ids[Math.max(0, idx <= 0 ? 0 : idx - 1)]);
+      } else if (e.key === 'Enter' && activeRowId) {
+        e.preventDefault();
+        openDossier(activeRowId);
+      } else if ((e.key === 'x' || e.key === 'X') && activeRowId && tab === 'live') {
+        e.preventDefault();
+        const row = sortedActive.find((r) => r.id === activeRowId);
+        if (row && !marketClosed && !row.state.toUpperCase().includes('CONFIRMED')) {
+          setPending({ kind: 'execute', row });
+        }
+      } else if (e.key === 'Escape' && activeRowId) {
+        setActiveRowId(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [rowList, activeRowId, dossierId, createOpen, tab, sortedActive, marketClosed, openDossier]);
+
   const ledgerBody =
     auditLoading && auditRows.length === 0 ? (
       <Skeletons rows={5} />
@@ -411,24 +507,24 @@ export function SignalsDesk() {
         </div>
         <div className="sg-scroll">
           <table className="sg-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Symbol</th>
-                <th>Expiry</th>
-                <th>Strategy</th>
-                <th>Side</th>
-                <th>Status</th>
-                <th className="r">Entry</th>
-                <th className="r">In value</th>
-                <th className="r">Live / Exit</th>
-                <th className="r">Out value</th>
-                <th className="r">Realized</th>
-                <th className="r">Unrealized</th>
-                <th className="r">Net</th>
-                <th className="r"><span className="sg-eyebrow">File</span></th>
-              </tr>
-            </thead>
+          <thead>
+            <tr>
+              <th className="col-hide-m">Time</th>
+              <th>Symbol</th>
+              <th className="col-hide-m">Expiry</th>
+              <th className="col-hide-m">Strategy</th>
+              <th>Side</th>
+              <th className="col-hide-m">Status</th>
+              <th className="r">Entry</th>
+              <th className="r col-hide-m">In value</th>
+              <th className="r">Live / Exit</th>
+              <th className="r col-hide-m">Out value</th>
+              <th className="r col-hide-m">Realized</th>
+              <th className="r col-hide-m">Unrealized</th>
+              <th className="r">Net</th>
+              <th className="r col-hide-m"><span className="sg-eyebrow">File</span></th>
+            </tr>
+          </thead>
             <tbody>
               {filledLedgerRows.map((r, i) => {
                 const isOpen = !/(WON|LOST|CLOSED|SQUARED|STOP|TARGET_2|RUNNER)/.test(r.status.toUpperCase());
@@ -437,29 +533,29 @@ export function SignalsDesk() {
                 const outPx = isOpen ? r.current : (r.exit ?? r.current);
                 const outVal = outPx !== null && outPx !== undefined && r.qty !== null ? (outPx as number) * r.qty : null;
                 return (
-                  <tr key={typeof r.id === 'string' ? r.id : `ledger-${i}`}>
-                    <td><span className="sg-num">{r.timeMs === null ? '—' : fmtTimeMs(r.timeMs)}</span></td>
+                  <tr key={typeof r.id === 'string' ? r.id : `ledger-${i}`} data-active={activeRowId === r.id}>
+                    <td className="col-hide-m"><span className="sg-num">{r.timeMs === null ? '—' : fmtTimeMs(r.timeMs)}</span></td>
                     <td><span className="sg-sym">{r.underlying}</span></td>
-                    <td><span className="sg-num" title="Contract expiry">{r.expiry}</span></td>
-                    <td><span className="sg-strat">{prettyKey(r.strategy)}</span></td>
+                    <td className="col-hide-m"><span className="sg-num" title="Contract expiry">{r.expiry}</span></td>
+                    <td className="col-hide-m"><span className="sg-strat">{prettyKey(r.strategy)}</span></td>
                     <td><DirText direction={r.direction} /></td>
-                    <td><StateTag state={r.status} /></td>
+                    <td className="col-hide-m"><StateTag state={r.status} /></td>
                     <td className="r">
                       <div className="sg-num" style={{ fontWeight: 700 }}>{r.entry === null ? '—' : fmtINR(r.entry)}</div>
                       <div className="sg-num" style={{ fontSize: 10, color: 'var(--sg-ink-3)' }} title="Fill timestamp">{fmtDateTimeMs(r.entryTimeMs)}</div>
                     </td>
-                    <td className="r sg-num">{inVal === null ? '—' : fmtINR(inVal)}</td>
+                    <td className="r sg-num col-hide-m">{inVal === null ? '—' : fmtINR(inVal)}</td>
                     <td className="r">
                       <div className="sg-num">{livePrice === null ? '—' : fmtINR(livePrice)}</div>
                       <div className="sg-num" style={{ fontSize: 10, color: 'var(--sg-ink-3)' }} title={isOpen ? 'Live MTM' : 'Exit timestamp'}>
                         {isOpen ? 'LIVE' : fmtDateTimeMs(r.exitTimeMs)}
                       </div>
                     </td>
-                    <td className="r sg-num">{outVal === null ? '—' : fmtINR(outVal)}</td>
-                    <td className={`r sg-num ${pnlCls(r.realized)}`}>{pnlSigned(r.realized)}</td>
-                    <td className={`r sg-num ${pnlCls(r.unrealized)}`}>{isOpen ? pnlSigned(r.unrealized) : '—'}</td>
+                    <td className="r sg-num col-hide-m">{outVal === null ? '—' : fmtINR(outVal)}</td>
+                    <td className={`r sg-num col-hide-m ${pnlCls(r.realized)}`}>{pnlSigned(r.realized)}</td>
+                    <td className={`r sg-num col-hide-m ${pnlCls(r.unrealized)}`}>{isOpen ? pnlSigned(r.unrealized) : '—'}</td>
                     <td className={`r sg-num ${pnlCls(r.total)}`} style={{ fontWeight: 700 }}>{pnlSigned(r.total)}</td>
-                    <td className="r">
+                    <td className="r col-hide-m">
                       <button
                         type="button"
                         className="sg-ibtn"

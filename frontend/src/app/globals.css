@@ -410,6 +410,18 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .divider { border: 0; border-top: 1px solid var(--ds-border); margin: 12px 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .spacer { flex: 1; }
+/* ---------- desk tables: mobile collapse + keyboard-active row ---------- */
+/* Phase 3: below md, secondary columns collapse away so critical P&L (Net)
+   stays visible without horizontal scrolling. Full detail lives in the dossier. */
+.sg-table tr[data-active="true"] td {
+  background: var(--ds-selected);
+}
+@media (max-width: 767px) {
+  .sg-table .col-hide-m { display: none; }
+  .sg-table thead th { padding: 6px 8px; font-size: 9.5px; }
+  .sg-table tbody td { padding: 6px 8px; }
+}
+
 /* ---------- toasts (components/ui/toast.tsx) ---------- */
 .toast-host {
   position: fixed;

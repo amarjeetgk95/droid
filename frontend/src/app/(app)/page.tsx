@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import { api } from '@/lib/api';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
+import { useEnumQueryParam, useQueryParam, useQueryParamsWriter, decodeParam, encodeParam } from '@/lib/urlState';
 import ForecastCard, { type HourForecast } from '@/components/research/ForecastCard';
 import { WhyStrip } from '@/components/dashboard/WhyStrip';
 import { AIDeepInsightCard } from '@/components/ai';
@@ -22,9 +23,48 @@ const TIMEFRAMES = [
 
 type TimeframeId = (typeof TIMEFRAMES)[number]['id'];
 
-export default function ForecastHomePage() {
-  const [instrument, setInstrument] = useState<string>('NIFTY 50');
-  const [timeframe, setTimeframe] = useState<TimeframeId>('1h');
+/** Instrument param codec: 'NIFTY 50' is the default, encoded in the URL. */
+const INSTRUMENT_PARAM_VALUES = ['NIFTY 50', 'BANKNIFTY', 'SENSEX'] as const;
+
+type InstrumentParam = (typeof INSTRUMENT_PARAM_VALUES)[number];
+
+function useInstrumentParam(): [
+  InstrumentParam | null,
+  (v: InstrumentParam | null) => void,
+] {
+  const raw = useQueryParam('instrument');
+  const write = useQueryParamsWriter();
+  const value = useMemo(() => parseInstrumentParam(raw), [raw]);
+  const set = useCallback(
+    (v: InstrumentParam | null) => write({ instrument: v === null ? null : encodeParam(v) }),
+    [write],
+  );
+  return [value, set];
+}
+
+function parseInstrumentParam(raw: string | null): InstrumentParam | null {
+  if (raw === null) return null;
+  const decoded = decodeParam(raw);
+  return (INSTRUMENT_PARAM_VALUES as readonly string[]).includes(decoded ?? '')
+    ? (decoded as InstrumentParam)
+    : null;
+}
+
+function ForecastHomePageInner() {
+  // Desk state lives in the URL (Phase 5): refresh-safe and shareable.
+  const writeParams = useQueryParamsWriter();
+  const [instrumentParam, setInstrumentParam] = useInstrumentParam();
+  const timeframe = useEnumQueryParam<TimeframeId>(
+    'timeframe',
+    TIMEFRAMES.map((t) => t.id),
+    '1h',
+  );
+  const instrument = instrumentParam ?? 'NIFTY 50';
+  const setInstrument = setInstrumentParam;
+  const setTimeframe = useCallback(
+    (tf: TimeframeId) => writeParams({ timeframe: tf === '1h' ? null : tf }),
+    [writeParams],
+  );
   const [forecast, setForecast] = useState<HourForecast | null>(null);
   const [forecastLoading, setForecastLoading] = useState(true);
   const [forecastError, setForecastError] = useState<string | null>(null);
@@ -70,22 +110,8 @@ export default function ForecastHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instrument, timeframe]);
 
-  useEffect(() => {
-    const handleSelect = (e: Event) => {
-      const custom = e as CustomEvent<{ symbol?: string; displayName?: string }>;
-      const sym = custom.detail?.symbol;
-      if (!sym) return;
-      if (sym === 'NIFTY' || sym === 'NIFTY 50') {
-        setInstrument('NIFTY 50');
-      } else if (sym === 'BANKNIFTY') {
-        setInstrument('BANKNIFTY');
-      } else if (sym === 'SENSEX') {
-        setInstrument('SENSEX');
-      }
-    };
-    window.addEventListener('droid:select-instrument', handleSelect);
-    return () => window.removeEventListener('droid:select-instrument', handleSelect);
-  }, []);
+  // Ticker selection arrives via URL param (droid:select-instrument event retired;
+  // MarketTicker writes ?instrument=…). No listener needed here anymore.
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -148,7 +174,7 @@ export default function ForecastHomePage() {
                 className="seg-btn"
                 data-active={instrument === inst}
                 aria-pressed={instrument === inst}
-                onClick={() => setInstrument(inst)}
+                onClick={() => setInstrument(inst === 'NIFTY 50' ? null : inst)}
               >
                 {inst.replace(' 50', '')}
               </button>
@@ -183,5 +209,14 @@ export default function ForecastHomePage() {
       {/* track record */}
       <ForecastOutcomes instrument={instrument} timeframe={timeframe} />
     </div>
+  );
+}
+
+/** Suspense boundary required: useSearchParams on a prerendered static route. */
+export default function ForecastHomePage() {
+  return (
+    <Suspense fallback={<div className="ds-page" />}>
+      <ForecastHomePageInner />
+    </Suspense>
   );
 }

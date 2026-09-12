@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { OptionChainResponse, MaxPainResult } from '@/lib/types';
@@ -15,6 +15,7 @@ import { GreeksSummaryCard, GreeksSummaryData } from '@/components/options/Greek
 import { ErrorCard } from '@/components/ui/ErrorCard';
 import { AIAnalysisCard, AIStrategyPanel, AITradeValidator } from '@/components/ai';
 import { deskCache } from '@/lib/useDeskCache';
+import { useEnumQueryParam, useQueryParam, useQueryParamsWriter, decodeParam, encodeParam } from '@/lib/urlState';
 import { OptionChainSkeleton } from '@/components/options/OptionChainSkeleton';
 
 // Flow ladder loads lazily; it owns its own polling hook.
@@ -53,12 +54,35 @@ function unwrapModel<T>(raw: unknown): T {
   return raw as T;
 }
 
-export default function OptionsPage() {
+function OptionsPageInner() {
   // Single shared symbol/expiry state for every section below — no forks.
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
-  const [selectedExpiry, setSelectedExpiry] = useState<string>('');
-  const [viewMode, setViewMode] = useState<'standard' | 'greeks'>('standard');
+  // Desk state lives in the URL (Phase 5): symbol/expiry/view are deep-linkable.
+  const writeParams = useQueryParamsWriter();
+  const symbolParam = useQueryParam('symbol');
+  const selectedSymbol = useMemo(() => decodeParam(symbolParam) ?? 'NIFTY', [symbolParam]);
+  const expiryParam = useQueryParam('expiry');
+  const selectedExpiry = useMemo(() => decodeParam(expiryParam) ?? '', [expiryParam]);
+  const viewMode = useEnumQueryParam<'standard' | 'greeks'>('view', ['standard', 'greeks'] as const, 'standard');
   const [forecastDirection, setForecastDirection] = useState<'BULLISH' | 'BEARISH'>('BULLISH');
+
+  const setSelectedSymbol = useCallback(
+    (sym: string) => {
+      void writeParams({ symbol: sym === 'NIFTY' ? null : encodeParam(sym), expiry: null });
+    },
+    [writeParams],
+  );
+  const setSelectedExpiry = useCallback(
+    (exp: string) => {
+      void writeParams({ expiry: exp ? encodeParam(exp) : null });
+    },
+    [writeParams],
+  );
+  const setViewMode = useCallback(
+    (vm: 'standard' | 'greeks') => {
+      void writeParams({ view: vm === 'standard' ? null : vm });
+    },
+    [writeParams],
+  );
 
   const [chainData, setChainData] = useState<OptionChainResponse | null>(null);
   const [maxPainData, setMaxPainData] = useState<MaxPainResult | null>(null);
@@ -409,5 +433,14 @@ export default function OptionsPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** Suspense boundary required: useSearchParams on a prerendered static route. */
+export default function OptionsPage() {
+  return (
+    <Suspense fallback={<div className="ds-page" />}>
+      <OptionsPageInner />
+    </Suspense>
   );
 }

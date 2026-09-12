@@ -50,11 +50,15 @@ const REFRESH_EVENTS = new Set([
 export type SignalsKpis = { active: number | null; confirmed: number | null; armed: number | null };
 
 const EMPTY_KPIS: SignalsKpis = { active: null, confirmed: null, armed: null };
-export function useSignalsData() {
+export function useSignalsData(opts?: {
+  /** URL-driven initial filters (Phase 5 deep links). */
+  initialDeskFilter?: DeskFilter;
+  initialInstrumentFilter?: InstrumentFilter;
+}) {
   const toast = useToast();
   /* filters */
-  const [deskFilter, setDeskFilter] = useState<DeskFilter>('ALL');
-  const [instrumentFilter, setInstrumentFilter] = useState<InstrumentFilter>('ALL');
+  const [deskFilter, setDeskFilter] = useState<DeskFilter>(opts?.initialDeskFilter ?? 'ALL');
+  const [instrumentFilter, setInstrumentFilter] = useState<InstrumentFilter>(opts?.initialInstrumentFilter ?? 'ALL');
   const [now, setNow] = useState(() => Date.now());
 
   /* status probe */
