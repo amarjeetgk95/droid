@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Query
+
+from app.api.envelope import envelope
+from app.models.market import DataStatus
 from app.instruments.search import search
-from datetime import datetime, timezone
-from app.models.market import ApiMeta, DataStatus
 
 router = APIRouter(prefix="/api/v1/instruments", tags=["instruments"])
 
-def _meta():
-    return ApiMeta(provider="instrument_registry", timestamp=datetime.now(timezone.utc), status=DataStatus.OFFLINE)
+_PROVIDER = "instrument_registry"
+
 
 @router.get("/search")
 async def search_instruments_endpoint(
@@ -20,8 +21,8 @@ async def search_instruments_endpoint(
     query = q.strip() if q else ""
     results = search(query, asset_class, exchange, instrument_type, fno_only, limit)
     # Registry is already restricted to 7; no additional filtering needed.
-    return {
-        "data": {"query": query, "results": [r.model_dump() for r in results], "total": len(results)},
-        "error": None,
-        "meta": _meta().model_dump(mode="json"),
-    }
+    return envelope(
+        {"query": query, "results": [r.model_dump() for r in results], "total": len(results)},
+        provider=_PROVIDER,
+        status=DataStatus.OFFLINE,
+    )

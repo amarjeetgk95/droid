@@ -62,42 +62,54 @@ export function RenderIntegrationCard({ settings }: Props) {
 
   return (
     <SettingSection
-      title="Backend Gateway & Authentication"
-      description="OAuth callback endpoints and secure token exchange managed on your Render server."
+      title="Broker Gateway & Execution Session"
+      description="Active Indian exchange broker (NSE/BSE) and 2FA OAuth session exchange."
       icon={Server}
       action={
         <a
           href={portalUrl}
           target="_blank"
           rel="noreferrer"
-          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+          className="btn btn-sm flex items-center gap-1.5"
         >
           <span>{portalName}</span>
-          <ExternalLink className="w-3 h-3" />
+          <ExternalLink className="w-3 h-3 muted" />
         </a>
       }
     >
       <SettingRow
-        label="OAuth Redirect URL"
-        description="Set this exact callback URI in your Fyers developer app console."
+        label="Execution Gateway"
+        description="Low-latency Indian market broker for live tick feed and orders."
       >
         <div className="flex items-center gap-2">
-          <code className="text-xs font-mono bg-secondary px-2 py-1 rounded border border-border/50 text-foreground">
+          <span className="font-semibold text-xs text-[var(--ds-ink)]">FYERS API v3</span>
+          <span className="badge b-info" style={{ fontSize: '10px', padding: '1px 6px' }}>
+            NSE · BSE (INR)
+          </span>
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        label="OAuth Redirect URL"
+        description="Set this callback URI in your Fyers developer dashboard application."
+      >
+        <div className="flex items-center gap-2">
+          <code className="text-xs font-mono bg-[var(--ds-inset)] px-2 py-1 rounded border border-[var(--ds-border-strong)] text-[var(--ds-ink)]">
             {REDIRECT_BASE}/fyers/callback
           </code>
           <button
             type="button"
             onClick={handleCopyRedirect}
-            className="flex items-center gap-1 px-2.5 py-1 bg-secondary hover:bg-secondary/80 text-foreground rounded text-xs font-medium transition-colors border border-border/60 cursor-pointer"
+            className="btn btn-sm flex items-center gap-1"
           >
             {copiedRedirect ? (
               <>
-                <Check className="w-3 h-3 text-emerald-500" />
+                <Check className="w-3 h-3 text-[var(--ds-bull)]" />
                 <span>Copied</span>
               </>
             ) : (
               <>
-                <Copy className="w-3 h-3 text-muted-foreground" />
+                <Copy className="w-3 h-3 muted" />
                 <span>Copy</span>
               </>
             )}
@@ -107,19 +119,19 @@ export function RenderIntegrationCard({ settings }: Props) {
 
       <SettingRow
         label="Session Authorization"
-        description="SEBI-compliant daily 2FA login. Activates 24-hour WebSocket feed and execution token."
+        description="SEBI-mandated daily 2FA login. Activates 24-hour WebSocket feed and execution token."
       >
         <button
           type="button"
           onClick={handleAuthorize}
           disabled={isAuthorizing}
           className={cn(
-            'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors shadow-2xs whitespace-nowrap cursor-pointer',
+            'btn btn-sm flex items-center gap-1.5 font-semibold',
             authSuccess
-              ? 'bg-emerald-600 text-white'
+              ? 'btn-buy'
               : isAuthorizing
-              ? 'bg-amber-500 text-slate-950 font-bold animate-pulse cursor-wait'
-              : 'bg-primary hover:bg-primary/90 text-primary-foreground',
+              ? 'btn-primary opacity-80 cursor-wait'
+              : 'btn-primary',
           )}
         >
           {authSuccess ? (

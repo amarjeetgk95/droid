@@ -87,10 +87,10 @@ export function PreferencesTab({
     <div className="space-y-4">
       {msg && (
         <div
-          className={`px-4 py-3 rounded-lg text-xs flex items-center gap-2.5 transition-all ${
+          className={`card card-pad flex items-center gap-2.5 text-xs ${
             msg.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-              : 'bg-destructive/10 text-destructive border border-destructive/20'
+              ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+              : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
           }`}
         >
           {msg.type === 'success' ? (
@@ -98,11 +98,11 @@ export function PreferencesTab({
           ) : (
             <AlertCircle className="w-4 h-4 shrink-0" />
           )}
-          <span>{msg.text}</span>
+          <span className="font-medium">{msg.text}</span>
           <button
             type="button"
             onClick={() => setMsg(null)}
-            className="ml-auto text-muted-foreground hover:text-foreground text-[11px]"
+            className="ml-auto text-xs opacity-70 hover:opacity-100 cursor-pointer"
           >
             Dismiss
           </button>
@@ -111,23 +111,39 @@ export function PreferencesTab({
 
       {/* 1. Display & Regional Formatting */}
       <SettingSection
-        title="Display & formatting"
-        description="Numeral conventions and default active index."
+        title="Display & Regional Formatting"
+        description="Theme appearance, numerical conventions, and default benchmark index."
         icon={Palette}
       >
         <SettingRow
-          label="Visual appearance"
-          description="Clean light theme optimized for financial data legibility."
+          label="Visual Appearance"
+          description="Color scheme optimized for high-density tabular financial data."
         >
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/40 border border-border/60 text-xs text-muted-foreground">
-            <span className="w-1.5 h-1.5 rounded-full bg-foreground/40" />
-            <span>Light</span>
+          <div className="seg" role="group" aria-label="Visual appearance">
+            <button
+              type="button"
+              className="seg-btn"
+              data-active={settings.theme !== 'dark'}
+              aria-pressed={settings.theme !== 'dark'}
+              onClick={() => onChange({ theme: 'light' })}
+            >
+              Kite Light (Standard)
+            </button>
+            <button
+              type="button"
+              className="seg-btn"
+              data-active={settings.theme === 'dark'}
+              aria-pressed={settings.theme === 'dark'}
+              onClick={() => onChange({ theme: 'dark' })}
+            >
+              Desk Dark
+            </button>
           </div>
         </SettingRow>
 
         <SettingRow
           label="Numeral & Currency System"
-          description="Format monetary values across option chains, P&L, and orders."
+          description="Format monetary values across option chains, P&L, and order book."
           error={getError('numberFormat')}
         >
           <SettingSelect
@@ -141,7 +157,7 @@ export function PreferencesTab({
 
         <SettingRow
           label="Primary Benchmark Index"
-          description="Default selected underlying asset when launching terminal screens."
+          description="Default selected underlying asset when launching terminal desks."
           error={getError('defaultIndexSymbol')}
         >
           <SettingSelect
@@ -157,13 +173,13 @@ export function PreferencesTab({
 
       {/* 2. Backup, Import & Reset */}
       <SettingSection
-        title="Configuration management"
-        description="Export, migrate between environments, or reset."
+        title="Configuration Management"
+        description="Export configuration snapshots, migrate setups, or restore factory defaults."
         icon={Sliders}
       >
         <SettingRow
           label="Include Sensitive Credentials in Export"
-          description="When enabled, your API secrets and keys will be included in the JSON dump."
+          description="Include broker keys and AI API credentials in the exported JSON file."
         >
           <SettingSwitch
             checked={includeSecretsInExport}
@@ -174,23 +190,23 @@ export function PreferencesTab({
 
         <SettingRow
           label="Backup & Restore"
-          description="Download current configuration snapshot or restore from a JSON file."
+          description="Download current configuration snapshot or restore from a JSON backup."
         >
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer"
+              className="btn btn-sm flex items-center gap-1.5"
             >
-              <Download className="w-3.5 h-3.5 text-muted-foreground" />
+              <Download className="w-3.5 h-3.5 muted" />
               <span>Export JSON</span>
             </button>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer"
+              className="btn btn-sm flex items-center gap-1.5"
             >
-              <Upload className="w-3.5 h-3.5 text-muted-foreground" />
+              <Upload className="w-3.5 h-3.5 muted" />
               <span>Import JSON</span>
             </button>
             <input
@@ -205,7 +221,7 @@ export function PreferencesTab({
 
         <SettingRow
           label="Factory Reset"
-          description="Revert all terminal parameters, risk limits, and pricing models to default defaults."
+          description="Revert all terminal parameters, risk limits, and pricing models to system defaults."
         >
           <button
             type="button"
@@ -215,7 +231,7 @@ export function PreferencesTab({
                 setMsg({ type: 'success', text: 'All settings restored to factory defaults.' });
               }
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-destructive bg-destructive/5 hover:bg-destructive/10 border border-destructive/20 rounded-md text-xs font-medium transition-colors cursor-pointer"
+            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)]"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Restore Defaults</span>

@@ -8,11 +8,15 @@ import { useToast } from '@/components/ui/toast';
 
 interface ActiveScalpPositionsProps {
   onPositionsUpdated?: () => void;
+  onPositionsChange?: (positions: VirtualPosition[]) => void;
+  onPanicTriggered?: () => void;
   refreshTrigger?: number;
 }
 
 export function ActiveScalpPositions({
   onPositionsUpdated,
+  onPositionsChange,
+  onPanicTriggered,
   refreshTrigger,
 }: ActiveScalpPositionsProps) {
   const toast = useToast();
@@ -28,12 +32,13 @@ export function ActiveScalpPositions({
       const raw = (res.data || []) as VirtualPosition[];
       const open = raw.filter((p) => p.is_open);
       setPositions(open);
+      onPositionsChange?.(open);
     } catch {
       // ignore poll error
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onPositionsChange]);
 
   useEffect(() => {
     fetchPositions();
@@ -62,6 +67,7 @@ export function ActiveScalpPositions({
     }
     try {
       setPanicExiting(true);
+      onPanicTriggered?.();
       await api.squareOffAllPositions();
       toast.success('🚨 EMERGENCY SQUARE-OFF COMPLETE: All active positions closed at market');
       await fetchPositions();

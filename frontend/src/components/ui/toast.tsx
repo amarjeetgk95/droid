@@ -19,7 +19,7 @@ import {
   type ReactNode,
 } from 'react';
 
-export type ToastTone = 'success' | 'error' | 'info';
+export type ToastTone = 'success' | 'error' | 'info' | 'warning';
 
 export type ToastItem = {
   id: number;
@@ -37,6 +37,7 @@ type ToastContextValue = {
   success: (message: string, detail?: string) => number;
   error: (message: string, detail?: string) => number;
   info: (message: string, detail?: string) => number;
+  warning: (message: string, detail?: string) => number;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -84,6 +85,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       success: (m, d) => push('success', m, d),
       error: (m, d) => push('error', m, d),
       info: (m, d) => push('info', m, d),
+      warning: (m, d) => push('warning', m, d),
     }),
     [push],
   );

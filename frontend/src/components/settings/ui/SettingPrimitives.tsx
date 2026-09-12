@@ -24,32 +24,32 @@ export function SettingSection({
   className = '',
 }: SettingSectionProps) {
   return (
-    <section
-      className={`bg-card border border-border/60 rounded-lg overflow-hidden transition-colors ${className}`}
-    >
-      <div className="px-5 py-3.5 border-b border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+    <section className={`card ${className}`}>
+      <div className="card-hd">
+        <div className="flex items-center gap-2 min-w-0">
           {Icon && (
-            <div className="text-muted-foreground p-1.5 rounded-md bg-secondary/60 shrink-0">
-              <Icon className="w-4 h-4" />
-            </div>
+            <span className="muted shrink-0 flex items-center">
+              <Icon className="w-3.5 h-3.5" />
+            </span>
           )}
           <div className="min-w-0">
-            <h2 className="text-[13px] font-semibold tracking-tight text-foreground">{title}</h2>
+            <h2 className="card-title">{title}</h2>
             {description && (
-              <p className="text-xs text-muted-foreground mt-0.5 leading-normal">{description}</p>
+              <p className="muted" style={{ margin: 0, fontSize: '11px', lineHeight: 1.25 }}>
+                {description}
+              </p>
             )}
           </div>
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
-      <div className="divide-y divide-border/40">{children}</div>
+      <div className="divide-y divide-[var(--ds-border-subtle)]">{children}</div>
     </section>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* 1b. StatTile — sober neutral metric tile shared by Quant / Paper / Telegram */
+/* 1b. StatTile — Institutional metric tile matching .stat from Droid desk    */
 /* -------------------------------------------------------------------------- */
 
 export interface StatTileProps {
@@ -61,21 +61,14 @@ export interface StatTileProps {
 }
 
 export function StatTile({ label, value, sub, tone = 'default', className = '' }: StatTileProps) {
-  const valueColor =
-    tone === 'positive'
-      ? 'text-emerald-600'
-      : tone === 'negative'
-        ? 'text-destructive'
-        : 'text-foreground';
+  const toneClass =
+    tone === 'positive' ? 'v-bull' : tone === 'negative' ? 'v-bear' : '';
+
   return (
-    <div className={`bg-secondary/30 border border-border/40 rounded-lg p-3 min-w-0 ${className}`}>
-      <span className="text-muted-foreground text-[10px] uppercase font-medium tracking-wide block truncate">
-        {label}
-      </span>
-      <span className={`font-mono font-semibold text-sm mt-1 block truncate ${valueColor}`}>
-        {value}
-      </span>
-      {sub && <span className="text-[10px] text-muted-foreground block truncate mt-0.5">{sub}</span>}
+    <div className={`stat ${className}`}>
+      <div className="stat-l">{label}</div>
+      <div className={`stat-v ${toneClass}`}>{value}</div>
+      {sub && <div className="stat-s num">{sub}</div>}
     </div>
   );
 }
@@ -104,41 +97,41 @@ export function SettingRow({
 }: SettingRowProps) {
   if (vertical) {
     return (
-      <div className={`px-5 py-4 space-y-2.5 ${className}`}>
+      <div className={`px-4 py-3 space-y-2 ${className}`}>
         <div>
           {htmlFor ? (
-            <label htmlFor={htmlFor} className="text-xs font-medium text-foreground block">
+            <label htmlFor={htmlFor} className="text-xs font-semibold text-[var(--ds-ink)] block">
               {label}
             </label>
           ) : (
-            <span className="text-xs font-medium text-foreground block">{label}</span>
+            <span className="text-xs font-semibold text-[var(--ds-ink)] block">{label}</span>
           )}
           {description && (
-            <p className="text-[11px] text-muted-foreground mt-0.5 leading-normal">{description}</p>
+            <p className="text-[11px] text-[var(--ds-ink-2)] mt-0.5 leading-normal">{description}</p>
           )}
         </div>
         <div>{children}</div>
-        {error && <p className="text-[11px] text-destructive mt-1 font-medium">{error}</p>}
+        {error && <p className="text-[11px] text-[var(--ds-bear)] mt-1 font-medium">{error}</p>}
       </div>
     );
   }
 
   return (
     <div
-      className={`px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${className}`}
+      className={`px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${className}`}
     >
       <div className="max-w-md pr-2">
         {htmlFor ? (
-          <label htmlFor={htmlFor} className="text-xs font-medium text-foreground block cursor-pointer">
+          <label htmlFor={htmlFor} className="text-xs font-semibold text-[var(--ds-ink)] block cursor-pointer">
             {label}
           </label>
         ) : (
-          <span className="text-xs font-medium text-foreground block">{label}</span>
+          <span className="text-xs font-semibold text-[var(--ds-ink)] block">{label}</span>
         )}
         {description && (
-          <p className="text-[11px] text-muted-foreground mt-0.5 leading-normal">{description}</p>
+          <p className="text-[11px] text-[var(--ds-ink-2)] mt-0.5 leading-normal">{description}</p>
         )}
-        {error && <p className="text-[11px] text-destructive mt-1 font-medium">{error}</p>}
+        {error && <p className="text-[11px] text-[var(--ds-bear)] mt-1 font-medium">{error}</p>}
       </div>
       <div className="shrink-0 flex items-center sm:justify-end">{children}</div>
     </div>
@@ -146,7 +139,7 @@ export function SettingRow({
 }
 
 /* -------------------------------------------------------------------------- */
-/* 3. SettingSwitch (Linear / Apple style toggle)                             */
+/* 3. SettingSwitch (Crisp Hairline Institutional Toggle)                     */
 /* -------------------------------------------------------------------------- */
 export interface SettingSwitchProps {
   checked: boolean;
@@ -172,13 +165,15 @@ export function SettingSwitch({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? 'bg-primary' : 'bg-muted-foreground/25 hover:bg-muted-foreground/35'
+      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border transition-colors duration-120 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-accent)] disabled:cursor-not-allowed disabled:opacity-40 ${
+        checked
+          ? 'bg-[var(--ds-accent)] border-[var(--ds-accent)]'
+          : 'bg-[var(--ds-inset-2)] border-[var(--ds-border-strong)] hover:bg-[var(--ds-border)]'
       }`}
     >
       <span
-        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-150 ease-in-out ${
-          checked ? 'translate-x-4' : 'translate-x-0'
+        className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition duration-120 mt-[1px] ${
+          checked ? 'translate-x-3.5' : 'translate-x-0.5'
         }`}
       />
     </button>
@@ -186,7 +181,7 @@ export function SettingSwitch({
 }
 
 /* -------------------------------------------------------------------------- */
-/* 4. SettingSegmented                                                        */
+/* 4. SettingSegmented (Using global .seg and .seg-btn)                       */
 /* -------------------------------------------------------------------------- */
 export interface SegmentedOption<T extends string = string> {
   id: T;
@@ -207,13 +202,10 @@ export function SettingSegmented<T extends string = string>({
   options,
   value,
   onChange,
-  size = 'md',
   className = '',
 }: SettingSegmentedProps<T>) {
   return (
-    <div
-      className={`inline-flex items-center p-1 bg-secondary/70 border border-border/50 rounded-lg gap-0.5 ${className}`}
-    >
+    <div className={`seg ${className}`} role="group">
       {options.map((option) => {
         const isSelected = value === option.id;
         const Icon = option.icon;
@@ -222,22 +214,14 @@ export function SettingSegmented<T extends string = string>({
             key={option.id}
             type="button"
             onClick={() => onChange(option.id)}
-            className={`flex items-center gap-1.5 rounded-md font-medium transition-all cursor-pointer ${
-              size === 'sm' ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
-            } ${
-              isSelected
-                ? 'bg-card text-foreground shadow-2xs font-semibold'
-                : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-            }`}
+            data-active={isSelected}
+            aria-pressed={isSelected}
+            className="seg-btn flex items-center gap-1.5"
           >
-            {Icon && <Icon className={size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
+            {Icon && <Icon className="w-3.5 h-3.5" />}
             <span>{option.label}</span>
             {option.badge && (
-              <span
-                className={`text-[9px] px-1 py-0.2 rounded font-mono ${
-                  isSelected ? 'bg-secondary text-foreground' : 'bg-muted text-muted-foreground'
-                }`}
-              >
+              <span className="badge b-neut" style={{ fontSize: '9px', padding: '1px 4px' }}>
                 {option.badge}
               </span>
             )}
@@ -249,7 +233,7 @@ export function SettingSegmented<T extends string = string>({
 }
 
 /* -------------------------------------------------------------------------- */
-/* 5. SettingInput & SettingSelect                                            */
+/* 5. SettingInput & SettingSelect (Institutional Form Controls)              */
 /* -------------------------------------------------------------------------- */
 export interface SettingInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   mono?: boolean;
@@ -261,7 +245,7 @@ export const SettingInput = forwardRef<HTMLInputElement, SettingInputProps>(
       <input
         ref={ref}
         {...props}
-        className={`w-full max-w-xs bg-secondary/40 border border-border/70 rounded-md px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/60 transition-colors focus:outline-hidden focus:border-ring focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed ${
+        className={`w-full max-w-xs bg-[var(--ds-surface)] border border-[var(--ds-border-strong)] rounded-[var(--radius-md)] px-2.5 py-1.5 text-xs text-[var(--ds-ink)] placeholder:text-[var(--ds-ink-3)] transition-colors focus:outline-none focus:border-[var(--ds-accent)] focus:ring-1 focus:ring-[var(--ds-accent)] disabled:opacity-40 disabled:cursor-not-allowed ${
           mono ? 'font-mono' : ''
         } ${className}`}
       />
@@ -279,11 +263,11 @@ export const SettingSelect = forwardRef<HTMLSelectElement, SettingSelectProps>(
         <select
           ref={ref}
           {...props}
-          className={`w-full appearance-none bg-secondary/40 border border-border/70 rounded-md pl-2.5 pr-8 py-1.5 text-xs text-foreground cursor-pointer transition-colors focus:outline-hidden focus:border-ring focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+          className={`w-full appearance-none bg-[var(--ds-surface)] border border-[var(--ds-border-strong)] rounded-[var(--radius-md)] pl-2.5 pr-8 py-1.5 text-xs text-[var(--ds-ink)] cursor-pointer transition-colors focus:outline-none focus:border-[var(--ds-accent)] focus:ring-1 focus:ring-[var(--ds-accent)] disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
         >
           {children}
         </select>
-        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <ChevronDown className="w-3.5 h-3.5 text-[var(--ds-ink-3)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
     );
   }

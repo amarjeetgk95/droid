@@ -1,8 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
+from app.api.envelope import make_meta
+from app.models.market import DataStatus
 from app.core.logging import setup_logging
 from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, instruments, futures, strategy
 from app.api import settings as settings_api
@@ -192,6 +197,24 @@ def create_app() -> FastAPI:
         description="AI-Powered Indian F&O Market Analysis Platform - High-Frequency & Caching Infrastructure",
         lifespan=lifespan,
     )
+
+    # ── Global error handling ────────────────────────────────────────
+    # Routers no longer wrap every endpoint in try/except → HTTPException(500).
+    # HTTPExceptions pass through untouched (frontend reads `detail`); any
+    # other unhandled exception becomes a sanitized 500 with the standard
+    # envelope meta. RequestValidationError (422) stays FastAPI-default.
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.error("unhandled_endpoint_exception", path=request.url.path, error=str(exc)[:300])
+        meta = make_meta(provider="api", status=DataStatus.ERROR)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "error": "Internal server error", "meta": meta.model_dump()},
+        )
     
     # CORS
     origins = [

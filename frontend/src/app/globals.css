@@ -486,6 +486,8 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .toast--error .toast__msg { color: var(--ds-bear-strong); }
 .toast--info { border-left-color: var(--ds-accent); color: var(--ds-accent); }
 .toast--info .toast__msg { color: var(--ds-accent); }
+.toast--warning { border-left-color: #f59e0b; color: #f59e0b; }
+.toast--warning .toast__msg { color: #f59e0b; }
 @media (prefers-reduced-motion: reduce) {
   .toast { animation: none; }
 }

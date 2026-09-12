@@ -110,7 +110,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
 
   return (
     <SettingSection
-      title="Session telemetry & gateway health"
+      title="Session Telemetry & Gateway Health"
       description="Token lifecycle and gateway heartbeat monitored by Render TokenManager."
       icon={Activity}
       action={
@@ -119,57 +119,57 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
             type="button"
             onClick={handleTestConnection}
             disabled={testing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            className="btn btn-sm flex items-center gap-1.5"
           >
-            <Activity className={`w-3.5 h-3.5 text-muted-foreground ${testing ? 'animate-spin' : ''}`} />
-            <span>{testing ? 'Probing...' : 'Test Probe'}</span>
+            <Activity className={`w-3.5 h-3.5 muted ${testing ? 'animate-spin' : ''}`} />
+            <span>{testing ? 'Probing...' : 'Test Connection'}</span>
           </button>
           <button
             type="button"
             onClick={handleRefreshToken}
             disabled={refreshing || loadingToken}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            className="btn btn-sm flex items-center gap-1.5"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 muted ${refreshing ? 'animate-spin' : ''}`} />
             <span>{refreshing ? 'Refreshing...' : 'Refresh Token'}</span>
           </button>
         </div>
       }
     >
-      <div className="p-5 space-y-4">
+      <div className="card-pad space-y-4">
         {testResult && (
           <div
-            className={`p-3.5 rounded-lg border text-xs space-y-1.5 ${
+            className={`card card-pad text-xs space-y-1.5 ${
               testResult.success
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600'
-                : 'bg-destructive/10 border-destructive/20 text-destructive'
+                ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+                : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
             }`}
           >
             <div className="flex items-center justify-between font-medium">
               <div className="flex items-center gap-2">
                 {testResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-[var(--ds-bull)] shrink-0" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
+                  <AlertCircle className="w-4 h-4 text-[var(--ds-bear)] shrink-0" />
                 )}
                 <span>
                   {testResult.success
-                    ? `Gateway connected for ${testResult.provider.toUpperCase()}`
-                    : `Connection failed for ${testResult.provider.toUpperCase()}`}
+                    ? `Gateway verified for ${testResult.provider.toUpperCase()}`
+                    : `Gateway verification failed for ${testResult.provider.toUpperCase()}`}
                 </span>
               </div>
-              <span className="font-mono text-[11px]">Latency: {testResult.latency_ms}ms</span>
+              <span className="mono text-[11px]">Latency: {testResult.latency_ms}ms</span>
             </div>
             {testResult.quote && (
-              <div className="text-[11px] font-mono text-muted-foreground flex items-center justify-between pt-1">
+              <div className="text-[11px] mono muted flex items-center justify-between pt-1">
                 <span>Sample Probe: {testResult.quote.symbol}</span>
-                <span className="font-semibold text-foreground">
+                <span className="font-semibold text-[var(--ds-ink)]">
                   ₹{testResult.quote.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </span>
               </div>
             )}
             {testResult.error && (
-              <p className="text-[11px] text-destructive/90 pt-1 leading-normal">
+              <p className="text-[11px] text-[var(--ds-bear-strong)] pt-1 leading-normal">
                 {testResult.error}
               </p>
             )}
@@ -178,10 +178,10 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
 
         {tokenMsg && (
           <div
-            className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+            className={`card card-pad text-xs flex items-center gap-2 ${
               tokenMsg.type === 'success'
-                ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-                : 'bg-destructive/10 text-destructive border border-destructive/20'
+                ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+                : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
             }`}
           >
             {tokenMsg.type === 'success' ? (
@@ -193,7 +193,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="stat-grid grid-cols-2 sm:grid-cols-4">
           <StatTile label="Active provider" value={settings.provider.toUpperCase()} />
           <StatTile
             label="Universe"
@@ -206,10 +206,10 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     providerMeta.tone === 'emerald'
-                      ? 'bg-emerald-500'
+                      ? 'bg-[var(--ds-bull)]'
                       : providerMeta.tone === 'amber'
-                        ? 'bg-amber-500'
-                        : 'bg-destructive'
+                        ? 'bg-[var(--ds-warn)]'
+                        : 'bg-[var(--ds-bear)]'
                   }`}
                 />
                 <span className="truncate">{providerMeta.label}</span>

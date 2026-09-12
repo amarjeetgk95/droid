@@ -1,17 +1,12 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query
+
+from app.api.envelope import envelope
+from app.models.market import DataStatus
 from app.services.options_service import options_service
-from app.models.market import ApiMeta, DataStatus
 
 router = APIRouter(prefix="/api/v1/options", tags=["options"])
 
-
-def _make_meta() -> ApiMeta:
-    return ApiMeta(
-        provider="options_quant_engine",
-        timestamp=datetime.now(timezone.utc),
-        status=DataStatus.OFFLINE,
-    )
+_PROVIDER = "options_quant_engine"
 
 
 @router.get("/{symbol}/chain")
@@ -20,15 +15,8 @@ async def get_option_chain(
     expiry: str | None = Query(default=None, description="Expiry date in YYYY-MM-DD format"),
 ):
     """Retrieve full interactive option chain strike ladder with Greeks and IV."""
-    try:
-        chain = await options_service.get_option_chain_matrix(symbol, expiry)
-        return {
-            "data": chain.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    chain = await options_service.get_option_chain_matrix(symbol, expiry)
+    return envelope(chain, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/analytics")
@@ -37,15 +25,8 @@ async def get_options_analytics(
     expiry: str | None = Query(default=None, description="Expiry date in YYYY-MM-DD format"),
 ):
     """Retrieve composite options analytics (PCR, Max Pain, ATM IV, Skew)."""
-    try:
-        chain = await options_service.get_option_chain_matrix(symbol, expiry)
-        return {
-            "data": chain.analytics.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    chain = await options_service.get_option_chain_matrix(symbol, expiry)
+    return envelope(chain.analytics, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/max-pain")
@@ -54,15 +35,8 @@ async def get_max_pain(
     expiry: str | None = Query(default=None, description="Expiry date in YYYY-MM-DD format"),
 ):
     """Retrieve Max Pain strike and full payout curve across strikes."""
-    try:
-        max_pain = await options_service.calculate_max_pain(symbol, expiry)
-        return {
-            "data": max_pain.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    max_pain = await options_service.calculate_max_pain(symbol, expiry)
+    return envelope(max_pain, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
 @router.get("/{symbol}/institutional-flow")
@@ -71,13 +45,5 @@ async def get_institutional_flow(
     expiry: str | None = Query(default=None, description="Expiry date in YYYY-MM-DD format"),
 ):
     """Retrieve strike-by-strike institutional build-ups, unwinding, and net flow sentiment."""
-    try:
-        flow = await options_service.get_institutional_oi_flow(symbol, expiry)
-        return {
-            "data": flow.model_dump(mode="json"),
-            "error": None,
-            "meta": _make_meta().model_dump(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    flow = await options_service.get_institutional_oi_flow(symbol, expiry)
+    return envelope(flow, provider=_PROVIDER, status=DataStatus.OFFLINE)

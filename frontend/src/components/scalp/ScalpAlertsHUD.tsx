@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Radio, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw, Zap } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Radio, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw, Zap, Bot } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 
-interface ScalpSignalItem {
+export interface ScalpSignalItem {
   id: string;
   symbol: string;
   strategy: string;
@@ -19,9 +19,21 @@ interface ScalpSignalItem {
   ttl_seconds?: number;
 }
 
+export interface AutoPilotConfig {
+  enabled: boolean;
+  minConfidence: number;
+  maxConcurrent: number;
+  maxDailyLoss: number;
+  antiChaseTolerance: number;
+  soundAlerts: boolean;
+}
+
 interface ScalpAlertsHUDProps {
   currentSpot: number | null;
   onExecuteSignal?: (signalId: string) => void;
+  autoPilot?: AutoPilotConfig;
+  onAutoExecute?: (signal: ScalpSignalItem) => void;
+  executedSignalIds?: Set<string>;
 }
 
 const SCALP_STRATEGIES = new Set([
@@ -35,12 +47,27 @@ const SCALP_STRATEGIES = new Set([
 export function ScalpAlertsHUD({
   currentSpot,
   onExecuteSignal,
+  autoPilot,
+  onAutoExecute,
+  executedSignalIds,
 }: ScalpAlertsHUDProps) {
   const toast = useToast();
   const [signals, setSignals] = useState<ScalpSignalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState<number>(Date.now());
   const [scanning, setScanning] = useState(false);
+
+  const autoPilotRef = useRef(autoPilot);
+  autoPilotRef.current = autoPilot;
+
+  const onAutoExecuteRef = useRef(onAutoExecute);
+  onAutoExecuteRef.current = onAutoExecute;
+
+  const executedIdsRef = useRef(executedSignalIds);
+  executedIdsRef.current = executedSignalIds;
+
+  const currentSpotRef = useRef(currentSpot);
+  currentSpotRef.current = currentSpot;
 
   // Update second ticker for TTL countdown
   useEffect(() => {
@@ -60,6 +87,38 @@ export function ScalpAlertsHUD({
         return SCALP_STRATEGIES.has(strat) || strat.includes('SCALP') || strat.includes('MOMENTUM');
       });
       setSignals(filtered);
+
+      // Auto-Pilot Evaluation
+      const ap = autoPilotRef.current;
+      const autoExec = onAutoExecuteRef.current;
+      const execSet = executedIdsRef.current;
+      const spot = currentSpotRef.current;
+
+      if (ap?.enabled && autoExec) {
+        for (const sig of filtered) {
+          if (execSet?.has(sig.id)) continue;
+
+          // Check TTL expiration
+          const createdAtMs = sig.created_at ? new Date(sig.created_at).getTime() : Date.now();
+          const ttlTotalSec = sig.ttl_seconds || 60;
+          const elapsedSec = Math.floor((Date.now() - createdAtMs) / 1000);
+          if (elapsedSec >= ttlTotalSec) continue;
+
+          // Check Confidence
+          const conf = sig.confidence ?? 80;
+          if (conf < ap.minConfidence) continue;
+
+          // Check Anti-Chase tolerance
+          if (spot && sig.trigger) {
+            const dist = Math.abs(spot - sig.trigger);
+            if (dist > ap.antiChaseTolerance) continue;
+          }
+
+          // Trigger Auto-Execution (at most 1 per poll cycle)
+          autoExec(sig);
+          break;
+        }
+      }
     } catch {
       // Fallback empty
       setSignals([]);
@@ -70,7 +129,7 @@ export function ScalpAlertsHUD({
 
   useEffect(() => {
     fetchScalpSignals();
-    const interval = setInterval(fetchScalpSignals, 6000); // 6s fast poll
+    const interval = setInterval(fetchScalpSignals, 5000); // 5s fast poll
     return () => clearInterval(interval);
   }, [fetchScalpSignals]);
 
@@ -95,6 +154,11 @@ export function ScalpAlertsHUD({
         <div className="flex items-center gap-1.5 font-bold text-foreground">
           <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
           <span>Fast-Path Scalp Radar (1M)</span>
+          {autoPilot?.enabled && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-mono font-semibold animate-pulse">
+              <Bot className="w-3 h-3" /> AUTO-PILOT ON
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -224,15 +288,21 @@ export function ScalpAlertsHUD({
                     )}
                   </span>
 
-                  <button
-                    type="button"
-                    disabled={isExpired}
-                    onClick={() => onExecuteSignal?.(sig.id)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] font-bold transition-all disabled:opacity-30 cursor-pointer"
-                  >
-                    <Play className="w-2.5 h-2.5 fill-current" />
-                    Execute
-                  </button>
+                  {executedSignalIds?.has(sig.id) ? (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-mono font-bold">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Auto-Fired
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isExpired}
+                      onClick={() => onExecuteSignal?.(sig.id)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] font-bold transition-all disabled:opacity-30 cursor-pointer"
+                    >
+                      <Play className="w-2.5 h-2.5 fill-current" />
+                      Execute
+                    </button>
+                  )}
                 </div>
               </div>
             );
