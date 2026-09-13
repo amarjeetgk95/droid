@@ -420,6 +420,12 @@ class SignalAuditLedger:
                 theo_diff = (exit_price - est_entry) if side == "BUY" else (est_entry - exit_price)
                 if side == "BUY" and theo_diff < -est_entry:
                     theo_diff = -est_entry
+                if side == "BUY" and exit_reason == "STOP_LOSS_HIT" and points_diff > 0 and est_entry > exit_price:
+                    entry_price = est_entry
+                    rec.actual_fill_price = est_entry
+                    points_diff = exit_price - est_entry
+                    if points_diff < -entry_price:
+                        points_diff = -entry_price
             except Exception:
                 theo_diff = points_diff
         else:
@@ -451,9 +457,16 @@ class SignalAuditLedger:
 
         theo_pnl_inr = round(theo_diff * qty, 2)
 
-        # Winner classification
-        is_win = actual_pnl_inr > 0
-        final_status = "WON" if is_win else ("LOST" if actual_pnl_inr < 0 else "CLOSED")
+        # Winner classification aligned with FSM terminal domain states
+        if exit_reason in ("STOP_LOSS_HIT", "LOSS"):
+            is_win = False
+            final_status = "LOST"
+        elif exit_reason in ("TARGET_1_HIT", "TARGET_2_HIT", "WON"):
+            is_win = True
+            final_status = "WON"
+        else:
+            is_win = actual_pnl_inr > 0
+            final_status = "WON" if is_win else ("LOST" if actual_pnl_inr < 0 else "CLOSED")
 
         rec.exit_price = exit_price
         rec.exited_at_utc = now_ms

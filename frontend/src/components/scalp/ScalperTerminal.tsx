@@ -18,13 +18,29 @@ import { api } from '@/lib/api';
 import { VirtualPosition } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
 
-function playScalpAudio(type: 'enter' | 'panic' | 'limit') {
+let sharedScalpAudioCtx: AudioContext | null = null;
+function getScalpAudioCtx(): AudioContext | null {
   try {
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    if (!AudioCtx) return null;
+    if (!sharedScalpAudioCtx || sharedScalpAudioCtx.state === 'closed') {
+      sharedScalpAudioCtx = new AudioCtx();
+    }
+    if (sharedScalpAudioCtx.state === 'suspended') {
+      void sharedScalpAudioCtx.resume().catch(() => undefined);
+    }
+    return sharedScalpAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
+function playScalpAudio(type: 'enter' | 'panic' | 'limit') {
+  try {
+    const ctx = getScalpAudioCtx();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
@@ -63,9 +79,12 @@ function playScalpAudio(type: 'enter' | 'panic' | 'limit') {
 export function ScalperTerminal() {
   const toast = useToast();
   const [underlying, setUnderlying] = useState<'NIFTY' | 'BANKNIFTY' | 'SENSEX'>('NIFTY');
-  const [spotPrice, setSpotPrice] = useState<number>(24500.0);
+  // 0 = no live quote yet — ticket stays blocked instead of trading a synthetic default.
+  const [spotPrice, setSpotPrice] = useState<number>(0);
+  const [spotUpdatedAt, setSpotUpdatedAt] = useState<number | null>(null);
   const [timeframe, setTimeframe] = useState<'1m' | '3m' | '5m'>('1m');
   const [positionsTrigger, setPositionsTrigger] = useState<number>(0);
+  const [bracket, setBracket] = useState<{ sl: number; tp: number }>({ sl: 8, tp: 16 });
 
   // Positions and circuit breakers state
   const [openPositions, setOpenPositions] = useState<VirtualPosition[]>([]);
@@ -93,22 +112,69 @@ export function ScalperTerminal() {
   const executedIdsRef = useRef(executedSignalIds);
   executedIdsRef.current = executedSignalIds;
 
+  const isAutoExecutingRef = useRef(false);
+  const pendingAutoExecRef = useRef(0);
+  // Realized P&L from closed positions (portfolio lifetime since reset ≈
+  // intraday session). Prevents the daily-loss guard resetting to 0 after
+  // panic square-off when open unrealized goes back to 0.
+  const dailyRealizedRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchRealized = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      try {
+        const res = await api.getPaperPortfolio();
+        const realized = res.data?.total_realized_pnl;
+        if (!cancelled && Number.isFinite(realized)) {
+          dailyRealizedRef.current = Number(realized);
+        }
+      } catch {
+        // keep last known realized — guard stays conservative
+      }
+    };
+    fetchRealized();
+    const interval = setInterval(fetchRealized, 10000);
+    const onVisible = () => {
+      if (!document.hidden) fetchRealized();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   const fetchQuote = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const sym = underlying === 'NIFTY' ? 'NIFTY 50' : underlying;
       const res = await api.getQuote(sym);
       if (res.data?.ltp && res.data.ltp > 0) {
-        setSpotPrice(res.data.ltp);
+        setSpotPrice((prev) => (prev === res.data.ltp ? prev : res.data.ltp));
+        // Always refresh the fetch timestamp, even when LTP is flat, so the
+        // ticket doesn't falsely report a stale spot.
+        setSpotUpdatedAt(Date.now());
       }
     } catch {
-      // ignore quote error
+      // keep last good spot — never fall back to a synthetic price
     }
   }, [underlying]);
 
   useEffect(() => {
+    setSpotPrice(0); // drop stale underlying's price so ATM can't fire on it
+    setSpotUpdatedAt(null);
     fetchQuote();
     const interval = setInterval(fetchQuote, 3000); // 3s quote refresh
-    return () => clearInterval(interval);
+    const onVisible = () => {
+      if (!document.hidden) fetchQuote();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [fetchQuote]);
 
   const handleOrderExecuted = useCallback(() => {
@@ -136,11 +202,14 @@ export function ScalperTerminal() {
       const currentOpen = openPositionsRef.current;
       const execSet = executedIdsRef.current;
 
-      // Circuit Breaker 1: Already executed
+      // Circuit Breaker 1: Already executed (or in-flight)
       if (execSet.has(sig.id)) return;
+      // Guard against overlapping auto-executions racing the 2.5s positions poll.
+      if (isAutoExecutingRef.current) return;
 
-      // Circuit Breaker 2: Max concurrent open scalps
-      if (currentOpen.length >= ap.maxConcurrent) {
+      // Circuit Breaker 2: Max concurrent open scalps (include in-flight orders)
+      const effectiveOpen = currentOpen.length + pendingAutoExecRef.current;
+      if (effectiveOpen >= ap.maxConcurrent) {
         if (ap.soundAlerts) playScalpAudio('limit');
         toast.warning(
           `Auto-Pilot Paused: Max concurrent scalps (${ap.maxConcurrent}) already open.`
@@ -148,8 +217,11 @@ export function ScalperTerminal() {
         return;
       }
 
-      // Circuit Breaker 3: Daily max loss cutoff
-      const totalPnl = currentOpen.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
+      // Circuit Breaker 3: Daily max loss cutoff (unrealized + realized so
+      // panic square-off can't reset the guard back to 0).
+      const unrealized = currentOpen.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
+      const realizedOpen = currentOpen.reduce((acc, p) => acc + (p.realized_pnl || 0), 0);
+      const totalPnl = unrealized + realizedOpen + dailyRealizedRef.current;
       if (totalPnl <= -ap.maxDailyLoss) {
         if (ap.soundAlerts) playScalpAudio('panic');
         toast.error(
@@ -162,7 +234,10 @@ export function ScalperTerminal() {
       }
 
       try {
+        isAutoExecutingRef.current = true;
         setIsAutoExecuting(true);
+        pendingAutoExecRef.current += 1;
+        // Mark in-flight optimistically so a second poll cycle can't double-fire.
         setExecutedSignalIds((prev) => new Set(prev).add(sig.id));
 
         await api.executeSignalPaper(sig.id);
@@ -176,8 +251,16 @@ export function ScalperTerminal() {
           }% Conf)`
         );
       } catch (err: unknown) {
+        // Allow retry after a failed fill — don't permanently block the signal.
+        setExecutedSignalIds((prev) => {
+          const next = new Set(prev);
+          next.delete(sig.id);
+          return next;
+        });
         toast.error(`Auto-Pilot execution failed: ${(err as Error)?.message || 'Unknown error'}`);
       } finally {
+        pendingAutoExecRef.current = Math.max(0, pendingAutoExecRef.current - 1);
+        isAutoExecutingRef.current = false;
         setIsAutoExecuting(false);
       }
     },
@@ -391,7 +474,9 @@ export function ScalperTerminal() {
             symbol={underlying === 'NIFTY' ? 'NIFTY 50' : underlying}
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
-            spotPrice={spotPrice}
+            spotPrice={spotPrice > 0 ? spotPrice : null}
+            slDistance={bracket.sl}
+            tpDistance={bracket.tp}
           />
         </div>
 
@@ -400,13 +485,19 @@ export function ScalperTerminal() {
           <QuickScalpTicket
             underlying={underlying}
             spotPrice={spotPrice}
+            spotUpdatedAt={spotUpdatedAt}
             onUnderlyingChange={setUnderlying}
             onOrderPlaced={handleOrderExecuted}
+            onRetrySpot={fetchQuote}
+            onBracketChange={(sl, tp) =>
+              setBracket((prev) => (prev.sl === sl && prev.tp === tp ? prev : { sl, tp }))
+            }
           />
 
           <div className="flex-1 min-h-[220px]">
             <ScalpAlertsHUD
-              currentSpot={spotPrice}
+              currentSpot={spotPrice > 0 ? spotPrice : null}
+              underlying={underlying}
               onExecuteSignal={handleExecuteSignal}
               autoPilot={autoPilot}
               onAutoExecute={handleAutoExecuteSignal}

@@ -85,6 +85,62 @@ LAYER_WEIGHTS = {
     "structure": 0.05,
 }
 
+# Regime-adaptive layer weights for Tactical Horizon Bias:
+# - Trending: Trend alignment & ML momentum dominate
+# - Ranging / Compressing: Indicators (oscillators/VWAP) & options walls dominate
+# - Volatile: Options gamma/IV & structure dominate
+REGIME_LAYER_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "TRENDING": {
+        "mtf_alignment": 0.35,
+        "indicators": 0.20,
+        "ml": 0.30,
+        "options": 0.10,
+        "structure": 0.05,
+    },
+    "RANGING": {
+        "mtf_alignment": 0.15,
+        "indicators": 0.35,
+        "ml": 0.15,
+        "options": 0.25,
+        "structure": 0.10,
+    },
+    "COMPRESSING": {
+        "mtf_alignment": 0.15,
+        "indicators": 0.35,
+        "ml": 0.15,
+        "options": 0.25,
+        "structure": 0.10,
+    },
+    "VOLATILE": {
+        "mtf_alignment": 0.25,
+        "indicators": 0.20,
+        "ml": 0.20,
+        "options": 0.25,
+        "structure": 0.10,
+    },
+    "DEFAULT": dict(LAYER_WEIGHTS),
+}
+
+
+def _is_adaptive_weights_enabled() -> bool:
+    raw = (os.getenv("FORECAST_WEIGHTS_VERSION", "v1") or "v1").strip().lower()
+    return raw in ("adaptive", "v2", "adaptive-v2") or (
+        os.getenv("FORECAST_ADAPTIVE_WEIGHTS", "false") or "false"
+    ).strip().lower() in ("true", "1", "yes", "on")
+
+
+def get_regime_layer_weights(regime: Optional[str] = None, adaptive: Optional[bool] = None) -> Dict[str, float]:
+    """Resolve layer weights dynamically conditioned on market regime."""
+    is_adaptive = adaptive if adaptive is not None else _is_adaptive_weights_enabled()
+    if not is_adaptive:
+        return dict(LAYER_WEIGHTS)
+    reg = str(regime or "").upper()
+    for key, weights in REGIME_LAYER_WEIGHTS.items():
+        if key != "DEFAULT" and key in reg:
+            return dict(weights)
+    return dict(REGIME_LAYER_WEIGHTS["DEFAULT"])
+
+
 # Supported forecast horizons. ml_minutes=None means the ML predictor has no
 # calibrated artifact for that horizon (see app.ml.targets.SUPPORTED_HORIZONS)
 # and the ML layer degrades gracefully to neutral.
@@ -1076,15 +1132,21 @@ class TrendForecaster:
         if max_pain and max_pain > 0:
             pain_dist_pct = ((max_pain - current_price) / current_price) * 100.0
             opt_score += max(-20.0, min(20.0, pain_dist_pct * 15.0))
-        # Wall proximity
+        # Wall proximity: continuous exponential decay instead of binary cliff
         if call_wall and call_wall > current_price:
             call_dist_pct = ((call_wall - current_price) / current_price) * 100.0
             if call_dist_pct < 0.4:
                 opt_score -= 20.0
+            else:
+                prox = math.exp(-(((call_dist_pct - 0.4) / 0.5) ** 2))
+                opt_score -= round(20.0 * prox, 2)
         if put_wall and put_wall < current_price:
             put_dist_pct = ((current_price - put_wall) / current_price) * 100.0
             if put_dist_pct < 0.4:
                 opt_score += 20.0
+            else:
+                prox = math.exp(-(((put_dist_pct - 0.4) / 0.5) ** 2))
+                opt_score += round(20.0 * prox, 2)
         opt_score = max(-100.0, min(100.0, opt_score))
 
         # Layer 5: Primary-timeframe structure
@@ -1111,13 +1173,18 @@ class TrendForecaster:
         structure_score += max(-20.0, min(20.0, (rsi_primary - 50.0) * 0.8))
         structure_score = max(-100.0, min(100.0, structure_score))
 
-        # Weighted ensemble
+        # Extract regime and session for regime-adaptive weighting
+        regime_v2 = self._extract_regime(mtf_features, timeframe)
+        session_v2 = self._extract_session(mtf_features, timeframe)
+        weights = get_regime_layer_weights(regime_v2)
+
+        # Weighted ensemble using regime-adaptive weights
         final_score = (
-            LAYER_WEIGHTS["mtf_alignment"] * mtf_normalized +
-            LAYER_WEIGHTS["indicators"] * ind_score +
-            LAYER_WEIGHTS["ml"] * ml_score +
-            LAYER_WEIGHTS["options"] * opt_score +
-            LAYER_WEIGHTS["structure"] * structure_score
+            weights["mtf_alignment"] * mtf_normalized +
+            weights["indicators"] * ind_score +
+            weights["ml"] * ml_score +
+            weights["options"] * opt_score +
+            weights["structure"] * structure_score
         )
         final_score = round(max(-100.0, min(100.0, final_score)), 2)
 
@@ -1144,12 +1211,20 @@ class TrendForecaster:
         if direction == Direction.BULLISH:
             target_price = round(current_price + (1.8 * atr_primary), 2)
             invalidation_price = round(current_price - (1.1 * atr_primary), 2)
+            expected_range_default = None
         elif direction == Direction.BEARISH:
             target_price = round(current_price - (1.8 * atr_primary), 2)
             invalidation_price = round(current_price + (1.1 * atr_primary), 2)
+            expected_range_default = None
         else:
             target_price = None
             invalidation_price = None
+            half_band = round(atr_primary * 0.75, 2)
+            expected_range_default = {
+                "lower": round(current_price - half_band, 2),
+                "mid": round(current_price, 2),
+                "upper": round(current_price + half_band, 2),
+            }
 
         result = {
             "instrument": mtf_features.get("instrument"),
@@ -1158,6 +1233,8 @@ class TrendForecaster:
             "horizon_candles": horizon_candles,
             "current_price": round(current_price, 2),
             "direction": direction.value,
+            "tactical_bias": direction.value,
+            "engine": "tactical_horizon_bias",
             "score": final_score,
             "confidence": confidence,
             "target_price": target_price,
@@ -1169,6 +1246,7 @@ class TrendForecaster:
                 "options": round(opt_score, 2),
                 "structure": round(structure_score, 2),
             },
+            "layer_weights": weights,
             "ml_forecast": ml_forecast,
             "indicator_outputs": [out.model_dump() for out in indicator_outputs],
             "mtf_features": mtf_features,
@@ -1183,8 +1261,6 @@ class TrendForecaster:
         raw_confidence = round(max(probabilities.values()), 4)
         ml_source = (ml_forecast or {}).get("model_source") or "unavailable"
         ml_model_version = (ml_forecast or {}).get("model_version") or None
-        regime_v2 = self._extract_regime(mtf_features, timeframe)
-        session_v2 = self._extract_session(mtf_features, timeframe)
         result.update(
             {
                 "forecast_version": f"{horizon}-v2",
@@ -1235,6 +1311,31 @@ class TrendForecaster:
                         ml_source = m2_info["model_source"]
                 if m2_info.get("limitation"):
                     v2_limitations.append(m2_info["limitation"])
+                # 1b. Stacker v1 (flag-gated, artifact-gated): learned blend over
+                # layer scores + regime/session/dte/iv. Missing artifact or
+                # FORECAST_STACKER!=on -> keep p_raw untouched (honest fallback).
+                try:
+                    import os as _os
+
+                    if (_os.getenv("FORECAST_STACKER", "off") or "off").strip().lower() in ("on", "true", "1", "yes"):
+                        from app.ml.stacker_v1 import build_stacker_row, predict_stacker
+
+                        _row = build_stacker_row(
+                            {"mtf": mtf_normalized, "indicators": ind_score, "ml": ml_score,
+                             "options": opt_score, "structure": structure_score},
+                            regime=regime_v2, session=session_v2,
+                            dte_days=(options_ctx or {}).get("days_to_expiry"),
+                            iv_rank=None, missing_count=0,
+                        )
+                        _sp = predict_stacker(_row)
+                        if _sp is not None:
+                            p_raw = {"bullish": _sp["bullish"], "neutral": _sp["neutral"], "bearish": _sp["bearish"]}
+                            ml_source = "stacker_v1"
+                            ml_model_version = "stacker-v1"
+                        else:
+                            v2_limitations.append("stacker-missing-fallback-layers")
+                except Exception as _se:
+                    v2_limitations.append(f"stacker-failed-fallback-layers:{str(_se)[:80]}")
                 raw_conf_v2 = round(max(p_raw.values()), 4)
 
                 # 2. Calibrate (persisted CalibratorV1 when present).
@@ -1832,22 +1933,33 @@ class TrendForecaster:
         return result
 
 
-class TrendForecast1H(TrendForecaster):
-    """Backwards-compatible 1-hour forecaster (thin wrapper over TrendForecaster)."""
+class TacticalHorizonEngine(TrendForecaster):
+    """Institutional Tactical Horizon Bias engine.
+
+    Provides probabilistic directional bias, expected range, and risk invalidation
+    across multi-timeframe horizons (1m / 5m / 15m / 30m / 60m), replacing rigid
+    deterministic 'forecast' assumptions with regime-conditioned expected moves.
+    """
 
     async def get_ml_1h_forecast(self, instrument: str) -> Optional[Dict[str, Any]]:
         """Get the quantitative ML ensemble forecast for a 60-minute horizon."""
         return await self.get_ml_forecast(instrument, 60)
 
-    async def forecast(
+    async def get_tactical_bias(
         self,
         instrument: str,
+        horizon: str = "1h",
         record: bool = True,
     ) -> Dict[str, Any]:
-        """Generate a 1-hour trend forecast and optionally persist it immutably."""
-        return await super().forecast(instrument=instrument, horizon="1h", record=record)
+        """Generate a tactical horizon bias and optionally persist it immutably."""
+        return await self.forecast(instrument=instrument, horizon=horizon, record=record)
 
+
+# Backward-compatible class alias
+TrendForecast1H = TacticalHorizonEngine
 
 # Module-level singletons for convenient import
-trend_forecaster = TrendForecaster()
-trend_forecast_1h = TrendForecast1H()
+tactical_horizon_engine = TacticalHorizonEngine()
+trend_forecaster = tactical_horizon_engine
+trend_forecast_1h = tactical_horizon_engine
+

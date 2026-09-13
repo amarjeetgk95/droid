@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ShieldAlert, RefreshCw, XCircle, AlertOctagon } from 'lucide-react';
 import { api } from '@/lib/api';
 import { VirtualPosition } from '@/lib/types';
@@ -79,18 +79,23 @@ export function ActiveScalpPositions({
     }
   };
 
-  // Keyboard shortcut listener: Shift + Escape to trigger panic square-off
+  const panicRef = useRef(handlePanicSquareOffAll);
+  useEffect(() => {
+    panicRef.current = handlePanicSquareOffAll;
+  });
+
+  // Keyboard shortcut listener: Shift + Escape to trigger panic square-off.
+  // Uses a ref so we subscribe once instead of on every positions poll.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.shiftKey && e.key === 'Escape') {
         e.preventDefault();
-        handlePanicSquareOffAll();
+        panicRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions]);
+  }, []);
 
   const totalUnrealized = positions.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
 

@@ -23,6 +23,19 @@ class TestHealthEndpoints:
         assert data["provider"] == "fyers"
         assert data["mode"] in ("OFFLINE", "LIVE", "DEMO")
 
+    def test_subsystems_health(self):
+        r = client.get("/health/subsystems")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "ok"
+        assert "elements" in data
+        assert data["elements"]["server"] is True
+        assert "central_feed" in data["elements"]
+        assert "signal_worker" in data["elements"]
+        assert "forecast_scheduler" in data["elements"]
+        assert "flow_scheduler" in data["elements"]
+
+
 
 class TestMarketEndpoints:
     def test_get_all_quotes(self):

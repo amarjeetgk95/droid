@@ -18,7 +18,7 @@ def normalize_database_url(url: str, for_async: bool = True) -> str:
     """Normalize database URL for asyncpg / psycopg and resolve IPv6-only Supabase direct hosts.
 
     Supabase direct DB hosts (db.<ref>.supabase.co) only provide IPv6 (AAAA) records.
-    Cloud platforms without IPv6 egress (such as Render) fail with [Errno 101] Network is unreachable.
+    Hosts without IPv6 egress fail with [Errno 101] Network is unreachable.
     This function automatically routes db.<ref>.supabase.co to the Supabase IPv4 connection pooler.
     """
     if not url:

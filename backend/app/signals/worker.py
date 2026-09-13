@@ -16,6 +16,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any, Coroutine
 import structlog
 
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS
@@ -89,6 +90,57 @@ class AutomatedSignalWorker:
         self._scanner_task = None
         logger.info("automated_signal_worker_stopped")
 
+    def spawn_background_task(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        name: str = "signal_worker_task",
+    ) -> asyncio.Task:
+        """
+        Centrally spawns, strongly references, and protects background async tasks.
+        Ensures tasks are kept alive, cleanly auto-discarded upon completion,
+        and unhandled exceptions are logged with structured context.
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._bg_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._bg_tasks.discard(t)
+            if not t.cancelled():
+                exc = t.exception()
+                if exc:
+                    logger.warning("worker_background_task_failed", name=name, error=str(exc)[:250])
+
+        task.add_done_callback(_on_done)
+        return task
+
+    async def _broadcast_audit_and_sse(self, sym: str, price_val: Decimal) -> None:
+        """Non-critical telemetry & audit MTM update."""
+        try:
+            import time as _time
+            from app.signals.audit_ledger import signal_audit_ledger
+            from app.signals.sse import signal_sse_hub
+
+            updated_recs = signal_audit_ledger.update_live_quote(sym, float(price_val))
+            if updated_recs:
+                try:
+                    deltas = [r.model_dump() for r in updated_recs[:50]]
+                except Exception:
+                    deltas = []
+                await signal_sse_hub.broadcast(
+                    "audit_pnl_update",
+                    {
+                        "underlying": sym,
+                        "ltp": float(price_val),
+                        "summary": signal_audit_ledger.get_summary_metrics(),
+                        "trades": deltas,
+                        "count": len(updated_recs),
+                        "timestamp_ms": int(_time.time() * 1000),
+                    },
+                    priority="P1",
+                )
+        except Exception as te_err:
+            logger.debug("worker_bg_audit_telemetry_error", underlying=sym, error=str(te_err))
+
     async def _run_position_risk_loop(self) -> None:
         """
         Dedicated 3-second open-position risk management loop (§14).
@@ -108,9 +160,10 @@ class AutomatedSignalWorker:
                         # EOD square-off: the FSM sweep alone never books P&L —
                         # without this, open paper positions and EXECUTED audit
                         # rows survive overnight with frozen MTM (ghost opens).
-                        eod_task = asyncio.create_task(self._settle_eod_positions())
-                        self._bg_tasks.add(eod_task)
-                        eod_task.add_done_callback(self._bg_tasks.discard)
+                        self.spawn_background_task(
+                            self._settle_eod_positions(),
+                            name="worker_eod_squareoff",
+                        )
 
                     now_wall = time.time()
                     if now_wall - self._last_risk_closed_log_ts >= 60.0:
@@ -160,39 +213,10 @@ class AutomatedSignalWorker:
                         await outcome_tracker.process_price_update_async(u, curr_p)
 
                         # Non-critical telemetry & audit MTM update: offload to background task to protect 2500ms cycle budget
-                        async def _bg_audit_and_sse(sym: str, price_val: Decimal):
-                            try:
-                                import time as _time
-
-                                from app.signals.audit_ledger import signal_audit_ledger
-                                from app.signals.sse import signal_sse_hub
-                                updated_recs = signal_audit_ledger.update_live_quote(sym, float(price_val))
-                                if updated_recs:
-                                    # Include per-trade MTM deltas so the P&L ledger can
-                                    # apply SSE updates incrementally without a full
-                                    # /audit refetch every 3s. Cap payload size.
-                                    try:
-                                        deltas = [r.model_dump() for r in updated_recs[:50]]
-                                    except Exception:
-                                        deltas = []
-                                    await signal_sse_hub.broadcast(
-                                        "audit_pnl_update",
-                                        {
-                                            "underlying": sym,
-                                            "ltp": float(price_val),
-                                            "summary": signal_audit_ledger.get_summary_metrics(),
-                                            "trades": deltas,
-                                            "count": len(updated_recs),
-                                            "timestamp_ms": int(_time.time() * 1000),
-                                        },
-                                        priority="P1",
-                                    )
-                            except Exception as te_err:
-                                logger.debug("worker_bg_audit_telemetry_error", underlying=sym, error=str(te_err))
-
-                        bg_task = asyncio.create_task(_bg_audit_and_sse(u, curr_p))
-                        self._bg_tasks.add(bg_task)
-                        bg_task.add_done_callback(self._bg_tasks.discard)
+                        self.spawn_background_task(
+                            self._broadcast_audit_and_sse(u, curr_p),
+                            name=f"worker_audit_sse_{u}",
+                        )
                     except Exception as pe:
                         logger.debug("worker_risk_tick_err", underlying=u, error=str(pe))
 

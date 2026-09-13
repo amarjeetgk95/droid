@@ -37,7 +37,7 @@ frontend/src/components/settings/
   ai/ConnectionModeSelector.tsx, RoutingModeSelector.tsx, TaskRoutingGrid.tsx,
      OpenRouterPanel.tsx, DirectProviderPanel.tsx, OllamaPanel.tsx,
      PersonaControls.tsx, LiveVerification.tsx
-  broker/ApiTypeSelector.tsx, ProviderGrid.tsx, RenderIntegrationCard.tsx,
+  broker/ApiTypeSelector.tsx, ProviderGrid.tsx, FyersGatewayCard.tsx,
          TelemetryCard.tsx, AdvancedDrawer.tsx, constants.ts
 backend/app/
   models/database.py       // user_settings.schema_version, encrypted_secrets (future)
@@ -79,7 +79,7 @@ type AISettings =
 ## 7. Open Qs Resolved for Now
 - Secrets stay in `app_settings` JSONB this cycle; `encrypted_secrets` column reserved.
 - Telegram stays as Notifications tab but remains API-driven, not in AppSettings.
-- `backend/app/core/config.py:14 backend_public_url` becomes canonical REDIRECT_BASE source next cycle; hardcoded Render URL kept with single constant.
+- `backend/app/core/config.py:14 backend_public_url` becomes canonical REDIRECT_BASE source next cycle; localhost URL kept with single constant.
 
 ## 8. File References
 - Frontend entry: `frontend/src/app/(app)/settings/page.tsx:300`

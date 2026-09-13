@@ -61,52 +61,34 @@ class FSMTransitionAudit(BaseModel):
     guard_snapshot: dict = Field(default_factory=dict)
 
 
-def compute_option_friction_r(
-    entry_premium: float,
-    exit_premium: float,
-    lots: int = 1,
-    lot_size: int = 65,
-    risk_points_premium: float = 20.0,
-) -> tuple[float, dict]:
-    """
-    Computes total round-trip transaction costs + slippage normalized to 1R for Indian Index Options.
-    Brokerage: Rs 20 entry + Rs 20 exit
-    STT: 0.1% on sell side turnover
-    Exchange txn: 0.05% on total turnover
-    GST: 18% on (brokerage + exchange txn)
-    SEBI & Stamp duty: ~0.003%
-    Slippage model: 0.5% of combined entry + exit premium
-    Returns (friction_in_r, breakdown_dict).
-    """
-    lots = max(1, lots)
-    lot_size = max(1, lot_size)
-    qty = lots * lot_size
-    turnover_entry = entry_premium * qty
-    turnover_exit = exit_premium * qty
+from app.signals.transaction_costs import (
+    DEFAULT_COST_SCHEDULE,
+    DEFAULT_SIGNAL_TTL_MS,
+    FSM_MAX_AUDIT_LOG_ENTRIES,
+    FSM_MAX_SIGNALS_IN_MEMORY,
+    IndianFNOCostSchedule,
+    compute_option_friction_r,
+    compute_terminal_outcome,
+    estimate_exit_premium,
+)
 
-    brokerage = 40.0
-    stt = 0.001 * turnover_exit
-    txn_charges = 0.0005 * (turnover_entry + turnover_exit)
-    gst = 0.18 * (brokerage + txn_charges)
-    sebi_stamp = (0.00003 * turnover_entry) + (0.000001 * (turnover_entry + turnover_exit))
-    slippage_pts = max(0.5, (entry_premium + exit_premium) * 0.005)
-    slippage_cost = slippage_pts * qty
+_exit_premium_for_friction = estimate_exit_premium
 
-    total_cost_inr = brokerage + stt + txn_charges + gst + sebi_stamp + slippage_cost
-    risk_inr = max(100.0, risk_points_premium * qty)
-    friction_r = total_cost_inr / risk_inr
+from app.signals.event_bus import SignalEvent, SignalEventType, signal_event_bus
+try:
+    from app.signals.handlers import register_default_handlers
+    register_default_handlers()
+except Exception:
+    pass
 
-    breakdown = {
-        "brokerage_inr": round(brokerage, 2),
-        "stt_inr": round(stt, 2),
-        "txn_charges_inr": round(txn_charges, 2),
-        "gst_inr": round(gst, 2),
-        "sebi_stamp_inr": round(sebi_stamp, 2),
-        "slippage_cost_inr": round(slippage_cost, 2),
-        "total_friction_inr": round(total_cost_inr, 2),
-        "friction_r": round(friction_r, 4),
-    }
-    return round(friction_r, 4), breakdown
+
+def _should_use_event_bus() -> bool:
+    try:
+        from app.core.config import settings
+        return getattr(settings, "use_event_bus", True)
+    except Exception:
+        return True
+
 
 
 def _spot_be_reference(sig: SignalInstance) -> Decimal | None:
@@ -220,7 +202,7 @@ class SignalInstance(BaseModel):
     # State & Lifecycle
     fsm_state: SignalFSMState = "DETECTED"
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
-    expires_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000) + 300000)
+    expires_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000) + DEFAULT_SIGNAL_TTL_MS)
     ttl_seconds: int = 300
     last_updated_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
 
@@ -249,6 +231,7 @@ class SignalInstance(BaseModel):
     state_history: list[FSMTransitionAudit] = Field(default_factory=list)
 
     # v3.0 Decoupled Domain Links & Auditable Metadata
+    version: int = 1
     execution_intent_id: str | None = None
     position_id: str | None = None
     strategy_version: int = 1
@@ -313,45 +296,172 @@ class SignalInstance(BaseModel):
             "created_at_utc": self.created_at_utc,
         }
 
+    # ── Phase 2 Domain Model Views ────────────────────────────────────
+    @property
+    def definition(self):
+        """Immutable view of the strategy decision."""
+        from app.signals.signal_model import SignalDefinition
+        return SignalDefinition(
+            signal_id=self.signal_id,
+            underlying=self.underlying,
+            strategy=self.strategy,
+            direction=self.direction,
+            timeframe=self.timeframe,
+            spot_price=self.spot_price,
+            entry_min=self.entry_min,
+            entry_max=self.entry_max,
+            trigger=self.trigger,
+            stop_loss=self.stop_loss,
+            target_1=self.target_1,
+            target_2=self.target_2,
+            risk_points=self.risk_points,
+            risk_reward_t1=self.risk_reward_t1,
+            risk_reward_t2=self.risk_reward_t2,
+            confidence=self.confidence,
+            signal_type=self.signal_type,
+            is_scalp=self.is_scalp,
+            ttl_seconds=self.ttl_seconds,
+            strategy_version=self.strategy_version,
+            scoring_version=self.scoring_version,
+            feature_version=self.feature_version,
+            created_at_utc=self.created_at_utc,
+        )
 
-def _exit_premium_for_friction(sig: SignalInstance, market_price: Decimal | None) -> float:
-    """
-    Exit premium in the option domain for friction math.
+    @property
+    def risk_sizing(self):
+        """View of risk engine capital allocation and limits."""
+        from app.signals.signal_model import RiskSizing
+        return RiskSizing(
+            lots=self.lots,
+            quantity=self.quantity,
+            max_rupee_loss=self.max_rupee_loss,
+            risk_r=self.risk_r,
+        )
 
-    Transitions receive underlying SPOT ticks, but entry fills are option
-    PREMIUMS. Feeding a spot exit (e.g. 23773) against a premium entry (118)
-    fabricates ~8R of friction (STT/slippage on a ₹17L phantom turnover) and
-    turns every win's realized_rr_net deeply negative — poisoning win-rate,
-    expectancy and profit-factor metrics. Estimate the exit premium via
-    Black76 when the signal owns an option contract; otherwise fall back to
-    the raw tick (spot-tracked flow, unchanged behavior).
+    @property
+    def confluence_typed(self):
+        """Typed view of multi-domain confluence scoring."""
+        from app.signals.signal_model import ConfluenceBreakdown
+        try:
+            return ConfluenceBreakdown.model_validate(self.confluence_breakdown or {})
+        except Exception:
+            return ConfluenceBreakdown()
+
+    @property
+    def execution_state(self):
+        """View of broker execution and fill reconciliation state."""
+        from app.signals.signal_model import ExecutionState
+        return ExecutionState(
+            fsm_state=self.fsm_state,
+            initial_stop_loss=self.initial_stop_loss,
+            current_stop_loss=self.current_stop_loss,
+            breakeven_activated=self.breakeven_activated,
+            breakeven_trigger_price=self.breakeven_trigger_price,
+            breakeven_activation_price=self.breakeven_activation_price,
+            time_stop_seconds=self.time_stop_seconds,
+            time_stop_at_utc=self.time_stop_at_utc,
+            runner_time_stop_at_utc=self.runner_time_stop_at_utc,
+            runner_ttl_seconds=self.runner_ttl_seconds,
+            entry_price=self.entry_price,
+            actual_fill_price=self.actual_fill_price,
+            remaining_qty=self.remaining_qty,
+            intended_qty=self.intended_qty,
+            t1_price=self.t1_price,
+            t2_price=self.t2_price,
+            t1_hit=self.t1_hit,
+            t1_fill_timestamp=self.t1_fill_timestamp,
+            t2_hit=self.t2_hit,
+            paper_order=self.paper_order,
+            last_updated_utc=self.last_updated_utc,
+        )
+
+    @property
+    def outcome_typed(self):
+        """Typed view of realized financial outcome."""
+        from app.signals.signal_model import SignalOutcome
+        return SignalOutcome(
+            exit_price=self.exit_price,
+            realized_rr=self.realized_rr,
+            realized_rr_gross=self.realized_rr_gross,
+            realized_rr_net=self.realized_rr_net,
+            cost_breakdown_r=self.cost_breakdown_r,
+            terminal_outcome=self.terminal_outcome,
+            outcome_status=self.outcome_status,
+        )
+
+
+
+
+def apply_fsm_transition_pure(
+    sig: SignalInstance,
+    to_state: SignalFSMState,
+    market_price: Decimal | None = None,
+    timestamp_ms: int | None = None,
+    expected_version: int | None = None,
+) -> tuple[bool, str | None]:
     """
-    try:
-        opt = sig.option_contract or {}
-        strike = opt.get("strike")
-        if strike and ("CALL" in str(sig.direction) or "PUT" in str(sig.direction)):
-            from app.signals.fill_reconciler import option_fill_reconciler
-            otype = str(opt.get("option_type") or ("CE" if "CALL" in str(sig.direction) else "PE"))
-            try:
-                dte = float(opt.get("dte", 3.0) or 3.0)
-            except Exception:
-                dte = 3.0
-            try:
-                spot = float(market_price if market_price is not None else (sig.trigger or 0.0))
-            except Exception:
-                spot = 0.0
-            if spot > 0 and float(strike) > 0:
-                return float(
-                    option_fill_reconciler.estimate_option_premium(
-                        spot=spot, strike=float(strike), option_type=otype, dte_days=dte
-                    )
-                )
-    except Exception:
-        pass
-    try:
-        return float(market_price or 0.0)
-    except Exception:
-        return 0.0
+    Pure state machine transition logic for SignalInstance.
+    Enforces allowed transitions, FNO integrity guard, two-clock lifecycle,
+    and optimistic concurrency versioning.
+    """
+    if expected_version is not None and sig.version != expected_version:
+        return False, f"Optimistic concurrency conflict: signal version is {sig.version}, expected {expected_version}"
+
+    if sig.fsm_state == to_state:
+        return True, None
+
+    allowed = ALLOWED_TRANSITIONS.get(sig.fsm_state, set())
+    if to_state not in allowed:
+        return False, f"Illegal transition {sig.fsm_state} -> {to_state}"
+
+    # State-Aware F&O Guard (§1): Never allow degraded F&O signals to ARM or TRIGGER
+    if to_state in ("ARMED", "TRIGGERED", "CONFIRMED"):
+        if sig.confluence_breakdown and sig.confluence_breakdown.get("fno_degraded"):
+            return False, "FNO_DATA_DEGRADED_CANNOT_ARM"
+
+    now_ms = timestamp_ms or int(time.time() * 1000)
+    sig.fsm_state = to_state
+    sig.last_updated_utc = now_ms
+    sig.version += 1
+
+    # Update specific timestamps & Two-Clock Lifecycle transitions (§6, §20)
+    if to_state == "TRIGGERED":
+        sig.triggered_at_utc = now_ms
+    elif to_state == "CONFIRMED":
+        sig.confirmed_at_utc = now_ms
+        # Anchor Active Trade Holding Time-Stop (§18, §20)
+        if sig.time_stop_at_utc is None:
+            duration_sec = sig.time_stop_seconds or (900 if sig.is_scalp else 4500)
+            sig.time_stop_at_utc = now_ms + (duration_sec * 1000)
+    elif to_state in (
+        "TARGET_1_HIT",
+        "TARGET_2_HIT",
+        "STOP_LOSS_HIT",
+        "TIME_STOP_HIT",
+        "RUNNER_TIME_STOP_HIT",
+        "EXPIRED",
+        "INVALIDATED",
+    ):
+        outcome = compute_terminal_outcome(to_state, sig, market_price)
+        for k, v in outcome.items():
+            setattr(sig, k, v)
+
+        if to_state == "TARGET_1_HIT":
+            sig.t1_fill_timestamp = now_ms
+            # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
+            runner_ttl_sec = sig.runner_ttl_seconds or 300
+            sig.runner_time_stop_at_utc = now_ms + (runner_ttl_sec * 1000)
+
+            # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19).
+            if not sig.breakeven_activated:
+                sig.breakeven_activated = True
+                cost_ref = _spot_be_reference(sig) or sig.stop_loss
+                if sig.direction == "LONG_CALL":
+                    sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
+                else:
+                    sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
+
+    return True, None
 
 
 class SignalFSMManager:
@@ -410,19 +520,29 @@ class SignalFSMManager:
             self._audit_log.append(audit)
 
             # Persist newly registered signal locally and to PostgreSQL
-            try:
-                import asyncio
-
-                from app.signals.signals_persistence import (
-                    persist_executed_signal,
-                    save_signals_state_local,
+            if _should_use_event_bus():
+                signal_event_bus.publish_sync(
+                    SignalEvent(
+                        event_type=SignalEventType.REGISTERED,
+                        signal_id=signal.signal_id,
+                        occurred_at_utc=signal.created_at_utc,
+                        payload=signal.to_wire_dict(),
+                    )
                 )
-                save_signals_state_local()
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    loop.create_task(persist_executed_signal(signal))
-            except (RuntimeError, Exception):
-                pass
+            else:
+                try:
+                    import asyncio
+
+                    from app.signals.signals_persistence import (
+                        persist_executed_signal,
+                        save_signals_state_local,
+                    )
+                    save_signals_state_local()
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        loop.create_task(persist_executed_signal(signal))
+                except (RuntimeError, Exception):
+                    pass
 
             return signal
 
@@ -436,11 +556,20 @@ class SignalFSMManager:
             if signal_id in self._signals:
                 del self._signals[signal_id]
                 self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
-                try:
-                    from app.signals.signals_persistence import save_signals_state_local
-                    save_signals_state_local()
-                except Exception:
-                    pass
+                if _should_use_event_bus():
+                    signal_event_bus.publish_sync(
+                        SignalEvent(
+                            event_type=SignalEventType.DELETED,
+                            signal_id=signal_id,
+                            payload={},
+                        )
+                    )
+                else:
+                    try:
+                        from app.signals.signals_persistence import save_signals_state_local
+                        save_signals_state_local()
+                    except Exception:
+                        pass
                 logger.info("fsm_signal_deleted", signal_id=signal_id)
                 return True
             return False
@@ -513,16 +642,16 @@ class SignalFSMManager:
             # 5. Bound memory: prune oldest terminal signals beyond cap
             pruned = 0
             try:
-                if len(self._signals) > 200:
+                if len(self._signals) > FSM_MAX_SIGNALS_IN_MEMORY:
                     terminal = [s for s in self._signals.values() if s.fsm_state in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")]
                     terminal.sort(key=lambda s: s.last_updated_utc)
-                    overflow = len(self._signals) - 200
+                    overflow = len(self._signals) - FSM_MAX_SIGNALS_IN_MEMORY
                     for s in terminal[:overflow]:
                         self._signals.pop(s.signal_id, None)
                         pruned += 1
                 # Also bound in-memory audit log
-                if len(self._audit_log) > 1000:
-                    self._audit_log = self._audit_log[-1000:]
+                if len(self._audit_log) > FSM_MAX_AUDIT_LOG_ENTRIES:
+                    self._audit_log = self._audit_log[-FSM_MAX_AUDIT_LOG_ENTRIES:]
             except Exception:
                 pass
             if expired or runner_stopped or pruned:
@@ -561,6 +690,8 @@ class SignalFSMManager:
             res.sort(key=lambda x: (state_order.get(x.fsm_state, 99), -x.created_at_utc))
             return res
 
+
+
     def transition(
         self,
         signal_id: str,
@@ -568,135 +699,29 @@ class SignalFSMManager:
         market_price: Decimal | None = None,
         reason: str = "STATE_UPDATE",
         guard_snapshot: dict | None = None,
+        expected_version: int | None = None,
     ) -> tuple[bool, str | None]:
         with self._lock:
             sig = self._signals.get(signal_id)
             if not sig:
                 return False, "Signal not found"
 
-            if sig.fsm_state == to_state:
+            from_st = sig.fsm_state
+            if from_st == to_state:
                 return True, None
 
-            allowed = ALLOWED_TRANSITIONS.get(sig.fsm_state, set())
-            if to_state not in allowed:
-                err = f"Illegal transition {sig.fsm_state} -> {to_state}"
-                logger.warning("fsm_illegal_transition", signal_id=signal_id, error=err)
-                return False, err
-
-            # State-Aware F&O Guard (§1): Never allow degraded F&O signals to ARM or TRIGGER
-            if to_state in ("ARMED", "TRIGGERED", "CONFIRMED"):
-                if sig.confluence_breakdown and sig.confluence_breakdown.get("fno_degraded"):
-                    err = "FNO_DATA_DEGRADED_CANNOT_ARM"
+            ok, err = apply_fsm_transition_pure(
+                sig=sig,
+                to_state=to_state,
+                market_price=market_price,
+                expected_version=expected_version,
+            )
+            if not ok:
+                if "Illegal" in str(err):
+                    logger.warning("fsm_illegal_transition", signal_id=signal_id, error=err)
+                elif "FNO_DATA_DEGRADED" in str(err):
                     logger.warning("fsm_fno_degraded_arm_blocked", signal_id=signal_id, to_state=to_state)
-                    return False, err
-
-            from_st = sig.fsm_state
-            sig.fsm_state = to_state
-            sig.last_updated_utc = int(time.time() * 1000)
-
-            # Update specific timestamps & Two-Clock Lifecycle transitions (§6, §20)
-            if to_state == "TRIGGERED":
-                sig.triggered_at_utc = sig.last_updated_utc
-            elif to_state == "CONFIRMED":
-                sig.confirmed_at_utc = sig.last_updated_utc
-                # Anchor Active Trade Holding Time-Stop (§18, §20)
-                if sig.time_stop_at_utc is None:
-                    duration_sec = sig.time_stop_seconds or (900 if sig.is_scalp else 4500)
-                    sig.time_stop_at_utc = sig.last_updated_utc + (duration_sec * 1000)
-            elif to_state == "TARGET_1_HIT":
-                sig.t1_hit = True
-                sig.t1_fill_timestamp = sig.last_updated_utc
-                sig.exit_price = market_price
-                sig.outcome_status = "WIN_T1"
-                sig.terminal_outcome = "PARTIAL_WIN"
-                gross_r = float(sig.risk_reward_t1)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
-                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
-                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
-                sig.realized_rr_net = round(gross_r - f_r, 4)
-                sig.cost_breakdown_r = bdown
-
-                # Disable original TTL clock permanently and activate Runner Clock (§6.2, §20)
-                runner_ttl_sec = sig.runner_ttl_seconds or 300
-                sig.runner_time_stop_at_utc = sig.last_updated_utc + (runner_ttl_sec * 1000)
-
-                # Auto-ratchet stop loss to entry (Cost) on T1 hit (§19).
-                # Spot-domain only: actual_fill_price is an option premium
-                # (execution domain) and must never become a spot stop.
-                if not sig.breakeven_activated:
-                    sig.breakeven_activated = True
-                    cost_ref = _spot_be_reference(sig) or sig.stop_loss
-                    if sig.direction == "LONG_CALL":
-                        sig.current_stop_loss = max(sig.current_stop_loss or sig.stop_loss, cost_ref)
-                    else:
-                        sig.current_stop_loss = min(sig.current_stop_loss or sig.stop_loss, cost_ref)
-
-            elif to_state == "TARGET_2_HIT":
-                sig.t2_hit = True
-                sig.exit_price = market_price
-                sig.outcome_status = "WIN_T2"
-                sig.terminal_outcome = "FULL_WIN"
-                gross_r = float(sig.risk_reward_t2)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_2 or 200.0)
-                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
-                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
-                sig.realized_rr_net = round(gross_r - f_r, 4)
-                sig.cost_breakdown_r = bdown
-            elif to_state == "STOP_LOSS_HIT":
-                sig.exit_price = market_price
-                sig.outcome_status = "LOSS_SL"
-                if sig.breakeven_activated:
-                    sig.terminal_outcome = "BREAKEVEN"
-                    gross_r = 0.0
-                else:
-                    sig.terminal_outcome = "STOP_LOSS_HIT"
-                    gross_r = -1.0
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = _exit_premium_for_friction(sig, market_price or sig.stop_loss or 80.0)
-                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
-                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
-                sig.realized_rr_net = round(gross_r - f_r, 4)
-                sig.cost_breakdown_r = bdown
-            elif to_state == "TIME_STOP_HIT":
-                sig.exit_price = market_price
-                sig.outcome_status = "TIME_STOP"
-                sig.terminal_outcome = "TIME_STOP_LOSS"
-                gross_r = 0.0
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = _exit_premium_for_friction(sig, market_price) if market_price is not None else float(entry_p)
-                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
-                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
-                sig.realized_rr_net = round(gross_r - f_r, 4)
-                sig.cost_breakdown_r = bdown
-            elif to_state == "RUNNER_TIME_STOP_HIT":
-                sig.exit_price = market_price
-                sig.outcome_status = "RUNNER_TIME_STOP"
-                sig.terminal_outcome = "PARTIAL_WIN"
-                gross_r = float(sig.risk_reward_t1)
-                sig.realized_rr = gross_r
-                sig.realized_rr_gross = gross_r
-                entry_p = float(sig.actual_fill_price or sig.trigger or 100.0)
-                exit_p = _exit_premium_for_friction(sig, market_price or sig.target_1 or 150.0)
-                risk_pts = float(abs((sig.trigger or Decimal(100)) - (sig.stop_loss or Decimal(80))))
-                f_r, bdown = compute_option_friction_r(entry_p, exit_p, lots=sig.lots or 1, risk_points_premium=risk_pts)
-                sig.realized_rr_net = round(gross_r - f_r, 4)
-                sig.cost_breakdown_r = bdown
-            elif to_state == "EXPIRED":
-                sig.outcome_status = "EXPIRED"
-                sig.terminal_outcome = "EXPIRED"
-            elif to_state == "INVALIDATED":
-                sig.outcome_status = "INVALIDATED"
-                sig.terminal_outcome = "INVALIDATED"
+                return False, err
 
             audit = FSMTransitionAudit(
                 signal_id=signal_id,
@@ -708,34 +733,51 @@ class SignalFSMManager:
             )
             sig.state_history.append(audit)
             self._audit_log.append(audit)
-            logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason)
+            logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason, version=sig.version)
 
-            # Sync transition to audit ledger & Supabase
-            try:
-                from app.signals.audit_ledger import signal_audit_ledger
-                signal_audit_ledger.record_state_transition(
-                    signal_id=signal_id,
-                    to_state=to_state,
-                    market_price=float(market_price) if market_price is not None else None,
-                    reason=reason,
+            if _should_use_event_bus():
+                signal_event_bus.publish_sync(
+                    SignalEvent(
+                        event_type=SignalEventType.TRANSITIONED,
+                        signal_id=signal_id,
+                        occurred_at_utc=audit.processed_timestamp,
+                        payload={
+                            "from_state": from_st,
+                            "to_state": to_state,
+                            "market_price": float(market_price) if market_price is not None else None,
+                            "reason": reason,
+                            "guard_snapshot": guard_snapshot or {},
+                            "version": sig.version,
+                        },
+                    )
                 )
-            except Exception as te:
-                logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
+            else:
+                # Sync transition to audit ledger & Supabase
+                try:
+                    from app.signals.audit_ledger import signal_audit_ledger
+                    signal_audit_ledger.record_state_transition(
+                        signal_id=signal_id,
+                        to_state=to_state,
+                        market_price=float(market_price) if market_price is not None else None,
+                        reason=reason,
+                    )
+                except Exception as te:
+                    logger.debug("fsm_audit_sync_failed", signal_id=signal_id, error=str(te))
 
-            # Persist updated SignalInstance locally and to PostgreSQL
-            try:
-                import asyncio
+                # Persist updated SignalInstance locally and to PostgreSQL
+                try:
+                    import asyncio
 
-                from app.signals.signals_persistence import (
-                    persist_executed_signal,
-                    save_signals_state_local,
-                )
-                save_signals_state_local()
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    loop.create_task(persist_executed_signal(sig))
-            except (RuntimeError, Exception):
-                pass
+                    from app.signals.signals_persistence import (
+                        persist_executed_signal,
+                        save_signals_state_local,
+                    )
+                    save_signals_state_local()
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        loop.create_task(persist_executed_signal(sig))
+                except (RuntimeError, Exception):
+                    pass
 
             return True, None
 
@@ -785,11 +827,21 @@ class SignalFSMManager:
         self._audit_log.append(audit)
         logger.info("fsm_breakeven_ratchet", signal_id=signal_id, new_sl=float(new_sl))
 
-        try:
-            from app.signals.signals_persistence import save_signals_state_local
-            save_signals_state_local()
-        except Exception:
-            pass
+        if _should_use_event_bus():
+            signal_event_bus.publish_sync(
+                SignalEvent(
+                    event_type=SignalEventType.BREAKEVEN_ACTIVATED,
+                    signal_id=signal_id,
+                    occurred_at_utc=audit.processed_timestamp,
+                    payload={"new_sl": float(new_sl), "market_price": float(market_price) if market_price is not None else None},
+                )
+            )
+        else:
+            try:
+                from app.signals.signals_persistence import save_signals_state_local
+                save_signals_state_local()
+            except Exception:
+                pass
 
         return True
 

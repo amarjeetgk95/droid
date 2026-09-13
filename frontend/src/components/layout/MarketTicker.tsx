@@ -18,8 +18,8 @@ const PRIMARY_BENCHMARKS = [
   'NIFTY 50',
   'BANKNIFTY',
   'SENSEX',
-  'FINNIFTY',
   'INDIA VIX',
+  'FINNIFTY',
   'MIDCPNIFTY',
 ] as const;
 
@@ -28,6 +28,7 @@ const FALLBACK_BENCHMARKS: Array<Pick<IndexCard, 'symbol' | 'display_name' | 'lt
   { symbol: 'NIFTY 50', display_name: 'NIFTY 50', ltp: 0, change: 0, change_percent: 0 },
   { symbol: 'BANKNIFTY', display_name: 'BANKNIFTY', ltp: 0, change: 0, change_percent: 0 },
   { symbol: 'SENSEX', display_name: 'SENSEX', ltp: 0, change: 0, change_percent: 0 },
+  { symbol: 'INDIA VIX', display_name: 'INDIA VIX', ltp: 0, change: 0, change_percent: 0 },
 ];
 
 /** Robust number parser */
@@ -169,39 +170,7 @@ function MicroSparkline({
   );
 }
 
-/** Micro Day Range Indicator showing current position between Day Low & Day High */
-function DayRangeBar({
-  ltp,
-  low,
-  high,
-}: {
-  ltp: number;
-  low: number;
-  high: number;
-}) {
-  if (!Number.isFinite(ltp) || !Number.isFinite(low) || !Number.isFinite(high) || high <= low || ltp <= 0) {
-    return null;
-  }
 
-  const clampedLtp = Math.min(Math.max(ltp, low), high);
-  const positionPct = ((clampedLtp - low) / (high - low)) * 100;
-
-  return (
-    <div
-      className="hidden 2xl:flex items-center gap-1.5 pl-1.5 border-l border-border/50 text-[10px] text-muted-foreground font-mono select-none"
-      title={`Day Range • Low: ₹${formatIndianPrice(low)} | High: ₹${formatIndianPrice(high)}`}
-    >
-      <span className="text-[9px] opacity-70">L</span>
-      <div className="relative w-10 h-1 bg-secondary rounded-full overflow-hidden border border-border/60">
-        <div
-          className="absolute top-0 bottom-0 left-0 bg-primary/70 rounded-full transition-all duration-300"
-          style={{ width: `${Math.min(Math.max(positionPct, 6), 100)}%` }}
-        />
-      </div>
-      <span className="text-[9px] opacity-70">H</span>
-    </div>
-  );
-}
 
 /** Single Interactive Index Card Item */
 function IndexCardItem({
@@ -248,6 +217,7 @@ function IndexCardItem({
   const closed = card.status === 'CLOSED';
   const sessionLabel = closed ? 'Closed' : (card.status || 'Live');
   const displayName = card.display_name || card.symbol;
+  const isVix = displayName.toUpperCase().includes('VIX');
 
   const handleClick = useCallback(() => {
     const symbolFocus = resolveCardSymbol(displayName);
@@ -263,21 +233,35 @@ function IndexCardItem({
 
   const formattedLtp = formatIndianPrice(ltp);
   const formattedChange = formatPointsChange(change);
+  const formattedPct = Number.isNaN(changePct)
+    ? '0.00%'
+    : isPos
+      ? `+${Math.abs(changePct).toFixed(2)}%`
+      : isNeg
+        ? `-${Math.abs(changePct).toFixed(2)}%`
+        : '0.00%';
   const safeVol = card.volume ? safeInt(card.volume) : '—';
   const safeOi = card.open_interest != null ? safeInt(card.open_interest) : '—';
+  const currency = isVix ? '' : '₹';
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-0.5 rounded-[3px] border border-transparent hover:border-border hover:bg-[#f7f7f7] transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
+      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-0.5 rounded-[3px] border border-transparent hover:border-border/60 hover:bg-secondary/60 dark:hover:bg-secondary/40 transition-all cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
         closed ? 'opacity-80' : ''
       }`}
-      title={`${displayName} • LTP: ₹${formattedLtp} (${formattedChange}) • Session: ${sessionLabel} • Vol: ${safeVol} • OI: ${safeOi} • Click to focus forecast`}
-      aria-label={`${displayName} index at ${formattedLtp}, ${isPos ? 'up' : isNeg ? 'down' : 'unchanged'} by ${Math.abs(changePct || 0).toFixed(2)}%`}
+      title={`${displayName} • LTP: ${currency}${formattedLtp} (${formattedChange}) • Session: ${sessionLabel} • Vol: ${safeVol} • OI: ${safeOi} • Click to focus tactical bias`}
+      aria-label={`${displayName} index at ${formattedLtp}, ${isPos ? 'up' : isNeg ? 'down' : 'unchanged'} by ${formattedPct}`}
     >
       {/* Symbol Name */}
-      <span className="font-bold text-foreground tracking-tight text-[11.5px] sm:text-[12px] whitespace-nowrap group-hover/item:text-primary transition-colors">
+      <span
+        className={`font-semibold tracking-tight text-[11.5px] sm:text-[12px] whitespace-nowrap transition-colors ${
+          isVix
+            ? 'text-purple-700 dark:text-purple-400 group-hover/item:text-purple-600 font-bold'
+            : 'text-foreground group-hover/item:text-primary'
+        }`}
+      >
         {displayName}
       </span>
 
@@ -285,59 +269,42 @@ function IndexCardItem({
       <span
         className={`tabular-nums font-mono font-bold text-[12px] sm:text-[12.5px] px-1 py-0.5 rounded-[2px] transition-colors duration-200 ${
           flash === 'up'
-            ? 'bg-emerald-500/15 text-emerald-700'
+            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
             : flash === 'down'
-              ? 'bg-rose-500/15 text-rose-700'
+              ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400'
               : 'text-foreground'
         }`}
       >
         {formattedLtp}
       </span>
 
-      {/* Badge for Percentage Change */}
+      {/* Unified Directional Change Capsule (combines points & percentage into single sleek pill) */}
       <span
-        className={`tabular-nums inline-flex items-center gap-0.5 sm:gap-1 font-semibold px-1 sm:px-1.5 py-0.5 rounded-[2px] text-[10px] sm:text-[10.5px] leading-tight border transition-colors ${
+        className={`tabular-nums font-mono inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-[3px] text-[10.5px] leading-tight border transition-colors ${
           isNeutral
-            ? 'text-muted-foreground bg-secondary border-border'
+            ? 'text-muted-foreground bg-secondary/80 border-border'
             : isPos
-              ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/25'
-              : 'text-rose-700 bg-rose-500/10 border-rose-500/25'
+              ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+              : 'text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/20'
         }`}
       >
         {isNeutral ? (
-          <span className="text-[8px] leading-none opacity-60">—</span>
+          <span className="text-[9px] opacity-70">0.00 (0.00%)</span>
         ) : isPos ? (
-          <TrendingUp className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+          <>
+            <TrendingUp className="w-2.5 h-2.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+            <span>{formattedChange}</span>
+            <span className="opacity-80">({formattedPct})</span>
+          </>
         ) : (
-          <TrendingDown className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+          <>
+            <TrendingDown className="w-2.5 h-2.5 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+            <span>{formattedChange}</span>
+            <span className="opacity-80">({formattedPct})</span>
+          </>
         )}
-        {Math.abs(changePct || 0).toFixed(2)}%
       </span>
 
-      {/* Points Change (hidden on mobile, visible on tablet/desktop) */}
-      <span
-        className={`hidden md:inline tabular-nums font-mono text-[11px] sm:text-[11.5px] font-medium ${
-          isPos
-            ? 'text-emerald-700/80 dark:text-emerald-400/90'
-            : isNeg
-              ? 'text-rose-700/80 dark:text-rose-400/90'
-              : 'text-muted-foreground'
-        }`}
-      >
-        {formattedChange}
-      </span>
-
-      {/* Micro Sparkline when tick points exist and screen is wide */}
-      {isPriority && card.sparkline && card.sparkline.length > 2 && (
-        <div className="hidden lg:block pl-0.5">
-          <MicroSparkline points={card.sparkline} isPositive={!isNeg} />
-        </div>
-      )}
-
-      {/* Intraday High/Low Range Gauge */}
-      {card.high > 0 && card.low > 0 && (
-        <DayRangeBar ltp={ltp} low={card.low} high={card.high} />
-      )}
     </button>
   );
 }
@@ -400,7 +367,7 @@ function MarketTickerFallback({
             <div
               key={f.symbol}
               className={`flex items-center gap-1.5 shrink-0 ${
-                i === 2 ? 'hidden sm:flex' : ''
+                i === 2 ? 'hidden sm:flex' : i === 3 ? 'hidden md:flex' : ''
               }`}
             >
               <span className="font-bold text-foreground/80">{f.display_name}</span>
@@ -497,67 +464,75 @@ function MarketTickerInner({
   const isClosed = marketSession === 'CLOSED';
 
   // Responsive stationary visibility logic:
-  // - On mobile (<sm): Show NIFTY 50 and BANKNIFTY cleanly
-  // - On small screens (sm): Show NIFTY 50, BANKNIFTY, SENSEX
-  // - On large screens (lg): Show 4th benchmark (e.g. FINNIFTY)
-  // - On xl screens (xl+): Show 5th benchmark (e.g. INDIA VIX)
+  // - On mobile (<sm): Show NIFTY 50 and BANKNIFTY cleanly (0, 1)
+  // - On small screens (sm: 640px+): Show NIFTY 50, BANKNIFTY, INDIA VIX (0, 1, 2)
+  // Always show all 4 core benchmarks (NIFTY 50, BANKNIFTY, SENSEX, INDIA VIX)
+  // - 0..3: Always visible
+  // - 4 (FINNIFTY): Visible on wide screens (xl: 1280px+)
+  // - 5+ (MIDCPNIFTY + rest): Visible on ultra-wide screens (2xl: 1536px+)
   const getItemVisibilityClass = (idx: number) => {
-    if (idx < 2) return 'flex';
-    if (idx === 2) return 'hidden sm:flex';
-    if (idx === 3) return 'hidden lg:flex';
-    return 'hidden xl:flex';
+    if (idx < 4) return 'flex';
+    if (idx === 4) return 'hidden xl:flex';
+    return 'hidden 2xl:flex';
   };
 
   return (
     <nav
       role="region"
       aria-label="Live Market Indices Ribbon"
-      className="relative h-10 border-b border-border bg-card flex items-center px-3 sm:px-4 md:px-6 select-none text-[12.5px] z-20 overflow-hidden"
+      className="relative h-10 border-b border-border bg-card flex items-center px-2.5 sm:px-4 md:px-5 select-none text-[12px] sm:text-[12.5px] z-20 overflow-hidden"
     >
       {/* Stream Status Chip */}
       <div
-        className="flex items-center gap-1.5 px-1.5 sm:px-2 py-0.5 rounded-[2px] bg-secondary border border-border text-[10px] sm:text-[10.5px] font-semibold tracking-wide uppercase shrink-0 text-muted-foreground"
+        className="flex items-center gap-1.5 px-2 py-0.5 rounded-[3px] bg-secondary/80 border border-border/80 text-[10px] sm:text-[10.5px] font-semibold tracking-wide uppercase shrink-0 text-muted-foreground"
         title={`Feed: ${streamState || 'CONNECTED'} • Session: ${marketSession || (isClosed ? 'Closed' : 'Open')}`}
       >
         {isClosed ? (
           <>
             <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-            <span className="hidden xs:inline">Closed</span>
+            <span className="font-mono">Closed</span>
           </>
         ) : isLive ? (
           <>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-emerald-700 dark:text-emerald-400 hidden xs:inline">Live</span>
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+            </span>
+            <span className="text-emerald-700 dark:text-emerald-400 font-mono">Live</span>
           </>
         ) : (
           <>
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-            <span className="text-amber-700 dark:text-amber-400 hidden xs:inline">Sync</span>
+            <span className="text-amber-700 dark:text-amber-400 font-mono">Sync</span>
           </>
         )}
       </div>
 
       {/* Divider between status and items */}
-      <div className="h-4 w-px bg-border/60 mx-2 sm:mx-3 shrink-0" aria-hidden="true" />
+      <div className="h-4 w-px bg-border/60 mx-1.5 sm:mx-2 shrink-0" aria-hidden="true" />
 
       {/* Stationary Fitted Indices Ribbon (NO SCROLLBAR, NEVER OVERFLOWS) */}
-      <div className="flex items-center justify-start gap-1 sm:gap-2.5 md:gap-3.5 lg:gap-5 overflow-hidden w-full">
+      <div className="flex items-center justify-start gap-1 sm:gap-1.5 md:gap-2 lg:gap-2.5 overflow-hidden w-full">
         {orderedCards.map((card, idx) => {
           const visClass = getItemVisibilityClass(idx);
           return (
             <div
               key={`${card.symbol || card.display_name}-${idx}`}
-              className={`items-center gap-1 sm:gap-2.5 md:gap-3.5 lg:gap-5 shrink-0 ${visClass}`}
+              className={`items-center gap-1 sm:gap-1.5 md:gap-2 shrink-0 ${visClass}`}
             >
               <IndexCardItem
                 card={card}
                 onSelect={onSelectSymbol}
-                isPriority={idx < 2}
+                isPriority={idx < 4}
               />
               {idx < orderedCards.length - 1 && (
                 <div
                   className={`h-3.5 w-px bg-border/40 shrink-0 ${
-                    idx === 1 ? 'hidden sm:block' : idx === 2 ? 'hidden lg:block' : idx === 3 ? 'hidden xl:block' : ''
+                    idx < 3
+                      ? 'block'
+                      : idx === 3
+                        ? 'hidden xl:block'
+                        : 'hidden 2xl:block'
                   }`}
                   aria-hidden="true"
                 />

@@ -54,19 +54,35 @@ class OptionsService:
         t = calculate_time_to_expiry(now, target_expiry_date)
         r, r_source = get_risk_free_rate()
 
-        # Estimated cost-of-carry futures price
+        # Estimated cost-of-carry futures price — NOT a FYERS futures quote.
+        # Truth-of-Wall: downstream must treat this as carry_estimate, never live basis.
         futures_price = round(spot_price * math.exp(r * t), 2) if spot_price > 0 else 0.0
 
         # Retrieve raw options from provider
         expiry_dt = datetime.combine(target_expiry_date, datetime.min.time(), tzinfo=timezone.utc)
         raw_quotes = await self.market_service.get_option_chain(underlying, expiry_dt)
 
-        # Group raw quotes by strike
+        # Group raw quotes by strike — FYERS truth only.
         strikes_map: dict[float, dict[str, NormalizedOptionQuote]] = {}
         for q in raw_quotes:
             if q.strike not in strikes_map:
                 strikes_map[q.strike] = {}
             strikes_map[q.strike][q.option_type] = q
+
+        # Sync live FYERS strikes into contract_master (authoritative truth replaces calendar bootstrap).
+        if strikes_map:
+            try:
+                _step_by_und = {"NIFTY": 50.0, "BANKNIFTY": 100.0, "FINNIFTY": 50.0, "SENSEX": 100.0}
+                _lot_by_und = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "SENSEX": 10}
+                contract_master_service.sync_strikes_from_fyers(
+                    underlying,
+                    target_expiry_date,
+                    sorted(strikes_map.keys()),
+                    strike_step=_step_by_und.get(underlying, 50.0),
+                    lot_size=_lot_by_und.get(underlying, 25),
+                )
+            except Exception:
+                pass
 
         if not strikes_map or spot_price <= 0:
             analytics = OptionsAnalytics(
@@ -105,20 +121,22 @@ class OptionsService:
         # Find ATM strike
         atm_strike = min(all_strikes, key=lambda k: abs(k - spot_price))
 
-        # Pass 1: Solve for baseline ATM IV
+        # Pass 1: Solve for baseline ATM IV — FYERS LTPs only, never fabricated.
+        # Truth-of-Wall: if both legs fail to solve, base_atm_iv stays None and
+        # per-strike Greeks stay None (no synthetic smile).
         atm_ce = strikes_map.get(atm_strike, {}).get("CE")
         atm_pe = strikes_map.get(atm_strike, {}).get("PE")
         atm_iv_ce = calculate_iv_black76("CE", atm_ce.ltp, futures_price, atm_strike, t, r) if atm_ce and atm_ce.ltp > 0 else None
         atm_iv_pe = calculate_iv_black76("PE", atm_pe.ltp, futures_price, atm_strike, t, r) if atm_pe and atm_pe.ltp > 0 else None
 
         if atm_iv_ce and atm_iv_pe:
-            base_atm_iv = round((atm_iv_ce + atm_iv_pe) / 2.0, 4)
+            base_atm_iv: float | None = round((atm_iv_ce + atm_iv_pe) / 2.0, 4)
         elif atm_iv_ce:
             base_atm_iv = atm_iv_ce
         elif atm_iv_pe:
             base_atm_iv = atm_iv_pe
         else:
-            base_atm_iv = 0.135
+            base_atm_iv = None
 
         strike_rows: list[OptionChainStrikeRow] = []
         total_ce_oi = 0
@@ -133,19 +151,28 @@ class OptionsService:
             ce_side: OptionSide | None = None
             pe_side: OptionSide | None = None
 
-            m = (strike - spot_price) / spot_price if spot_price > 0 else 0.0
-
-            # Build Call side
+            # Build Call side — Truth-of-Wall: solved IV only, else greeks=None.
             if ce_raw:
                 total_ce_oi += ce_raw.oi
                 total_ce_vol += ce_raw.volume
                 iv_ce = calculate_iv_black76("CE", ce_raw.ltp, futures_price, strike, t, r)
-                if iv_ce is None or iv_ce <= 0.005:
-                    calc_iv_ce = round(base_atm_iv * (1.0 + 0.18 * (m ** 2) - 0.06 * m), 4)
-                else:
-                    calc_iv_ce = iv_ce
+                calc_iv_ce: float | None = iv_ce if (iv_ce is not None and iv_ce > 0.005) else None
 
-                g_ce = black76_greeks("CE", futures_price, strike, t, r, calc_iv_ce)
+                if calc_iv_ce is not None:
+                    g_ce = black76_greeks("CE", futures_price, strike, t, r, calc_iv_ce)
+                    ce_greeks = OptionGreeks(
+                        delta=g_ce.delta,
+                        gamma=g_ce.gamma,
+                        theta=g_ce.theta,
+                        vega=g_ce.vega,
+                        rho=g_ce.rho,
+                        iv=round(calc_iv_ce * 100.0, 2),
+                        theoretical_price=g_ce.theoretical_price,
+                        intrinsic_value=g_ce.intrinsic_value,
+                        time_value=g_ce.time_value,
+                    )
+                else:
+                    ce_greeks = None
                 ce_oi_change = getattr(ce_raw, "oi_change", 0) or 0
                 ce_chg = getattr(ce_raw, "change", 0.0) or 0.0
                 ce_chg_pct = getattr(ce_raw, "change_percent", 0.0) or 0.0
@@ -162,30 +189,31 @@ class OptionsService:
                     bid=ce_raw.bid,
                     ask=ce_raw.ask,
                     is_itm=strike < spot_price,
-                    greeks=OptionGreeks(
-                        delta=g_ce.delta,
-                        gamma=g_ce.gamma,
-                        theta=g_ce.theta,
-                        vega=g_ce.vega,
-                        rho=g_ce.rho,
-                        iv=round(calc_iv_ce * 100.0, 2),
-                        theoretical_price=g_ce.theoretical_price,
-                        intrinsic_value=g_ce.intrinsic_value,
-                        time_value=g_ce.time_value,
-                    ),
+                    greeks=ce_greeks,
                 )
 
-            # Build Put side
+            # Build Put side — Truth-of-Wall: solved IV only, else greeks=None.
             if pe_raw:
                 total_pe_oi += pe_raw.oi
                 total_pe_vol += pe_raw.volume
                 iv_pe = calculate_iv_black76("PE", pe_raw.ltp, futures_price, strike, t, r)
-                if iv_pe is None or iv_pe <= 0.005:
-                    calc_iv_pe = round(base_atm_iv * (1.0 + 0.18 * (m ** 2) + 0.06 * m), 4)
-                else:
-                    calc_iv_pe = iv_pe
+                calc_iv_pe: float | None = iv_pe if (iv_pe is not None and iv_pe > 0.005) else None
 
-                g_pe = black76_greeks("PE", futures_price, strike, t, r, calc_iv_pe)
+                if calc_iv_pe is not None:
+                    g_pe = black76_greeks("PE", futures_price, strike, t, r, calc_iv_pe)
+                    pe_greeks = OptionGreeks(
+                        delta=g_pe.delta,
+                        gamma=g_pe.gamma,
+                        theta=g_pe.theta,
+                        vega=g_pe.vega,
+                        rho=g_pe.rho,
+                        iv=round(calc_iv_pe * 100.0, 2),
+                        theoretical_price=g_pe.theoretical_price,
+                        intrinsic_value=g_pe.intrinsic_value,
+                        time_value=g_pe.time_value,
+                    )
+                else:
+                    pe_greeks = None
                 pe_oi_change = getattr(pe_raw, "oi_change", 0) or 0
                 pe_chg = getattr(pe_raw, "change", 0.0) or 0.0
                 pe_chg_pct = getattr(pe_raw, "change_percent", 0.0) or 0.0
@@ -202,17 +230,7 @@ class OptionsService:
                     bid=pe_raw.bid,
                     ask=pe_raw.ask,
                     is_itm=strike > spot_price,
-                    greeks=OptionGreeks(
-                        delta=g_pe.delta,
-                        gamma=g_pe.gamma,
-                        theta=g_pe.theta,
-                        vega=g_pe.vega,
-                        rho=g_pe.rho,
-                        iv=round(calc_iv_pe * 100.0, 2),
-                        theoretical_price=g_pe.theoretical_price,
-                        intrinsic_value=g_pe.intrinsic_value,
-                        time_value=g_pe.time_value,
-                    ),
+                    greeks=pe_greeks,
                 )
 
             strike_rows.append(OptionChainStrikeRow(
@@ -244,7 +262,7 @@ class OptionsService:
             futures_price=futures_price,
             expiry=target_expiry_date.isoformat(),
             atm_strike=atm_strike,
-            atm_iv=round(base_atm_iv * 100.0, 2),
+            atm_iv=round(base_atm_iv * 100.0, 2) if base_atm_iv is not None else None,
             pcr_oi=pcr_oi,
             pcr_volume=pcr_vol,
             max_pain_strike=max_pain,

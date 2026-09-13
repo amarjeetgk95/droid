@@ -26,18 +26,28 @@ class ContractMasterService:
         self._initialize_default_catalog()
 
     def _initialize_default_catalog(self) -> None:
-        """Populate initial representative contract catalog for Indian F&O benchmarks."""
+        """Bootstrap expiry calendar ONLY — Truth-of-Wall.
+
+        FYERS is the sole source for LTP/OI/strikes. This catalog seeds ONLY
+        expiry DATES from NSE calendar rules (reference schedule, not prices)
+        so `resolve_expiries` works before the first live FYERS option-chain
+        sync. No synthetic option strikes are generated here — live strikes
+        come from `FyersProvider.get_option_chain` and override via
+        `sync_strikes_from_fyers`. Provider label is local_calendar_bootstrap,
+        never fyers, to avoid claiming FYERS truth.
+        """
         today = datetime.now(timezone.utc).astimezone(IST).date()
 
         benchmarks = [
-            ("NIFTY 50", "NIFTY", 25, 0.05, 25000.0, 50.0, 30),
-            ("BANKNIFTY", "BANKNIFTY", 15, 0.05, 52000.0, 100.0, 30),
-            ("FINNIFTY", "FINNIFTY", 25, 0.05, 24000.0, 50.0, 20),
-            ("SENSEX", "SENSEX", 10, 0.05, 81500.0, 100.0, 30),
+            # (display, underlying, lot_size, tick_size) — no base_spot: strikes are FYERS-only
+            ("NIFTY 50", "NIFTY", 25, 0.05),
+            ("BANKNIFTY", "BANKNIFTY", 15, 0.05),
+            ("FINNIFTY", "FINNIFTY", 25, 0.05),
+            ("SENSEX", "SENSEX", 10, 0.05),
         ]
 
         # Generate rolling expiries (next 4 weekly and next 2 monthly)
-        for name, underlying, lot_size, tick_size, base_spot, strike_step, strike_count in benchmarks:
+        for name, underlying, lot_size, tick_size in benchmarks:
             # Add Spot Contract
             spot_contract = ContractMaster(
                 instrument_token=f"{underlying}_INDEX",
@@ -51,7 +61,7 @@ class ContractMasterService:
                 pricing_style=PricingStyle.SPOT_BLACK_SCHOLES,
                 contract_status=ContractStatus.ACTIVE,
                 effective_from=date(2020, 1, 1),
-                provider="fyers"
+                provider="local_calendar_bootstrap"
             )
             self.add_contract(spot_contract)
 
@@ -62,7 +72,7 @@ class ContractMasterService:
                 is_monthly = (exp_idx == len(expiries) - 1 or exp_date.day > 21)
                 exp_type = ExpiryType.MONTHLY if is_monthly else ExpiryType.WEEKLY
 
-                # Add Futures Contract for this expiry
+                # Add Futures expiry shell for this expiry (schedule only, no price)
                 fut_symbol = f"{underlying}{exp_date.strftime('%y%b').upper()}FUT"
                 fut_contract = ContractMaster(
                     instrument_token=f"{underlying}_{exp_date.strftime('%Y%m%d')}_FUT",
@@ -78,63 +88,58 @@ class ContractMasterService:
                     pricing_style=PricingStyle.FUTURES_BLACK76,
                     contract_status=ContractStatus.ACTIVE,
                     effective_from=today - timedelta(days=60),
-                    provider="fyers"
+                    provider="local_calendar_bootstrap"
                 )
                 self.add_contract(fut_contract)
 
-                # Generate Option Strikes (OTM and ITM CE/PE)
-                half_strikes = strike_count // 2
-                start_strike = base_spot - (half_strikes * strike_step)
-                
-                for s_i in range(strike_count):
-                    strike = start_strike + (s_i * strike_step)
-                    strike_str = f"{int(strike)}" if strike.is_integer() else f"{strike:.1f}"
+                # NOTE: option strikes intentionally NOT generated here.
+                # Live strikes/OI/LTP come from FYERS option-chain-v3 via
+                # OptionsService.get_option_chain_matrix. See sync_strikes_from_fyers.
 
-                    # CE Option
-                    ce_symbol = f"{underlying}{exp_date.strftime('%y%b%d').upper()}{strike_str}CE"
-                    ce_contract = ContractMaster(
-                        instrument_token=f"{underlying}_{exp_date.strftime('%Y%m%d')}_{strike_str}_CE",
-                        exchange="NFO",
-                        symbol=ce_symbol,
-                        underlying=underlying,
-                        contract_type=ContractType.INDEX_OPTION,
-                        option_type=OptionType.CE,
-                        option_style=OptionStyle.EUROPEAN,
-                        strike=strike,
-                        expiry=exp_date,
-                        expiry_type=exp_type,
-                        lot_size=lot_size,
-                        tick_size=tick_size,
-                        settlement_type=SettlementType.CASH_SETTLED,
-                        pricing_style=PricingStyle.FUTURES_BLACK76,
-                        contract_status=ContractStatus.ACTIVE,
-                        effective_from=today - timedelta(days=30),
-                        provider="fyers"
-                    )
-                    self.add_contract(ce_contract)
+    def sync_strikes_from_fyers(
+        self,
+        underlying: str,
+        expiry: date,
+        strikes: list[float],
+        strike_step: float,
+        lot_size: int,
+        tick_size: float = 0.05,
+    ) -> int:
+        """Upsert live FYERS strikes for an expiry (authoritative truth).
 
-                    # PE Option
-                    pe_symbol = f"{underlying}{exp_date.strftime('%y%b%d').upper()}{strike_str}PE"
-                    pe_contract = ContractMaster(
-                        instrument_token=f"{underlying}_{exp_date.strftime('%Y%m%d')}_{strike_str}_PE",
-                        exchange="NFO",
-                        symbol=pe_symbol,
-                        underlying=underlying,
-                        contract_type=ContractType.INDEX_OPTION,
-                        option_type=OptionType.PE,
-                        option_style=OptionStyle.EUROPEAN,
-                        strike=strike,
-                        expiry=exp_date,
-                        expiry_type=exp_type,
-                        lot_size=lot_size,
-                        tick_size=tick_size,
-                        settlement_type=SettlementType.CASH_SETTLED,
-                        pricing_style=PricingStyle.FUTURES_BLACK76,
-                        contract_status=ContractStatus.ACTIVE,
-                        effective_from=today - timedelta(days=30),
-                        provider="fyers"
-                    )
-                    self.add_contract(pe_contract)
+        Called after a successful FYERS option-chain fetch to replace the
+        calendar bootstrap with tradable truth. Returns count synced.
+        """
+        from app.models.contracts import ExpiryType as _ET
+        count = 0
+        exp_type = _ET.MONTHLY if expiry.day > 21 else _ET.WEEKLY
+        today = datetime.now(timezone.utc).astimezone(IST).date()
+        for strike in strikes:
+            strike_str = f"{int(strike)}" if float(strike).is_integer() else f"{strike:.1f}"
+            for opt_type, sym_suffix in ((OptionType.CE, "CE"), (OptionType.PE, "PE")):
+                sym = f"{underlying}{expiry.strftime('%y%b%d').upper()}{strike_str}{sym_suffix}"
+                contract = ContractMaster(
+                    instrument_token=f"{underlying}_{expiry.strftime('%Y%m%d')}_{strike_str}_{sym_suffix}",
+                    exchange="NFO",
+                    symbol=sym,
+                    underlying=underlying,
+                    contract_type=ContractType.INDEX_OPTION,
+                    option_type=opt_type,
+                    option_style=OptionStyle.EUROPEAN,
+                    strike=float(strike),
+                    expiry=expiry,
+                    expiry_type=exp_type,
+                    lot_size=lot_size,
+                    tick_size=tick_size,
+                    settlement_type=SettlementType.CASH_SETTLED,
+                    pricing_style=PricingStyle.FUTURES_BLACK76,
+                    contract_status=ContractStatus.ACTIVE,
+                    effective_from=today - timedelta(days=30),
+                    provider="fyers",
+                )
+                self.add_contract(contract)
+                count += 1
+        return count
 
     def _generate_sample_expiries(self, start_date: date, count: int = 6) -> list[date]:
         """Generate realistic forward-looking expiry dates adjusted for exchange holidays."""

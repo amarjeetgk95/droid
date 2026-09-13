@@ -11,7 +11,8 @@ def client():
 
 def test_fyers_login_redirect(client, monkeypatch):
     monkeypatch.setattr(settings, "fyers_app_id", "TEST_APP_100")
-    monkeypatch.setattr(settings, "fyers_redirect_uri", "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback")
+    monkeypatch.setattr(settings, "fyers_secret_key", "TEST_SECRET")
+    monkeypatch.setattr(settings, "fyers_redirect_uri", "http://127.0.0.1:8000/api/v1/tokens/fyers/callback")
     
     resp = client.get("/api/v1/tokens/fyers/login", follow_redirects=False)
     assert resp.status_code == 307 or resp.status_code == 302
@@ -37,16 +38,11 @@ def test_fyers_callback_missing_creds(client, monkeypatch):
 
 
 def test_fyers_callback_exchange_internal_server_error(client, monkeypatch):
-    from app.core.broker_runtime import apply_app_settings
-    apply_app_settings({
-        "broker": {
-            "provider": "fyers",
-            "fyers": {
-                "appId": "HVMUH3H2LQ-100",
-                "secret": "wrong_secret",
-            }
-        }
-    })
+    from app.core.broker_runtime import reset
+    from app.core.config import settings as cfg
+    reset()
+    monkeypatch.setattr(cfg, "fyers_app_id", "HVMUH3H2LQ-100")
+    monkeypatch.setattr(cfg, "fyers_secret_key", "wrong_secret")
     
     class MockResponse:
         status_code = 400
@@ -73,15 +69,19 @@ def test_fyers_callback_exchange_internal_server_error(client, monkeypatch):
     assert "HVMUH3H2LQ-100" in resp.text
 
 
-def test_fyers_login_custom_credentials(client):
+def test_fyers_login_local_env_only(client, monkeypatch):
+    from app.core.config import settings as cfg
+    monkeypatch.setattr(cfg, "fyers_app_id", "LOCAL_APP_100")
+    monkeypatch.setattr(cfg, "fyers_secret_key", "LOCAL_SECRET")
+    # Query overrides are ignored — env wins (hardcoded-only)
     resp = client.get(
-        "/api/v1/tokens/fyers/login?app_id=CUSTOM_APP_200&secret_key=CUSTOM_SECRET_999",
+        "/api/v1/tokens/fyers/login?redirect_to=https://fo-droid.web.app",
         follow_redirects=False,
     )
     assert resp.status_code in (302, 307)
     loc = resp.headers["location"]
-    assert "client_id=CUSTOM_APP_200" in loc
-    assert "state=c_" in loc
+    assert "client_id=LOCAL_APP_100" in loc
+    assert "127.0.0.1%3A8000" in loc or "127.0.0.1:8000" in loc or "redirect_uri=" in loc
 
 
 def test_fyers_callback_error_redirect(client):
@@ -92,16 +92,11 @@ def test_fyers_callback_error_redirect(client):
 
 
 def test_fyers_callback_exchange_success(client, monkeypatch):
-    from app.core.broker_runtime import apply_app_settings
-    apply_app_settings({
-        "broker": {
-            "provider": "fyers",
-            "fyers": {
-                "appId": "HVMUH3H2LQ-100",
-                "secret": "valid_secret",
-            }
-        }
-    })
+    from app.core.broker_runtime import reset
+    from app.core.config import settings as cfg
+    reset()
+    monkeypatch.setattr(cfg, "fyers_app_id", "HVMUH3H2LQ-100")
+    monkeypatch.setattr(cfg, "fyers_secret_key", "valid_secret")
 
     class MockSuccessResponse:
         status_code = 200
@@ -121,9 +116,9 @@ def test_fyers_callback_exchange_success(client, monkeypatch):
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
 
-    # Encode state with return_url
+    # Encode state with return_url only (no creds — env is sole source)
     import json, base64
-    state_payload = {"a": "HVMUH3H2LQ-100", "s": "valid_secret", "r": "https://test.fo-droid.web.app"}
+    state_payload = {"r": "https://test.fo-droid.web.app"}
     state_b64 = "c_" + base64.urlsafe_b64encode(json.dumps(state_payload).encode("utf-8")).decode("utf-8")
 
     resp = client.get(f"/api/v1/tokens/fyers/callback?auth_code=valid_code&state={state_b64}")

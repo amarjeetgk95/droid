@@ -439,14 +439,11 @@ async def analyze_with_model(
                 user_prompt = build_market_context_prompt(symbol=symbol, regime=regime, futures=futures_gem, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
                 insight = await GeminiProvider(api_key=effective_gemini_key, model=payload.geminiModel or "gemini-2.5-flash").generate_analysis(symbol, system_prompt, user_prompt)
             elif provider.lower() == "ollama" and (payload.ollamaBaseUrl or payload.ollamaModel):
-                # Ollama localhost is local-only — backend on Render cannot reach user's laptop; gate with clear hint (browser check is primary)
+                # Ollama is local-only and the backend is localhost too, so localhost URLs ARE reachable.
+                # Gate with clear hint (browser check is primary)
                 _base = (payload.ollamaBaseUrl or "").strip()
                 if _base and ("localhost" in _base or "127.0.0.1" in _base):
-                    raise ValueError(
-                        f"Ollama URL {_base} is localhost — backend on Render cannot reach your local machine. "
-                        f"This is local-only. Use direct browser check: fetch {_base}/api/tags from your browser. "
-                        f"Ensure `ollama serve` and `ollama pull {payload.ollamaModel or 'deepseek-r1:8b'}` are running, or configure a remote Ollama URL."
-                    )
+                    pass  # localhost reachable from localhost backend — proceed to OllamaProvider below
                 from app.ai.ollama import OllamaProvider
                 from app.ai.prompt_builder import build_system_prompt, build_market_context_prompt
                 from app.services.regime_service import regime_service

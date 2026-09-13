@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { ALL_NAV_ITEMS, ALL_NAV_HREFS, NAV_GROUPS, findNavItemByHref } from './nav-config';
 
 describe('nav-config navigation layout', () => {
-  it('exposes the standalone 1-Hour Forecast home route', () => {
+  it('exposes the standalone Tactical Bias home route', () => {
     const home = findNavItemByHref('/');
     expect(home).toBeDefined();
-    expect(home?.label).toBe('1-Hour Forecast');
+    expect(home?.label).toBe('Tactical Bias');
     expect(home?.shortcut).toBe('⌘1');
     expect(ALL_NAV_HREFS).toContain('/');
   });
@@ -18,7 +18,7 @@ describe('nav-config navigation layout', () => {
   });
 
   it('contains only forecast-first routes plus signals, AI copilot and settings', () => {
-    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/ai', '/markets', '/options', '/settings', '/signals']);
+    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/ai', '/markets', '/options', '/settings', '/signals', '/swing']);
     for (const dead of [
       '/crypto',
       '/paper-trading',
@@ -38,11 +38,12 @@ describe('nav-config navigation layout', () => {
     expect(new Set(shortcuts).size).toBe(shortcuts.length);
   });
 
-  it('assigns clean shortcuts ⌘1, ⌘2, ⌘3, ⌘4 and ⌘,', () => {
+  it('assigns clean shortcuts ⌘1, ⌘2, ⌘3, ⌘4, ⌘5 and ⌘,', () => {
     expect(findNavItemByHref('/')?.shortcut).toBe('⌘1');
     expect(findNavItemByHref('/markets')?.shortcut).toBe('⌘2');
     expect(findNavItemByHref('/options')?.shortcut).toBe('⌘3');
     expect(findNavItemByHref('/ai')?.shortcut).toBe('⌘4');
+    expect(findNavItemByHref('/swing')?.shortcut).toBe('⌘5');
     expect(findNavItemByHref('/settings')?.shortcut).toBe('⌘,');
   });
 });

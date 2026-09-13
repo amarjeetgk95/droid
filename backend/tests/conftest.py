@@ -41,11 +41,17 @@ def isolate_signals_state(tmp_path, monkeypatch):
     monkeypatch.setattr("app.signals.signals_persistence.get_async_session_factory", lambda: None)
     from app.signals.fsm import signal_fsm
     from app.signals.audit_ledger import signal_audit_ledger
+    from app.core import broker_runtime
+    from app.algo.algo_service import reset_algo_caches
+    broker_runtime.reset()
+    reset_algo_caches()
     with signal_fsm._lock:
         orig_signals = dict(signal_fsm._signals)
     with signal_audit_ledger._lock:
         orig_trades = dict(signal_audit_ledger._trades)
     yield
+    broker_runtime.reset()
+    reset_algo_caches()
     with signal_fsm._lock:
         signal_fsm._signals.clear()
         signal_fsm._signals.update(orig_signals)

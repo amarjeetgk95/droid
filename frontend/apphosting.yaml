@@ -11,4 +11,4 @@ env:
   - variable: NODE_ENV
     value: production
   - variable: NEXT_PUBLIC_API_URL
-    value: https://droid-backend-emeq.onrender.com
+    value: http://127.0.0.1:8000

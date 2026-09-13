@@ -25,6 +25,69 @@ async def health_ready():
     }
 
 
+@router.get("/health/subsystems")
+async def health_subsystems():
+    """Diagnostic check of all running backend elements."""
+    from app.services.central_feed import central_feed
+    from app.core.config import settings
+    from app.core.broker_runtime import get_config
+
+    elements = {
+        "server": True,
+        "central_feed": False,
+        "signal_worker": False,
+        "morning_briefing": False,
+        "forecast_scheduler": False,
+        "flow_scheduler": False,
+        "broker_configured": False,
+        "token_present": False,
+        "telegram_configured": bool(settings.telegram_bot_token),
+    }
+
+    try:
+        elements["central_feed"] = bool(getattr(central_feed, "_running", False))
+    except Exception:
+        pass
+
+    try:
+        from app.signals.worker import automated_signal_worker
+        elements["signal_worker"] = bool(getattr(automated_signal_worker, "_running", False))
+    except Exception:
+        pass
+
+    try:
+        from app.services.morning_briefing_service import morning_briefing_service
+        elements["morning_briefing"] = bool(getattr(morning_briefing_service, "_running", False))
+    except Exception:
+        pass
+
+    try:
+        from app.research.scheduler import scheduler_enabled
+        elements["forecast_scheduler"] = bool(scheduler_enabled())
+    except Exception:
+        pass
+
+    try:
+        from app.institutional.scheduler import enabled as flow_enabled
+        elements["flow_scheduler"] = bool(flow_enabled())
+    except Exception:
+        pass
+
+    try:
+        cfg = get_config()
+        elements["broker_configured"] = bool(cfg.credentials.get("app_id"))
+        elements["token_present"] = bool(cfg.credentials.get("access_token"))
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "elements": elements,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
 @router.get("/api/v1/health/market-data")
 async def market_data_health():
     """Market data health status (fail-open: never 500s on degraded feed)."""

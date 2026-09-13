@@ -12,7 +12,7 @@ interface Props {
   settings: BrokerSettings;
 }
 
-export function RenderIntegrationCard({ settings }: Props) {
+export function FyersGatewayCard({ settings }: Props) {
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [authSuccess, setAuthSuccess] = useState(false);
@@ -63,7 +63,7 @@ export function RenderIntegrationCard({ settings }: Props) {
   return (
     <SettingSection
       title="Broker Gateway & Execution Session"
-      description="Active Indian exchange broker (NSE/BSE) and 2FA OAuth session exchange."
+      description="Local FastAPI (127.0.0.1:8000) + FYERS API v3. Frontend stays on Firebase; backend must be running locally."
       icon={Server}
       action={
         <a

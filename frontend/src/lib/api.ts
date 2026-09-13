@@ -11,6 +11,7 @@ import { createInstitutionalApi, type InstitutionalApi } from './api/institution
 import { createSignalsApi, type SignalsApi } from './api/signals';
 import { createEventsApi, type EventsApi } from './api/events';
 import { createIntelligenceApi, type IntelligenceApi } from './api/intelligence';
+import { createSwingApi, type SwingApi } from './api/swing';
 
 export type Api = ApiCore &
   MarketsApi &
@@ -22,7 +23,8 @@ export type Api = ApiCore &
   InstitutionalApi &
   SignalsApi &
   EventsApi &
-  IntelligenceApi;
+  IntelligenceApi &
+  SwingApi;
 
 const core = new ApiCore(API_BASE);
 
@@ -38,6 +40,7 @@ export const api: Api = Object.assign(
   createSignalsApi(core),
   createEventsApi(core),
   createIntelligenceApi(core),
+  createSwingApi(core),
 );
 /** Back-compat alias — no code constructs ApiClient directly (singleton `api` is the entrypoint). */
 export type ApiClient = Api;

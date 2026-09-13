@@ -540,7 +540,9 @@ export interface OrderPayload {
   order_type?: 'MARKET' | 'LIMIT' | 'SL_MARKET' | 'SL_LIMIT';
   product?: 'INTRADAY' | 'CARRYFORWARD';
   quantity: number;
-  price: number;
+  // Truth-of-Wall: MARKET orders send price=0 (no client fallback).
+  // Backend fills from live FYERS chain or rejects — never trusts client price.
+  price?: number;
   trigger_price?: number | null;
   client_order_id?: string | null;
 }

@@ -83,14 +83,14 @@ function ForecastHomePageInner() {
     setForecastLoading(true);
     setForecastError(null);
     try {
-      const data = await api.getForecast(instrument, timeframe, true);
+      const data = await api.getTacticalBias(instrument, timeframe, true);
       setForecast(data as HourForecast);
       setLastUpdated(new Date());
     } catch (err) {
-      // Keep the last good forecast on screen (stale) instead of wiping to
+      // Keep the last good bias on screen (stale) instead of wiping to
       // "unavailable" on every transient blip (cold start, rate limit, token
       // expiry). Do NOT clear forecast here.
-      setForecastError(err instanceof Error ? err.message : 'forecast unavailable');
+      setForecastError(err instanceof Error ? err.message : 'tactical bias unavailable');
     } finally {
       setForecastLoading(false);
     }
@@ -101,8 +101,8 @@ function ForecastHomePageInner() {
   }, [loadForecast]);
 
   // Clear stale data when the user switches instrument/horizon so a 1H
-  // forecast is never shown mislabeled as 5M. Auto-refresh failures (same
-  // instrument/timeframe) keep the last good forecast via loadForecast.
+  // bias is never shown mislabeled as 5M. Auto-refresh failures (same
+  // instrument/timeframe) keep the last good bias via loadForecast.
   useEffect(() => {
     setForecast(null);
     setForecastError(null);
@@ -143,7 +143,7 @@ function ForecastHomePageInner() {
         <div className="toolbar">
           <div>
             <div className="flex items-center gap-2.5">
-              <h1>{timeframeLabel} Forecast</h1>
+              <h1>{timeframeLabel} Tactical Bias</h1>
               <span className="badge b-info" style={{ fontSize: 11 }}>LIVE MODEL</span>
             </div>
             <p className="muted num">
@@ -152,7 +152,7 @@ function ForecastHomePageInner() {
             </p>
           </div>
           <span className="spacer" />
-          <div className="seg" role="group" aria-label="Forecast horizon">
+          <div className="seg" role="group" aria-label="Tactical horizon">
             {TIMEFRAMES.map((tf) => (
               <button
                 key={tf.id}

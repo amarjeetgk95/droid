@@ -8,10 +8,10 @@ class Settings(BaseSettings):
     app_mode: Literal["development", "production"] = "development"
     app_name: str = "Droid - F&O Market Analysis"
     
-    # Server
-    backend_host: str = "0.0.0.0"
+    # Server (backend localhost-only, frontend stays on Firebase)
+    backend_host: str = "127.0.0.1"
     backend_port: int = 8000
-    backend_public_url: str = ""  # public base URL used for Telegram setWebhook
+    backend_public_url: str = "http://127.0.0.1:8000"  # local base URL; Telegram webhook needs a tunnel
     frontend_url: str = "https://fo-droid.web.app"
     
     # Auth
@@ -28,10 +28,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # FYERS Settings (Indian Market Gateway)
+    # FYERS Settings (Indian Market Gateway) — LOCAL hardcoded-only.
+    # Sole source of truth is backend/.env (never the Settings UI).
+    # Redirect must match Fyers MyAPI dashboard exactly.
     fyers_app_id: str = ""
     fyers_secret_key: str = ""
-    fyers_redirect_uri: str = "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback"
+    fyers_redirect_uri: str = "http://127.0.0.1:8000/api/v1/tokens/fyers/callback"
     fyers_access_token: str = ""
 
 
@@ -129,6 +131,9 @@ class Settings(BaseSettings):
     max_quote_age_seconds: float = 15.0          # Maximum acceptable quote age in risk/execution
     scanner_quote_age_seconds: float = 10.0      # Stricter quote age threshold for signal scanner
     stale_data_age_seconds: float = 5.0          # Threshold to mark a quote as STALE
+
+    # Signal Engine Architecture Flags
+    use_event_bus: bool = True                   # Decouples FSM transitions to lightweight event bus
 
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":

@@ -8,7 +8,7 @@ Lifecycle contract (4 phases — dashboard is independent of all of them):
   4. Backend shutdown:  gracefully stop persistent services (lifespan teardown).
 
 Rules enforced here:
-  - Credentials always come from Render Environment Variables first
+  - Credentials always come from localhost backend/.env first
     (app.core.broker_runtime._env_config / settings); DB-saved settings only
     override at startup via apply_app_settings.
   - Exactly one provider stream and one Telegram stack per backend process,
@@ -16,7 +16,7 @@ Rules enforced here:
   - Frontend request handlers NEVER call provider.start/stop or telegram
     start/stop directly — they call restart_provider_stream() / ensure_*()
     here, which are idempotent and never tied to any browser session.
-  - Render restarts re-run lifespan → start_persistent_services() retries with
+  - Backend restarts re-run lifespan → start with retry uses
     exponential backoff until both services are up.
 """
 from __future__ import annotations
@@ -144,7 +144,7 @@ async def restart_provider_stream(reason: str = "config_change") -> object:
 async def start_provider_with_retry(max_attempts: int = 8) -> object | None:
     """Start the provider stream at backend startup, retrying with backoff.
 
-    Guarantees the FYERS connection comes up on Render (re)starts even when
+    Guarantees the FYERS connection comes up on backend (re)starts even when
     the first attempts fail (cold DB, DNS, auth propagation). Returns the
     provider, or None if all attempts fail (lifespan continues degraded —
     later control-plane calls can still trigger ensure_provider_stream).

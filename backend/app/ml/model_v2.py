@@ -91,6 +91,13 @@ try:
 except Exception:
     HAS_SKLEARN = False
 
+try:
+    import numpy as _np  # noqa: F401
+
+    HAS_NUMPY = True
+except Exception:
+    HAS_NUMPY = False
+
 
 # ---------------------------------------------------------------------------
 # helpers

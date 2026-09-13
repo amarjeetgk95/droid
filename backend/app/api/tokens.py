@@ -164,23 +164,21 @@ async def refresh_token(payload: dict | None = Body(default=None)):
 @router.get("/fyers/login")
 async def fyers_oauth_login(
     request: Request,
-    app_id: str | None = Query(default=None),
-    secret_key: str | None = Query(default=None),
     redirect_to: str | None = Query(default=None),
 ):
-    """Redirect user to Fyers OAuth authorization using Render server credentials or custom query overrides."""
-    broker_config = get_config()
-    creds = broker_config.credentials if broker_config.provider == "fyers" else {}
+    """Redirect user to Fyers OAuth authorization — localhost hardcoded-only.
 
+    app_id/secret/redirect_uri come ONLY from backend/.env
+    (FYERS_APP_ID / FYERS_SECRET_KEY / FYERS_REDIRECT_URI).
+    Settings UI values and query overrides are ignored.
+    """
     def _clean(v: object) -> str:
         return str(v or "").strip().strip("\"'")
 
-    # Precedence: explicit ?app_id/?secret_key query overrides FIRST (retry form),
-    # then active runtime creds (Settings UI save), then Render env. Env-last so a
-    # stale FYERS_APP_ID in Render can never silently override what the user typed.
-    clean_app_id = (_clean(app_id) or _clean(creds.get("app_id")) or _clean(creds.get("appId")) or _clean(cfg.fyers_app_id))
-    clean_secret = (_clean(secret_key) or _clean(creds.get("secret_key")) or _clean(creds.get("secret")) or _clean(cfg.fyers_secret_key))
-    redirect_uri = (_clean(creds.get("redirect_uri")) or _clean(creds.get("redirectUri")) or _clean(cfg.fyers_redirect_uri) or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback")
+    # Localhost hardcoded-only: env is the sole source.
+    clean_app_id = _clean(cfg.fyers_app_id)
+    clean_secret = _clean(cfg.fyers_secret_key)
+    redirect_uri = (_clean(cfg.fyers_redirect_uri) or "http://127.0.0.1:8000/api/v1/tokens/fyers/callback")
     
     if not clean_app_id:
         return HTMLResponse(
@@ -188,7 +186,7 @@ async def fyers_oauth_login(
             <html><body style="font-family:system-ui;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;">
             <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;text-align:center;max-width:480px;">
                 <h3 style="color:#ef4444;margin-top:0;">FYERS_APP_ID Not Found</h3>
-                <p style="color:#94a3b8;font-size:14px;">Please configure <code>FYERS_APP_ID</code> and <code>FYERS_SECRET_KEY</code> in Render Environment Variables or enter them in Droid Settings.</p>
+                <p style="color:#94a3b8;font-size:14px;">Set <code>FYERS_APP_ID</code> and <code>FYERS_SECRET_KEY</code> in <code>backend/.env</code> and restart the local backend (port 8000).</p>
             </div>
             </body></html>
             """,
@@ -203,11 +201,8 @@ async def fyers_oauth_login(
             if len(parts) >= 3:
                 target_origin = f"{parts[0]}//{parts[2]}"
 
-    # Pack custom app_id, secret_key, and redirect_to into state so callback has access
+    # Pack only return URL into state (no credentials — localhost env is sole source)
     state_payload = {}
-    if app_id or secret_key:
-        state_payload["a"] = clean_app_id
-        state_payload["s"] = clean_secret
     if target_origin:
         state_payload["r"] = target_origin
 
@@ -386,16 +381,12 @@ async def fyers_oauth_callback(
             status_code=200,
         )
 
-    # 3. Decode custom credentials and return_url if packed into state
-    custom_app_id = ""
-    custom_secret = ""
+    # 3. Decode return_url if packed into state (no credentials in state anymore)
     return_url = ""
     if state and state.startswith("c_"):
         try:
             raw_json = base64.urlsafe_b64decode(state[2:].encode("utf-8")).decode("utf-8")
             parsed = json.loads(raw_json)
-            custom_app_id = (parsed.get("a") or "").strip().strip("\"'")
-            custom_secret = (parsed.get("s") or "").strip().strip("\"'")
             return_url = (parsed.get("r") or "").strip()
         except Exception as ex:
             logger.warning("failed_to_decode_custom_state", error=str(ex))
@@ -403,17 +394,12 @@ async def fyers_oauth_callback(
     if not return_url:
         return_url = cfg.frontend_url or "https://fo-droid.web.app"
 
-    # 4. Resolve credentials with fallback hierarchy.
-    # Precedence: custom state payload (retry form) FIRST, then active runtime
-    # creds (Settings UI), then Render env. Env-last so stale env secrets can
-    # never override what the user just typed.
-    broker_config = get_config()
-    creds = broker_config.credentials if broker_config.provider == "fyers" else {}
+    # 4. Localhost hardcoded-only: credentials come ONLY from backend/.env.
     def _clean2(v: object) -> str:
         return str(v or "").strip().strip("\"'")
-    app_id = (_clean2(custom_app_id) or _clean2(creds.get("app_id")) or _clean2(creds.get("appId")) or _clean2(cfg.fyers_app_id))
-    secret_key = (_clean2(custom_secret) or _clean2(creds.get("secret_key")) or _clean2(creds.get("secret")) or _clean2(cfg.fyers_secret_key))
-    cred_source = ("Custom Browser Session" if custom_app_id else ("Saved Settings" if creds.get("app_id") or creds.get("appId") else "Render Server Environment Variables"))
+    app_id = _clean2(cfg.fyers_app_id)
+    secret_key = _clean2(cfg.fyers_secret_key)
+    cred_source = "Local backend/.env"
 
     if not app_id or not secret_key:
         error_html = """
@@ -423,7 +409,7 @@ async def fyers_oauth_callback(
         <body style="font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
             <div style="background:#1e293b;padding:2rem;border-radius:12px;border:1px solid #ef4444;max-width:480px;text-align:center;">
                 <h2 style="color:#ef4444;margin-top:0;">Fyers App ID or Secret Missing</h2>
-                <p style="color:#94a3b8;font-size:14px;">Received auth code, but App ID and Secret Key are not configured in Droid Settings. Please save your Fyers App ID and Secret first.</p>
+                <p style="color:#94a3b8;font-size:14px;">Set FYERS_APP_ID and FYERS_SECRET_KEY in backend/.env and restart the local backend.</p>
             </div>
         </body>
         </html>
@@ -449,22 +435,13 @@ async def fyers_oauth_callback(
             data = resp.json()
             if resp.status_code == 200 and data.get("s") == "ok" and data.get("access_token"):
                 access_token = data["access_token"]
-                
-                # Apply new access token.
-                # Dual-write BOTH snake_case and camelCase keys: backend runtime
-                # reads app_id/secret_key/access_token while the frontend
-                # Settings form reads appId/secret/accessToken. Writing only one
-                # convention caused the other side to see empty creds on the
-                # next save and wipe the good token ("always meshup").
+
+                # Localhost: token is runtime-only. app_id/secret stay in .env.
                 new_settings = {
                     "broker": {
                         "provider": "fyers",
                         "apiType": "indian",
                         "fyers": {
-                            "appId": app_id,
-                            "app_id": app_id,
-                            "secret": secret_key,
-                            "secret_key": secret_key,
                             "access_token": access_token,
                             "accessToken": access_token,
                             "token": access_token,
@@ -483,6 +460,13 @@ async def fyers_oauth_callback(
                     token_type="Bearer",
                     expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 ))
+                # Persist to local .fyers_token so restarts and auto-reloads retain active authentication
+                try:
+                    from pathlib import Path
+                    Path(".fyers_token").write_text(access_token.strip(), encoding="utf-8")
+                except Exception as _ex:
+                    logger.warning("failed_to_persist_fyers_token_file", error=str(_ex))
+
                 await provider.start_stream()
 
                 # Synchronize caches, warmup quotes, and broadcast to all connected clients
@@ -495,15 +479,15 @@ async def fyers_oauth_callback(
                 err_text = data.get("message") or str(data)
                 logger.warning("fyers_oauth_exchange_failed", status_code=resp.status_code, response=data, app_id=app_id)
                 
-                # Secret fingerprint (length + preview) so user can immediately verify if Render has the right secret
+                # Secret fingerprint (length + preview) so user can verify backend/.env
                 if len(secret_key) >= 8:
                     secret_preview = f"{secret_key[:3]}••••{secret_key[-3:]} ({len(secret_key)} chars)"
                 elif secret_key:
                     secret_preview = f"•••• ({len(secret_key)} chars)"
                 else:
                     secret_preview = "Not configured (empty)"
-                
-                redirect_uri = (creds.get("redirect_uri") or cfg.fyers_redirect_uri or "https://droid-backend-emeq.onrender.com/api/v1/tokens/fyers/callback").strip()
+
+                redirect_uri = (_clean2(cfg.fyers_redirect_uri) or "http://127.0.0.1:8000/api/v1/tokens/fyers/callback").strip()
 
                 fail_html = f"""
                 <!DOCTYPE html>
@@ -536,21 +520,10 @@ async def fyers_oauth_callback(
                             </div>
                         </div>
 
-                        <!-- Direct Override & Retry Form -->
+                        <!-- Local hardcoded-only: fix in backend/.env, then retry -->
                         <div style="background:#111827;border:1px solid #374151;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left;">
-                            <p style="color:#f3f4f6;font-weight:600;font-size:13px;margin:0 0 6px 0;">⚡ Re-authorize with Custom Credentials</p>
-                            <p style="color:#9ca3af;font-size:11px;margin:0 0 12px 0;">If your App ID or Secret in Render is outdated, enter your actual Fyers MyAPI credentials below to authenticate immediately:</p>
-                            <form action="/api/v1/tokens/fyers/login" method="GET" style="display:flex;flex-direction:column;gap:10px;">
-                                <div>
-                                    <label style="color:#9ca3af;font-size:11px;display:block;margin-bottom:4px;">Fyers App ID (e.g. from MyAPI Dashboard):</label>
-                                    <input type="text" name="app_id" value="{app_id}" placeholder="e.g. YOUR_APP_ID-100" required style="width:100%;box-sizing:border-box;background:#1f2937;border:1px solid #4b5563;color:#f9fafb;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;" />
-                                </div>
-                                <div>
-                                    <label style="color:#9ca3af;font-size:11px;display:block;margin-bottom:4px;">Secret ID (from MyAPI Dashboard):</label>
-                                    <input type="password" name="secret_key" placeholder="Enter Fyers Secret ID" required style="width:100%;box-sizing:border-box;background:#1f2937;border:1px solid #4b5563;color:#f9fafb;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;" />
-                                </div>
-                                <button type="submit" style="margin-top:4px;padding:9px 16px;background:#38bdf8;color:#0f172a;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;">Authorize With These Credentials</button>
-                            </form>
+                            <p style="color:#f3f4f6;font-weight:600;font-size:13px;margin:0 0 6px 0;">Local backend only — no browser override</p>
+                            <p style="color:#9ca3af;font-size:11px;margin:0;">App ID / Secret come from <code>backend/.env</code> (<code>FYERS_APP_ID</code> / <code>FYERS_SECRET_KEY</code>). Fix them there, restart the backend on port 8000, then retry.</p>
                         </div>
 
                         <div style="text-align:left;color:#94a3b8;font-size:12px;line-height:1.6;border-top:1px solid #334155;padding-top:14px;">
@@ -598,7 +571,8 @@ async def test_connection(payload: dict = Body(...)):
     raw_creds = payload.get("credentials") or {}
     
     if prov_name == "fyers":
-        app_id = raw_creds.get("appId") or raw_creds.get("app_id") or cfg.fyers_app_id or ""
+        # Localhost hardcoded-only: app_id from backend/.env, never from browser.
+        app_id = (cfg.fyers_app_id or "").strip()
         access_token = raw_creds.get("access_token") or raw_creds.get("accessToken") or raw_creds.get("token") or cfg.fyers_access_token or ""
         
         # Fallback to active runtime token if not explicitly provided in test payload
@@ -616,9 +590,7 @@ async def test_connection(payload: dict = Body(...)):
                     pass
 
         if not app_id:
-            broker_config = get_config()
-            if broker_config.provider == "fyers":
-                app_id = broker_config.credentials.get("app_id") or ""
+            app_id = (cfg.fyers_app_id or "").strip()
 
         if not access_token:
             latency = round((time.time() - start) * 1000, 1)

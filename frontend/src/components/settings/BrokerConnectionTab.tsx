@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { BrokerSettings, AppSettings } from '@/lib/settings';
-import { RenderIntegrationCard } from './broker/RenderIntegrationCard';
+import { FyersGatewayCard } from './broker/FyersGatewayCard';
 import { TelemetryCard } from './broker/TelemetryCard';
 import { AdvancedDrawer } from './broker/AdvancedDrawer';
 
@@ -17,7 +17,7 @@ export function BrokerConnectionTab({ settings, fullSettings, onChange }: Props)
   return (
     <div className="space-y-4">
       {/* 1. Execution Gateway & Session OAuth */}
-      <RenderIntegrationCard settings={settings} />
+      <FyersGatewayCard settings={settings} />
 
       {/* 2. Live Telemetry & Health */}
       <TelemetryCard settings={settings} fullSettings={fullSettings} />

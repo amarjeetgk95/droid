@@ -82,6 +82,10 @@ class QuantitativeContractSelector:
         option_chain_quotes: Optional[dict[float, float]] = None,  # strike -> market price
         expected_move_projection: Optional[object] = None,
         as_of_datetime: Optional[datetime] = None,
+        candidate_types: Optional[list[str]] = None,  # e.g. ["ITM_1", "ATM"] for Intraday Swing MVP
+        max_theta_drag_ratio: float = 20.0,  # 20% ceiling as per §12
+        min_net_rr: Optional[float] = None,   # e.g. 2.0 as per §13
+        max_spread_pct: float = 2.5,          # 2.5% ceiling as per §11
     ) -> Optional[StrikeSelectionResult]:
         """
         Runs full multi-strike evaluation and returns the best-fit contract.
@@ -109,8 +113,8 @@ class QuantitativeContractSelector:
         if direction == "LONG_CALL":
             target_spot = spot_price + expected_move_points
             stop_spot = spot_price - stop_loss_points
-            # Strikes to compare: ITM-1, ATM, OTM-1
-            strike_candidates = [
+            # Base strikes to compare
+            raw_candidates = [
                 (atm_strike - step, "ITM_1"),
                 (atm_strike, "ATM"),
                 (atm_strike + step, "OTM_1"),
@@ -118,11 +122,16 @@ class QuantitativeContractSelector:
         else:
             target_spot = spot_price - expected_move_points
             stop_spot = spot_price + stop_loss_points
-            strike_candidates = [
+            raw_candidates = [
                 (atm_strike + step, "ITM_1"),
                 (atm_strike, "ATM"),
                 (atm_strike - step, "OTM_1"),
             ]
+
+        if candidate_types:
+            strike_candidates = [c for c in raw_candidates if c[1] in candidate_types]
+        else:
+            strike_candidates = raw_candidates
 
         now = as_of_datetime or datetime.now(IST)
         # Determine DTE from contract resolver baseline
@@ -131,6 +140,8 @@ class QuantitativeContractSelector:
         t_years = days_to_expiry / 365.0
 
         evaluated_candidates: list[EvaluatedStrikeCandidate] = []
+
+        default_spread_pts = getattr(self.simulator.costs, "default_spread_pts", 1.0)
 
         for strike_val, s_type in strike_candidates:
             # Greeks calculation
@@ -143,6 +154,7 @@ class QuantitativeContractSelector:
             )
 
             mkt_price = None
+            spread_pts = default_spread_pts
             if option_chain_quotes and strike_val in option_chain_quotes:
                 mkt_price = option_chain_quotes[strike_val]
             else:
@@ -169,6 +181,7 @@ class QuantitativeContractSelector:
             theta_hr = abs(greeks.theta_hour)
             theta_drag_ratio = (theta_hr * target_horizon_hours / expected_gross_gain * 100.0) if expected_gross_gain > 0 else 100.0
             spread_friction = (sim_report.fast_target.friction_total / (expected_gross_gain * lot_size) * 100.0) if expected_gross_gain > 0 else 100.0
+            spread_pct = (spread_pts / mkt_price * 100.0) if mkt_price > 0 else 0.0
             net_rr = (sim_report.fast_target.net_pnl_total / abs(sim_report.adverse_stop.net_pnl_total)) if sim_report.adverse_stop.net_pnl_total < 0 else 0.0
 
             rejection_reasons = []
@@ -176,11 +189,19 @@ class QuantitativeContractSelector:
             if abs(greeks.delta) < 0.35:
                 rejection_reasons.append(f"Delta ({abs(greeks.delta):.2f}) is too low (< 0.35)")
 
-            # Guard 2: Theta drag cannot exceed 25% of expected target move
-            if theta_drag_ratio > 25.0:
-                rejection_reasons.append(f"Theta drag ({theta_drag_ratio:.1f}%) exceeds 25% ceiling")
+            # Guard 2: Theta drag ceiling (§12)
+            if theta_drag_ratio > max_theta_drag_ratio:
+                rejection_reasons.append(f"Theta drag ({theta_drag_ratio:.1f}%) exceeds {max_theta_drag_ratio:.0f}% ceiling")
 
-            # Guard 3: Economic viability from simulator
+            # Guard 3: Option bid-ask spread ceiling (§11: max 2.5% of premium)
+            if max_spread_pct is not None and spread_pct > max_spread_pct:
+                rejection_reasons.append(f"Spread ({spread_pct:.1f}%) exceeds {max_spread_pct:.1f}% ceiling")
+
+            # Guard 4: Net R/R minimum if enforced (§13: net_RR >= 2.0)
+            if min_net_rr is not None and net_rr < min_net_rr:
+                rejection_reasons.append(f"Net R/R ({net_rr:.2f}) below minimum required ({min_net_rr:.1f})")
+
+            # Guard 5: Economic viability from simulator
             if not sim_report.is_economically_viable:
                 rejection_reasons.extend(sim_report.viability_rationale)
 
@@ -190,6 +211,14 @@ class QuantitativeContractSelector:
             # Higher score rewards: high delta efficiency, high net R/R, low theta drag, low spread %
             score = 50.0
             score += min(25.0, abs(greeks.delta) * 35.0)  # Up to +25 for delta
+
+            # Delta sweet spot preference bonus (0.60 - 0.70 as per §10)
+            abs_delta = abs(greeks.delta)
+            if 0.55 <= abs_delta <= 0.75:
+                score += 5.0
+            if 0.60 <= abs_delta <= 0.70:
+                score += 5.0
+
             score += min(20.0, net_rr * 8.0)  # Up to +20 for net R/R
             score -= min(25.0, theta_drag_ratio * 0.8)  # Penalty for high theta
             score -= min(15.0, spread_friction * 0.5)  # Penalty for spread drag

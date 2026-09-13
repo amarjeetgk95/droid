@@ -4,6 +4,7 @@ from app.core.config import settings as app_settings
 from app.core.database import get_db_session
 from app.models.user import UserSettingsResponse, UserSettingsUpdate
 from app.services.user_service import SettingsService
+from app.repositories.user_repository import SettingsRepository
 from app.core.broker_runtime import apply_app_settings, get_config as get_broker_config
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -45,14 +46,9 @@ def _is_dev_mode() -> bool:
     return not app_settings.auth_required
 
 def _deep_merge(base: dict, patch: dict, depth: int = 4) -> dict:
-    out = dict(base)
-    for k, v in patch.items():
-        prev = out.get(k)
-        if isinstance(v, dict) and isinstance(prev, dict) and depth > 0:
-            out[k] = _deep_merge(prev, v, depth - 1)
-        else:
-            out[k] = v
-    return out
+    # Dev-memory fallback merge. Delegates to the repository merge so stored
+    # secrets get the same never-blank-on-empty-string protection as the DB path.
+    return SettingsRepository._deep_merge_dict(base, patch, max_depth=depth)
 
 def _is_broker_changed(old: dict | None, new: dict | None) -> bool:
     if not old and new:
@@ -134,7 +130,9 @@ async def get_settings_schema(user: AuthUser = Depends(require_auth)):
         "broker": {
             "apiType": ["indian"],
             "providers": ["fyers"],
-            "fields": {"fyers": ["appId", "secret", "redirectUri"]},
+            "mode": "hardcoded-local-env",
+            "fields": {"fyers": []},
+            "note": "FYERS appId/secret come from backend/.env only; Settings UI values are ignored.",
         },
         "ai": {
             "connectionModes": ["OpenRouter", "Direct Provider", "Local Ollama"],

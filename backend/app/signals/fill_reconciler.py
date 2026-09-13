@@ -282,13 +282,17 @@ class OptionFillReconciler:
                 or rec.option_type
                 or rec.strike
             )
-            if _is_opt and rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0:
+            _should_repair = _is_opt and (
+                (rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0)
+                or (exit_reason == "STOP_LOSS_HIT" and rec.entry_fill_price < exit_fill_price)
+            )
+            if _should_repair:
                 _repaired: Optional[float] = None
                 try:
                     _opt = sig.option_contract or {}
                     _strike = float(_opt.get("strike") or rec.strike or 0.0)
                     _otype = str(_opt.get("option_type") or rec.option_type or ("CE" if "CALL" in str(sig.direction) else "PE"))
-                    _spot = float(sig.spot_price or sig.trigger or 0.0)
+                    _spot = float(sig.trigger or sig.spot_price or 0.0)
                     if _strike > 0 and _spot > 0:
                         _repaired = self.estimate_option_premium(spot=_spot, strike=_strike, option_type=_otype)
                 except Exception:

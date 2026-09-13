@@ -663,7 +663,7 @@ class TelegramUpdateQueue:
             from app.core.broker_runtime import get_config
             broker_cfg = get_config()
             provider_name = broker_cfg.provider.lower()
-            backend_url = getattr(settings, "backend_public_url", "") or "https://droid-backend-emeq.onrender.com"
+            backend_url = getattr(settings, "backend_public_url", "") or "http://127.0.0.1:8000"
             login_url = f"{backend_url}/api/v1/tokens/{provider_name}/login"
             
             auth_text = (

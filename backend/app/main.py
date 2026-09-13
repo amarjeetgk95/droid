@@ -19,6 +19,7 @@ from app.api import telegram as telegram_api
 from app.api import events as events_api
 from app.api import options_intelligence as options_intelligence_api
 from app.api import research as research_api
+from app.api import swing as swing_api
 from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
@@ -30,6 +31,8 @@ from app.core.service_lifecycle import (
     stop_telegram_stack,
 )
 import structlog
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -93,7 +96,7 @@ async def lifespan(app: FastAPI):
     # browser/dashboard NEVER stops these services.
     # Start Central Market Data Feed & Upstream Provider Stream (real ticks only; no synthetic)
     await central_feed.start()
-    # Backend-owned FYERS start with retry — survives Render cold starts.
+    # Backend-owned FYERS start with retry — survives localhost restarts.
     # (Registry lazy autostart is disabled: no request path may start this.)
     await start_provider_with_retry()
 
@@ -136,6 +139,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("automated_signal_worker_start_failed", error=str(e))
 
+    # Start Swing Trading Worker (v5.0 EOD scan & intraday monitor)
+    try:
+        from app.swing.worker import swing_worker
+        swing_worker.start()
+        logger.info("swing_worker_started")
+    except Exception as e:
+        logger.warning("swing_worker_start_failed", error=str(e))
+
     # Hourly 1H-forecast evidence collection (shadow + settlement). Disabled by
     # default (FORECAST_SCHEDULER_ENABLED=on to enable); market-closed ticks
     # are no-ops. Never breaks startup.
@@ -144,6 +155,14 @@ async def lifespan(app: FastAPI):
         await start_forecast_scheduler()
     except Exception as e:
         logger.warning("forecast_scheduler_start_failed", error=str(e))
+
+    # Nightly institutional flow ingest + drift (FLOW_SCHEDULER_ENABLED=on).
+    # Disabled by default; never breaks startup.
+    try:
+        from app.institutional.scheduler import start as start_flow_scheduler
+        start_flow_scheduler()
+    except Exception as e:
+        logger.warning("flow_scheduler_start_failed", error=str(e))
 
     # Initialize Event Intelligence Engine baseline (§2 Phase 1)
     try:
@@ -172,6 +191,11 @@ async def lifespan(app: FastAPI):
         try:
             from app.services.morning_briefing_service import morning_briefing_service
             await morning_briefing_service.stop()
+        except Exception:
+            pass
+        try:
+            from app.swing.worker import swing_worker
+            swing_worker.stop()
         except Exception:
             pass
         await stop_telegram_stack()
@@ -213,10 +237,10 @@ def create_app() -> FastAPI:
         meta = make_meta(provider="api", status=DataStatus.ERROR)
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal server error", "error": "Internal server error", "meta": meta.model_dump()},
+            content={"detail": "Internal server error", "error": "Internal server error", "meta": meta.model_dump(mode="json")},
         )
     
-    # CORS
+    # CORS: backend is localhost-only, frontend stays on Firebase + local dev
     origins = [
         settings.frontend_url,
         "https://fo-droid.web.app",
@@ -230,11 +254,11 @@ def create_app() -> FastAPI:
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ]
-    
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://(fo-droid|droid-backend-emeq).*\.(web\.app|firebaseapp\.com|onrender\.com)$",
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://fo-droid.*\.(web\.app|firebaseapp\.com)$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -282,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(events_api.router)
     app.include_router(options_intelligence_api.router)
     app.include_router(research_api.router)
+    app.include_router(swing_api.router)
     try:
         from app.api import monitoring as monitoring_api
         app.include_router(monitoring_api.router)

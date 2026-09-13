@@ -30,6 +30,7 @@ export interface AutoPilotConfig {
 
 interface ScalpAlertsHUDProps {
   currentSpot: number | null;
+  underlying?: 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
   onExecuteSignal?: (signalId: string) => void;
   autoPilot?: AutoPilotConfig;
   onAutoExecute?: (signal: ScalpSignalItem) => void;
@@ -46,6 +47,7 @@ const SCALP_STRATEGIES = new Set([
 
 export function ScalpAlertsHUD({
   currentSpot,
+  underlying = 'NIFTY',
   onExecuteSignal,
   autoPilot,
   onAutoExecute,
@@ -136,8 +138,8 @@ export function ScalpAlertsHUD({
   const handleScanNow = async () => {
     try {
       setScanning(true);
-      toast.info('Scanning 1M orderflow for momentum scalps…');
-      await api.autoDetectSignal({ underlying: 'NIFTY', strategy: 'VWAP_SCALP', timeframe: '1M' });
+      toast.info(`Scanning 1M orderflow for momentum scalps… (${underlying})`);
+      await api.autoDetectSignal({ underlying, strategy: 'VWAP_SCALP', timeframe: '1M' });
       await fetchScalpSignals();
       toast.success('Scalp scan complete');
     } catch {
@@ -203,7 +205,8 @@ export function ScalpAlertsHUD({
 
             const isLong = sig.direction.includes('LONG') || sig.direction.includes('CALL') || sig.direction === 'BULLISH';
             const distPts = (currentSpot && sig.trigger) ? Math.abs(currentSpot - sig.trigger) : null;
-            const isChased = distPts !== null && distPts > 15; // Anti-chase > 15pts
+            const chaseTolerance = autoPilot?.antiChaseTolerance ?? 15;
+            const isChased = distPts !== null && distPts > chaseTolerance;
 
             return (
               <div

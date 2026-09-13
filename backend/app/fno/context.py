@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.instruments.registry import get_by_symbol_exact, get_instrument
 
 async def get_fno_context(symbol: str) -> dict:
@@ -129,6 +131,11 @@ async def get_fno_context(symbol: str) -> dict:
             "buildup_strength": "UNKNOWN",
             "analytics_available": analytics is not None,
             "degraded_fields": degraded_fields,
+            # PIT provenance: snapshot time of THIS chain read (decision-time
+            # readers must prove available_time <= T via pit_validator).
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "available_time": datetime.now(timezone.utc).isoformat(),
+            "timestamp_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
             # Data ingestion protocol §22
             "data_ingestion": {
                 "tick_level": "Unavailable",
@@ -174,6 +181,9 @@ async def get_fno_context(symbol: str) -> dict:
             "rollover_percent": None,
             "synthetic": False,
             "data_unavailable": True,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "available_time": datetime.now(timezone.utc).isoformat(),
+            "timestamp_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
             "data_ingestion": {
                 "tick_level": "Unavailable",
                 "orderbook_depth": "Unavailable",

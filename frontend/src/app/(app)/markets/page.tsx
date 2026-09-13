@@ -31,6 +31,7 @@ function BreadthFlowsStrip() {
   const hasCtxFii = ctxFii ? 'ctx' : 'noctx';
   const [fbBreadth, setFbBreadth] = useState<MarketBreadthData | null>(null);
   const [fbFii, setFbFii] = useState<FIIDIIOverviewResponse | null>(null);
+  const [flow, setFlow] = useState<{ composite: { score: number | null; sentiment: string; status: string } | null; drift: { degraded: boolean } | null; flow: { event_date: string | null } | null } | null>(null);
 
   const breadth: MarketBreadthData | null = ctxBreadth ?? fbBreadth;
   const fii: FIIDIIOverviewResponse | null = ctxFii ?? fbFii;
@@ -48,6 +49,12 @@ function BreadthFlowsStrip() {
         if (!ctxFii) {
           const f = await api.getFIIDIIOverview();
           if (isMounted && f.data) setFbFii(f.data);
+        }
+        try {
+          const fl = await api.getFlowSnapshot();
+          if (isMounted && fl.data) setFlow(fl.data);
+        } catch {
+          // Flow context is additive — never breaks the strip.
         }
       } catch {
         // Keep strip silent — shows placeholder text below.
@@ -97,6 +104,12 @@ function BreadthFlowsStrip() {
         <Stat label="A/D ratio" value={breadth ? fmtNum(breadth.advance_decline_ratio, 2) : '—'} />
         <Stat label="Sentiment" value={sentiment} />
         <Stat label="FII long/short" value={fiiLS} sub={fiiSub} tone={fiiLive ? undefined : 'neut'} />
+        <Stat
+          label="Institutional composite"
+          value={flow?.composite?.score != null ? `${Math.round(flow.composite.score)}` : '—'}
+          sub={flow?.composite ? `${flow.composite.sentiment} · ${flow.composite.status}${flow?.drift?.degraded ? ' · drift' : ''}${flow?.flow?.event_date ? ` · ${flow.flow.event_date}` : ''} · daily, not live` : 'daily file · not live'}
+          tone={flow?.drift?.degraded ? 'neut' : undefined}
+        />
       </div>
     </Card>
   );

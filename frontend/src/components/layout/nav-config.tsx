@@ -66,11 +66,11 @@ export const STANDALONE_ITEMS: NavItem[] = [
   {
     id: 'forecast',
     href: '/',
-    label: '1-Hour Forecast',
+    label: 'Tactical Bias',
     icon: LayoutDashboard,
-    description: 'Next-hour direction forecast',
+    description: '60-minute tactical directional bias',
     shortcut: '⌘1',
-    keywords: ['forecast', 'home', '1-hour', 'prediction', 'overview'],
+    keywords: ['tactical', 'bias', 'horizon', '60m', 'forecast', 'home', 'overview'],
   },
   {
     id: 'signals',
@@ -80,6 +80,15 @@ export const STANDALONE_ITEMS: NavItem[] = [
     description: 'Active setups & paper trades',
     badgeKey: 'signals',
     keywords: ['signals', 'setups', 'paper', 'trades', 'desk', 'scalp', 'intraday'],
+  },
+  {
+    id: 'swing',
+    href: '/swing',
+    label: 'Swing Trading',
+    icon: TrendingUp,
+    description: 'Multi-day positional setups (2–20D)',
+    shortcut: '⌘5',
+    keywords: ['swing', 'positional', 'vcp', 'pullback', 'stage2', 'breakout', 'equities', 'delivery'],
   },
   {
     id: 'ai',

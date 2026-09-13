@@ -111,7 +111,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
   return (
     <SettingSection
       title="Session Telemetry & Gateway Health"
-      description="Token lifecycle and gateway heartbeat monitored by Render TokenManager."
+      description="Token lifecycle and gateway heartbeat monitored by the local TokenManager."
       icon={Activity}
       action={
         <div className="flex items-center gap-2">

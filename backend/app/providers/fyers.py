@@ -19,11 +19,12 @@ logger = structlog.get_logger()
 
 
 class FyersProvider(MarketDataProvider):
-    """FYERS API v3 Market Data Provider Adapter.
+    """FYERS API v3 Market Data Provider Adapter (REST poller, not websocket).
 
-    Backend-owned persistent connection: started once at backend startup via
-    app.core.service_lifecycle, never by frontend connections. Closing the
-    browser/dashboard never stops this stream.
+    Backend-owned 1s REST poller (`_poller_loop` -> `data/quotes` -> central_feed),
+    started once at backend startup via app.core.service_lifecycle, never by
+    frontend connections. Closing the browser/dashboard never stops this poller.
+    Truth-of-Wall: FYERS-only; no websocket tick stream, no order-book.
     """
 
     PROVIDER_ID = "fyers"
@@ -34,9 +35,8 @@ class FyersProvider(MarketDataProvider):
         secret_key: str | None = None,
         access_token: str | None = None,
     ):
-        # Resolution order: explicit ctor arg -> runtime broker config (Settings
-        # UI / OAuth dual-write, both naming conventions) -> Render env. Never
-        # env-only, otherwise a Settings save looks like it "did nothing".
+        # Resolution order: explicit ctor arg -> localhost .env ONLY.
+        # Settings UI secrets are ignored (hardcoded-only localhost setup).
         _rt_creds: dict = {}
         try:
             from app.core.broker_runtime import get_config as _get_cfg
@@ -45,8 +45,8 @@ class FyersProvider(MarketDataProvider):
                 _rt_creds = _cfg.credentials
         except Exception:
             _rt_creds = {}
-        self.app_id = (app_id or _rt_creds.get("app_id") or settings.fyers_app_id or "").strip().strip("\"'") or None
-        self.secret_key = (secret_key or _rt_creds.get("secret_key") or settings.fyers_secret_key or "").strip().strip("\"'") or None
+        self.app_id = (app_id or settings.fyers_app_id or "").strip().strip("\"'") or None
+        self.secret_key = (secret_key or settings.fyers_secret_key or "").strip().strip("\"'") or None
         _rt_token = _rt_creds.get("access_token") or ""
         
         self.token_manager = TokenManager(
@@ -683,11 +683,18 @@ class FyersProvider(MarketDataProvider):
                         await _cf.ingest_tick(tick)
                 else:
                     # No fresh quotes: auth/network failure OR market closed.
-                    # Back off exponentially (RECONNECTING state) and do NOT
-                    # mask an outage by re-publishing stale ticks while the
-                    # market is open — re-publish last-known only when closed.
+                    # Truth-of-Wall: never re-publish stale ticks as live while open.
+                    # Auth-expired parks the poller at 15s idle (no FYERS hammering)
+                    # until re-auth; network blips back off exponentially.
                     if self.token_manager.is_token_expired() or self.token_manager.state == ConnectionState.AUTH_EXPIRED:
+                        if self.token_manager.state != ConnectionState.AUTH_EXPIRED:
+                            self.token_manager.mark_expired("FYERS daily token expired — re-auth required, poller parked")
                         delay = 15.0
+                        logger.info(
+                            "fyers_poller_parked_auth_expired",
+                            delay_s=delay,
+                            hint="Re-auth FYERS via /api/v1/tokens/fyers/auth-url — no synthetic ticks emitted",
+                        )
                     else:
                         self._consecutive_failures += 1
                         delay = self.token_manager.record_reconnect_attempt()
@@ -715,7 +722,11 @@ class FyersProvider(MarketDataProvider):
         logger.info("fyers_poller_loop_stopped")
 
     async def start_stream(self) -> None:
-        """Idempotent backend-owned start — one poller per instance max."""
+        """Idempotent backend-owned start — one REST poller per instance max.
+
+        Interface name `start_stream` is kept for MarketDataProvider compat,
+        but this is a 1s REST poller, not a websocket stream.
+        """
         lock = self._get_start_lock()
         async with lock:
             if self._stream_running and self._poll_task and not self._poll_task.done():

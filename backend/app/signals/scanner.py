@@ -29,6 +29,24 @@ from app.signals.strategies import (
     STRATEGY_REGISTRY,
 )
 from app.signals.strategies.base import SignalCandidate, StrategyContext
+from app.signals.pipeline import (
+    acquire_market_context,
+    run_strategies,
+    build_signal_instance,
+    register_and_notify,
+    enrich_candidate,
+    GateChain,
+    KillSwitchGate,
+    FeedCircuitGate,
+    FNOIntegrityGate,
+    DeskConcurrencyGate,
+    PortfolioConcurrencyGate,
+    CrossDeskArbiterGate,
+    RSIGate,
+    MarketStructureGate,
+    TriggerIntegrityGate,
+    OptionViabilityGate,
+)
 
 logger = structlog.get_logger()
 
@@ -97,330 +115,11 @@ class SignalScanner:
         timeframe: str = "5M",
         desk: str | None = None,
     ) -> list[SignalCandidate]:
-        started = time.time()
         u = validate_underlying(underlying)
-        diag = ScanDiagnostics(underlying=u)
-
-        # ── Centralized Market Session Check ──
-        from app.services.calendar_service import calendar_service
-        perm = calendar_service.can_trade_now()
-        if not perm.allowed:
-            diag.data_quality = "CLOSED"
-            diag.reasons.append(f"Market is closed ({perm.reason}: NSE trading hours 09:15 - 15:30 IST). Quantitative scanning paused.")
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
+        ctx, diag = await acquire_market_context(u, timeframe, self._get_market_svc())
+        self._last_diagnostics[f"{u}:{timeframe}"] = diag
+        if not ctx:
             return []
-
-        from app.multi_timeframe.alignment import compute_alignment
-        from app.technical_analysis.analyzer import analyze_timeframe
-
-        market_svc = self._get_market_svc()
-        try:
-            quote = await asyncio.wait_for(market_svc.get_quote(u), timeout=8.0)
-        except TimeoutError:
-            diag.data_quality = "OFFLINE"
-            diag.error = "quote_timeout_after_8s"
-            diag.reasons.append("Quote fetch timed out — feed unreachable")
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
-            return []
-        except ValueError:
-            raise
-        except Exception as e:
-            diag.data_quality = "OFFLINE"
-            diag.error = f"quote_failed: {str(e)[:120]}"
-            diag.reasons.append(f"Quote fetch failed: {str(e)[:120]}")
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
-            return []
-        if not quote or getattr(quote, "ltp", None) is None or float(getattr(quote, "ltp", 0.0) or 0.0) <= 0:
-            diag.data_quality = "OFFLINE"
-            diag.error = "no_quote_or_non_positive_ltp"
-            diag.reasons.append(f"Quote unavailable or LTP ({getattr(quote, 'ltp', None)}) <= 0")
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
-            return []
-
-        raw_status = getattr(quote, "status", "UNKNOWN")
-        diag.quote_status = str(getattr(raw_status, "value", raw_status))
-        diag.provider = str(getattr(quote, "provider", "UNKNOWN"))
-        try:
-            diag.spot_price = float(quote.ltp)
-        except Exception:
-            diag.spot_price = None
-
-        # ── Trust gate: never generate signals off fabricated fallback prices ──
-        if self._is_fallback_quote(quote):
-            diag.data_quality = "OFFLINE"
-            diag.error = "fallback_quote"
-            diag.reasons.append(
-                f"Provider={diag.provider} status={diag.quote_status} — fallback price rejected, no signals generated"
-            )
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
-            logger.info("scanner_fallback_quote_rejected", underlying=u, provider=diag.provider)
-            return []
-
-        # ── Staleness gate: reject quotes older than scanner threshold ──
-        if getattr(quote, "timestamp", None):
-            try:
-                from datetime import datetime
-
-                from app.core.config import settings
-                q_ts = quote.timestamp
-                if q_ts.tzinfo is None:
-                    q_ts = q_ts.replace(tzinfo=UTC)
-                age_sec = (datetime.now(UTC) - q_ts).total_seconds()
-                if age_sec > settings.scanner_quote_age_seconds:
-                    diag.data_quality = "DEGRADED"
-                    diag.error = f"stale_quote_{round(age_sec, 1)}s"
-                    diag.reasons.append(f"Quote age ({round(age_sec, 1)}s) exceeds max allowed ({settings.scanner_quote_age_seconds}s)")
-                    diag.duration_ms = int((time.time() - started) * 1000)
-                    self._last_diagnostics[f"{u}:{timeframe}"] = diag
-                    logger.info("scanner_stale_quote_rejected", underlying=u, age_sec=round(age_sec, 1))
-                    return []
-            except Exception:
-                pass
-
-        try:
-            spot = Decimal(str(quote.ltp))
-        except Exception:
-            diag.data_quality = "OFFLINE"
-            diag.error = "invalid_spot_price"
-            diag.reasons.append("Quote LTP is not numeric")
-            diag.duration_ms = int((time.time() - started) * 1000)
-            self._last_diagnostics[f"{u}:{timeframe}"] = diag
-            return []
-
-        # Pre-market gap filter: suppress strategies for first 3 candles if gap > 0.5%
-        prev_close = getattr(quote, "previous_close", None)
-        gap_pct = 0.0
-        if prev_close and prev_close > 0:
-            gap_pct = float(abs((spot - Decimal(str(prev_close))) / Decimal(str(prev_close))) * Decimal("100.0"))
-
-        # Fetch real candles for indicators (bounded timeout, never fatal)
-        candles_dict = {}
-        try:
-            target_tfs = ["1m", "5m", "15m", "1h"]
-
-            async def _fetch_tf(tf_str: str):
-                try:
-                    c_list = await market_svc.get_candles(u, timeframe=tf_str)
-                    return tf_str, [
-                        c.model_dump() if hasattr(c, "model_dump") else dict(c)
-                        for c in c_list
-                    ]
-                except Exception as ce:
-                    logger.debug("candle_tf_fetch_error", underlying=u, timeframe=tf_str, error=str(ce))
-                    return tf_str, []
-
-            tf_results = await asyncio.wait_for(
-                asyncio.gather(*[_fetch_tf(tf_str) for tf_str in target_tfs]),
-                timeout=8.0,
-            )
-            candles_dict = {tf_k: c_arr for tf_k, c_arr in tf_results if c_arr}
-        except TimeoutError:
-            diag.reasons.append("Candle fetch timed out — indicators degraded")
-        except Exception as e:
-            diag.reasons.append(f"Candle fetch failed: {str(e)[:120]}")
-
-        target_tf = timeframe.lower()
-        if target_tf == "1m":
-            active_candles = candles_dict.get("1m") or []
-            if not active_candles:
-                diag.reasons.append("Scalp native 1m candles unavailable — fallback prohibited to prevent timeframe skew")
-        else:
-            active_candles = candles_dict.get(target_tf) or candles_dict.get("5m") or []
-            if not active_candles and "1m" in candles_dict:
-                active_candles = candles_dict.get("1m") or []
-        diag.candles_count = len(active_candles)
-        if not active_candles:
-            diag.reasons.append("No candles available — S/R, volume and MTF use synthetic defaults")
-
-        ta_analysis: dict[str, Any] = {}
-        if active_candles:
-            try:
-                ta_analysis = analyze_timeframe(active_candles, symbol=u, timeframe=timeframe) or {}
-            except Exception as e:
-                diag.reasons.append(f"TA analysis failed: {str(e)[:100]} — using defaults")
-                logger.debug("ta_analysis_failed", underlying=u, error=str(e))
-
-        # Multi-Timeframe Alignment
-        mtf_analyses = {}
-        for tf_k, c_list in candles_dict.items():
-            if c_list:
-                try:
-                    mtf_analyses[tf_k] = analyze_timeframe(c_list, symbol=u, timeframe=tf_k)
-                except Exception:
-                    pass
-        mtf_result = compute_alignment(mtf_analyses) if mtf_analyses else {"overall_bias": ta_analysis.get("bias", "NEUTRAL"), "alignment_score": 70.0}
-
-        # F&O Context (bounded, strict degradation detection — flagged in diagnostics)
-        fno_data = {}
-        fno_degraded = False
-        try:
-            from app.fno.context import get_fno_context
-            fno_data = await asyncio.wait_for(get_fno_context(u), timeout=6.0) or {}
-        except TimeoutError:
-            fno_degraded = True
-            diag.reasons.append("F&O context timed out — PCR/OI degraded")
-        except Exception as e:
-            fno_degraded = True
-            diag.reasons.append(f"F&O context failed: {str(e)[:100]}")
-        if not fno_data:
-            fno_degraded = True
-            fno_data = {}
-
-        # Market Regime — shared matrix (single source with scalp_confirmation §15).
-        # TREND_UP/DOWN (ADX>=25 + trend), HIGH_VOL (atr_pct>=80), COMPRESSION (bb_width pct<=20 + adx<18),
-        # EVENT (explicit event flag), else RANGE.
-        regime = "RANGE"
-        adx_val = float(ta_analysis.get("momentum", {}).get("adx", 20.0))
-        trend_val = ta_analysis.get("trend", {}).get("trend", "RANGE")
-        try:
-            atr_pct = float(ta_analysis.get("volatility", {}).get("atr_percentile", 50.0))
-        except Exception:
-            atr_pct = 50.0
-        try:
-            bbw = ta_analysis.get("volatility", {}).get("bb_width_pctile", ta_analysis.get("bollinger_bandwidth_pctile", 50.0))
-            bbw = float(bbw)
-        except Exception:
-            bbw = 50.0
-        event_flag = bool(ta_analysis.get("event_flag", False) or ta_analysis.get("is_event_day", False))
-        if event_flag:
-            regime = "EVENT"
-        elif adx_val >= 25.0 and trend_val == "BULLISH":
-            regime = "TREND_UP"
-        elif adx_val >= 25.0 and trend_val == "BEARISH":
-            regime = "TREND_DOWN"
-        elif atr_pct >= 80.0:
-            regime = "HIGH_VOL"
-        elif bbw <= 20.0 and adx_val < 18.0:
-            regime = "COMPRESSION_SQUEEZE"
-
-        # Check True Session-Anchored VWAP (Strictly >= 09:15:00 IST of current trading session)
-        vwap_val = None
-        vwap_degraded = False
-        vwap_coverage_pct = 100.0
-        if active_candles:
-            try:
-                from zoneinfo import ZoneInfo
-                ist_tz = ZoneInfo("Asia/Kolkata")
-                
-                # Determine session reference date (latest candle date in IST)
-                latest_candle_time = None
-                for c in reversed(active_candles):
-                    ts = c.get("timestamp")
-                    if ts is not None:
-                        if isinstance(ts, datetime):
-                            latest_candle_time = ts.astimezone(ist_tz) if ts.tzinfo else ts.replace(tzinfo=ist_tz)
-                            break
-                        elif isinstance(ts, (int, float)):
-                            latest_candle_time = datetime.fromtimestamp(ts if ts < 1e11 else ts / 1000.0, tz=ist_tz)
-                            break
-                        elif isinstance(ts, str):
-                            try:
-                                dt = datetime.fromisoformat(ts)
-                                latest_candle_time = dt.astimezone(ist_tz) if dt.tzinfo else dt.replace(tzinfo=ist_tz)
-                                break
-                            except Exception:
-                                pass
-
-                session_candles = []
-                if latest_candle_time:
-                    session_open = datetime.combine(latest_candle_time.date(), dt_time(9, 15, 0), tzinfo=ist_tz)
-                    for c in active_candles:
-                        ts = c.get("timestamp")
-                        c_dt = None
-                        if isinstance(ts, datetime):
-                            c_dt = ts.astimezone(ist_tz) if ts.tzinfo else ts.replace(tzinfo=ist_tz)
-                        elif isinstance(ts, (int, float)):
-                            c_dt = datetime.fromtimestamp(ts if ts < 1e11 else ts / 1000.0, tz=ist_tz)
-                        elif isinstance(ts, str):
-                            try:
-                                dt = datetime.fromisoformat(ts)
-                                c_dt = dt.astimezone(ist_tz) if dt.tzinfo else dt.replace(tzinfo=ist_tz)
-                            except Exception:
-                                pass
-                        if c_dt and c_dt >= session_open and c_dt.date() == latest_candle_time.date():
-                            session_candles.append(c)
-
-                vwap_pool = session_candles if session_candles else active_candles
-                vwap_degraded = not bool(session_candles)
-                try:
-                    vwap_coverage_pct = round(len(session_candles) / max(1, len(active_candles)) * 100.0, 1)
-                except Exception:
-                    vwap_coverage_pct = 0.0 if vwap_degraded else 100.0
-                cum_vol = sum(float(c.get("volume", 0)) for c in vwap_pool)
-                cum_pv = sum(
-                    float(c.get("volume", 0)) * ((float(c.get("high", 0)) + float(c.get("low", 0)) + float(c.get("close", 0))) / 3.0)
-                    for c in vwap_pool
-                )
-                if cum_vol > 0:
-                    vwap_val = Decimal(str(round(cum_pv / cum_vol, 2)))
-            except Exception as v_err:
-                logger.debug("session_vwap_calc_error", error=str(v_err))
-                vwap_degraded = True
-                vwap_coverage_pct = 0.0
-        else:
-            vwap_degraded = True
-            vwap_coverage_pct = 0.0
-
-        vol_ma = None
-        if len(active_candles) >= 20:
-            vol_ma = sum(float(c.get("volume", 0)) for c in active_candles[-20:]) / 20.0
-
-        # Lunch-session liquidity vacuum detection (12:00-13:30 IST = 720-810 min)
-        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-        ist_minute_of_day = now_ist.hour * 60 + now_ist.minute
-        lunch_session = 720 <= ist_minute_of_day <= 810
-
-        # Resolve India VIX Percentile from F&O context or TA volatility metrics
-        vix_pct_val = None
-        if fno_data:
-            vix_pct_val = fno_data.get("india_vix_percentile") or fno_data.get("vix_percentile") or fno_data.get("vix_pct")
-        if vix_pct_val is None and ta_analysis:
-            vix_pct_val = ta_analysis.get("volatility", {}).get("vix_percentile") or ta_analysis.get("volatility", {}).get("vix_pct")
-        try:
-            vix_percentile_val = float(vix_pct_val) if vix_pct_val is not None else None
-        except (ValueError, TypeError):
-            vix_percentile_val = None
-
-        feat_snap = compute_feature_snapshot(
-            underlying=u,
-            spot_price=float(spot),
-            candles=active_candles,
-            timeframe=timeframe,
-            vwap=float(vwap_val) if vwap_val else None,
-            indicators=ta_analysis,
-            timestamp_ms=int(time.time() * 1000),
-            prior_day_high=float(getattr(quote, "high", 0.0) or 0.0) if getattr(quote, "high", None) else None,
-            prior_day_low=float(getattr(quote, "low", 0.0) or 0.0) if getattr(quote, "low", None) else None,
-        )
-
-        ctx = StrategyContext(
-            underlying=u,  # type: ignore
-            spot_price=spot,
-            timeframe=timeframe,  # type: ignore
-            indicators=ta_analysis,
-            mtf=mtf_result,
-            fno=fno_data,
-            regime=regime,
-            session_state="OPEN",
-            candles=active_candles,
-            vwap=vwap_val,
-            volume_ma_20=vol_ma,
-            is_new_1m_candle=(timeframe == "1M"),
-            is_new_5m_candle=(timeframe == "5M"),
-            fno_degraded=fno_degraded,
-            vwap_degraded=vwap_degraded,
-            vwap_coverage_pct=vwap_coverage_pct,
-            timestamp_ms=int(time.time() * 1000),
-            vix_percentile=vix_percentile_val,
-            lunch_session=lunch_session,
-            pre_market_gap_pct=float(gap_pct),
-            feature_snapshot=feat_snap,
-        )
 
         # Select strategies according to desk and timeframe
         if desk == "SCALP" or timeframe in ("1M", "3M"):
@@ -430,114 +129,10 @@ class SignalScanner:
         else:
             strategies_to_run = STRATEGY_REGISTRY
 
-        candidates: list[SignalCandidate] = []
-        rejected_gates: list[str] = []
-        for strat_name, strat in strategies_to_run.items():
-            try:
-                candidate = strat.detect(ctx)
-                if candidate:
-                    # Propagate context flags to candidate before confirmation gates
-                    candidate.fno_degraded = fno_degraded
-                    candidate.vwap_degraded = vwap_degraded
-                    candidate.vwap_coverage_pct = vwap_coverage_pct
-                    candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
-                    candidate.lunch_session = getattr(ctx, "lunch_session", False)
-
-                    # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles (except gap-exempt strategies)
-                    gap_pct_val = float(getattr(ctx, "pre_market_gap_pct", 0.0) or 0.0)
-                    if gap_pct_val > 0.5 and len(ctx.candles) <= 3 and strat_name not in GAP_EXEMPT_STRATEGIES:
-                        rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
-                        logger.info("candidate_rejected_gap", strategy=strat_name, underlying=u, gap_pct=gap_pct_val)
-                        continue
-
-                    # Gating Fast Scalping setups through ScalpConfirmationEngine (§16)
-                    if candidate.is_scalp or strat_name in SCALP_STRATEGIES:
-                        confirm_res = scalp_confirmation_engine.validate(
-                            candidate=candidate,
-                            current_spot=spot,
-                            regime=regime,
-                            candle_timestamp_ms=ctx.timestamp_ms,
-                        )
-                        if not confirm_res.passed:
-                            rejected_gates.append(f"{strat_name}:{confirm_res.reason_code or 'REJECTED'}")
-                            logger.info(
-                                "scalp_candidate_rejected_gate",
-                                strategy=strat_name,
-                                underlying=u,
-                                reason=confirm_res.reason_code,
-                                msg=confirm_res.rejection_message,
-                            )
-                            continue
-                        # Gate passed: record confirmed fingerprint
-                        scalp_confirmation_engine.record_confirmed(candidate, candle_timestamp_ms=ctx.timestamp_ms)
-
-                    # ── Participation Engine (§18, §19) ──
-                    desk_type = "SCALP" if (candidate.is_scalp or strat_name in SCALP_STRATEGIES) else "INTRADAY"
-                    part_ctx = participation_engine.evaluate(
-                        direction=candidate.direction,
-                        desk=desk_type,
-                        rvol=feat_snap.rvol if feat_snap else 1.0,
-                        volume_acceleration=feat_snap.volume_acceleration if feat_snap else 0.0,
-                        price_change_pct=feat_snap.roc_1 if feat_snap else 0.0,
-                        fno_data=fno_data,
-                        candles=active_candles,
-                    )
-                    candidate.participation = part_ctx.model_dump()
-
-                    # ── Orthogonal Confluence Engine (§23, §24) ──
-                    conf_res = orthogonal_confluence_engine.evaluate(candidate, feat_snap, part_ctx)
-                    candidate.confluence_factors = conf_res.confirmed_factors
-                    if not conf_res.passed:
-                        rejected_gates.append(f"{strat_name}:REJECT_CONFLUENCE")
-                        logger.info("candidate_rejected_confluence", strategy=strat_name, underlying=u, reasons=conf_res.rejection_reasons)
-                        continue
-
-                    # ── Net Edge & Friction Gate (§27, §28) ──
-                    edge_res = friction_gate.evaluate(candidate)
-                    candidate.net_edge = edge_res.expected_net_edge_pts
-                    if not edge_res.passed:
-                        rejected_gates.append(f"{strat_name}:{edge_res.rejection_reason or 'REJECT_FRICTION'}")
-                        logger.info("candidate_rejected_friction", strategy=strat_name, underlying=u, reason=edge_res.rejection_reason)
-                        continue
-
-                    candidate.vwap_coverage_pct = vwap_coverage_pct
-                    candidate.context_snapshot = {
-                        "regime": ctx.regime,
-                        "fno": ctx.fno,
-                        "mtf": ctx.mtf,
-                        "indicators": ctx.indicators,
-                        "vwap": float(ctx.vwap) if ctx.vwap else float(ctx.spot_price),
-                        "volume_ma_20": ctx.volume_ma_20,
-                        "spot_price": float(ctx.spot_price),
-                    }
-                    candidates.append(candidate)
-            except Exception as e:
-                diag.reasons.append(f"{strat_name} detect failed: {str(e)[:100]}")
-                logger.warning("strategy_detect_failed", strategy=strat_name, underlying=u, error=str(e))
-
         diag.strategies_evaluated = len(strategies_to_run)
+        candidates, rejected = run_strategies(ctx, strategies_to_run)
         diag.candidates_found = len(candidates)
-        if rejected_gates:
-            diag.reasons.append(f"Scalp gates rejected: {', '.join(rejected_gates[:4])}")
-        if not candidates:
-            vol_r = ta_analysis.get("volume", {}).get("ratio") if isinstance(ta_analysis.get("volume"), dict) else ta_analysis.get("volume_ratio")
-            vol_ratio_fmt = float(vol_r or 1.0)
-            diag.reasons.append(
-                f"No strategy triggered on {u} {timeframe} (regime={regime}, volume_ratio≈{vol_ratio_fmt:.2f})"
-            )
-        # Data quality: LIVE only when real quote + real candles + real F&O + session VWAP
-        if not diag.candles_count or fno_degraded:
-            diag.data_quality = "DEGRADED"
-        elif vwap_degraded:
-            diag.data_quality = "DEGRADED"
-            diag.reasons.append(f"Session VWAP degraded (coverage {vwap_coverage_pct:.1f}%) — confidence haircut applied")
-        else:
-            diag.data_quality = "LIVE"
-        diag.fno_degraded = fno_degraded
-        diag.vwap_degraded = vwap_degraded
-        diag.vwap_coverage_pct = vwap_coverage_pct
-        diag.duration_ms = int((time.time() - started) * 1000)
-        self._last_diagnostics[f"{u}:{timeframe}"] = diag
+        diag.reasons.extend(rejected)
         return candidates
 
     async def _process_candidates(self, candidates: list[SignalCandidate]) -> tuple[list[SignalInstance], list[str]]:
@@ -554,142 +149,44 @@ class SignalScanner:
 
         from app.algo.signal_fusion import conflict_resolver
         from app.signals.risk_engine import StrategySetup, central_risk_engine
-        from app.signals.trigger_gate import check_trigger_integrity
 
         registered_signals: list[SignalInstance] = []
         rejected_gates: list[str] = []
 
-        # ── Cross-Strategy Directional Conflict Arbitration (§28) ──
         candidates, dropped_conflicts = conflict_resolver.resolve_candidate_conflicts(candidates, tie_epsilon=5.0)
         if dropped_conflicts:
             rejected_gates.extend(dropped_conflicts)
 
+        pre_risk_chain = GateChain([
+            KillSwitchGate(),
+            FeedCircuitGate(),
+            FNOIntegrityGate(),
+            DeskConcurrencyGate(),
+            PortfolioConcurrencyGate(),
+            CrossDeskArbiterGate(),
+        ])
+
+        post_risk_chain = GateChain([
+            RSIGate(),
+            MarketStructureGate(),
+            TriggerIntegrityGate(),
+            OptionViabilityGate(),
+        ])
+
         for cand in candidates:
-            # ── Global Kill Switch & Feed Circuit Breaker Checks ──
-            from app.signals.safety.kill_switch import kill_switch
-            if kill_switch.is_active():
-                rejected_gates.append(f"{cand.strategy}:GLOBAL_KILL_SWITCH_ACTIVE")
-                continue
-
-            from app.signals.safety.feed_circuit import feed_circuit
-            if feed_circuit.is_degraded(cand.underlying):
-                rejected_gates.append(f"{cand.strategy}:FEED_DEGRADED_CIRCUIT_BREAKER")
-                logger.info("candidate_rejected_feed_degraded", underlying=cand.underlying, strategy=cand.strategy)
-                continue
-
-            # ── F&O Integrity Gate (§1): State-aware execution protection ──
+            # 1. Evaluate Pre-Risk Gates
+            passed_pre, results_pre = pre_risk_chain.evaluate(cand, registered_in_flight=registered_signals)
             fno_is_degraded = getattr(cand, "fno_degraded", False)
-            if fno_is_degraded:
-                rejected_gates.append(f"{cand.strategy}:ARMED_BLOCKED_FNO_DEGRADED")
-                logger.info(
-                    "candidate_fno_degraded_clamped_to_validated",
-                    strategy=cand.strategy,
-                    underlying=cand.underlying,
-                    reason="ARMED_BLOCKED_FNO_DEGRADED",
-                )
-
-            # ── Desk-Differentiated Concurrency & Anti-Stacking Governance (§3) ──
-            cand_is_scalp = bool(getattr(cand, "is_scalp", False) or cand.timeframe in ("1M", "3M"))
-            active_underlying_all = signal_fsm.list_active(underlying=cand.underlying)
-            in_flight_underlying = [
-                s for s in active_underlying_all
-                if s.fsm_state in ("DETECTED", "VALIDATED", "ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT")
-                and not s.is_expired()
-            ] + [s for s in registered_signals if s.underlying == cand.underlying]
-
-            # Isolate in-flight setups belonging to the SAME desk
-            same_desk_in_flight = [
-                s for s in in_flight_underlying
-                if bool(getattr(s, "is_scalp", False) or s.timeframe in ("1M", "3M")) == cand_is_scalp
-            ]
-
-            # Reject if underlying already has an active trade in the SAME desk lane
-            active_same_desk_trades = [s for s in same_desk_in_flight if s.fsm_state in ("CONFIRMED", "TARGET_1_HIT")]
-            if active_same_desk_trades:
-                desk_lbl = "SCALP" if cand_is_scalp else "INTRADAY"
-                reason = f"UNDERLYING_HAS_ACTIVE_TRADE_{desk_lbl}_{active_same_desk_trades[0].strategy}"
-                rejected_gates.append(f"{cand.strategy}:{reason}")
-                diag = self._last_diagnostics.get(f"{cand.underlying}:{cand.timeframe}")
-                if diag:
-                    diag.throttled_signals_count += 1
-                logger.info("candidate_rejected_active_trade_exists", underlying=cand.underlying, strategy=cand.strategy, desk=desk_lbl)
+            for r in results_pre:
+                if not r.passed and r.reason_code:
+                    rejected_gates.append(f"{cand.strategy}:{r.reason_code}")
+                elif r.reason_code == "ARMED_BLOCKED_FNO_DEGRADED":
+                    rejected_gates.append(f"{cand.strategy}:{r.reason_code}")
+            if not passed_pre:
                 continue
 
-            # Reject if underlying already has an actionable in-flight signal in
-            # the same direction on the SAME desk. VALIDATED/DETECTED are
-            # watch-only (never executable) so they must NOT block a new,
-            # potentially stronger ARMED setup — otherwise one weak 09:30
-            # VALIDATED would suppress every better setup until it expires,
-            # leaving the desk blank for an hour.
-            same_dir_stacked = [
-                s for s in same_desk_in_flight
-                if s.direction == cand.direction
-                and s.fsm_state in ("ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT")
-            ]
-            if same_dir_stacked:
-                reason = f"STACKING_BLOCKED_EXISTING_{same_dir_stacked[0].strategy}_{same_dir_stacked[0].direction}"
-                rejected_gates.append(f"{cand.strategy}:{reason}")
-                diag = self._last_diagnostics.get(f"{cand.underlying}:{cand.timeframe}")
-                if diag:
-                    diag.throttled_signals_count += 1
-                logger.info("candidate_rejected_stacking", underlying=cand.underlying, strategy=cand.strategy, blocked_by=same_dir_stacked[0].strategy)
-                continue
-
-            # Cross-desk clone guard: decoupled desks are intentional (a
-            # SCALP scalp and an INTRADAY swing may coexist), but the IDENTICAL
-            # setup (same strategy + direction) must never register twice —
-            # on 11 Sep 2026 three MEAN_REVERSION LONG clones filled in 35s.
-            # One live position per underlying+strategy+direction, all desks.
-            cross_desk_stacked = [
-                s for s in in_flight_underlying
-                if s.direction == cand.direction
-                and s.strategy == cand.strategy
-                and s.fsm_state in ("ARMED", "TRIGGERED", "CONFIRMED", "TARGET_1_HIT")
-            ]
-            if cross_desk_stacked:
-                blocker = cross_desk_stacked[0]
-                reason = f"CROSS_DESK_STACKING_BLOCKED_{blocker.strategy}_{blocker.direction}"
-                rejected_gates.append(f"{cand.strategy}:{reason}")
-                diag = self._last_diagnostics.get(f"{cand.underlying}:{cand.timeframe}")
-                if diag:
-                    diag.throttled_signals_count += 1
-                logger.info(
-                    "candidate_rejected_cross_desk_stacking",
-                    underlying=cand.underlying,
-                    strategy=cand.strategy,
-                    blocked_by=getattr(blocker, "signal_id", "?"),
-                )
-                continue
-
-            # Portfolio Concurrency Cap: Max 4 open/active trades across entire portfolio
-            all_active = signal_fsm.list_active()
-            portfolio_open_trades = [
-                s for s in all_active
-                if s.fsm_state in ("CONFIRMED", "TARGET_1_HIT")
-                and not s.is_expired()
-            ]
-            if len(portfolio_open_trades) >= 4:
-                reason = "PORTFOLIO_CONCURRENCY_LIMIT_REACHED"
-                rejected_gates.append(f"{cand.strategy}:{reason}")
-                diag = self._last_diagnostics.get(f"{cand.underlying}:{cand.timeframe}")
-                if diag:
-                    diag.throttled_signals_count += 1
-                logger.info("candidate_rejected_portfolio_cap", strategy=cand.strategy, active_open_trades=len(portfolio_open_trades))
-                continue
-
-            # ── Cross-Desk Inventory Arbiter (§31, §51) ──
-            arb_dec = cross_desk_arbiter.arbitrate(
-                candidate_is_scalp=cand_is_scalp,
-                candidate_underlying=cand.underlying,
-                candidate_direction=cand.direction,
-                active_trades=all_active,
-            )
-            if not arb_dec.passed:
-                rejected_gates.append(f"{cand.strategy}:{arb_dec.reason}")
-                logger.info("candidate_rejected_cross_desk_arbiter", strategy=cand.strategy, underlying=cand.underlying, reason=arb_dec.reason)
-                continue
-
-            # ── Centralized Risk Engine Validation (Enforces Envelopes & Rejection of Oversized SL) ──
+            # 2. Centralized Risk Engine Validation
+            cand_greeks = getattr(cand, "greeks", {}) or {}
             strat_setup = StrategySetup(
                 strategy_name=cand.strategy,
                 underlying=cand.underlying,
@@ -702,8 +199,11 @@ class SignalScanner:
                 structural_target_candidates=[cand.target_1, cand.target_2],
                 atr_5m=Decimal(str(round(float(cand.risk_points or 20.0), 2))),
                 confidence=cand.overall_confidence,
+                option_delta=cand_greeks.get("delta"),
+                option_theta_hour=cand_greeks.get("theta_hour"),
+                option_premium=cand_greeks.get("theoretical_price"),
+                option_iv=cand_greeks.get("iv"),
             )
-            # ── Centralized Risk Engine Validation with Event Risk Overlay (§28) ──
             overlay = None
             try:
                 from app.event_engine.risk_overlay import event_risk_overlay_service
@@ -725,336 +225,51 @@ class SignalScanner:
                 )
                 continue
 
-            # Update candidate with validated, realistic parameters
+            # Update candidate parameters from risk decision
             cand.stop_loss = risk_decision.stop_loss
             cand.target_1 = risk_decision.target_1
             cand.target_2 = risk_decision.target_2
             cand.risk_points = Decimal(str(risk_decision.risk_points))
             cand.risk_reward_t1 = risk_decision.risk_reward_t1
             cand.risk_reward_t2 = risk_decision.risk_reward_t2
-            cand.ttl_seconds = risk_decision.trigger_ttl_seconds
-            cand.time_stop_seconds = risk_decision.active_time_stop_seconds
+            cand.ttl_seconds = max(cand.ttl_seconds or 300, risk_decision.trigger_ttl_seconds)
+            cand.time_stop_seconds = max(getattr(cand, "time_stop_seconds", 0) or 0, risk_decision.active_time_stop_seconds)
 
-            # ── 1a. Strategy-aware RSI confirmation gate ──
-            indicators_snap = cand.context_snapshot.get("indicators", {}) or {}
-            rsi_explicit = indicators_snap.get("rsi") or indicators_snap.get("momentum", {}).get("rsi")
-            if rsi_explicit is not None:
-                rsi_val = float(rsi_explicit)
-                is_call = "CALL" in cand.direction
-                strat = cand.strategy.upper()
-
-                if strat == "MEAN_REVERSION":
-                    # Exhaustion setups: CALL requires oversold, PUT requires overbought
-                    rsi_ok = (is_call and rsi_val <= 38.0) or (not is_call and rsi_val >= 62.0)
-                elif strat in ("BREAKOUT", "MICRO_MOMENTUM", "GAMMA_SQUEEZE", "GAMMA_SPIKE"):
-                    # Momentum expansion setups
-                    rsi_ok = (is_call and 52.0 <= rsi_val <= 82.0) or (not is_call and 18.0 <= rsi_val <= 48.0)
-                elif strat in ("TREND_PULLBACK", "EMA_RIBBON", "ORB", "VWAP_SCALP"):
-                    # Trend-following pullback / continuation
-                    rsi_ok = (is_call and 40.0 <= rsi_val <= 70.0) or (not is_call and 30.0 <= rsi_val <= 60.0)
-                else:
-                    # Default permissive window
-                    rsi_ok = (is_call and 35.0 <= rsi_val <= 80.0) or (not is_call and 20.0 <= rsi_val <= 65.0)
-
-                if not rsi_ok:
-                    rejected_gates.append(f"{cand.strategy}:RSI_REJECTION_{rsi_val:.1f}")
-                    logger.info("candidate_rejected_rsi", strategy=cand.strategy, underlying=cand.underlying, rsi=rsi_val, direction=cand.direction)
-                    continue
-
-            # ── 1b. Strategy-aware market-structure proximity filter ──
-            # Universal rejection near S/R breaks BREAKOUT (which triggers at S/R) and MEAN_REVERSION.
-            # Only trend-continuation setups should reject running directly into opposing blocking levels.
-            strat = cand.strategy.upper()
-            if strat not in ("BREAKOUT", "MEAN_REVERSION", "VWAP_SCALP"):
-                atr_val = Decimal(str(indicators_snap.get("volatility", {}).get("atr") or float(cand.risk_points or 20.0)))
-                sr_data = indicators_snap.get("support_resistance", {})
-                is_call = "CALL" in cand.direction
-                if is_call and sr_data.get("resistance"):
-                    # Check for immediate overhead resistance blocking CALL upside
-                    raw_res = sr_data.get("resistance")
-                    res_items = raw_res if isinstance(raw_res, (list, tuple, set)) else [raw_res] if raw_res is not None else []
-                    res_levels = []
-                    for r in res_items:
-                        try:
-                            dec_r = Decimal(str(r))
-                            if dec_r > cand.spot_price:
-                                res_levels.append(dec_r)
-                        except Exception:
-                            pass
-                    if res_levels:
-                        dist_to_overhead = min(lvl - cand.spot_price for lvl in res_levels)
-                        if dist_to_overhead < (atr_val * Decimal("0.25")):
-                            rejected_gates.append(f"{cand.strategy}:BLOCKED_BY_RESISTANCE_{float(dist_to_overhead):.1f}pts")
-                            logger.info("candidate_rejected_blocking_resistance", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_overhead))
-                            continue
-                elif (not is_call) and sr_data.get("support"):
-                    # Check for immediate support floor blocking PUT downside
-                    raw_sup = sr_data.get("support")
-                    sup_items = raw_sup if isinstance(raw_sup, (list, tuple, set)) else [raw_sup] if raw_sup is not None else []
-                    sup_levels = []
-                    for s in sup_items:
-                        try:
-                            dec_s = Decimal(str(s))
-                            if dec_s < cand.spot_price:
-                                sup_levels.append(dec_s)
-                        except Exception:
-                            pass
-                    if sup_levels:
-                        dist_to_floor = min(cand.spot_price - lvl for lvl in sup_levels)
-                        if dist_to_floor < (atr_val * Decimal("0.25")):
-                            rejected_gates.append(f"{cand.strategy}:BLOCKED_BY_SUPPORT_{float(dist_to_floor):.1f}pts")
-                            logger.info("candidate_rejected_blocking_support", strategy=cand.strategy, underlying=cand.underlying, dist_pts=float(dist_to_floor))
-                            continue
-
-            # ── 2. Trigger integrity gate: kill born-triggered / no-edge setups ──
-            gate = check_trigger_integrity(
-                underlying=cand.underlying,
-                strategy=cand.strategy,
-                direction=cand.direction,
-                spot_price=cand.spot_price,
-                entry_min=cand.entry_min,
-                entry_max=cand.entry_max,
-                trigger=cand.trigger,
-                stop_loss=cand.stop_loss,
-                target_1=cand.target_1,
-                target_2=cand.target_2,
-                risk_points=cand.risk_points,
-                risk_reward_t1=cand.risk_reward_t1,
-                risk_reward_t2=cand.risk_reward_t2,
-                is_scalp=getattr(cand, "is_scalp", False),
-                timeframe=getattr(cand, "timeframe", "5M"),
-            )
-            if not gate.passed:
-                rejected_gates.append(f"{cand.strategy}:{gate.reason_code}")
-                logger.info(
-                    "candidate_rejected_trigger_gate",
-                    strategy=cand.strategy,
-                    underlying=cand.underlying,
-                    reason=gate.reason_code,
-                    msg=gate.message,
-                )
+            # 3. Evaluate Post-Risk Gates
+            passed_post, results_post = post_risk_chain.evaluate(cand)
+            for r in results_post:
+                if not r.passed and r.reason_code:
+                    rejected_gates.append(f"{cand.strategy}:{r.reason_code}")
+            if not passed_post:
                 continue
 
-            # Check confluence with Desk-Specific AI Advisory (§35)
-            ai_advice = None
-            try:
-                c_snap = getattr(cand, "context_snapshot", {}) or {}
-                ai_snapshot = {
-                    "regime": c_snap.get("regime") or ("RANGE" if cand.regime_score in (70.0, 85.0) else "TREND"),
-                    "fno": c_snap.get("fno", {}),
-                    "mtf": c_snap.get("mtf", {}),
-                    "indicators": c_snap.get("indicators") or {"volatility": {"atr": float(cand.risk_points or 20.0)}},
-                    "spot_price": float(c_snap.get("spot_price") or cand.spot_price),
-                    "vwap": float(c_snap.get("vwap") or cand.spot_price),
-                    "volume_ma_20": c_snap.get("volume_ma_20"),
-                }
-                ai_advice = await confluence_engine.fetch_ai_advisory(cand, ai_snapshot)
-                cand.ai_score = ai_advice.score
-                if ai_advice.rationale:
-                    cand.rationale.append(f"AI: {ai_advice.rationale}")
-            except Exception as ai_err:
-                logger.debug("ai_advisory_fetch_skipped", error=str(ai_err))
-
-            # Query ML Prediction if available (§48)
-            ml_pred = None
-            try:
-                from app.ml.predictor import ml_predictor
-                ml_res = await ml_predictor.predict_probabilities(cand.underlying)
-                if ml_res:
-                    ml_pred = {
-                        "is_available": True,
-                        "bullish_pct": ml_res.bullish_pct,
-                        "bearish_pct": ml_res.bearish_pct,
-                        "confidence_score": ml_res.confidence_score,
-                    }
-                    is_call = "CALL" in cand.direction
-                    cand_ml_score = ml_res.bullish_pct if is_call else ml_res.bearish_pct
-                    cand.rationale.append(f"ML: {ml_res.predicted_bias} ({cand_ml_score:.1f}% prob, conf {ml_res.confidence_score:.0f}%)")
-            except Exception as ml_err:
-                logger.debug("ml_prediction_fetch_skipped", error=str(ml_err))
-
-            fused_score = confluence_engine.fuse(cand, ai_result=ai_advice, ml_prediction=ml_pred)
-            cand.overall_confidence = fused_score
-
-            # ── Immutable explain bundle (§explainability): pure, never throws ──
-            _explain = None
-            try:
-                from app.signals.confluence import ARMED_THRESHOLD as _armed_thr
-                from app.signals.confluence import DEFAULT_WEIGHTS as _wts
-                from app.signals.explain import build_signal_explain as _build_explain
-                _c_snap = getattr(cand, "context_snapshot", {}) or {}
-                _ind = _c_snap.get("indicators", {}) or {}
-                _fno = _c_snap.get("fno", {}) or {}
-                _mtf = _c_snap.get("mtf", {}) or {}
-                _inputs_snapshot = {
-                    "spot": float(_c_snap.get("spot_price") or cand.spot_price),
-                    "vwap": float(_c_snap.get("vwap") or cand.spot_price),
-                    "rsi": None,
-                    "adx": None,
-                    "volume_ratio": None,
-                    "pcr": None,
-                    "atm_iv": None,
-                    "regime": _c_snap.get("regime"),
-                    "mtf_bias": _mtf.get("overall_bias", _mtf.get("bias")),
-                    "indicators": _ind,
-                    "fno": _fno,
-                    "mtf": _mtf,
-                }
-                try:
-                    _inputs_snapshot["rsi"] = float(_ind.get("rsi") or (_ind.get("momentum") or {}).get("rsi"))
-                except Exception:
-                    pass
-                try:
-                    _inputs_snapshot["adx"] = float((_ind.get("momentum") or {}).get("adx") or _ind.get("adx"))
-                except Exception:
-                    pass
-                try:
-                    _inputs_snapshot["volume_ratio"] = float(
-                        _ind.get("volume_ratio") or (_ind.get("volume") or {}).get("ratio") or 1.0
-                    )
-                except Exception:
-                    pass
-                try:
-                    _inputs_snapshot["pcr"] = float(_fno.get("pcr", 1.0))
-                except Exception:
-                    pass
-                try:
-                    _inputs_snapshot["atm_iv"] = float(_fno.get("atm_iv", 14.5))
-                except Exception:
-                    pass
-                _data_health = {
-                    "fno_degraded": bool(fno_is_degraded),
-                    "vwap_degraded": bool(getattr(cand, "vwap_degraded", False)),
-                    "vwap_coverage_pct": float(getattr(cand, "vwap_coverage_pct", 100.0) or 100.0),
-                }
-                _weights_cfg = {"weights_fraction": dict(_wts), "version": 2}
-                _thr_cfg = {"armed": float(_armed_thr)}
-                _explain = _build_explain(
-                    cand, fused_score, ai_advice, ml_pred, overlay,
-                    _weights_cfg, _thr_cfg, rejected_gates,
-                    _inputs_snapshot, _data_health,
-                )
-            except Exception as _ex:
-                logger.debug("signal_explain_build_skipped", error=str(_ex))
-
-            # Convert to FSM instance with Version 6.0 fields.
-            # VALIDATED is watch-only (never auto-executed) — it is the
-            # "armed but waiting" shelf the desk watches. Give it a 30-min
-            # visibility window so the board is not blank 1hr after open
-            # when nothing is executable yet. ARMED keeps the short
-            # execution TTL (300/600s) so stale triggers still die fast.
-            fsm_init_state = "VALIDATED" if fno_is_degraded else ("ARMED" if fused_score >= ARMED_THRESHOLD else "VALIDATED")
-            watch_ttl_seconds = cand.ttl_seconds
-            if fsm_init_state == "VALIDATED":
-                try:
-                    watch_ttl_seconds = max(int(cand.ttl_seconds or 0), 1800)
-                except Exception:
-                    watch_ttl_seconds = 1800
-                try:
-                    cand.rationale.append(
-                        f"WATCH only (score {fused_score:.1f} < ARMED {ARMED_THRESHOLD:.0f}) — waiting for confirmation, not executable"
-                    )
-                except Exception:
-                    pass
-            instance = SignalInstance(
-                underlying=cand.underlying,
-                strategy=cand.strategy,
-                direction=cand.direction,
-                timeframe=cand.timeframe,
-                spot_price=cand.spot_price,
-                signal_type=cand.signal_type,
-                is_scalp=cand.is_scalp,
-                entry_min=cand.entry_min,
-                entry_max=cand.entry_max,
-                trigger=cand.trigger,
-                stop_loss=cand.stop_loss,
-                initial_stop_loss=cand.stop_loss,
-                current_stop_loss=cand.stop_loss,
-                target_1=cand.target_1,
-                target_2=cand.target_2,
-                t1_price=cand.target_1,
-                t2_price=cand.target_2,
-                risk_points=cand.risk_points,
-                risk_reward_t1=cand.risk_reward_t1,
-                risk_reward_t2=cand.risk_reward_t2,
-                ttl_seconds=watch_ttl_seconds,
-                runner_ttl_seconds=cand.runner_ttl_seconds,
-                time_stop_seconds=cand.time_stop_seconds,
-                lots=risk_decision.lots,
-                quantity=risk_decision.quantity,
-                max_rupee_loss=risk_decision.max_rupee_loss,
-                confidence=fused_score,
-                confluence_breakdown={
-                    "technical": cand.technical_score,
-                    "mtf": cand.mtf_score,
-                    "fno": cand.fno_score,
-                    "regime": cand.regime_score,
-                    "ai": cand.ai_score,
-                    "ai_status": getattr(ai_advice, "status", "UNAVAILABLE") if ai_advice else "UNAVAILABLE",
-                    "ml_score": (ml_pred.get("bullish_pct") if "CALL" in cand.direction else ml_pred.get("bearish_pct")) if ml_pred else None,
-                    "ml_status": "AVAILABLE" if ml_pred else "UNAVAILABLE",
-                    "event_state": getattr(overlay, "proximity_state", "NORMAL") if overlay else "NORMAL",
-                    "event_sizing_multiplier": getattr(overlay, "sizing_multiplier", 1.0) if overlay else 1.0,
-                    "fno_degraded": fno_is_degraded,
-                },
-                rationale=cand.rationale,
-                explain=_explain,
-                option_contract=cand.option_contract.model_dump() if cand.option_contract else None,
-                greeks=cand.greeks,
-                expected_move=cand.expected_move,
-                ai_research=cand.ai_research,
-                path_simulation=cand.path_simulation,
-                fsm_state=fsm_init_state,
+            # 4. Multi-Domain Intelligence Enrichment
+            fused_score, inst_overlay, explain_bundle, fsm_init_state = await enrich_candidate(
+                cand=cand,
+                active_candles=getattr(cand, "context_snapshot", {}).get("candles", []),
+                fno_data=getattr(cand, "context_snapshot", {}).get("fno", {}),
+                fno_is_degraded=fno_is_degraded,
+                risk_decision=risk_decision,
+                overlay=overlay,
+                rejected_gates=rejected_gates,
             )
 
-            signal_fsm.register(instance)
+            # 5. Build SignalInstance and Register
+            instance = build_signal_instance(
+                cand=cand,
+                fused_score=fused_score,
+                fsm_init_state=fsm_init_state,
+                risk_decision=risk_decision,
+                inst_overlay=inst_overlay,
+                ai_advice=None,
+                ml_pred=None,
+                overlay=overlay,
+                explain_bundle=explain_bundle,
+                fno_is_degraded=fno_is_degraded,
+            )
+
+            await register_and_notify(instance)
             registered_signals.append(instance)
-
-            # Record into Signal Audit Ledger
-            try:
-                from app.signals.audit_ledger import signal_audit_ledger
-                signal_audit_ledger.record_signal_created(
-                    signal_id=instance.signal_id,
-                    underlying=instance.underlying,
-                    strategy=instance.strategy,
-                    direction=instance.direction,
-                    timeframe=instance.timeframe,
-                    spot_price=float(instance.spot_price),
-                    trigger=float(instance.trigger),
-                    stop_loss=float(instance.stop_loss),
-                    target_1=float(instance.target_1),
-                    target_2=float(instance.target_2),
-                    confidence=float(instance.confidence),
-                    option_contract=instance.option_contract,
-                    status=instance.fsm_state,
-                )
-            except Exception as ae:
-                logger.warning("audit_record_created_failed", error=str(ae))
-
-            # Enqueue Telegram notification
-            try:
-                from app.institutional.telegram_notifications import (
-                    SignalEvent,
-                    telegram_notification_queue,
-                )
-                ev = SignalEvent(
-                    event_type="POSSIBLE_SETUP",
-                    signal_id=instance.signal_id,
-                    instrument=instance.underlying,
-                    candle_timeframe=instance.timeframe,
-                    setup_type=f"{'⚡ ' if instance.is_scalp else ''}{instance.strategy}",
-                    direction="BULLISH" if "CALL" in instance.direction else "BEARISH",
-                    status=instance.fsm_state,
-                    trigger_level=float(instance.trigger),
-                    current_price=float(instance.spot_price),
-                    stop_loss=float(instance.stop_loss),
-                    target_low=float(instance.target_1),
-                    target_high=float(instance.target_2),
-                    confidence=float(instance.confidence),
-                )
-                await telegram_notification_queue.publish_signal_event(ev)
-            except Exception as te:
-                logger.warning("scanner_telegram_publish_failed", error=str(te))
 
         return registered_signals, rejected_gates
 

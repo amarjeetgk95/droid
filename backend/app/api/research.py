@@ -207,6 +207,35 @@ async def get_forecast(
 
 
 # -------------------------------------------------------------
+# 2c. Tactical Horizon Bias (60m primary; aliases /forecast/{horizon})
+# -------------------------------------------------------------
+@router.get("/tactical-bias/{horizon}")
+async def get_tactical_bias(
+    horizon: str,
+    instrument: str = Query("NIFTY 50", description="Trading instrument"),
+    record: bool = Query(True, description="Persist bias as an immutable prediction"),
+):
+    """Generate a point-in-time tactical horizon bias for the requested horizon."""
+    from app.research.trend_forecast import SUPPORTED_HORIZONS, tactical_horizon_engine
+
+    h = (horizon or "").lower()
+    if h not in SUPPORTED_HORIZONS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown horizon '{horizon}'. Supported: {sorted(SUPPORTED_HORIZONS)}",
+        )
+    try:
+        return await tactical_horizon_engine.forecast(instrument=instrument, horizon=h, record=record)
+    except ValueError as e:
+        logger.warning("tactical_bias_insufficient_data", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("tactical_bias_failed", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Tactical bias failed: {e}")
+
+
+
+# -------------------------------------------------------------
 # 3. Indicator Registry (§13, §14)
 # -------------------------------------------------------------
 @router.get("/indicators", response_model=List[IndicatorDefinition])

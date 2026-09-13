@@ -29,6 +29,9 @@ class ResearchOptionsContext:
     async def get_context(cls, instrument: str) -> Dict[str, Any]:
         """Fetch standardized options context for the given instrument."""
         quality = DataQualityStatus.LIVE
+        # timestamp/available_time are set from the underlying F&O snapshot
+        # (PIT provenance), never minted here, so downstream can prove
+        # available_time <= decision_time.
         timestamp = datetime.now(timezone.utc).isoformat()
 
         try:
@@ -72,7 +75,9 @@ class ResearchOptionsContext:
 
             return {
                 "instrument": instrument,
-                "timestamp": timestamp,
+                "timestamp": fno_data.get("timestamp", timestamp),
+                "available_time": fno_data.get("available_time", fno_data.get("timestamp", timestamp)),
+                "timestamp_ms": fno_data.get("timestamp_ms"),
                 "available": True,
                 "data_quality": quality.value,
                 "pcr_oi": round(pcr_oi, 3),

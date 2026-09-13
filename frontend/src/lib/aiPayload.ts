@@ -56,15 +56,19 @@ export function useAISettings(): AISettings | null {
   /* eslint-disable react-hooks/set-state-in-effect -- hydration from localStorage */
   useEffect(() => {
     setAi(getStoredAISettings());
+    const refresh = () => setAi(getStoredAISettings());
     const onStorage = (e: StorageEvent) => {
-      if (e.key && e.key.includes('droid_app_settings')) setAi(getStoredAISettings());
+      if (e.key && e.key.includes('droid_app_settings')) refresh();
     };
-    const onFocus = () => setAi(getStoredAISettings());
     window.addEventListener('storage', onStorage);
-    window.addEventListener('focus', onFocus);
+    window.addEventListener('focus', refresh);
+    // Cross-device key pull (Supabase -> localStorage) notifies here so AI
+    // screens pick up keys synced from another device without a reload.
+    window.addEventListener('droid:ai-keys-synced', refresh);
     return () => {
       window.removeEventListener('storage', onStorage);
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('droid:ai-keys-synced', refresh);
     };
   }, []);
   return ai;

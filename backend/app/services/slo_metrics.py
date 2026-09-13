@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, List
-import numpy as np
 
 from app.core.redis_bus import global_event_bus
 from app.institutional.state_recovery import state_recovery_engine
@@ -28,13 +27,21 @@ class LatencyTracker:
     def percentiles(self) -> Dict[str, float]:
         if not self._samples:
             return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0, "count": 0}
-        arr = np.array(self._samples)
+        s = sorted(self._samples)
+        n = len(s)
+
+        def _pct(p: float) -> float:
+            k = (n - 1) * p
+            f = int(k)
+            c = min(f + 1, n - 1)
+            return round(s[f] + (s[c] - s[f]) * (k - f), 2)
+
         return {
-            "p50": round(float(np.percentile(arr, 50)), 2),
-            "p95": round(float(np.percentile(arr, 95)), 2),
-            "p99": round(float(np.percentile(arr, 99)), 2),
-            "max": round(float(np.max(arr)), 2),
-            "count": len(self._samples),
+            "p50": _pct(0.50),
+            "p95": _pct(0.95),
+            "p99": _pct(0.99),
+            "max": round(s[-1], 2),
+            "count": n,
         }
 
 

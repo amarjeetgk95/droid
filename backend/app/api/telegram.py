@@ -246,12 +246,12 @@ async def dev_quick_test(
     }
     if event_type not in allowed_events:
         raise HTTPException(400, f"Unknown event_type {event_type}. Allowed: {sorted(allowed_events)}")
-    if instrument not in ("NIFTY", "BANKNIFTY", "SENSEX", "BTCUSD"):
-        raise HTTPException(400, "instrument must be NIFTY/BANKNIFTY/SENSEX/BTCUSD")
+    if instrument not in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        raise HTTPException(400, "instrument must be NIFTY/BANKNIFTY/SENSEX (FYERS-only)")
     if candle_timeframe not in ("1M", "5M"):
         raise HTTPException(400, "candle_timeframe must be 1M or 5M")
 
-    # Derive demo prices from live buffer if available
+    # Truth-of-Wall: test signal needs a LIVE FYERS price — never fabricate demo spot.
     spot: float | None = None
     try:
         from app.institutional.snapshot_buffer import synchronized_buffer
@@ -260,9 +260,8 @@ async def dev_quick_test(
             spot = float(latest.event.price)
     except Exception:
         pass
-    if spot is None:
-        demo = {"NIFTY": 25000.0, "BANKNIFTY": 57800.0, "SENSEX": 82000.0, "BTCUSD": 65000.0}
-        spot = demo.get(instrument, 10000.0)
+    if spot is None or spot <= 0:
+        raise HTTPException(503, f"No live FYERS price for {instrument} — re-auth FYERS and retry, no demo fallback")
     trigger = spot * 1.005 if direction == "BULLISH" else spot * 0.995
     stop = spot * 0.992 if direction == "BULLISH" else spot * 1.008
     target = spot * 1.012 if direction == "BULLISH" else spot * 0.988

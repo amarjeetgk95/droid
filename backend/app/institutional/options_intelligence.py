@@ -62,6 +62,8 @@ class VolatilitySurfaceEngine:
     """
     def analyze(self, chain) -> dict[str, Any]:
         # chain: OptionChainResponse from options_service
+        # Truth-of-Wall: FYERS solved IVs only. Percentile/rank/term-structure
+        # need historical IV series / multi-expiry comparison — unavailable, so None.
         strikes = chain.strikes
         atm_iv = chain.analytics.atm_iv
         if not atm_iv:
@@ -70,14 +72,14 @@ class VolatilitySurfaceEngine:
                 "otm_call_iv": None,
                 "otm_put_iv": None,
                 "skew": None,
-                "smile": "NEUTRAL",
+                "smile": "UNKNOWN",
                 "term_structure": "UNKNOWN",
-                "iv_percentile": 50,
-                "iv_rank": 50,
+                "iv_percentile": None,
+                "iv_rank": None,
                 "iv_change": None,
                 "skew_change": None,
-                "regime": "NORMAL",
-                "note": "IV data not available",
+                "regime": "UNKNOWN",
+                "note": "IV data not available — FYERS IV solve failed, no synthetic fallback",
             }
 
         # Find OTM call/put IVs
@@ -90,9 +92,12 @@ class VolatilitySurfaceEngine:
         if atm_idx - 3 >= 0 and strikes[atm_idx - 3].put and strikes[atm_idx - 3].put.greeks:
             otm_put_iv = strikes[atm_idx - 3].put.greeks.iv
         skew = (otm_put_iv - otm_call_iv) if (otm_put_iv and otm_call_iv) else chain.analytics.iv_skew
-        # Smile approx
-        smile = "SMILE" if skew and abs(skew) < 2 else "SKEW"
-        # Regime detection (§14)
+        # Smile approx — only when both OTM legs solved, else UNKNOWN
+        if otm_put_iv is not None and otm_call_iv is not None and skew is not None:
+            smile = "SMILE" if abs(skew) < 2 else "SKEW"
+        else:
+            smile = "UNKNOWN"
+        # Regime detection (§14) — single-expiry ATM IV only, no term-structure
         iv = atm_iv
         if iv > 30:
             regime: VolRegime = "SHOCK"
@@ -104,21 +109,19 @@ class VolatilitySurfaceEngine:
             regime = "CRUSH"
         else:
             regime = "NORMAL"
-        # Percentile placeholder (would need historical IV series)
-        iv_percentile = min(95, max(5, int((iv - 8) / 22 * 80 + 10)))
         return {
             "atm_iv": atm_iv,
             "otm_call_iv": otm_call_iv,
             "otm_put_iv": otm_put_iv,
             "skew": round(skew, 2) if isinstance(skew, (int, float)) else None,
             "smile": smile,
-            "term_structure": "CONTANGO" if atm_iv < 20 else "FLAT",
-            "iv_percentile": iv_percentile,
-            "iv_rank": int(iv_percentile * 0.9),
+            "term_structure": "UNKNOWN",
+            "iv_percentile": None,
+            "iv_rank": None,
             "iv_change": None,
             "skew_change": None,
             "regime": regime,
-            "note": "Do not interpret IV direction as price direction (§14)",
+            "note": "Single-expiry FYERS IV only — percentile/term-structure need history, not fabricated",
         }
 
 

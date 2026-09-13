@@ -1,10 +1,45 @@
-// Shared HTTP core for all API domains. Single base URL + token + timeout/401 handling.
-const DEFAULT_API_URL =
-  typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:8000'
-    : 'https://droid-backend-emeq.onrender.com';
+// Shared HTTP core. Backend is localhost-only; frontend stays on Firebase.
+// NEXT_PUBLIC_API_URL override wins, else local backend.
+const DEFAULT_API_URL = 'http://127.0.0.1:8000';
 
-export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/+$/, '');
+function resolveApiBase(): string {
+  if (typeof window !== 'undefined') {
+    // 1. URL search param: ?api=https://... (enables instant mobile testing without rebuild)
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const queryApi = params.get('api');
+      if (queryApi && /^https?:\/\//i.test(queryApi)) {
+        const clean = queryApi.replace(/\/+$/, '');
+        localStorage.setItem('droid_custom_api_url', clean);
+        return clean;
+      }
+    } catch {}
+
+    // 2. Saved custom API URL in localStorage
+    try {
+      const saved = localStorage.getItem('droid_custom_api_url');
+      if (saved && /^https?:\/\//i.test(saved)) {
+        return saved.replace(/\/+$/, '');
+      }
+    } catch {}
+
+    // 3. Ignore baked-in trycloudflare.com tunnels (ephemeral quick tunnels die quickly)
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && !envUrl.includes('trycloudflare.com')) {
+      return envUrl.replace(/\/+$/, '');
+    }
+    return DEFAULT_API_URL;
+  }
+
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  return DEFAULT_API_URL;
+}
+
+export const API_BASE = resolveApiBase();
+
 
 export type RequestOptions = RequestInit & { timeoutMs?: number };
 

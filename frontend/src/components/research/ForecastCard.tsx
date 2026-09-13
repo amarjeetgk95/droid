@@ -117,13 +117,13 @@ function distPct(anchor: number | null | undefined, ref: number | null | undefin
 
 export default function ForecastCard({ forecast, loading, error, onRetry, updatedAt, timeframe = '1h', timeframeLabel }: ForecastCardProps) {
   const tfLabel = timeframeLabel ?? timeframe.toUpperCase();
-  const outlookLabel = `${tfLabel} Outlook`;
+  const outlookLabel = `${tfLabel} Tactical Bias`;
   if (loading && !forecast) {
     return (
       <section className="card" aria-label={outlookLabel}>
         <div className="card-hd">
           <h2 className="card-title">{outlookLabel}</h2>
-          <span className="card-meta">scanning…</span>
+          <span className="card-meta">evaluating…</span>
         </div>
         <div className="card-bd" style={{ display: 'grid', gap: 10 }}>
           <div className="skel" style={{ height: 44, width: '42%' }}>.</div>
@@ -148,7 +148,7 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
         </div>
         <div className="card-bd">
           <EmptyNote>
-            Forecast unavailable — {error ? String(error) : 'the feed or model did not respond.'}
+            Tactical bias unavailable — {error ? String(error) : 'the feed or model did not respond.'}
           </EmptyNote>
           <div style={{ marginTop: 12 }}>
             <RetryButton onRetry={onRetry} />
@@ -253,7 +253,7 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
               justifyContent: 'space-between',
             }}
           >
-            <span>Showing last good forecast — refresh failed: {String(error)}</span>
+            <span>Showing last good bias — refresh failed: {String(error)}</span>
             <RetryButton onRetry={onRetry}>Retry</RetryButton>
           </div>
         ) : null}
@@ -503,7 +503,7 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
           }}
         >
           <summary style={{ cursor: 'pointer', fontSize: 13.5, fontWeight: 750 }}>
-            Why this forecast? How &amp; why
+            Why this tactical bias? How &amp; why
           </summary>
           <WhyPanel
             explain={

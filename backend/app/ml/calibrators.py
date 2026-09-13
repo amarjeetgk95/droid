@@ -506,4 +506,39 @@ __all__ = [
     "calibrator_path",
     "save_calibrator",
     "load_calibrator",
+    "load_calibrator_for_regime",
 ]
+
+
+def load_calibrator_for_regime(instrument: str,
+                               regime: str = "UNKNOWN",
+                               h: int = CALIBRATOR_HORIZON_MINUTES):
+    """Regime-aware lookup: calibrator_h{h}_{INSTRUMENT}_{REGIME}.json first,
+    fallback to base calibrator_h{h}_{INSTRUMENT}.json, else None.
+
+    No artifact (the current state) -> None; callers degrade to uncalibrated +
+    limitation, never crash. Train per-regime maps once >=200 OOS rows exist.
+    """
+    from pathlib import Path as _P
+
+    reg = str(regime or "UNKNOWN").upper()
+    base_dir = calibrator_path(instrument, h).parent
+    stem = calibrator_path(instrument, h).stem  # calibrator_h60_NIFTY
+    for cand in (base_dir / f"{stem}_{reg}.json", base_dir / f"{stem}.json"):
+        try:
+            if isinstance(cand, _P) and cand.exists():
+                return load_calibrator(instrument, h) if cand.name == f"{stem}.json" else _load_path(cand)
+        except Exception:
+            continue
+    return None
+
+
+def _load_path(path):
+    import json as _json
+
+    payload = _json.loads(path.read_text())
+    if "ece_before" not in payload and "ECE_before" in payload:
+        payload["ece_before"] = payload.pop("ECE_before")
+    if "ece_after" not in payload and "ECE_after" in payload:
+        payload["ece_after"] = payload.pop("ECE_after")
+    return CalibratorV1.from_dict(payload)

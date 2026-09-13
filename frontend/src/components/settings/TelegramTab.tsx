@@ -425,7 +425,7 @@ export function TelegramTab() {
           description={
             status?.bot_username
               ? `Connected via @${status.bot_username}`
-              : 'Configure your Telegram Bot token in Render environment.'
+              : 'Configure your Telegram Bot token in backend/.env (localhost).'
           }
         >
           <div className="text-xs text-muted-foreground">

@@ -79,3 +79,10 @@ backend/crypto_scalp_signals_state.json
 
 # Scratch / Temp files
 .tmp*
+*.fyers_token
+.fyers_token
+backend/.fyers_token
+*candles_cache.json
+backend/*candles_cache.json
+*.flag
+backend/data/*.flag

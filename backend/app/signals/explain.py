@@ -460,6 +460,8 @@ def build_forecast_explain(
         _weights = {"mtf_alignment": 0.30, "indicators": 0.30, "ml": 0.25, "options": 0.10, "structure": 0.05}
     try:
         ens = dict(ensemble_result) if isinstance(ensemble_result, dict) else {}
+        if isinstance(ens.get("layer_weights"), dict) and len(ens["layer_weights"]) == 5:
+            _weights = dict(ens["layer_weights"])
         mtf = dict(mtf_features) if isinstance(mtf_features, dict) else {}
         opts = dict(options_ctx) if isinstance(options_ctx, dict) else {}
         layer_scores = dict(ens.get("layer_scores", {})) if isinstance(ens.get("layer_scores"), dict) else {}

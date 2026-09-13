@@ -7,6 +7,7 @@ import type { HourForecast } from '@/components/research/ForecastCard';
  * All v2 keys are optional so v1 responses without new keys still render.
  */
 export type HourForecastV2 = HourForecast;
+export type TacticalHorizonBias = HourForecast;
 
 export function createIntelligenceApi(core: ApiCore) {
   return {
@@ -40,6 +41,14 @@ export function createIntelligenceApi(core: ApiCore) {
 
     async getFinancialResearch(underlying: string, horizon = 'INTRADAY', direction = 'BULLISH') {
     return core.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
+  },
+
+    async getTacticalBias(instrument: string, horizon: string = '1h', record = true): Promise<HourForecastV2> {
+    try {
+      return await core.request<HourForecastV2>(`/api/v1/research/tactical-bias/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+    } catch {
+      return this.getForecast(instrument, horizon, record);
+    }
   },
 
     async getForecast(instrument: string, horizon: string = '1h', record = true): Promise<HourForecastV2> {

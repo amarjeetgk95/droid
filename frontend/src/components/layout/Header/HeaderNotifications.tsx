@@ -255,7 +255,7 @@ export function HeaderNotifications() {
                   <Radio className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground">Directional Horizon Forecast</p>
+                  <p className="text-xs font-semibold text-foreground">Tactical Horizon Bias</p>
                   <p className="text-[10px] text-muted-foreground truncate">
                     Multi-TF directional outlook, MTF alignment & model consensus
                   </p>
@@ -298,7 +298,7 @@ export function HeaderNotifications() {
         {/* Footer Link */}
         <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-center justify-between text-xs font-semibold text-primary hover:bg-primary/10">
           <Link href="/">
-            <span>Open Forecast</span>
+            <span>Open Tactical Bias</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </DropdownMenuItem>

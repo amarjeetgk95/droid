@@ -1,22 +1,12 @@
-"""Runtime broker configuration.
+"""Runtime broker configuration — LOCAL hardcoded-only.
 
-The market-data provider is a process-wide singleton (see
-``app.providers.registry``). Historically it was chosen exclusively from the
-``MARKET_DATA_PROVIDER`` env var at startup, which meant credentials saved via
-the settings UI (``app_settings.broker.*``) had no effect and the backend kept
-serving DEMO data.
+Single-broker localhost deployment: FYERS app_id/secret_key come ONLY from
+backend/.env (``FYERS_APP_ID`` / ``FYERS_SECRET_KEY``). Values saved via the
+Settings UI are IGNORED for app_id/secret — this ends the hybrid
+``AppID(saved)+Secret(env)`` mismatch that caused ``invalid app id hash``.
 
-This module introduces a cached, runtime-reloadable broker configuration that
-is populated from the persisted user settings (``app_settings``) and falls back
-to env/config when no saved settings exist. The settings endpoints call
-:func:`apply_app_settings` after persisting, which refreshes the cache and
-resets the provider singleton so changes take effect immediately (without a
-backend restart).
-
-Env (``MARKET_DATA_PROVIDER`` / ``API_TYPE`` + ``FYERS_*`` etc.)
-remains the source of truth when no user settings are saved, which keeps
-the single-broker-per-deployment model and Render env-driven config working
-out of the box.
+Only the OAuth access_token is runtime-mutable (set by /fyers/callback after
+a successful exchange, held in memory). Frontend never sends secrets.
 """
 from __future__ import annotations
 
@@ -33,11 +23,9 @@ _PROVIDER_SAVED_KEY: Dict[str, str] = {
     "fyers": "fyers",
 }
 
-# Canonical ctor arg -> ALL accepted saved-field aliases (camelCase from the
-# frontend Settings form, snake_case from backend OAuth callbacks / env).
-# Frontend fyers shape: {appId, secret, redirectUri, accessToken}
-# Backend OAuth dual-writes: {appId, app_id, secret, secret_key,
-#   access_token, accessToken, token}
+# Canonical ctor arg -> ALL accepted saved-field aliases (kept for reading
+# legacy DB blobs / OAuth dual-write). NOTE: app_id/secret_key from saved
+# settings are IGNORED — env is the sole source (see apply_app_settings).
 _PROVIDER_CRED_ALIASES: Dict[str, Dict[str, tuple[str, ...]]] = {
     "fyers": {
         "app_id": ("appId", "app_id", "appID", "client_id", "clientId"),
@@ -73,18 +61,30 @@ def _env_config() -> BrokerConfig:
         creds["app_id"] = cfg.fyers_app_id.strip().strip("\"'")
     if cfg.fyers_secret_key:
         creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
-    if cfg.fyers_access_token:
-        creds["access_token"] = cfg.fyers_access_token.strip().strip("\"'")
+    token = (cfg.fyers_access_token or "").strip().strip("\"'")
+    if not token:
+        from pathlib import Path
+        token_file = Path(".fyers_token")
+        if token_file.exists():
+            try:
+                token = token_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                token = ""
+
+    if token:
+        creds["access_token"] = token
 
     return BrokerConfig(provider=provider, api_type="indian", credentials=creds)
 
 
 def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract the active provider's credentials from the saved app_settings blob.
+    """Extract ONLY the runtime access_token from saved app_settings.
 
-    Accepts EVERY known alias (frontend camelCase + backend snake_case +
-    OAuth dual-write) so a save from either side can never silently drop the
-    other side's keys — the root cause of the recurring FYERS "meshup".
+    app_id/secret_key from the Settings UI are deliberately IGNORED —
+    hardcoded localhost .env is the sole source. Accepting saved secrets
+    caused hybrid mismatches (saved App ID + env Secret) -> Fyers
+    ``invalid app id hash``. Legacy blobs are still parsed so old DB rows
+    don't crash, but only the token is returned.
     """
     broker = (app_settings or {}).get("broker") or {}
     if not isinstance(broker, dict):
@@ -98,12 +98,13 @@ def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     creds: Dict[str, Any] = {}
-    for ctor_arg, fields in aliases.items():
-        for f in fields:
-            val = raw.get(f)
-            if val not in (None, ""):
-                creds[ctor_arg] = val.strip().strip("\"'") if isinstance(val, str) else val
-                break
+    # Hardcoded-only: ignore saved app_id/secret_key entirely.
+    token_fields = aliases.get("access_token", ())
+    for f in token_fields:
+        val = raw.get(f)
+        if val not in (None, ""):
+            creds["access_token"] = val.strip().strip("\"'") if isinstance(val, str) else val
+            break
     return creds
 
 
@@ -130,16 +131,12 @@ def get_config() -> BrokerConfig:
 
 
 def apply_app_settings(app_settings: Optional[Dict[str, Any]]) -> bool:
-    """Refresh the active broker config from persisted app_settings.
+    """Refresh runtime state — hardcoded localhost .env wins.
 
-    Merge strategy (Render env is the base, web Settings overlays):
-      - Provider / api_type come from saved Settings when recognizable,
-        else env.
-      - Credentials start from the env config for the RESOLVED provider and
-        any non-empty saved Settings value overwrites per-field. A blank
-        field in the web app therefore falls back to the Render env value
-        instead of wiping it — this ends the "web wants its own credential
-        while I store it in Render" fight.
+    - app_id/secret_key: ALWAYS from env (``FYERS_APP_ID``/``FYERS_SECRET_KEY``).
+      Saved Settings values are ignored (see _creds_from_app_settings).
+    - access_token: env base + OAuth/saved token overlay (in-memory session).
+    - provider/api_type: fyers/indian fixed for localhost single-broker.
 
     Returns True if the active provider changed and the caller should reset the
     provider singleton.
@@ -164,13 +161,16 @@ def apply_app_settings(app_settings: Optional[Dict[str, Any]]) -> bool:
     api_type = broker.get("apiType") or env_cfg.api_type
 
     saved_creds = _creds_from_app_settings(app_settings)
-    # Env base only applies when it is for the SAME provider; otherwise the
-    # resolved provider's env creds would leak across providers.
+    # Hardcoded-only: env supplies app_id/secret; saved blob may only add token.
     base_creds = dict(env_cfg.credentials) if env_cfg.provider == provider else {}
+    if "app_id" in saved_creds or "secret_key" in saved_creds:
+        logger.warning("broker_saved_creds_ignored", keys=list(saved_creds.keys()))
+    saved_creds.pop("app_id", None)
+    saved_creds.pop("secret_key", None)
     creds = {**base_creds, **saved_creds}
-    source = "app_settings+env" if base_creds else "app_settings"
-    if not saved_creds and base_creds:
-        source = "env"
+    source = "local_env"
+    if saved_creds.get("access_token"):
+        source = "local_env+token"
     new_cfg = BrokerConfig(provider=provider, api_type=api_type, credentials=creds)
 
     changed = _active is None or (

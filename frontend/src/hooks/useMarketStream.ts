@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { TickEvent } from '@/lib/types';
+import { API_BASE } from '@/lib/api';
+
 
 export type StreamConnectionState = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING';
 
@@ -70,15 +72,11 @@ export function useMarketStream() {
       if (isUnmounted) return;
       clearReconnectTimeout();
 
-      const DEFAULT_API_URL =
-        typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-          ? 'http://localhost:8000'
-          : 'https://droid-backend-emeq.onrender.com';
-      const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
-      const apiUrl = rawApiUrl.replace(/\/+$/, '');
+      const apiUrl = API_BASE.replace(/\/+$/, '');
       const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
       const wsHost = apiUrl.replace(/^https?:\/\//, '');
       const wsUrl = `${wsProtocol}://${wsHost}/api/v1/ws/market-feed`;
+
 
       try {
         const ws = new WebSocket(wsUrl);

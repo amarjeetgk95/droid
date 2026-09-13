@@ -205,12 +205,19 @@ class ConfluenceEngine:
         candidate: SignalCandidate,
         ai_result: Optional[AIAdviceResult] = None,
         ml_prediction: Optional[dict] = None,
+        institutional: Optional[dict] = None,
     ) -> float:
         """Compute final fused confidence score with quality-aware weighting.
 
         Baseline is neutral (50.0) — each domain must EARN its contribution by scoring > 55.
         Scores below 45 are penalized. 2+ penalized domains → −10 fused penalty.
         Missing AI/ML/F&O/VWAP haircuts applied. ARMED threshold is 78.0.
+
+        institutional (optional, PIT-safe only): {"delta": float in [-5,5],
+        "applied": bool, "reasons": [...]} from
+        app.signals.institutional_overlay.compute_institutional_adjustment.
+        Applied AFTER haircuts, capped, never overrides gates. Unverifiable
+        (pit_ok False / None) is ignored.
         """
         active_weights = {
             "technical": DEFAULT_WEIGHTS["technical"],
@@ -271,6 +278,15 @@ class ConfluenceEngine:
 
         # Cap cumulative infrastructure haircut so degraded feeds don't kill high confluence
         fused -= min(raw_haircut, MAX_TOTAL_HAIRCUT)
+
+        # Institutional overlay (PIT-safe, capped +-5, never overrides gates).
+        try:
+            if isinstance(institutional, dict) and institutional.get("applied"):
+                _d = float(institutional.get("delta", 0.0) or 0.0)
+                _d = max(-5.0, min(5.0, _d))
+                fused += _d
+        except Exception:
+            pass
         return round(float(max(15.0, min(98.0, fused))), 1)
 
 

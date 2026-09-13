@@ -146,6 +146,8 @@ async def train_ensemble(
     target_spec_version: str = TARGET_SPEC_VERSION,
     expected_width: int | None = None,
     feature_names: list[str] | None = None,
+    pit_records: list[dict] | None = None,
+    chronological: bool = False,
 ) -> dict:
     """Train XGBoost + LightGBM ensemble on real historical feature vectors and save artifacts.
 
@@ -153,6 +155,13 @@ async def train_ensemble(
     f12-v1) with ``target_spec_version="v2-atr-em-session"``. Width is
     validated generically (never hardcoded to 10); v1 and v2 specs are both
     accepted and recorded verbatim in meta.
+
+    PIT: when ``pit_records`` (list of {observation_time_utc,
+    publication_timestamps{...}}) is supplied, LeakageGate.assert_no_leakage
+    is enforced before any fit (fail-loud, no silent shuffled leak).
+    ``chronological=True`` uses a chronological 80/20 split (no shuffle) for
+    time-series correctness; default False preserves legacy stratified shuffle
+    for backward compat.
     """
     horizon_minutes = validate_horizon(horizon_minutes)
     if target_spec_version not in ACCEPTED_TARGET_SPECS:
@@ -170,6 +179,10 @@ async def train_ensemble(
         raise ValueError(
             f"feature_names length {len(feature_names)} != feature width {width}"
         )
+    if pit_records is not None:
+        from app.ml.leakage_gate import leakage_gate as _lg
+
+        _lg.assert_no_leakage(pit_records)
     resolved_feature_names = list(feature_names) if feature_names else _feature_names_for_width(width)
 
     try:
@@ -185,7 +198,12 @@ async def train_ensemble(
     X = np.array(features, dtype=float)
     y = np.array(labels, dtype=int)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    if chronological:
+        n = len(X)
+        cut = int(n * 0.8)
+        X_train, X_test, y_train, y_test = X[:cut], X[cut:], y[:cut], y[cut:]
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
     # XGBoost
     xgb_model = xgb.XGBClassifier(

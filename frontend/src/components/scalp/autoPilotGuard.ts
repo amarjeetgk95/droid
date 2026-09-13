@@ -30,6 +30,7 @@ export function evaluateSignalEligibility({
   config,
   currentOpenCount,
   currentUnrealizedPnl,
+  currentRealizedPnl = 0,
   executedIds,
   nowMs = Date.now(),
 }: {
@@ -42,6 +43,8 @@ export function evaluateSignalEligibility({
   config: AutoPilotGuardConfig;
   currentOpenCount: number;
   currentUnrealizedPnl: number;
+  /** Realized / closed-session P&L so the guard survives panic square-off. */
+  currentRealizedPnl?: number;
   executedIds: Set<string>;
   nowMs?: number;
 }): AutoPilotDecision {
@@ -53,7 +56,8 @@ export function evaluateSignalEligibility({
     return { eligible: false, reason: 'ALREADY_EXECUTED' };
   }
 
-  if (currentUnrealizedPnl <= -config.maxDailyLoss) {
+  const dayPnl = currentUnrealizedPnl + currentRealizedPnl;
+  if (dayPnl <= -config.maxDailyLoss) {
     return { eligible: false, reason: 'DAILY_LOSS_EXCEEDED' };
   }
 

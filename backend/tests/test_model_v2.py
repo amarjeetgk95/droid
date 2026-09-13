@@ -50,6 +50,7 @@ class TestV2Contract:
         assert MODEL_VERSION_V2 == "logistic-v2-h60-v1"
 
 
+@pytest.mark.skipif(not model_v2.HAS_NUMPY, reason="numpy not installed")
 class TestLogisticV2:
     def test_simplex_output(self):
         X, y = _synthetic_v2_dataset()

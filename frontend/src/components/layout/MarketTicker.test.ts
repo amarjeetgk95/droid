@@ -99,6 +99,8 @@ describe('MarketTicker utility functions and robust normalization', () => {
     it('matches FINNIFTY, INDIA VIX, and MIDCPNIFTY', () => {
       expect(matchBenchmarkAlias(makeCard('NSE:FINNIFTY-INDEX', 'FINNIFTY'), 'FINNIFTY')).toBe(true);
       expect(matchBenchmarkAlias(makeCard('NSE:INDIAVIX-INDEX', 'INDIA VIX'), 'INDIA VIX')).toBe(true);
+      expect(matchBenchmarkAlias(makeCard('INDIA VIX', 'INDIA VIX'), 'INDIA VIX')).toBe(true);
+      expect(matchBenchmarkAlias(makeCard('INDIAVIX', 'INDIAVIX'), 'INDIA VIX')).toBe(true);
       expect(matchBenchmarkAlias(makeCard('NSE:MIDCPNIFTY-INDEX', 'NIFTY MIDCAP SELECT'), 'MIDCPNIFTY')).toBe(true);
     });
   });

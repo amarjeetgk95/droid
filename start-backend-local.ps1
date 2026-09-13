@@ -12,14 +12,35 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 $env:PYTHONPATH = (Join-Path $PSScriptRoot "backend")
+$env:FORECAST_SCHEDULER_ENABLED = "on"
+$env:FLOW_SCHEDULER_ENABLED = "on"
 
+# Auto-free port 8000 if a zombie process is holding it
 try {
-    $probe = New-Object Net.Sockets.TcpClient
-    $probe.Connect("127.0.0.1", 8000)
-    $probe.Close()
-    Write-Host "Port 8000 is already in use - another backend is running." -ForegroundColor Yellow
-    Write-Host "Close the old window (or run: Get-Process python | Stop-Process) and retry."
-    exit 1
-} catch { }
+    $conns = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -ne 0 -and $_.OwningProcess -ne $PID }
+    if ($conns) {
+        $pidsToKill = $conns | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($procId in $pidsToKill) {
+            Write-Host "Port 8000 occupied by PID $procId - auto-recycling for 1-click launch..." -ForegroundColor Yellow
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Seconds 1
+    }
+} catch {
+    try {
+        $lines = netstat -ano | Select-String ":8000\s+.*LISTENING\s+(\d+)"
+        foreach ($line in $lines) {
+            if ($line.Matches[0].Groups[1].Value) {
+                $procId = [int]$line.Matches[0].Groups[1].Value
+                if ($procId -gt 0 -and $procId -ne $PID) {
+                    Write-Host "Port 8000 occupied by PID $procId - auto-recycling..." -ForegroundColor Yellow
+                    Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        Start-Sleep -Seconds 1
+    } catch { }
+}
 
 & $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+

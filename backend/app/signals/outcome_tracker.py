@@ -518,8 +518,15 @@ class SignalOutcomeTracker:
                                             sq_rec.actual_pnl_points = round(recon.gross_realized_pnl / _qty, 2)
                                         except Exception:
                                             pass
-                                    sq_rec.is_winner = recon.net_realized_pnl_inr > 0
-                                    sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
+                                    if eval_action in ("STOP_LOSS_HIT", "LOSS"):
+                                        sq_rec.is_winner = False
+                                        sq_rec.status = "LOST"
+                                    elif eval_action in ("TARGET_1_HIT", "TARGET_2_HIT"):
+                                        sq_rec.is_winner = True
+                                        sq_rec.status = "WON"
+                                    else:
+                                        sq_rec.is_winner = recon.net_realized_pnl_inr > 0
+                                        sq_rec.status = "WON" if recon.net_realized_pnl_inr > 0 else ("LOST" if recon.net_realized_pnl_inr < 0 else "CLOSED")
                                     signal_audit_ledger._schedule_persist(sq_rec)
                                 # Keep the displayed exit in the premium domain:
                                 # a spot-scale exit (e.g. 74561) next to a

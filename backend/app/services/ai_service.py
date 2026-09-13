@@ -267,19 +267,7 @@ class AIService:
         system_prompt = build_system_prompt()
         user_prompt = build_market_context_prompt(symbol=underlying, regime=regime, futures=futures, options_analytics=options_analytics, max_pain=max_pain, strikes=strikes)
 
-        # Special handling for Ollama when base_url is localhost – backend on Render cannot reach user's laptop.
-        # We still try, but will return a clear error indicating frontend must test Ollama directly.
-        if provider.lower() == "ollama" and ollamaBaseUrl and ("localhost" in ollamaBaseUrl or "127.0.0.1" in ollamaBaseUrl):
-            return {
-                "success": False,
-                "provider": "ollama",
-                "model": ollamaModel or "deepseek-r1:8b",
-                "latency_ms": 0,
-                "schema_valid": False,
-                "is_mock": False,
-                "error": f"Ollama URL {ollamaBaseUrl} is localhost. Backend (Render) cannot reach your local machine. Test Ollama directly from your browser – the UI will attempt a direct fetch to {ollamaBaseUrl}/api/tags. If that fails, start Ollama with `ollama serve` and `ollama pull {ollamaModel or 'deepseek-r1:8b'}`.",
-                "hint": "Frontend will run a direct browser check to your Ollama instance. Ensure Ollama is running and CORS is allowed, or use a remote Ollama URL.",
-            }
+        # Localhost Ollama IS reachable — backend runs on localhost too. Proceed below.
 
         # compat: mock_ai -> openrouter for test
         if provider.lower() == "mock_ai":

@@ -160,6 +160,15 @@ function migrateThemeToLight(settings: AppSettings): AppSettings {
   return settings;
 }
 
+function clearHardcodedFyersSecrets(settings: AppSettings): AppSettings {
+  // Hardcoded-only: never keep appId/secret in browser storage.
+  const f = settings.broker?.fyers;
+  if (f && (f.appId || f.secret)) {
+    return { ...settings, broker: { ...settings.broker, fyers: { ...f, appId: '', secret: '' } } };
+  }
+  return settings;
+}
+
 export function applyAllMigrations(settings: AppSettings): AppSettings {
   let s = migrateLegacyDevConfig(settings);
   s = migrateMockProvider(s);
@@ -167,5 +176,6 @@ export function applyAllMigrations(settings: AppSettings): AppSettings {
   s = migrateConnectionMode(s);
   s = migrateSchemaVersion(s);
   s = migrateThemeToLight(s);
+  s = clearHardcodedFyersSecrets(s);
   return s;
 }

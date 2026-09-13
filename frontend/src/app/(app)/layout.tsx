@@ -26,6 +26,21 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
       setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
       setTickerVisible(loadTickerVisible());
     } catch {}
+    // Pull AI provider keys saved in Supabase from another device (e.g. PC)
+    // into this browser's localStorage so AI works here without opening
+    // Settings first. Throttled + silent when offline.
+    let onFocus: (() => void) | null = null;
+    (async () => {
+      try {
+        const { syncAISecretsFromBackend } = await import('@/lib/aiKeySync');
+        void syncAISecretsFromBackend();
+        onFocus = () => { void syncAISecretsFromBackend(); };
+        window.addEventListener('focus', onFocus);
+      } catch {}
+    })();
+    return () => {
+      if (onFocus) window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   const handleToggleTicker = () => {

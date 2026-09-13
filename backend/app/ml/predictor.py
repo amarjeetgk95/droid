@@ -255,5 +255,53 @@ class MLPredictor:
 
         return response
 
+    async def predict_v3_sidecar(
+        self,
+        symbol: str = "NIFTY",
+        v2_model_vector: list | None = None,
+        flow_snapshot=None,
+        options_flow: dict | None = None,
+        breadth: dict | None = None,
+    ) -> dict | None:
+        """Institutional v3 sidecar (research-only, never replaces ensemble).
+
+        Needs a v2 model_vector (len 15) + PIT-safe institutional slices.
+        Returns {"schema": "f20-v1", "vector": [...20], "missing": [...],
+        "available_time": iso|None, "model": "none-missing-artifact"} or None
+        when inputs are absent/unverifiable. Never raises; artifact training
+        needs >=200 aligned sessions (not yet available).
+        """
+        try:
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
+
+            from app.ml.feature_extractor_v3 import (
+                FEATURE_SCHEMA_V3,
+                build_v3_extension,
+                to_v3_vector,
+            )
+            from app.institutional.flow_store import flow_store
+
+            if not isinstance(v2_model_vector, (list, tuple)) or len(v2_model_vector) != 15:
+                return None
+            now = _dt.now(_tz.utc)
+            flow = flow_snapshot if flow_snapshot is not None else flow_store.as_of(now)
+            if flow is None or getattr(flow, "pit_ok", False) is not True:
+                return None
+            ext, _mask = build_v3_extension(flow, options_flow, breadth)
+            vec, mask = to_v3_vector([float(x) for x in v2_model_vector], ext)
+            return {
+                "schema": FEATURE_SCHEMA_V3,
+                "symbol": symbol,
+                "vector": vec,
+                "missing": mask,
+                "available_time": getattr(flow, "available_time_utc", None),
+                "model": "none-missing-artifact",
+                "calibrated": False,
+            }
+        except Exception as e:
+            logger.debug("v3_sidecar_unavailable", error=str(e))
+            return None
+
 
 ml_predictor = MLPredictor()

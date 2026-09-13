@@ -60,6 +60,25 @@ class ProfileRepository:
 class SettingsRepository:
     """Repository for user settings operations."""
 
+    # Dot-paths (from app_settings root) holding secrets. A PATCH carrying ""
+    # for one of these means "this device never had the key" (e.g. a phone on
+    # which the field is empty) — NOT "delete the stored secret". Without this
+    # guard, saving settings from any device with an empty key field would wipe
+    # the key for every other device. Rotation (non-empty overwrite) still works;
+    # explicit null clears the secret.
+    SECRET_PATHS = frozenset({
+        "ai.geminiApiKey",
+        "ai.openRouterApiKey",
+        "ai.openaiApiKey",
+        "ai.novitaApiKey",
+        "ai.nvidiaApiKey",
+        "ai.customOpenaiApiKey",
+        "broker.fyers.secret",
+        "broker.fyers.accessToken",
+        "broker.binance.apiKey",
+        "broker.binance.apiSecret",
+    })
+
     @staticmethod
     async def get_by_user(session: AsyncSession, user_id: UUID) -> Optional[UserSettings]:
         result = await session.execute(select(UserSettings).where(UserSettings.user_id == user_id))
@@ -95,13 +114,24 @@ class SettingsRepository:
         return settings
 
     @staticmethod
-    def _deep_merge_dict(base: dict, patch: dict, max_depth: int = 4) -> dict:
-        """Recursively merge patch into base — preserves sibling keys at every nesting level."""
+    def _deep_merge_dict(base: dict, patch: dict, max_depth: int = 4, _prefix: str = "") -> dict:
+        """Recursively merge patch into base — preserves sibling keys at every nesting level.
+
+        Secret paths (see SECRET_PATHS) are never blanked by an empty-string
+        patch value; explicit null clears them.
+        """
         out = dict(base)
         for k, v in patch.items():
+            path = f"{_prefix}.{k}" if _prefix else str(k)
             prev = out.get(k)
             if isinstance(v, dict) and isinstance(prev, dict) and max_depth > 0:
-                out[k] = SettingsRepository._deep_merge_dict(prev, v, max_depth - 1)
+                out[k] = SettingsRepository._deep_merge_dict(prev, v, max_depth - 1, path)
+            elif path in SettingsRepository.SECRET_PATHS:
+                if v is None:
+                    out[k] = ""
+                elif not (isinstance(v, str) and v == "" and isinstance(prev, str) and prev != ""):
+                    out[k] = v
+                # else: empty-string patch over a stored secret — keep stored value
             else:
                 out[k] = v
         return out
