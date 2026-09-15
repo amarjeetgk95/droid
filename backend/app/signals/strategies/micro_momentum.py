@@ -55,11 +55,11 @@ class MicroMomentumStrategy(Strategy):
             vols = [float(c.get("volume", 0)) for c in candles[-21:-1]] if len(candles) >= 21 else []
             vol_ma = (sum(vols) / len(vols)) if vols else 1.0
 
-        if vol_ma > 0 and cur_vol < (vol_ma * 1.8):
+        if vol_ma > 0 and cur_vol < (vol_ma * 1.5):
             return None
 
         # RSI Momentum filter
-        rsi_val = float(ctx.indicators.get("rsi", 50.0))
+        rsi_val = float(ctx.indicators.get("rsi") or ctx.indicators.get("momentum", {}).get("rsi", 50.0))
         tick = Decimal("0.05")
         is_high_vol = ctx.regime == "HIGH_VOL"
         max_chase = 0.35 if is_high_vol else 0.50

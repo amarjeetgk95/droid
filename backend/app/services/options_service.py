@@ -73,7 +73,7 @@ class OptionsService:
         if strikes_map:
             try:
                 _step_by_und = {"NIFTY": 50.0, "BANKNIFTY": 100.0, "FINNIFTY": 50.0, "SENSEX": 100.0}
-                _lot_by_und = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "SENSEX": 10}
+                _lot_by_und = {"NIFTY": 75, "BANKNIFTY": 30, "FINNIFTY": 65, "SENSEX": 10}
                 contract_master_service.sync_strikes_from_fyers(
                     underlying,
                     target_expiry_date,

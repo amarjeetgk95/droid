@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Radio, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw, Zap, Bot } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
+import { useScalpContext } from './ScalpContext';
+import { useSmartInterval } from '@/hooks/useSmartInterval';
+import { useExecutionGuard } from '@/hooks/useExecutionGuard';
 
 export interface ScalpSignalItem {
   id: string;
@@ -29,7 +32,7 @@ export interface AutoPilotConfig {
 }
 
 interface ScalpAlertsHUDProps {
-  currentSpot: number | null;
+  currentSpot?: number | null;
   underlying?: 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
   onExecuteSignal?: (signalId: string) => void;
   autoPilot?: AutoPilotConfig;
@@ -45,19 +48,21 @@ const SCALP_STRATEGIES = new Set([
   'ORB',
 ]);
 
-export function ScalpAlertsHUD({
-  currentSpot,
-  underlying = 'NIFTY',
-  onExecuteSignal,
-  autoPilot,
-  onAutoExecute,
-  executedSignalIds,
-}: ScalpAlertsHUDProps) {
+export function ScalpAlertsHUD(props: ScalpAlertsHUDProps) {
   const toast = useToast();
+  const scalpCtx = useScalpContext();
+
+  const underlying = props.underlying || scalpCtx.underlying;
+  const currentSpot = props.currentSpot !== undefined ? props.currentSpot : scalpCtx.spotPrice;
+  const autoPilot = props.autoPilot || scalpCtx.autoPilot;
+  const { onExecuteSignal, onAutoExecute, executedSignalIds } = props;
+
   const [signals, setSignals] = useState<ScalpSignalItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [now, setNow] = useState<number>(Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
   const [scanning, setScanning] = useState(false);
+
+  const { isPending: executingSignal, execute: executeGuard } = useExecutionGuard();
 
   const autoPilotRef = useRef(autoPilot);
   autoPilotRef.current = autoPilot;
@@ -71,7 +76,7 @@ export function ScalpAlertsHUD({
   const currentSpotRef = useRef(currentSpot);
   currentSpotRef.current = currentSpot;
 
-  // Update second ticker for TTL countdown
+  // TTL second ticker
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -82,8 +87,7 @@ export function ScalpAlertsHUD({
       setLoading(true);
       const res = await api.getSignalsActive({ desk: 'SCALP' });
       const items = (res.signals || []) as unknown as ScalpSignalItem[];
-      
-      // Filter for scalp strategies or short timeframes
+
       const filtered = items.filter((s) => {
         const strat = (s.strategy || '').toUpperCase();
         return SCALP_STRATEGIES.has(strat) || strat.includes('SCALP') || strat.includes('MOMENTUM');
@@ -100,7 +104,7 @@ export function ScalpAlertsHUD({
         for (const sig of filtered) {
           if (execSet?.has(sig.id)) continue;
 
-          // Check TTL expiration
+          // Check TTL
           const createdAtMs = sig.created_at ? new Date(sig.created_at).getTime() : Date.now();
           const ttlTotalSec = sig.ttl_seconds || 60;
           const elapsedSec = Math.floor((Date.now() - createdAtMs) / 1000);
@@ -116,24 +120,23 @@ export function ScalpAlertsHUD({
             if (dist > ap.antiChaseTolerance) continue;
           }
 
-          // Trigger Auto-Execution (at most 1 per poll cycle)
+          // Trigger Auto-Execution
           autoExec(sig);
           break;
         }
       }
     } catch {
-      // Fallback empty
       setSignals([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchScalpSignals();
-    const interval = setInterval(fetchScalpSignals, 5000); // 5s fast poll
-    return () => clearInterval(interval);
-  }, [fetchScalpSignals]);
+  const { refresh: refreshSignals } = useSmartInterval(fetchScalpSignals, 5000, {
+    fireOnMount: true,
+    fireOnVisible: true,
+    pauseWhenHidden: true,
+  });
 
   const handleScanNow = async () => {
     try {
@@ -149,13 +152,25 @@ export function ScalpAlertsHUD({
     }
   };
 
+  const handleManualExecute = async (signalId: string) => {
+    await executeGuard(async () => {
+      if (onExecuteSignal) {
+        onExecuteSignal(signalId);
+      } else {
+        await api.executeSignalPaper(signalId);
+        scalpCtx.notifyOrderPlaced();
+        toast.success('Signal executed');
+      }
+    });
+  };
+
   return (
-    <div className="flex flex-col bg-card border border-border rounded-lg p-3 text-xs select-none gap-2 h-full">
+    <div className="flex flex-col text-xs select-none gap-2 h-full">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border/60 pb-2">
+      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 shrink-0">
         <div className="flex items-center gap-1.5 font-bold text-foreground">
           <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
-          <span>Fast-Path Scalp Radar (1M)</span>
+          <span>Fast Scalp Radar (1M)</span>
           {autoPilot?.enabled && (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-mono font-semibold animate-pulse">
               <Bot className="w-3 h-3" /> AUTO-PILOT ON
@@ -167,16 +182,16 @@ export function ScalpAlertsHUD({
             type="button"
             onClick={handleScanNow}
             disabled={scanning}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-secondary hover:bg-secondary/80 text-[10px] font-medium text-foreground transition-colors"
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-secondary hover:bg-secondary/80 text-[10px] font-medium text-foreground transition-colors cursor-pointer"
           >
             <Zap className={`w-3 h-3 text-amber-500 ${scanning ? 'animate-bounce' : ''}`} />
             Scan 1M
           </button>
           <button
             type="button"
-            onClick={fetchScalpSignals}
+            onClick={() => void refreshSignals()}
             disabled={loading}
-            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors"
+            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             title="Refresh signals"
           >
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
@@ -184,10 +199,10 @@ export function ScalpAlertsHUD({
         </div>
       </div>
 
-      {/* Signal List */}
+      {/* Signals List */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-0.5">
         {signals.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-36 text-center text-muted-foreground p-3 border border-dashed border-border/60 rounded">
+          <div className="flex flex-col items-center justify-center h-28 text-center text-muted-foreground p-3 border border-dashed border-border/60 rounded">
             <Clock className="w-5 h-5 text-muted-foreground/60 mb-1" />
             <p className="font-medium text-[11px]">No active 1M scalp setups</p>
             <p className="text-[10px] text-muted-foreground/80 mt-0.5">
@@ -196,17 +211,20 @@ export function ScalpAlertsHUD({
           </div>
         ) : (
           signals.map((sig) => {
-            // Calculate remaining TTL
             const createdAtMs = sig.created_at ? new Date(sig.created_at).getTime() : now;
             const ttlTotalSec = sig.ttl_seconds || 60;
             const elapsedSec = Math.floor((now - createdAtMs) / 1000);
             const remainingSec = Math.max(0, ttlTotalSec - elapsedSec);
             const isExpired = remainingSec <= 0;
 
-            const isLong = sig.direction.includes('LONG') || sig.direction.includes('CALL') || sig.direction === 'BULLISH';
-            const distPts = (currentSpot && sig.trigger) ? Math.abs(currentSpot - sig.trigger) : null;
+            const isLong =
+              sig.direction.includes('LONG') ||
+              sig.direction.includes('CALL') ||
+              sig.direction === 'BULLISH';
+            const distPts = currentSpot && sig.trigger ? Math.abs(currentSpot - sig.trigger) : null;
             const chaseTolerance = autoPilot?.antiChaseTolerance ?? 15;
             const isChased = distPts !== null && distPts > chaseTolerance;
+            const conf = sig.confidence ?? 80;
 
             return (
               <div
@@ -231,23 +249,34 @@ export function ScalpAlertsHUD({
                       {isLong ? 'BUY CE' : 'BUY PE'}
                     </span>
                     <span className="font-bold text-foreground">{sig.symbol}</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {sig.strategy}
-                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono">{sig.strategy}</span>
                   </div>
 
-                  {/* TTL Countdown */}
-                  <div
-                    className={`flex items-center gap-1 font-mono text-[10px] font-semibold px-1.5 py-0.2 rounded ${
-                      remainingSec > 30
-                        ? 'bg-emerald-500/10 text-emerald-400'
-                        : remainingSec > 10
-                          ? 'bg-amber-500/10 text-amber-400 animate-pulse'
-                          : 'bg-rose-500/10 text-rose-400'
-                    }`}
-                  >
-                    <Clock className="w-2.5 h-2.5" />
-                    <span>{remainingSec}s TTL</span>
+                  {/* Confidence Bar & TTL */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 font-mono text-[9px] text-muted-foreground">
+                      <span>Conf:</span>
+                      <div className="w-12 h-1.5 bg-secondary rounded-full overflow-hidden border border-border/50">
+                        <div
+                          className="h-full bg-primary rounded-full"
+                          style={{ width: `${Math.min(100, Math.max(10, conf))}%` }}
+                        />
+                      </div>
+                      <span className="text-foreground font-semibold">{conf}%</span>
+                    </div>
+
+                    <div
+                      className={`flex items-center gap-1 font-mono text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                        remainingSec > 30
+                          ? 'bg-emerald-500/10 text-emerald-400'
+                          : remainingSec > 10
+                            ? 'bg-amber-500/10 text-amber-400 animate-pulse'
+                            : 'bg-rose-500/10 text-rose-400'
+                      }`}
+                    >
+                      <Clock className="w-2.5 h-2.5" />
+                      <span>{remainingSec}s</span>
+                    </div>
                   </div>
                 </div>
 
@@ -261,9 +290,7 @@ export function ScalpAlertsHUD({
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-[9px]">SL</span>
-                    <span className="text-rose-400 font-semibold">
-                      {sig.sl ? `₹${sig.sl.toFixed(1)}` : '—'}
-                    </span>
+                    <span className="text-rose-400 font-semibold">{sig.sl ? `₹${sig.sl.toFixed(1)}` : '—'}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-[9px]">Target</span>
@@ -273,7 +300,7 @@ export function ScalpAlertsHUD({
                   </div>
                 </div>
 
-                {/* Anti-Chase & Execution Button */}
+                {/* Sweet Zone Proximity Pulse & Execution Button */}
                 <div className="flex items-center justify-between mt-1">
                   <span
                     className={`text-[9px] font-mono flex items-center gap-1 ${
@@ -285,9 +312,9 @@ export function ScalpAlertsHUD({
                         <AlertTriangle className="w-2.5 h-2.5" /> Chase warning ({distPts?.toFixed(1)}pt away)
                       </>
                     ) : (
-                      <>
-                        <CheckCircle2 className="w-2.5 h-2.5" /> In sweet zone ({distPts?.toFixed(1) || 0}pt)
-                      </>
+                      <span className="flex items-center gap-1 animate-pulse">
+                        <CheckCircle2 className="w-2.5 h-2.5" /> Sweet zone ({distPts?.toFixed(1) || 0}pt)
+                      </span>
                     )}
                   </span>
 
@@ -298,12 +325,12 @@ export function ScalpAlertsHUD({
                   ) : (
                     <button
                       type="button"
-                      disabled={isExpired}
-                      onClick={() => onExecuteSignal?.(sig.id)}
+                      disabled={isExpired || executingSignal}
+                      onClick={() => void handleManualExecute(sig.id)}
                       className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] font-bold transition-all disabled:opacity-30 cursor-pointer"
                     >
                       <Play className="w-2.5 h-2.5 fill-current" />
-                      Execute
+                      {executingSignal ? 'Executing…' : 'Execute'}
                     </button>
                   )}
                 </div>

@@ -1,25 +1,34 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Zap, ShieldAlert, ArrowUpRight, ArrowDownRight, Target, Minus, Plus } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import {
+  Zap,
+  ShieldAlert,
+  ArrowUpRight,
+  ArrowDownRight,
+  Target,
+  Minus,
+  Plus,
+  AlertTriangle,
+  RefreshCw,
+} from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
+import { calculateStrikeForSide, StrikeOffset } from './autoPilotGuard';
+import { useScalpContext } from './ScalpContext';
+import { useOptionQuotes } from '@/hooks/useOptionQuotes';
+import { useMarginPreview } from '@/hooks/useMarginPreview';
+import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useScalpKeyboard } from '@/hooks/useScalpKeyboard';
 
 interface QuickScalpTicketProps {
-  underlying: 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
-  spotPrice: number;
-  /** Epoch ms of the last successful spot fetch — drives staleness even when price is flat. */
-  spotUpdatedAt?: number | null;
-  onUnderlyingChange?: (u: 'NIFTY' | 'BANKNIFTY' | 'SENSEX') => void;
-  onOrderPlaced?: () => void;
   onBracketChange?: (slPts: number, tpPts: number) => void;
-  onRetrySpot?: () => void;
+  onToggleHelp?: () => void;
 }
 
-// Aligned with backend contract_master (NIFTY 25, BANKNIFTY 15, SENSEX 10).
 const LOT_SIZES: Record<string, number> = {
-  NIFTY: 25,
-  BANKNIFTY: 15,
+  NIFTY: 75,
+  BANKNIFTY: 30,
   SENSEX: 10,
 };
 
@@ -30,380 +39,300 @@ const STRIKE_STEPS: Record<string, number> = {
 };
 
 const CONFIRM_LOTS_THRESHOLD = 4;
-const QUOTE_STALE_SEC = 15;
 const CONFIRM_TIMEOUT_MS = 5000;
-
-interface AtmQuotes {
-  ceLtp: number | null;
-  peLtp: number | null;
-  ceBid: number | null;
-  ceAsk: number | null;
-  peBid: number | null;
-  peAsk: number | null;
-  ceIv: number | null;
-  peIv: number | null;
-  ceDelta: number | null;
-  peDelta: number | null;
-  ceOi: number | null;
-  peOi: number | null;
-  expiry: string | null;
-  fetchedAt: number | null;
-}
-
-const EMPTY_QUOTES: AtmQuotes = {
-  ceLtp: null, peLtp: null,
-  ceBid: null, ceAsk: null, peBid: null, peAsk: null,
-  ceIv: null, peIv: null, ceDelta: null, peDelta: null,
-  ceOi: null, peOi: null, expiry: null, fetchedAt: null,
-};
 
 function clampInt(v: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(v)) return fallback;
   return Math.min(max, Math.max(min, Math.round(v)));
 }
 
-export function QuickScalpTicket({
-  underlying,
-  spotPrice,
-  spotUpdatedAt,
-  onUnderlyingChange,
-  onOrderPlaced,
-  onBracketChange,
-  onRetrySpot,
-}: QuickScalpTicketProps) {
+function fmtCompact(n: number | null) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  if (n >= 10000000) return `${(n / 10000000).toFixed(2)}Cr`;
+  if (n >= 100000) return `${(n / 100000).toFixed(2)}L`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return Math.round(n).toString();
+}
+
+export function QuickScalpTicket({ onBracketChange, onToggleHelp }: QuickScalpTicketProps) {
   const toast = useToast();
+  const {
+    underlying,
+    setUnderlying,
+    spotPrice,
+    spotAgeSec,
+    spotStale,
+    refreshSpot,
+    notifyOrderPlaced,
+    panicSquareOff,
+    toggleFullscreen,
+  } = useScalpContext();
+
   const [lots, setLots] = useState<number>(1);
   const [slPoints, setSlPoints] = useState<number>(8);
   const [targetPoints, setTargetPoints] = useState<number>(16);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [quotes, setQuotes] = useState<AtmQuotes>(EMPTY_QUOTES);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [marginInfo, setMarginInfo] = useState<{ required: number; affordable: boolean } | null>(null);
+  const [strikeOffset, setStrikeOffset] = useState<StrikeOffset>('ATM');
+
+  // Confirmation state
   const [confirmSide, setConfirmSide] = useState<'CALL' | 'PUT' | null>(null);
-  const [confirmLots, setConfirmLots] = useState<number>(0);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  const requestIdRef = useRef(0);
+  const [confirmSecondsLeft, setConfirmSecondsLeft] = useState<number>(0);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const submittingRef = useRef(false);
-  const lastSpotRef = useRef<{ price: number; at: number }>({ price: spotPrice, at: Date.now() });
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const lotSize = LOT_SIZES[underlying] || 50;
+  const { isPending: isSubmitting, execute } = useExecutionGuard();
+
+  const lotSize = LOT_SIZES[underlying] || 25;
   const step = STRIKE_STEPS[underlying] || 50;
   const totalQuantity = lots * lotSize;
 
-  // Track spot freshness from the parent's successful fetch timestamp so a
-  // flat market (same LTP across polls) doesn't falsely read as stale.
-  useEffect(() => {
-    if (Number.isFinite(spotPrice) && spotPrice > 0) {
-      if (typeof spotUpdatedAt === 'number' && Number.isFinite(spotUpdatedAt) && spotUpdatedAt > 0) {
-        lastSpotRef.current = { price: spotPrice, at: spotUpdatedAt };
-      } else if (spotPrice !== lastSpotRef.current.price) {
-        lastSpotRef.current = { price: spotPrice, at: Date.now() };
-      }
-    }
-  }, [spotPrice, spotUpdatedAt]);
-  useEffect(() => {
-    const t = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const spotAgeSec = useMemo(() => {
-    if (!Number.isFinite(spotPrice) || spotPrice <= 0) return null;
-    return Math.max(0, Math.floor((nowMs - lastSpotRef.current.at) / 1000));
-  }, [nowMs, spotPrice]);
-
-  // Calculate nearest ATM Strike — FYERS spot only, never hardcoded fallback.
+  // Strikes
   const atmStrike = useMemo(() => {
-    if (!spotPrice || spotPrice <= 0) {
-      return 0;
-    }
+    if (!spotPrice || spotPrice <= 0) return 0;
     return Math.round(spotPrice / step) * step;
   }, [spotPrice, step]);
 
-  const callSymbol = atmStrike > 0 ? `${underlying}${atmStrike}CE` : '—';
-  const putSymbol = atmStrike > 0 ? `${underlying}${atmStrike}PE` : '—';
+  const ceStrike = useMemo(() => {
+    return calculateStrikeForSide(spotPrice, step, strikeOffset, 'CE');
+  }, [spotPrice, step, strikeOffset]);
+
+  const peStrike = useMemo(() => {
+    return calculateStrikeForSide(spotPrice, step, strikeOffset, 'PE');
+  }, [spotPrice, step, strikeOffset]);
+
+  const callSymbol = ceStrike > 0 ? `${underlying}${ceStrike}CE` : '—';
+  const putSymbol = peStrike > 0 ? `${underlying}${peStrike}PE` : '—';
   const noLiveSpot = !spotPrice || spotPrice <= 0 || atmStrike <= 0;
 
-  // Distance to the half-step boundary where ATM flips.
-  const flipDistance = useMemo(() => {
-    if (noLiveSpot) return null;
+  // ATM flip proximity warning (within 5 pts of flip threshold)
+  const flipNear = useMemo(() => {
+    if (noLiveSpot) return false;
     const upperFlip = atmStrike + step / 2;
     const lowerFlip = atmStrike - step / 2;
-    return Math.min(upperFlip - spotPrice, spotPrice - lowerFlip);
+    const dist = Math.min(upperFlip - spotPrice, spotPrice - lowerFlip);
+    return dist <= 5;
   }, [noLiveSpot, atmStrike, step, spotPrice]);
 
-  // Lift bracket to parent (chart overlay) without feedback loops.
+  // Option quotes hook
+  const {
+    quotes,
+    quoteError,
+    quoteAgeSec,
+    quotesStale,
+    ceSpread,
+    peSpread,
+    refresh: refreshQuotes,
+  } = useOptionQuotes(underlying, ceStrike, peStrike);
+
+  // Margin preview hook
+  const hasCe = quotes.ceLtp != null && quotes.ceLtp > 0;
+  const hasPe = quotes.peLtp != null && quotes.peLtp > 0;
+  const refPrice = hasCe ? quotes.ceLtp : hasPe ? quotes.peLtp : null;
+  const refSymbol = hasCe ? callSymbol : hasPe ? putSymbol : null;
+  const marginInfo = useMarginPreview(underlying, refSymbol, totalQuantity, refPrice);
+
+  // Lift bracket SL/TP
   useEffect(() => {
     onBracketChange?.(slPoints, targetPoints);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slPoints, targetPoints]);
+  }, [slPoints, targetPoints, onBracketChange]);
 
-  // Live ATM option quotes from the chain (LTP + bid/ask + greeks + OI).
-  const fetchAtmQuotes = useCallback(async () => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    if (!atmStrike || atmStrike <= 0) return;
-    const reqId = ++requestIdRef.current;
-    try {
-      const res = await api.getOptionChain(underlying);
-      if (reqId !== requestIdRef.current) return;
-      if (res.error) {
-        setQuoteError(res.error);
-        return;
-      }
-      const chain = res.data;
-      const strikes = chain?.strikes || [];
-      if (strikes.length === 0) {
-        setQuoteError('Empty option chain');
-        return;
-      }
-      let best = strikes[0];
-      let bestDist = Math.abs((best?.strike ?? 0) - atmStrike);
-      for (const row of strikes) {
-        const d = Math.abs(row.strike - atmStrike);
-        if (d < bestDist) {
-          best = row;
-          bestDist = d;
-        }
-      }
-      setQuotes({
-        ceLtp: best?.call?.ltp ?? null,
-        peLtp: best?.put?.ltp ?? null,
-        ceBid: best?.call?.bid ?? null,
-        ceAsk: best?.call?.ask ?? null,
-        peBid: best?.put?.bid ?? null,
-        peAsk: best?.put?.ask ?? null,
-        ceIv: best?.call?.greeks?.iv ?? null,
-        peIv: best?.put?.greeks?.iv ?? null,
-        ceDelta: best?.call?.greeks?.delta ?? null,
-        peDelta: best?.put?.greeks?.delta ?? null,
-        ceOi: best?.call?.open_interest ?? null,
-        peOi: best?.put?.open_interest ?? null,
-        expiry: chain?.expiry ?? null,
-        fetchedAt: Date.now(),
-      });
-      setQuoteError(null);
-    } catch (err: unknown) {
-      if (reqId !== requestIdRef.current) return;
-      setQuoteError((err as Error)?.message || 'Option chain unavailable');
-    }
-  }, [atmStrike, underlying]);
-
-  useEffect(() => {
-    setQuotes(EMPTY_QUOTES);
-    setQuoteError(null);
+  // Confirmation timeout helper
+  const clearConfirm = useCallback(() => {
     setConfirmSide(null);
-    fetchAtmQuotes();
-    const interval = setInterval(fetchAtmQuotes, 5000);
-    const onVisible = () => {
-      if (!document.hidden) fetchAtmQuotes();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [fetchAtmQuotes]);
-
-  useEffect(() => {
-    return () => {
-      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-    };
+    setConfirmSecondsLeft(0);
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
   }, []);
 
-  const quoteAgeSec = quotes.fetchedAt != null ? Math.max(0, Math.floor((nowMs - quotes.fetchedAt) / 1000)) : null;
-  const quotesStale = quoteAgeSec == null || quoteAgeSec > QUOTE_STALE_SEC;
-
-  const spreadFor = (bid: number | null, ask: number | null, ltp: number | null) => {
-    if (bid == null || ask == null || ltp == null) return { spread: null as number | null, wide: false, missing: true };
-    if (!(bid > 0) || !(ask > 0) || !(ltp > 0) || ask < bid) return { spread: null, wide: true, missing: false };
-    const spread = ask - bid;
-    const wide = spread > Math.max(1.5, ltp * 0.03);
-    return { spread, wide, missing: false };
-  };
-  const ceSpread = spreadFor(quotes.ceBid, quotes.ceAsk, quotes.ceLtp);
-  const peSpread = spreadFor(quotes.peBid, quotes.peAsk, quotes.peLtp);
-
-  // Margin preview (debounced, advisory only — never blocks).
-  // Uses the side that actually has a quote so CE/PE estimates match.
   useEffect(() => {
-    if (!atmStrike || totalQuantity <= 0) {
-      setMarginInfo(null);
-      return;
-    }
-    const hasCe = quotes.ceLtp != null && quotes.ceLtp > 0;
-    const hasPe = quotes.peLtp != null && quotes.peLtp > 0;
-    const refPrice = hasCe ? quotes.ceLtp : hasPe ? quotes.peLtp : null;
-    const refSymbol = hasCe ? callSymbol : hasPe ? putSymbol : null;
-    if (refPrice == null || refSymbol == null) {
-      setMarginInfo(null);
-      return;
-    }
-    let cancelled = false;
-    const t = setTimeout(async () => {
-      try {
-        const res = await api.previewPaperMargin({
-          symbol: refSymbol,
-          underlying,
-          side: 'BUY',
-          quantity: totalQuantity,
-          price: refPrice,
-        });
-        if (cancelled) return;
-        if (!res.error && res.data) {
-          setMarginInfo({ required: res.data.required_margin, affordable: res.data.affordable });
-        }
-      } catch {
-        if (!cancelled) setMarginInfo(null);
-      }
-    }, 600);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [atmStrike, totalQuantity, quotes.ceLtp, quotes.peLtp, callSymbol, putSymbol, underlying]);
+    return () => clearConfirm();
+  }, [clearConfirm]);
 
-  const armConfirm = (side: 'CALL' | 'PUT') => {
+  const armConfirm = useCallback((side: 'CALL' | 'PUT') => {
+    clearConfirm();
     setConfirmSide(side);
-    setConfirmLots(lots);
-    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    setConfirmSecondsLeft(5);
+
+    countdownIntervalRef.current = setInterval(() => {
+      setConfirmSecondsLeft((s) => {
+        if (s <= 1) {
+          clearConfirm();
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+
     confirmTimerRef.current = setTimeout(() => {
-      setConfirmSide(null);
+      clearConfirm();
     }, CONFIRM_TIMEOUT_MS);
-  };
+  }, [clearConfirm]);
 
-  const needsConfirm = (side: 'CALL' | 'PUT'): boolean => {
-    if (lots >= CONFIRM_LOTS_THRESHOLD) return true;
-    const ltp = side === 'CALL' ? quotes.ceLtp : quotes.peLtp;
-    if (ltp == null || !(ltp > 0)) return true; // no quote: confirm blind fire, backend validates
-    const wide = side === 'CALL' ? ceSpread.wide : peSpread.wide;
-    return wide;
-  };
-
-  const handleExecuteScalp = async (side: 'CALL' | 'PUT') => {
-    if (submittingRef.current || isSubmitting) return;
-    if (noLiveSpot) {
-      toast.error('No live spot — tap Retry spot, no synthetic price fallback');
-      return;
-    }
-    // Fat-finger guard: large lots, wide spread, or missing quote need a second tap.
-    if (needsConfirm(side) && (confirmSide !== side || confirmLots !== lots)) {
-      armConfirm(side);
+  const needsConfirm = useCallback(
+    (side: 'CALL' | 'PUT'): boolean => {
+      if (lots >= CONFIRM_LOTS_THRESHOLD) return true;
       const ltp = side === 'CALL' ? quotes.ceLtp : quotes.peLtp;
-      const reason =
-        lots >= CONFIRM_LOTS_THRESHOLD
-          ? `${lots}x size`
-          : ltp == null || !(ltp > 0)
-            ? 'no live quote (backend will validate)'
-            : 'wide spread';
-      toast.warning(`Confirm ${side} (${reason}): tap again within 5s to fire ${totalQuantity} qty`);
-      return;
-    }
-    setConfirmSide(null);
-    const symbol = side === 'CALL' ? callSymbol : putSymbol;
-    try {
-      submittingRef.current = true;
-      setIsSubmitting(true);
-      // Truth-of-Wall: MARKET order with no client price — backend fills from live chain.
-      const payload = {
-        symbol,
-        underlying,
-        side: 'BUY' as const,
-        order_type: 'MARKET' as const,
-        product: 'INTRADAY' as const,
-        quantity: totalQuantity,
-        client_order_id: `scalp-${Date.now()}`,
-      };
-
-      const res = await api.placePaperOrder(payload);
-      if (res.error) {
-        toast.error(`Order failed: ${res.error}`);
-      } else {
-        const fillPx = res.data?.fill_price;
-        toast.success(
-          fillPx && fillPx > 0
-            ? `SCALP FILLED: ${symbol} x ${totalQuantity} @ ₹${fillPx.toFixed(1)} (SL: -${slPoints}pt, TP: +${targetPoints}pt)`
-            : `Order placed: ${symbol} x ${totalQuantity} — awaiting live fill (no synthetic price)`
-        );
-        onOrderPlaced?.();
-        fetchAtmQuotes();
-      }
-    } catch (err: unknown) {
-      toast.error(`Execution error: ${(err as Error)?.message || 'Failed to place scalp order'}`);
-    } finally {
-      submittingRef.current = false;
-      setIsSubmitting(false);
-    }
-  };
-
-  // Keyboard fast-path (C/P). Ignored while typing so SL/TP edits are safe.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = e.key.toLowerCase();
-      if (k === 'c' || k === 'p') {
-        e.preventDefault();
-        handleExecuteScalp(k === 'c' ? 'CALL' : 'PUT');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lots, confirmSide, confirmLots, noLiveSpot, quotes.ceLtp, quotes.peLtp, callSymbol, putSymbol, slPoints, targetPoints, isSubmitting]);
-
-  const riskEstimateINR = totalQuantity * slPoints;
-  const rewardEstimateINR = totalQuantity * targetPoints;
-  const estPremRisk = (delta: number | null) =>
-    delta != null && Number.isFinite(delta) && Math.abs(delta) > 0
-      ? totalQuantity * slPoints * Math.abs(delta)
-      : null;
-  const cePremRisk = estPremRisk(quotes.ceDelta);
-  const pePremRisk = estPremRisk(quotes.peDelta);
-
-  const fmtCompact = (n: number | null) => {
-    if (n == null || !Number.isFinite(n)) return '—';
-    if (n >= 10000000) return `${(n / 10000000).toFixed(2)}Cr`;
-    if (n >= 100000) return `${(n / 100000).toFixed(2)}L`;
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-    return Math.round(n).toString();
-  };
-
-  const quoteChip = (label: string, ltp: number | null, iv: number | null, delta: number | null, oi: number | null) => (
-    <div className="flex items-center justify-between gap-2 bg-background/50 border border-border/40 rounded px-2 py-1">
-      <span className="font-mono font-bold text-[10px] text-muted-foreground">{label}</span>
-      <span className={`font-mono font-bold text-xs ${ltp && ltp > 0 ? 'text-foreground' : 'text-rose-400'}`}>
-        {ltp && ltp > 0 ? `₹${ltp.toFixed(1)}` : 'NO QUOTE'}
-      </span>
-      <span className="font-mono text-[9px] text-muted-foreground hidden sm:inline">
-        {iv != null ? `IV ${(iv * 100).toFixed(1)}%` : 'IV —'} · {delta != null ? `Δ ${delta.toFixed(2)}` : 'Δ —'} · OI {oi != null ? fmtCompact(oi) : '—'}
-      </span>
-    </div>
+      if (ltp == null || !(ltp > 0)) return true;
+      const wide = side === 'CALL' ? ceSpread.wide : peSpread.wide;
+      return wide;
+    },
+    [lots, quotes.ceLtp, quotes.peLtp, ceSpread.wide, peSpread.wide]
   );
 
-  // Controls stay interactive: lots/SL/TP/underlying always clickable.
-  // Only the fire buttons need a live spot; missing option quotes downgrade
-  // to tap-again confirm instead of a dead disabled button.
-  const lotsDisabled = isSubmitting;
+  const handleExecuteScalp = useCallback(
+    async (side: 'CALL' | 'PUT') => {
+      if (noLiveSpot) {
+        toast.error('No live spot quote — click retry spot to refresh');
+        return;
+      }
+
+      if (needsConfirm(side) && confirmSide !== side) {
+        armConfirm(side);
+        return;
+      }
+
+      clearConfirm();
+      const symbol = side === 'CALL' ? callSymbol : putSymbol;
+
+      await execute(async () => {
+        const payload = {
+          symbol,
+          underlying,
+          side: 'BUY' as const,
+          order_type: 'MARKET' as const,
+          product: 'INTRADAY' as const,
+          quantity: totalQuantity,
+          client_order_id: `scalp-${Date.now()}`,
+        };
+
+        const res = await api.placePaperOrder(payload);
+        if (res.error) {
+          toast.error(`Order failed: ${res.error}`);
+        } else {
+          const fillPx = res.data?.fill_price;
+          toast.success(
+            fillPx && fillPx > 0
+              ? `FILLED: ${symbol} x ${totalQuantity} @ ₹${fillPx.toFixed(1)} (SL: -${slPoints}pt, TP: +${targetPoints}pt)`
+              : `Order placed: ${symbol} x ${totalQuantity}`
+          );
+          notifyOrderPlaced();
+          void refreshQuotes();
+        }
+      });
+    },
+    [
+      noLiveSpot,
+      needsConfirm,
+      confirmSide,
+      clearConfirm,
+      callSymbol,
+      putSymbol,
+      execute,
+      underlying,
+      totalQuantity,
+      slPoints,
+      targetPoints,
+      toast,
+      notifyOrderPlaced,
+      refreshQuotes,
+      armConfirm,
+    ]
+  );
+
+  // Single global keyboard wiring
+  useScalpKeyboard({
+    onBuyCall: () => void handleExecuteScalp('CALL'),
+    onBuyPut: () => void handleExecuteScalp('PUT'),
+    onSetLots: (l) => {
+      setLots(l);
+      clearConfirm();
+    },
+    onPanicSquareOff: () => void panicSquareOff(),
+    onToggleHelp,
+    onToggleFullscreen: toggleFullscreen,
+  });
+
+  // Risk / reward calculations
+  const riskEstimateINR = totalQuantity * slPoints;
+  const rewardEstimateINR = totalQuantity * targetPoints;
+  const estPremRisk = useMemo(() => {
+    const delta = quotes.ceDelta || quotes.peDelta;
+    if (delta && Number.isFinite(delta) && Math.abs(delta) > 0) {
+      return totalQuantity * slPoints * Math.abs(delta);
+    }
+    return null;
+  }, [totalQuantity, slPoints, quotes.ceDelta, quotes.peDelta]);
+
+  // Render option quote strip
+  const renderQuoteChip = (
+    label: string,
+    strike: number,
+    ltp: number | null,
+    delta: number | null,
+    oi: number | null,
+    spread: number | null,
+    wide: boolean,
+    side: 'CALL' | 'PUT'
+  ) => {
+    const isCall = side === 'CALL';
+    return (
+      <div className="flex items-center justify-between gap-1.5 bg-background/60 border border-border/50 rounded px-2 py-1.5 transition-colors">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={`font-mono font-black text-[10px] px-1.5 py-0.5 rounded ${
+              isCall ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+            }`}
+          >
+            {label} {strike || ''}
+          </span>
+          <span className="font-mono text-[9px] text-muted-foreground hidden sm:inline">
+            {delta != null ? `Δ ${delta.toFixed(2)}` : 'Δ —'}
+          </span>
+          {spread != null && (
+            <span
+              className={`text-[9px] font-mono px-1 rounded ${
+                wide ? 'bg-amber-500/20 text-amber-400' : 'text-muted-foreground'
+              }`}
+            >
+              spd {spread.toFixed(1)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`font-mono font-bold text-xs ${
+              ltp && ltp > 0 ? (isCall ? 'text-emerald-400' : 'text-rose-400') : 'text-muted-foreground'
+            }`}
+          >
+            {ltp && ltp > 0 ? `₹${ltp.toFixed(1)}` : 'MKT'}
+          </span>
+          <span className="font-mono text-[9px] text-muted-foreground">
+            {oi != null ? `OI ${fmtCompact(oi)}` : ''}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   const fireBlocked = isSubmitting || noLiveSpot;
 
   return (
-    <div className="flex flex-col bg-card border border-border rounded-lg p-3 select-none text-xs gap-3">
+    <div className="flex flex-col bg-card border border-border rounded-lg p-2.5 select-none text-xs gap-2">
       {/* Header & Underlying Switcher */}
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
+      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-1.5">
         <div className="flex items-center gap-1.5 font-bold text-foreground">
-          <Zap className="w-4 h-4 text-amber-500 fill-amber-500/20" />
-          <span>1-Click Scalp Execution</span>
+          <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20" />
+          <span className="text-[11.5px]">1-Click Execution</span>
         </div>
-        <div className="flex items-center gap-1 bg-secondary/80 p-0.5 rounded border border-border/50" role="tablist" aria-label="Underlying">
+        <div className="flex items-center gap-1 bg-secondary/80 p-0.5 rounded border border-border/50">
           {(['NIFTY', 'BANKNIFTY', 'SENSEX'] as const).map((u) => (
             <button
               key={u}
               type="button"
-              role="tab"
-              aria-selected={underlying === u}
-              onClick={() => onUnderlyingChange?.(u)}
-              className={`px-1.5 py-0.5 rounded font-mono font-bold text-[10px] transition-colors ${
+              onClick={() => {
+                setUnderlying(u);
+                clearConfirm();
+              }}
+              className={`px-1.5 py-0.5 rounded font-mono font-bold text-[10px] transition-colors cursor-pointer ${
                 underlying === u
                   ? 'bg-foreground text-background shadow-xs'
                   : 'text-muted-foreground hover:text-foreground'
@@ -415,111 +344,64 @@ export function QuickScalpTicket({
         </div>
       </div>
 
-      {/* ATM Strikes & Lot Sizing */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="bg-secondary/40 p-2 rounded border border-border/40">
-          <span className="text-[10px] text-muted-foreground block">ATM Strike</span>
-          <span className="font-mono font-bold text-sm text-foreground">
-            {atmStrike || '—'}
-          </span>
-          <span className="text-[9px] text-muted-foreground block">
-            Spot: {spotPrice ? `₹${spotPrice.toFixed(1)}` : '—'}
-            {spotAgeSec != null && spotPrice > 0 ? (
-              <span className={spotAgeSec > 5 ? 'text-amber-400' : ''}> · {spotAgeSec}s ago</span>
-            ) : null}
-          </span>
-          <span className="text-[9px] text-muted-foreground block">
-            {flipDistance != null ? `ATM flips in ${flipDistance.toFixed(1)} pts` : '—'}
-            {quotes.expiry ? ` · Exp ${quotes.expiry}` : ''}
-          </span>
-        </div>
-
-        <div className="bg-secondary/40 p-2 rounded border border-border/40">
-          <span className="text-[10px] text-muted-foreground block">Total Qty</span>
-          <span className="font-mono font-bold text-sm text-foreground">
-            {totalQuantity} <span className="text-[10px] text-muted-foreground font-medium">({lots} {lots === 1 ? 'lot' : 'lots'})</span>
-          </span>
-          <span className="text-[9px] text-muted-foreground block">
-            1 lot = {lotSize} qty
-          </span>
-          <span className="text-[9px] block">
-            {marginInfo ? (
-              <span className={marginInfo.affordable ? 'text-emerald-400' : 'text-rose-400'}>
-                Margin ₹{marginInfo.required.toLocaleString('en-IN', { maximumFractionDigits: 0 })}{marginInfo.affordable ? '' : ' · shortfall'}
+      {/* Strike Matrix Selector with ATM Flip Proximity Callout */}
+      <div className="flex flex-col gap-1 bg-secondary/30 p-1.5 rounded border border-border/40">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+            Strike Matrix
+            {flipNear && (
+              <span className="text-amber-400 text-[9px] font-mono flex items-center gap-0.5 bg-amber-500/15 px-1 rounded animate-pulse">
+                <AlertTriangle className="w-2.5 h-2.5" /> ATM FLIP NEAR
               </span>
-            ) : (
-              <span className="text-muted-foreground">Margin —</span>
             )}
           </span>
+          <span className="text-[10px] font-mono text-foreground font-semibold">
+            CE {ceStrike || '—'} · PE {peStrike || '—'}
+          </span>
         </div>
-      </div>
 
-      {/* Live option quotes — advisory, with manual retry */}
-      <div className="flex flex-col gap-1">
-        {quoteChip('CE', quotes.ceLtp, quotes.ceIv, quotes.ceDelta, quotes.ceOi)}
-        {quoteChip('PE', quotes.peLtp, quotes.peIv, quotes.peDelta, quotes.peOi)}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] font-mono px-0.5">
-          <span className={ceSpread.wide ? 'text-amber-400' : 'text-muted-foreground'}>
-            CE spread {ceSpread.spread != null ? `₹${ceSpread.spread.toFixed(1)}` : '—'}{ceSpread.wide ? ' · WIDE' : ''}
-          </span>
-          <span className={peSpread.wide ? 'text-amber-400' : 'text-muted-foreground'}>
-            PE spread {peSpread.spread != null ? `₹${peSpread.spread.toFixed(1)}` : '—'}{peSpread.wide ? ' · WIDE' : ''}
-          </span>
-          <span className={quotesStale ? 'text-amber-400' : 'text-muted-foreground'}>
-            {quoteAgeSec != null ? `quotes ${quoteAgeSec}s ago` : 'quotes —'}
-          </span>
-          {quoteError ? <span className="text-rose-400">· {quoteError}</span> : null}
-          {(quoteError || quotes.ceLtp == null || quotes.peLtp == null) && (
+        {/* Compact Horizontal Segmented Selector */}
+        <div className="grid grid-cols-3 gap-1 bg-secondary/60 p-0.5 rounded border border-border/40">
+          {(['ITM', 'ATM', 'OTM'] as const).map((offset) => (
             <button
+              key={offset}
               type="button"
-              onClick={() => fetchAtmQuotes()}
-              className="ml-auto px-1.5 py-0.5 rounded bg-secondary hover:bg-secondary/80 text-foreground border border-border/50"
+              onClick={() => {
+                setStrikeOffset(offset);
+                clearConfirm();
+              }}
+              className={`py-1 rounded text-center font-mono font-bold text-[10px] transition-all cursor-pointer ${
+                strikeOffset === offset
+                  ? 'bg-amber-500 text-black shadow-xs font-black'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/70'
+              }`}
             >
-              Retry quotes
+              {offset === 'ATM' ? '★ ATM' : offset === 'ITM' ? 'ITM -1' : 'OTM +1'}
             </button>
-          )}
+          ))}
         </div>
-        {noLiveSpot && (
-          <div className="flex items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px]">
-            <span className="text-amber-300 font-mono">Waiting for live spot — orders need ATM</span>
-            {onRetrySpot && (
-              <button
-                type="button"
-                onClick={onRetrySpot}
-                className="px-1.5 py-0.5 rounded bg-amber-500 text-black font-bold font-mono text-[10px] hover:bg-amber-400"
-              >
-                Retry spot
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Quick Lot Multipliers */}
+      {/* Lot Sizing */}
       <div className="flex items-center justify-between gap-1.5 bg-secondary/20 p-1.5 rounded border border-border/30">
-        <span className="text-[10px] text-muted-foreground font-medium">Lots:</span>
-        <div className="flex items-center gap-1 flex-1 justify-end" role="radiogroup" aria-label="Lots">
+        <span className="text-[10px] text-muted-foreground font-medium whitespace-nowrap">Lots:</span>
+        <div className="flex items-center gap-1 flex-1 justify-end">
           {[1, 2, 4, 10].map((l) => {
             const dangerous = l >= 10;
             return (
               <button
                 key={l}
                 type="button"
-                role="radio"
-                aria-checked={lots === l}
-                disabled={lotsDisabled}
+                disabled={isSubmitting}
                 onClick={() => {
                   setLots(l);
-                  setConfirmSide(null);
+                  clearConfirm();
                 }}
-                title={l >= CONFIRM_LOTS_THRESHOLD ? `${l}x needs tap-again confirm` : `${l} lot${l > 1 ? 's' : ''}`}
-                className={`flex-1 py-1 rounded text-center font-mono font-semibold transition-all disabled:opacity-50 ${
+                className={`flex-1 py-1 rounded text-center font-mono font-semibold transition-all cursor-pointer disabled:opacity-50 ${
                   lots === l
                     ? dangerous
                       ? 'bg-rose-500 text-white shadow-xs font-bold'
-                      : l >= CONFIRM_LOTS_THRESHOLD
-                        ? 'bg-amber-500 text-black shadow-xs font-bold'
-                        : 'bg-amber-500 text-black shadow-xs font-bold'
+                      : 'bg-amber-500 text-black shadow-xs font-bold'
                     : dangerous
                       ? 'bg-secondary text-rose-400 border border-rose-500/40 hover:bg-rose-500/10'
                       : 'bg-secondary hover:bg-secondary/80 text-foreground'
@@ -530,120 +412,248 @@ export function QuickScalpTicket({
             );
           })}
         </div>
+        <span className="font-mono text-[10px] text-foreground font-semibold whitespace-nowrap pl-1">
+          {totalQuantity}q
+        </span>
       </div>
 
-      {/* Bracket Offsets (SL / TP) — underlying points */}
-      <div className="grid grid-cols-2 gap-2 text-[11px]">
-        <div className="flex items-center justify-between bg-rose-500/5 border border-rose-500/20 px-2 py-1.5 rounded">
-          <span className="text-rose-400 font-medium flex items-center gap-1">
-            <ShieldAlert className="w-3 h-3" /> SL (u-pts)
-          </span>
+      {/* Option Depth Chips */}
+      <div className="flex flex-col gap-1">
+        {renderQuoteChip(
+          'CE',
+          ceStrike,
+          quotes.ceLtp,
+          quotes.ceDelta,
+          quotes.ceOi,
+          ceSpread.spread,
+          ceSpread.wide,
+          'CALL'
+        )}
+        {renderQuoteChip(
+          'PE',
+          peStrike,
+          quotes.peLtp,
+          quotes.peDelta,
+          quotes.peOi,
+          peSpread.spread,
+          peSpread.wide,
+          'PUT'
+        )}
+
+        {/* Spot/Quote freshness banner if degraded */}
+        {noLiveSpot ? (
+          <div className="flex items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px]">
+            <span className="text-amber-300 font-mono">Waiting for live spot</span>
+            <button
+              type="button"
+              onClick={refreshSpot}
+              className="px-1.5 py-0.5 rounded bg-amber-500 text-black font-bold font-mono text-[10px] hover:bg-amber-400"
+            >
+              Retry spot
+            </button>
+          </div>
+        ) : spotStale || quotesStale ? (
+          <div className="flex items-center justify-between text-[9px] font-mono text-amber-400/90 px-1">
+            <span>Data age: spot {spotAgeSec || 0}s · chain {quoteAgeSec || 0}s</span>
+            <button
+              type="button"
+              onClick={() => {
+                void refreshSpot();
+                void refreshQuotes();
+              }}
+              className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
+            >
+              <RefreshCw className="w-2.5 h-2.5" /> refresh
+            </button>
+          </div>
+        ) : null}
+
+        {quoteError && (
+          <span className="text-[10px] text-rose-400 font-mono">{quoteError}</span>
+        )}
+      </div>
+
+      {/* SL & TP Brackets */}
+      <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+        {/* SL */}
+        <div className="flex flex-col gap-1 bg-rose-500/5 border border-rose-500/20 p-1.5 rounded">
+          <div className="flex items-center justify-between">
+            <span className="text-rose-400 font-bold text-[10px] flex items-center gap-1">
+              <ShieldAlert className="w-3 h-3" /> SL (pts)
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setSlPoints((v) => clampInt(v - 1, 2, 50, 8))}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-rose-500/20 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <span className="w-6 text-center font-mono font-bold text-xs text-foreground">
+                {slPoints}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSlPoints((v) => clampInt(v + 1, 2, 50, 8))}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-rose-500/20 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
-            <button type="button" aria-label="Decrease stop loss" onClick={() => setSlPoints((v) => clampInt(v - 1, 2, 50, 8))} className="p-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground">
-              <Minus className="w-3 h-3" />
-            </button>
-            <input
-              type="number"
-              min="2"
-              max="50"
-              value={slPoints}
-              onChange={(e) => setSlPoints(clampInt(Number(e.target.value), 2, 50, 8))}
-              className="w-12 text-right bg-background font-mono rounded px-1 py-0.5 border border-border"
-              aria-label="Stop loss in underlying points"
-            />
-            <button type="button" aria-label="Increase stop loss" onClick={() => setSlPoints((v) => clampInt(v + 1, 2, 50, 8))} className="p-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground">
-              <Plus className="w-3 h-3" />
-            </button>
+            {[5, 8, 12, 20].map((pt) => (
+              <button
+                key={pt}
+                type="button"
+                onClick={() => setSlPoints(pt)}
+                className={`flex-1 py-0.5 rounded text-[9px] font-mono font-bold transition-all cursor-pointer ${
+                  slPoints === pt
+                    ? 'bg-rose-500 text-white shadow-xs'
+                    : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {pt}p
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="flex items-center justify-between bg-emerald-500/5 border border-emerald-500/20 px-2 py-1.5 rounded">
-          <span className="text-emerald-400 font-medium flex items-center gap-1">
-            <Target className="w-3 h-3" /> TP (u-pts)
-          </span>
+        {/* TP */}
+        <div className="flex flex-col gap-1 bg-emerald-500/5 border border-emerald-500/20 p-1.5 rounded">
+          <div className="flex items-center justify-between">
+            <span className="text-emerald-400 font-bold text-[10px] flex items-center gap-1">
+              <Target className="w-3 h-3" /> TP (pts)
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setTargetPoints((v) => clampInt(v - 2, 4, 100, 16))}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-emerald-500/20 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <span className="w-6 text-center font-mono font-bold text-xs text-foreground">
+                {targetPoints}
+              </span>
+              <button
+                type="button"
+                onClick={() => setTargetPoints((v) => clampInt(v + 2, 4, 100, 16))}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-emerald-500/20 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
-            <button type="button" aria-label="Decrease target" onClick={() => setTargetPoints((v) => clampInt(v - 2, 4, 100, 16))} className="p-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground">
-              <Minus className="w-3 h-3" />
-            </button>
-            <input
-              type="number"
-              min="4"
-              max="100"
-              value={targetPoints}
-              onChange={(e) => setTargetPoints(clampInt(Number(e.target.value), 4, 100, 16))}
-              className="w-12 text-right bg-background font-mono rounded px-1 py-0.5 border border-border"
-              aria-label="Target in underlying points"
-            />
-            <button type="button" aria-label="Increase target" onClick={() => setTargetPoints((v) => clampInt(v + 2, 4, 100, 16))} className="p-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground">
-              <Plus className="w-3 h-3" />
-            </button>
+            {[10, 16, 25, 40].map((pt) => (
+              <button
+                key={pt}
+                type="button"
+                onClick={() => setTargetPoints(pt)}
+                className={`flex-1 py-0.5 rounded text-[9px] font-mono font-bold transition-all cursor-pointer ${
+                  targetPoints === pt
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {pt}p
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Risk / Reward Metrics — underlying notional + delta-adjusted premium estimate */}
-      <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground px-1">
-        <div className="flex items-center justify-between">
-          <span title="Underlying-points notional (qty × SL). Actual option premium loss is the Δ-adjusted estimate below.">Max Risk (underlying notional): <strong className="text-rose-400 font-mono">₹{riskEstimateINR.toLocaleString('en-IN')}</strong></span>
-          <span>Target ROI: <strong className="text-emerald-400 font-mono">+₹{rewardEstimateINR.toLocaleString('en-IN')}</strong></span>
-          <span>R:R <strong className="text-foreground font-mono">1:{(targetPoints / (slPoints || 1)).toFixed(1)}</strong></span>
-        </div>
-        <div className="flex items-center justify-between font-mono text-[9px]">
-          <span title="Premium moves ~delta × underlying, so actual premium risk differs from underlying notional">
-            CE prem risk ≈ {cePremRisk != null ? `₹${cePremRisk.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—'}
+      {/* Risk / Reward Metrics & Surfaced Premium Risk */}
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground px-0.5 font-mono">
+        <span>
+          Risk <strong className="text-rose-400">-₹{riskEstimateINR.toLocaleString('en-IN')}</strong>
+          {estPremRisk != null && (
+            <span className="text-[9px] text-muted-foreground/80 block">
+              Prem ₹{Math.round(estPremRisk).toLocaleString('en-IN')}
+            </span>
+          )}
+        </span>
+        <span>
+          Target <strong className="text-emerald-400">+₹{rewardEstimateINR.toLocaleString('en-IN')}</strong>
+        </span>
+        <span>
+          R:R <strong className="text-foreground">1:{(targetPoints / (slPoints || 1)).toFixed(1)}</strong>
+        </span>
+        {marginInfo ? (
+          <span className={marginInfo.affordable ? 'text-muted-foreground' : 'text-rose-400 font-bold'}>
+            Margin ₹{marginInfo.required.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
           </span>
-          <span>
-            PE prem risk ≈ {pePremRisk != null ? `₹${pePremRisk.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—'}
-          </span>
-          <span className="text-muted-foreground/70">Δ-adjusted est.</span>
-        </div>
+        ) : null}
       </div>
 
-      {/* 1-Click Action Buttons — always clickable when spot is live; missing
-          quotes fall back to tap-again confirm and backend validation */}
-      <div className="grid grid-cols-2 gap-2 pt-1">
+      {/* 1-Click Action Buttons with Inline Countdown Confirmation */}
+      <div className="grid grid-cols-2 gap-2 pt-0.5">
+        {/* BUY CALL */}
         <button
           type="button"
           disabled={fireBlocked}
-          title={noLiveSpot ? 'No live spot — tap Retry spot' : 'Buy CE market (shortcut: C)'}
-          onClick={() => handleExecuteScalp('CALL')}
-          className={`flex flex-col items-center justify-center p-2.5 rounded-lg font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-            confirmSide === 'CALL' && confirmLots === lots
-              ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-950/20 animate-pulse'
+          onClick={() => void handleExecuteScalp('CALL')}
+          className={`flex flex-col items-center justify-center py-2 px-2 rounded-lg font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+            confirmSide === 'CALL'
+              ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-950/20 ring-2 ring-amber-400'
               : 'bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white shadow-emerald-950/20'
           }`}
         >
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1.5 text-xs font-black">
             <ArrowUpRight className="w-4 h-4" />
-            <span>{confirmSide === 'CALL' && confirmLots === lots ? 'CONFIRM CE?' : 'BUY CALL (CE)'}</span>
+            <span>
+              {confirmSide === 'CALL'
+                ? `CONFIRM BUY CE (${confirmSecondsLeft}s)`
+                : isSubmitting
+                  ? 'SUBMITTING…'
+                  : 'BUY CALL (CE)'}
+            </span>
+            <kbd className="text-[9px] font-mono bg-black/20 px-1 rounded opacity-80">C</kbd>
           </div>
-          <span className="font-mono text-[10px] opacity-80 mt-0.5">
-            {noLiveSpot ? 'NO LIVE SPOT' : !(quotes.ceLtp && quotes.ceLtp > 0) ? `${atmStrike} CE · MKT (no quote)` : `${atmStrike} CE · MKT ${quotes.ceLtp ? `₹${quotes.ceLtp.toFixed(1)}` : ''}`}
+          <span className="font-mono text-[10px] opacity-85 mt-0.5">
+            {noLiveSpot
+              ? 'WAITING SPOT'
+              : quotes.ceLtp && quotes.ceLtp > 0
+                ? `${ceStrike} CE · ₹${quotes.ceLtp.toFixed(1)}`
+                : `${ceStrike} CE · MKT`}
           </span>
         </button>
 
+        {/* BUY PUT */}
         <button
           type="button"
           disabled={fireBlocked}
-          title={noLiveSpot ? 'No live spot — tap Retry spot' : 'Buy PE market (shortcut: P)'}
-          onClick={() => handleExecuteScalp('PUT')}
-          className={`flex flex-col items-center justify-center p-2.5 rounded-lg font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-            confirmSide === 'PUT' && confirmLots === lots
-              ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-950/20 animate-pulse'
+          onClick={() => void handleExecuteScalp('PUT')}
+          className={`flex flex-col items-center justify-center py-2 px-2 rounded-lg font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+            confirmSide === 'PUT'
+              ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-950/20 ring-2 ring-amber-400'
               : 'bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white shadow-rose-950/20'
           }`}
         >
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1.5 text-xs font-black">
             <ArrowDownRight className="w-4 h-4" />
-            <span>{confirmSide === 'PUT' && confirmLots === lots ? 'CONFIRM PE?' : 'BUY PUT (PE)'}</span>
+            <span>
+              {confirmSide === 'PUT'
+                ? `CONFIRM BUY PE (${confirmSecondsLeft}s)`
+                : isSubmitting
+                  ? 'SUBMITTING…'
+                  : 'BUY PUT (PE)'}
+            </span>
+            <kbd className="text-[9px] font-mono bg-black/20 px-1 rounded opacity-80">P</kbd>
           </div>
-          <span className="font-mono text-[10px] opacity-80 mt-0.5">
-            {noLiveSpot ? 'NO LIVE SPOT' : !(quotes.peLtp && quotes.peLtp > 0) ? `${atmStrike} PE · MKT (no quote)` : `${atmStrike} PE · MKT ${quotes.peLtp ? `₹${quotes.peLtp.toFixed(1)}` : ''}`}
+          <span className="font-mono text-[10px] opacity-85 mt-0.5">
+            {noLiveSpot
+              ? 'WAITING SPOT'
+              : quotes.peLtp && quotes.peLtp > 0
+                ? `${peStrike} PE · ₹${quotes.peLtp.toFixed(1)}`
+                : `${peStrike} PE · MKT`}
           </span>
         </button>
       </div>
-      <p className="text-[9px] text-muted-foreground/70 font-mono px-0.5 -mt-1">
-        {isSubmitting ? 'Firing order…' : 'Keys: C = CE · P = PE · 4x/10x, wide spreads & missing quotes need tap-again.'}
+
+      <p className="text-[9px] text-muted-foreground/70 font-mono text-center -mt-0.5">
+        Keys: C = CE · P = PE · 1-4 = Lots · F = Full · Shift+Esc = Panic · ? = Help
       </p>
     </div>
   );

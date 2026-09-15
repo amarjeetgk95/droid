@@ -1,0 +1,13 @@
+﻿...F.                                                                    [100%]
+================================== FAILURES ===================================
+E   AssertionError: assert 'CONFIRMED' == 'EXECUTED'
+      
+      - EXECUTED
+      + CONFIRMED
+---------------------------- Captured stdout call -----------------------------
+2026-09-15 13:50:04 [debug    ] fyers_api_quotes_failed        error='Event loop is closed'
+2026-09-15 13:50:04 [warning  ] execution_guard_rejected       check=9_SLIPPAGE_POLICY reason='GUARD_FAIL: Slippage 8.00% exceeds policy limit 0.50%' signal_id=b3ded238-45a5-4f7a-b931-12510333e20c
+E:\Droid\backend\tests\test_signals_automated_audit.py:287: AssertionError: assert 'CONFIRMED' == 'EXECUTED'
+=========================== short test summary info ===========================
+FAILED tests/test_signals_automated_audit.py::test_signals_audit_api_endpoints
+1 failed, 4 passed in 1.50s

@@ -1,58 +1,38 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { ShieldAlert, RefreshCw, XCircle, AlertOctagon } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldAlert, RefreshCw, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { VirtualPosition } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
+import { useScalpContext } from './ScalpContext';
 
 interface ActiveScalpPositionsProps {
-  onPositionsUpdated?: () => void;
-  onPositionsChange?: (positions: VirtualPosition[]) => void;
-  onPanicTriggered?: () => void;
-  refreshTrigger?: number;
+  onSquareOffSingle?: (pos: VirtualPosition) => void;
 }
 
-export function ActiveScalpPositions({
-  onPositionsUpdated,
-  onPositionsChange,
-  onPanicTriggered,
-  refreshTrigger,
-}: ActiveScalpPositionsProps) {
+export function ActiveScalpPositions({ onSquareOffSingle }: ActiveScalpPositionsProps) {
   const toast = useToast();
-  const [positions, setPositions] = useState<VirtualPosition[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { openPositions, refreshPositions, notifyOrderPlaced } = useScalpContext();
   const [exitingId, setExitingId] = useState<string | null>(null);
-  const [panicExiting, setPanicExiting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const fetchPositions = useCallback(async () => {
+  const handleManualRefresh = async () => {
     try {
       setLoading(true);
-      const res = await api.getPaperPositions();
-      const raw = (res.data || []) as VirtualPosition[];
-      const open = raw.filter((p) => p.is_open);
-      setPositions(open);
-      onPositionsChange?.(open);
-    } catch {
-      // ignore poll error
+      await refreshPositions();
     } finally {
       setLoading(false);
     }
-  }, [onPositionsChange]);
+  };
 
-  useEffect(() => {
-    fetchPositions();
-    const interval = setInterval(fetchPositions, 2500); // 2.5s fast position poll
-    return () => clearInterval(interval);
-  }, [fetchPositions, refreshTrigger]);
-
-  const handleSquareOffSingle = async (pos: VirtualPosition) => {
+  const handleSquareOff = async (pos: VirtualPosition) => {
     try {
       setExitingId(pos.position_id);
       await api.squareOffPosition(pos.position_id);
-      toast.success(`Position squared off: ${pos.symbol}`);
-      await fetchPositions();
-      onPositionsUpdated?.();
+      toast.success(`Position closed: ${pos.symbol}`);
+      notifyOrderPlaced();
+      onSquareOffSingle?.(pos);
     } catch (err: unknown) {
       toast.error(`Square off failed: ${(err as Error)?.message || 'Unknown error'}`);
     } finally {
@@ -60,56 +40,19 @@ export function ActiveScalpPositions({
     }
   };
 
-  const handlePanicSquareOffAll = async () => {
-    if (positions.length === 0) {
-      toast.info('No open positions to square off');
-      return;
-    }
-    try {
-      setPanicExiting(true);
-      onPanicTriggered?.();
-      await api.squareOffAllPositions();
-      toast.success('🚨 EMERGENCY SQUARE-OFF COMPLETE: All active positions closed at market');
-      await fetchPositions();
-      onPositionsUpdated?.();
-    } catch (err: unknown) {
-      toast.error(`Emergency exit failed: ${(err as Error)?.message || 'Unknown error'}`);
-    } finally {
-      setPanicExiting(false);
-    }
-  };
-
-  const panicRef = useRef(handlePanicSquareOffAll);
-  useEffect(() => {
-    panicRef.current = handlePanicSquareOffAll;
-  });
-
-  // Keyboard shortcut listener: Shift + Escape to trigger panic square-off.
-  // Uses a ref so we subscribe once instead of on every positions poll.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey && e.key === 'Escape') {
-        e.preventDefault();
-        panicRef.current();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  const totalUnrealized = positions.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
+  const totalUnrealized = openPositions.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
 
   return (
-    <div className="flex flex-col bg-card border border-border rounded-lg p-3 text-xs select-none gap-2">
-      {/* Header with Panic Exit Button */}
-      <div className="flex items-center justify-between border-b border-border/60 pb-2">
+    <div className="flex flex-col text-xs select-none gap-2 h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 shrink-0">
         <div className="flex items-center gap-2">
           <span className="font-bold text-foreground flex items-center gap-1.5">
-            <ShieldAlert className="w-4 h-4 text-amber-500" />
-            Active Scalp Positions ({positions.length})
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+            Positions ({openPositions.length})
           </span>
           <span
-            className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+            className={`font-mono font-bold px-2 py-0.5 rounded text-[10px] ${
               totalUnrealized > 0
                 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                 : totalUnrealized < 0
@@ -117,45 +60,100 @@ export function ActiveScalpPositions({
                   : 'bg-secondary text-muted-foreground'
             }`}
           >
-            Live MTM: {totalUnrealized >= 0 ? '+' : ''}₹{totalUnrealized.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+            Live MTM: {totalUnrealized >= 0 ? '+' : ''}₹
+            {totalUnrealized.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={fetchPositions}
-            disabled={loading}
-            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors"
-            title="Refresh positions"
-          >
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-
-          {/* Prominent Emergency Square-Off All Button */}
-          <button
-            type="button"
-            disabled={panicExiting || positions.length === 0}
-            onClick={handlePanicSquareOffAll}
-            className="flex items-center gap-1.5 px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-[11px] shadow-sm shadow-rose-950/30 transition-all disabled:opacity-40 cursor-pointer"
-            title="Emergency exit all open positions (Shortcut: Shift + Esc)"
-          >
-            <AlertOctagon className="w-3.5 h-3.5" />
-            <span>PANIC SQUARE OFF ALL</span>
-            <kbd className="hidden sm:inline-block font-mono text-[9px] bg-rose-800 px-1 rounded opacity-80">
-              Shift+Esc
-            </kbd>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={loading}
+          className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          title="Refresh positions"
+        >
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
-      {/* Positions Table */}
-      {positions.length === 0 ? (
-        <div className="flex items-center justify-center h-16 text-center text-muted-foreground text-[11px] border border-dashed border-border/60 rounded">
-          No open scalp positions · Ready for execution
+      {/* Content: Empty State vs Cards vs Table */}
+      {openPositions.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-5 px-3 text-center text-muted-foreground text-[11px] border border-dashed border-border/50 rounded-lg bg-secondary/10 flex-1 min-h-[100px]">
+          <span className="font-semibold text-foreground flex items-center gap-1.5">
+            <ShieldAlert className="w-3.5 h-3.5 text-emerald-400" />
+            No Active Scalp Positions
+          </span>
+          <span className="text-[10px] text-muted-foreground mt-0.5">
+            Capital safe · Ready for 1-click execution or auto-pilot setups
+          </span>
+        </div>
+      ) : openPositions.length < 3 ? (
+        /* Compact Card Grid for 1 or 2 positions */
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-y-auto">
+          {openPositions.map((pos) => {
+            const pnl = pos.unrealized_pnl || 0;
+            const pnlPct = pos.average_price > 0 ? (pnl / (pos.average_price * pos.quantity)) * 100 : 0;
+            const isProfit = pnl >= 0;
+
+            return (
+              <div
+                key={pos.position_id}
+                className="bg-card/70 border border-border/70 rounded-lg p-2.5 flex flex-col justify-between gap-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        pos.side === 'BUY'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/20 text-rose-400'
+                      }`}
+                    >
+                      {pos.side}
+                    </span>
+                    <span className="font-bold text-foreground text-xs">{pos.symbol}</span>
+                    <span className="font-mono text-muted-foreground text-[10px]">({pos.quantity}q)</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={exitingId === pos.position_id}
+                    onClick={() => handleSquareOff(pos)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 text-[10px] font-semibold transition-colors cursor-pointer"
+                  >
+                    <XCircle className="w-3 h-3" />
+                    {exitingId === pos.position_id ? 'Closing…' : 'Exit'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 bg-secondary/30 rounded p-1.5 text-[10px] font-mono">
+                  <div>
+                    <span className="text-muted-foreground block text-[9px]">Entry</span>
+                    <span className="text-foreground font-semibold">₹{pos.average_price.toFixed(1)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[9px]">LTP</span>
+                    <span className="text-foreground font-semibold">₹{pos.ltp.toFixed(1)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[9px]">P&L</span>
+                    <span
+                      className={`font-bold flex items-center gap-0.5 ${
+                        isProfit ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {isProfit ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                      {isProfit ? '+' : ''}₹{pnl.toFixed(1)} ({isProfit ? '+' : ''}{pnlPct.toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        /* Compact Table for 3+ positions */
+        <div className="overflow-x-auto overflow-y-auto">
           <table className="w-full text-[11px] border-collapse font-mono">
             <thead>
               <tr className="border-b border-border/40 text-muted-foreground text-[10px] text-left">
@@ -169,7 +167,7 @@ export function ActiveScalpPositions({
               </tr>
             </thead>
             <tbody>
-              {positions.map((pos) => {
+              {openPositions.map((pos) => {
                 const pnl = pos.unrealized_pnl || 0;
                 const pnlPct = pos.average_price > 0 ? (pnl / (pos.average_price * pos.quantity)) * 100 : 0;
                 const isProfit = pnl >= 0;
@@ -179,9 +177,7 @@ export function ActiveScalpPositions({
                     key={pos.position_id}
                     className="border-b border-border/30 hover:bg-secondary/20 transition-colors"
                   >
-                    <td className="py-1.5 px-2 font-bold text-foreground">
-                      {pos.symbol}
-                    </td>
+                    <td className="py-1.5 px-2 font-bold text-foreground">{pos.symbol}</td>
                     <td className="py-1.5 px-2">
                       <span
                         className={`px-1 py-0.2 rounded text-[10px] font-bold ${
@@ -193,15 +189,9 @@ export function ActiveScalpPositions({
                         {pos.side}
                       </span>
                     </td>
-                    <td className="py-1.5 px-2 text-foreground font-semibold">
-                      {pos.quantity}
-                    </td>
-                    <td className="py-1.5 px-2 text-muted-foreground">
-                      ₹{pos.average_price.toFixed(1)}
-                    </td>
-                    <td className="py-1.5 px-2 text-foreground font-semibold">
-                      ₹{pos.ltp.toFixed(1)}
-                    </td>
+                    <td className="py-1.5 px-2 text-foreground font-semibold">{pos.quantity}</td>
+                    <td className="py-1.5 px-2 text-muted-foreground">₹{pos.average_price.toFixed(1)}</td>
+                    <td className="py-1.5 px-2 text-foreground font-semibold">₹{pos.ltp.toFixed(1)}</td>
                     <td className={`py-1.5 px-2 font-bold ${isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {isProfit ? '+' : ''}₹{pnl.toFixed(1)} ({isProfit ? '+' : ''}{pnlPct.toFixed(1)}%)
                     </td>
@@ -209,11 +199,11 @@ export function ActiveScalpPositions({
                       <button
                         type="button"
                         disabled={exitingId === pos.position_id}
-                        onClick={() => handleSquareOffSingle(pos)}
+                        onClick={() => handleSquareOff(pos)}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] font-semibold transition-colors cursor-pointer"
                       >
                         <XCircle className="w-2.5 h-2.5" />
-                        Exit
+                        {exitingId === pos.position_id ? '…' : 'Exit'}
                       </button>
                     </td>
                   </tr>

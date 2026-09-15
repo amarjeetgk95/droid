@@ -17,8 +17,8 @@ describe('nav-config navigation layout', () => {
     expect(findNavItemByHref('/options')?.label).toBe('Derivatives');
   });
 
-  it('contains only forecast-first routes plus signals, AI copilot and settings', () => {
-    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/ai', '/markets', '/options', '/settings', '/signals', '/swing']);
+  it('contains only forecast-first routes plus signals, AI copilot, war room and settings', () => {
+    expect([...ALL_NAV_HREFS].sort()).toEqual(['/', '/ai', '/markets', '/options', '/settings', '/signals', '/swing', '/war-room']);
     for (const dead of [
       '/crypto',
       '/paper-trading',
@@ -38,7 +38,8 @@ describe('nav-config navigation layout', () => {
     expect(new Set(shortcuts).size).toBe(shortcuts.length);
   });
 
-  it('assigns clean shortcuts ⌘1, ⌘2, ⌘3, ⌘4, ⌘5 and ⌘,', () => {
+  it('assigns clean shortcuts ⌘0, ⌘1, ⌘2, ⌘3, ⌘4, ⌘5 and ⌘,', () => {
+    expect(findNavItemByHref('/war-room')?.shortcut).toBe('⌘0');
     expect(findNavItemByHref('/')?.shortcut).toBe('⌘1');
     expect(findNavItemByHref('/markets')?.shortcut).toBe('⌘2');
     expect(findNavItemByHref('/options')?.shortcut).toBe('⌘3');

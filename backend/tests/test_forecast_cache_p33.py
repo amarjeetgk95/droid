@@ -148,7 +148,9 @@ async def test_mtf_cache_hit_avoids_second_fetch(monkeypatch):
     assert r2.get("1h")
     # Second call served from 30s TTL cache: no new backend calls.
     assert market.get_candles.await_count == calls_after_first
-    assert getattr(fc, "_last_mtf_cache_hit", False) is True
+    # P1-3: provenance rides on the payload (per call), not on the singleton.
+    assert r1.cache_hit is False
+    assert r2.cache_hit is True
 
 
 @pytest.mark.asyncio
@@ -179,10 +181,13 @@ async def test_ml_cache_hit(monkeypatch):
     assert fc._ml_cache is not None
     out1 = await fc.get_ml_forecast("NIFTY 50", 60)
     assert out1 is not None
+    # P1-3: the per-call provenance flag comes from the cache path (a ContextVar,
+    # so concurrent requests cannot clobber each other's value).
+    assert tf_mod._ML_CACHE_HIT_FLAG.get() is False  # miss
     out2 = await fc.get_ml_forecast("NIFTY 50", 60)
     assert out2 == out1
     assert mp.predict_probabilities.await_count == 1
-    assert getattr(fc, "_last_ml_cache_hit", False) is True
+    assert tf_mod._ML_CACHE_HIT_FLAG.get() is True  # hit
 
 
 # --- integration: SLO latency + idempotency ---

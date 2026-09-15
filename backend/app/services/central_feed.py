@@ -29,7 +29,7 @@ class CentralMarketDataFeed:
 
     def __init__(self):
         self._subscribers: dict[WebSocket, asyncio.Queue] = {}
-        self._canonical_subscriptions: Set[str] = {"NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX"}
+        self._canonical_subscriptions: Set[str] = {"NIFTY 50", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIA VIX"}
         self._running: bool = False
         self._worker_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
+import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
@@ -138,6 +139,24 @@ function ForecastHomePageInner() {
 
   return (
     <div className="ds-page">
+      {/* War Room Banner */}
+      <div className="mb-3 px-3.5 py-2.5 rounded-lg border border-[var(--ds-accent)]/40 bg-[var(--ds-accent-wash)] flex items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--ds-accent)] font-bold text-sm">⚡</span>
+          <span className="font-semibold text-foreground">Fast Trading Desk Available:</span>
+          <span className="text-[var(--ds-text-secondary)] hidden sm:inline">
+            One-screen glanceable trend verdict, real-time signal feed & automated algo controls.
+          </span>
+        </div>
+        <Link
+          href="/war-room"
+          className="px-3 py-1 rounded bg-[var(--ds-accent)] hover:opacity-90 text-white font-bold tracking-tight text-xs flex items-center gap-1 shrink-0 transition-opacity"
+        >
+          <span>Open War Room</span>
+          <span className="text-[10px] opacity-80 font-mono">›</span>
+        </Link>
+      </div>
+
       {/* header */}
       <header className="page-hero">
         <div className="toolbar">
@@ -200,11 +219,11 @@ function ForecastHomePageInner() {
       {/* context */}
       <WhyStrip instrument={instrument} />
 
-      {/* AI deep signal (regime + MTF + AI setup for this instrument) */}
-      <AIDeepInsightCard symbol={instrument} />
-
-      {/* supporting signals */}
-      <SupportingSignalsPanel />
+      {/* intelligence & supporting signals: 2-column grid on desktop */}
+      <div className="ds-grid-dashboard">
+        <AIDeepInsightCard symbol={instrument} />
+        <SupportingSignalsPanel />
+      </div>
 
       {/* track record */}
       <ForecastOutcomes instrument={instrument} timeframe={timeframe} />

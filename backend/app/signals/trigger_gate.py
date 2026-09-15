@@ -14,13 +14,13 @@ from typing import Any, Optional
 
 
 TICK = Decimal("0.05")
-# Minimum trigger distance from spot: the larger of 0.05% of spot or 0.10R.
-MIN_GAP_PCT = Decimal("0.0005")
+# Minimum trigger distance from spot: the larger of 0.03% of spot or 0.10R.
+MIN_GAP_PCT = Decimal("0.0003")
 MIN_GAP_RISK_FRACTION = Decimal("0.10")
 # Minimum risk size: 0.03% of spot (filters dust stops that make R:R meaningless).
 MIN_RISK_PCT = Decimal("0.0003")
-# Minimum reward bar for a fresh signal — raised to 1.5 for 80% win-rate quality target.
-MIN_RR_T2 = 1.5
+# Minimum reward bar for a fresh signal — 1.2 for balanced edge and signal generation.
+MIN_RR_T2 = 1.2
 # Entry zone wider than 2R means the "setup" is just chop.
 MAX_ENTRY_WIDTH_R = Decimal("2.0")
 

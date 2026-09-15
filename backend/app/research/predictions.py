@@ -20,6 +20,16 @@ from app.research.models import PredictionOutcome, ResearchPrediction, ResearchS
 logger = structlog.get_logger(__name__)
 
 
+class PersistenceError(RuntimeError):
+    """Raised instead of silently falling back to memory (``strict=True``).
+
+    A caller that supplied a session asked for durable persistence, so a failed
+    insert must be surfaced — otherwise the response claims an immutable record
+    (prediction_id/snapshot_id) that does not exist in the database. Callers
+    without a session keep the legacy memory-fallback behaviour.
+    """
+
+
 class SnapshotService:
     """Service handling point-in-time market-state snapshots (§25).
 
@@ -37,11 +47,14 @@ class SnapshotService:
         cls,
         snapshot: ResearchSnapshot,
         session: Optional[AsyncSession] = None,
+        strict: bool = False,
     ) -> str:
-        """Persist a point-in-time market snapshot. Never raises on DB failure
-        when a session is provided (falls back to memory); raises only when
-        the snapshot itself cannot be built/stored in memory, so callers can
-        degrade the forecast instead of persisting a prediction without one.
+        """Persist a point-in-time market snapshot. Without ``strict`` it never
+        raises on DB failure (falls back to memory); with ``strict=True`` (used
+        by the forecast path when it actually has a session) a failed insert
+        raises :class:`PersistenceError` and the memory mirror is dropped, so
+        callers can degrade the forecast instead of claiming a record that was
+        never written.
         """
         if not snapshot.snapshot_id:
             snapshot.snapshot_id = f"snap_{uuid.uuid4().hex[:12]}"
@@ -84,8 +97,14 @@ class SnapshotService:
                 await session.commit()
                 logger.info("recorded_research_snapshot_db", snapshot_id=snapshot.snapshot_id)
             except Exception as e:
-                await session.rollback()
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
                 logger.warning("failed_to_write_snapshot_db_fallback_memory", error=str(e))
+                if strict:
+                    cls._memory_snapshots.pop(snapshot.snapshot_id, None)
+                    raise PersistenceError(f"snapshot-db-write-failed: {e}") from e
 
         return snapshot.snapshot_id
 
@@ -123,10 +142,14 @@ class PredictionService:
         cls,
         prediction: ResearchPrediction,
         session: Optional[AsyncSession] = None,
+        strict: bool = False,
     ) -> str:
         """Record an immutable prediction.
         
         Rule N5: Once written, prediction records CANNOT be updated.
+        With ``strict=True`` a failed DB insert raises :class:`PersistenceError`
+        (and the memory mirror is dropped) instead of returning an id for a row
+        that was never written.
         """
         if not prediction.prediction_id:
             prediction.prediction_id = f"pred_{uuid.uuid4().hex[:12]}"
@@ -183,10 +206,71 @@ class PredictionService:
                 await session.commit()
                 logger.info("recorded_immutable_prediction_db", prediction_id=prediction.prediction_id)
             except Exception as e:
-                await session.rollback()
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
                 logger.warning("failed_to_write_prediction_db_fallback_memory", error=str(e))
+                if strict:
+                    cls._memory_predictions.pop(prediction.prediction_id, None)
+                    raise PersistenceError(f"prediction-db-write-failed: {e}") from e
 
         return prediction.prediction_id
+
+    @classmethod
+    async def find_in_minute_bucket(
+        cls,
+        session: Optional[AsyncSession],
+        *,
+        instrument: str,
+        indicator_id: str,
+        bucket_start: datetime,
+        bucket_end: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        """Return ``{prediction_id, snapshot_id}`` for a prediction already
+        recorded for ``instrument``/``indicator_id`` inside the minute window
+        ``[bucket_start, bucket_end)``, else ``None``.
+
+        Pre-insert guard for cross-process minute-bucket idempotency: without it
+        the in-memory replay map cannot see rows written by another worker, so
+        the same logical forecast would be inserted twice. Never raises — a
+        lookup failure must not turn a forecast into a 500, and the subsequent
+        (strict) insert is honest about its own failure.
+        """
+        if session is None:
+            return None
+        try:
+            stmt = text("""
+                SELECT prediction_id, snapshot_id FROM research_predictions
+                WHERE instrument = :inst AND indicator_id = :ind
+                  AND timestamp >= :start AND timestamp < :end
+                ORDER BY timestamp ASC
+                LIMIT 1
+            """)
+            result = await session.execute(
+                stmt,
+                {
+                    "inst": instrument,
+                    "ind": indicator_id,
+                    "start": bucket_start,
+                    "end": bucket_end,
+                },
+            )
+            row = result.mappings().first()
+            if not row:
+                return None
+            return {
+                "prediction_id": row["prediction_id"],
+                "snapshot_id": row["snapshot_id"],
+            }
+        except Exception as e:
+            logger.warning(
+                "find_in_minute_bucket_failed",
+                instrument=instrument,
+                indicator_id=indicator_id,
+                error=str(e)[:200],
+            )
+            return None
 
     @classmethod
     async def append_outcome(

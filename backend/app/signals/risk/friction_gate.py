@@ -37,8 +37,8 @@ class FrictionGate:
 
     def __init__(
         self,
-        min_net_reward_risk: float = 1.10,
-        max_cost_to_target_ratio: float = 0.45,  # Max 45% of gross target eaten by costs
+        min_net_reward_risk: float = 0.85,
+        max_cost_to_target_ratio: float = 0.50,  # Max 50% of gross target eaten by costs
         default_nifty_lot: int = 75,
         default_banknifty_lot: int = 30,
         default_sensex_lot: int = 20,

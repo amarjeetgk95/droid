@@ -76,7 +76,18 @@ async def health_subsystems():
     try:
         cfg = get_config()
         elements["broker_configured"] = bool(cfg.credentials.get("app_id"))
-        elements["token_present"] = bool(cfg.credentials.get("access_token"))
+        raw_token = (cfg.credentials.get("access_token") or "")
+        try:
+            from app.core.broker_runtime import is_usable_access_token
+            usable = is_usable_access_token(raw_token)
+        except Exception:
+            usable = bool(raw_token)
+        elements["token_present"] = bool(usable)
+        # Explicit status so dashboards can distinguish "no token" from a
+        # stored placeholder (e.g. test fixture) that can never authenticate.
+        elements["token_status"] = (
+            "present" if usable else ("placeholder" if raw_token else "missing")
+        )
     except Exception:
         pass
 

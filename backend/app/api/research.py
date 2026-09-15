@@ -184,9 +184,28 @@ async def get_forecast(
     horizon: str,
     instrument: str = Query("NIFTY 50", description="Trading instrument"),
     record: bool = Query(True, description="Persist forecast as an immutable prediction"),
+    include_layers: bool = Query(
+        False,
+        description="Include the heavy debug layers (mtf_features, indicator_outputs, options_context)",
+    ),
+    include_explain: bool = Query(
+        True,
+        description="Include the explain bundle (persisted recordings keep it either way)",
+    ),
+    session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    """Generate a point-in-time directional forecast for the requested horizon."""
-    from app.research.trend_forecast import SUPPORTED_HORIZONS, trend_forecaster
+    """Generate a point-in-time directional forecast for the requested horizon.
+
+    ``session`` (None when no database is configured) is the durable store of
+    record; the response's ``persisted`` flag reports whether the immutable
+    snapshot+prediction actually exist. A forecast that exceeds its end-to-end
+    budget returns 503 (``deadline_exceeded``) instead of hanging.
+    """
+    from app.research.trend_forecast import (
+        SUPPORTED_HORIZONS,
+        ForecastDeadlineExceeded,
+        trend_forecaster,
+    )
 
     h = (horizon or "").lower()
     if h not in SUPPORTED_HORIZONS:
@@ -195,7 +214,18 @@ async def get_forecast(
             detail=f"Unknown forecast horizon '{horizon}'. Supported: {sorted(SUPPORTED_HORIZONS)}",
         )
     try:
-        return await trend_forecaster.forecast(instrument=instrument, horizon=h, record=record)
+        return await trend_forecaster.forecast(
+            instrument=instrument,
+            horizon=h,
+            record=record,
+            session=session,
+            include_layers=include_layers,
+            include_explain=include_explain,
+        )
+    except ForecastDeadlineExceeded as e:
+        # P1-2: bounded request -> labeled 503 instead of an unbounded hang.
+        logger.warning("forecast_deadline_exceeded", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
     except ValueError as e:
         # Transient data gaps (e.g. insufficient candles after hours) stay 503,
         # never a synthetic forecast.
@@ -214,9 +244,22 @@ async def get_tactical_bias(
     horizon: str,
     instrument: str = Query("NIFTY 50", description="Trading instrument"),
     record: bool = Query(True, description="Persist bias as an immutable prediction"),
+    include_layers: bool = Query(
+        False,
+        description="Include the heavy debug layers (mtf_features, indicator_outputs, options_context)",
+    ),
+    include_explain: bool = Query(
+        True,
+        description="Include the explain bundle (persisted recordings keep it either way)",
+    ),
+    session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Generate a point-in-time tactical horizon bias for the requested horizon."""
-    from app.research.trend_forecast import SUPPORTED_HORIZONS, tactical_horizon_engine
+    from app.research.trend_forecast import (
+        SUPPORTED_HORIZONS,
+        ForecastDeadlineExceeded,
+        tactical_horizon_engine,
+    )
 
     h = (horizon or "").lower()
     if h not in SUPPORTED_HORIZONS:
@@ -225,7 +268,17 @@ async def get_tactical_bias(
             detail=f"Unknown horizon '{horizon}'. Supported: {sorted(SUPPORTED_HORIZONS)}",
         )
     try:
-        return await tactical_horizon_engine.forecast(instrument=instrument, horizon=h, record=record)
+        return await tactical_horizon_engine.forecast(
+            instrument=instrument,
+            horizon=h,
+            record=record,
+            session=session,
+            include_layers=include_layers,
+            include_explain=include_explain,
+        )
+    except ForecastDeadlineExceeded as e:
+        logger.warning("tactical_bias_deadline_exceeded", horizon=h, instrument=instrument, error=str(e))
+        raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
     except ValueError as e:
         logger.warning("tactical_bias_insufficient_data", horizon=h, instrument=instrument, error=str(e))
         raise HTTPException(status_code=503, detail=str(e))

@@ -41,9 +41,42 @@ class OpeningRangeBreakoutStrategy(Strategy):
             orb_high = Decimal(str(orb_data["high"]))
             orb_low = Decimal(str(orb_data["low"]))
         elif ctx.candles and len(ctx.candles) >= 2:
+            # Filter session candles for current trading day (>= 09:15 IST)
+            session_candles = []
+            try:
+                from datetime import datetime as _dt, time as _dt_time
+                from zoneinfo import ZoneInfo
+                ist_tz = ZoneInfo("Asia/Kolkata")
+                latest_ts = ctx.candles[-1].get("timestamp")
+                if latest_ts:
+                    if isinstance(latest_ts, _dt):
+                        latest_dt = latest_ts.astimezone(ist_tz) if latest_ts.tzinfo else latest_ts.replace(tzinfo=ist_tz)
+                    elif isinstance(latest_ts, (int, float)):
+                        latest_dt = _dt.fromtimestamp(latest_ts if latest_ts < 1e11 else latest_ts / 1000.0, tz=ist_tz)
+                    else:
+                        latest_dt = _dt.fromisoformat(str(latest_ts))
+                    session_open = _dt.combine(latest_dt.date(), _dt_time(9, 15, 0), tzinfo=ist_tz)
+                    for c in ctx.candles:
+                        ts = c.get("timestamp")
+                        c_dt = None
+                        if isinstance(ts, _dt):
+                            c_dt = ts.astimezone(ist_tz) if ts.tzinfo else ts.replace(tzinfo=ist_tz)
+                        elif isinstance(ts, (int, float)):
+                            c_dt = _dt.fromtimestamp(ts if ts < 1e11 else ts / 1000.0, tz=ist_tz)
+                        elif isinstance(ts, str):
+                            try:
+                                c_dt = _dt.fromisoformat(ts)
+                            except Exception:
+                                pass
+                        if c_dt and c_dt >= session_open and c_dt.date() == latest_dt.date():
+                            session_candles.append(c)
+            except Exception:
+                session_candles = []
+
+            candle_pool = session_candles if session_candles else ctx.candles
             # 5M timeframe: first 3 candles = 15m opening range; 1M timeframe: first 15 candles.
             n_candles = 3 if ctx.timeframe == "5M" else (15 if ctx.timeframe == "1M" else 3)
-            opening_candles = ctx.candles[:min(len(ctx.candles), n_candles)]
+            opening_candles = candle_pool[:min(len(candle_pool), n_candles)]
             orb_high = Decimal(str(max(float(c.get("high", spot)) for c in opening_candles)))
             orb_low = Decimal(str(min(float(c.get("low", spot)) for c in opening_candles)))
         else:

@@ -1,4 +1,4 @@
-import type { ApiCore } from './client';
+import { isApiErrorStatus, type ApiCore } from './client';
 import type { HourForecast } from '@/components/research/ForecastCard';
 
 /**
@@ -43,18 +43,32 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
   },
 
-    async getTacticalBias(instrument: string, horizon: string = '1h', record = true): Promise<HourForecastV2> {
+    async getTacticalBias(instrument: string, horizon: string = '1h', record = true, includeExplain = true): Promise<HourForecastV2> {
     try {
-      return await core.request<HourForecastV2>(`/api/v1/research/tactical-bias/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
-    } catch {
-      return this.getForecast(instrument, horizon, record);
+      return await core.request<HourForecastV2>(
+        `/api/v1/research/tactical-bias/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}&include_explain=${includeExplain ? 'true' : 'false'}`,
+      );
+    } catch (err) {
+      // Fall back to the sibling route ONLY when the route itself is missing on
+      // this backend build (404/405). Any other failure is real: re-issuing the
+      // same computation through /forecast would double the provider work
+      // exactly when the broker (or the model) is already struggling, and it
+      // turns a fast error into a second full forecast round-trip.
+      if (!isApiErrorStatus(err, 404, 405)) throw err;
+      return this.getForecast(instrument, horizon, record, includeExplain);
     }
   },
 
-    async getForecast(instrument: string, horizon: string = '1h', record = true): Promise<HourForecastV2> {
-    return core.request<HourForecastV2>(`/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
+    async getForecast(instrument: string, horizon: string = '1h', record = true, includeExplain = true): Promise<HourForecastV2> {
+    return core.request<HourForecastV2>(
+      `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}&include_explain=${includeExplain ? 'true' : 'false'}`,
+    );
   },
 
+    /** Explain bundle only (no prediction recorded). The bundle is what WhyPanel
+     *  renders, so the polling call keeps `include_explain=true` (the default);
+     *  pass `includeExplain=false` to `getForecast`/`getTacticalBias` for lighter
+     *  polls and use this to fetch it on demand. */
     async getForecastExplain(instrument: string, horizon: string = '1h'): Promise<HourForecastV2> {
     return core.request<HourForecastV2>(
       `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=false&include_explain=true`,

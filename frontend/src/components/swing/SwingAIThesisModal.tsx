@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bot, Copy, Check, X, ShieldAlert, Sparkles, AlertCircle } from 'lucide-react';
+import { Bot, Copy, Check, X, ShieldAlert, Sparkles, AlertCircle, Gauge, Activity } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { SwingSetupDTO } from '@/lib/api/swing';
 
@@ -43,6 +43,11 @@ export function SwingAIThesisModal({ setup, isOpen, onClose }: SwingAIThesisModa
     }
   };
 
+  const delta = setup.greeks?.delta ?? 0;
+  const thetaDay = setup.greeks?.theta_day ?? 0;
+  const vega = setup.greeks?.vega ?? 0;
+  const isCall = setup.option_type === 'CE';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
       <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
@@ -53,16 +58,16 @@ export function SwingAIThesisModal({ setup, isOpen, onClose }: SwingAIThesisModa
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-semibold text-foreground">
-                  AI Swing Thesis: {setup.symbol}
+                  AI Options Thesis: {setup.underlying} {setup.strike} {setup.option_type}
                 </h3>
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-primary/20 text-primary border border-primary/30">
-                  {setup.strategy.replace(/_/g, ' ')}
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-primary/20 text-primary border border-primary/30 font-mono">
+                  {setup.expiry_date} ({setup.dte} DTE)
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Read-only advisory trade briefing (§57) — strictly constrained to deterministic levels
+                Read-only advisory trade briefing (§53) — strictly constrained to deterministic levels
               </p>
             </div>
           </div>
@@ -86,36 +91,42 @@ export function SwingAIThesisModal({ setup, isOpen, onClose }: SwingAIThesisModa
               {/* Setup Snapshot Box */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-lg bg-muted/40 border border-border/60 text-xs">
                 <div>
-                  <div className="text-muted-foreground">Trigger Entry</div>
-                  <div className="font-semibold text-foreground text-sm">₹{setup.trigger_price}</div>
-                  <div className="text-[10px] text-muted-foreground">Max chase: ₹{setup.max_chase_price}</div>
+                  <div className="text-muted-foreground text-[10px] uppercase font-semibold">Entry Premium</div>
+                  <div className="font-semibold text-foreground text-sm font-mono">₹{setup.entry_premium.toFixed(2)}</div>
+                  <div className="text-[10px] text-muted-foreground">Spot: ₹{setup.spot_price.toFixed(1)}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Invalidation Stop</div>
-                  <div className="font-semibold text-destructive text-sm">₹{setup.stop_price}</div>
-                  <div className="text-[10px] text-muted-foreground">ATR floor: ₹{setup.atr_floor}</div>
+                  <div className="text-muted-foreground text-[10px] uppercase font-semibold">Option Stop</div>
+                  <div className="font-semibold text-destructive text-sm font-mono">₹{setup.stop_premium.toFixed(2)}</div>
+                  <div className="text-[10px] text-muted-foreground font-mono">Spot Stop: ₹{setup.spot_stop.toFixed(1)}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Target 1 & 2</div>
-                  <div className="font-semibold text-emerald-500 text-sm">₹{setup.target_1} / ₹{setup.target_2}</div>
-                  <div className="text-[10px] text-muted-foreground">1.5R & 3.0R Multiples</div>
+                  <div className="text-muted-foreground text-[10px] uppercase font-semibold">Targets (1.5R / 3R)</div>
+                  <div className="font-semibold text-emerald-500 text-sm font-mono">₹{setup.target_premium_1.toFixed(2)}</div>
+                  <div className="text-[10px] text-muted-foreground font-mono">T2: ₹{setup.target_premium_2.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Score & Expected Hold</div>
-                  <div className="font-semibold text-foreground text-sm">{setup.score.total}/100</div>
-                  <div className="text-[10px] text-muted-foreground">{setup.expected_holding_days} trading days</div>
+                  <div className="text-muted-foreground text-[10px] uppercase font-semibold">Greeks & IV</div>
+                  <div className="font-semibold text-foreground text-xs font-mono">Δ {delta.toFixed(2)} | Θ -₹{Math.abs(thetaDay).toFixed(1)}</div>
+                  <div className="text-[10px] text-muted-foreground">IV: {(setup.iv * 100).toFixed(1)}% ({setup.iv_percentile.toFixed(0)}%)</div>
                 </div>
               </div>
 
               {/* Confirmations */}
               <div>
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                  Technical Confirmations
+                  Technical & Volatility Confirmations
                 </h4>
                 <ul className="space-y-1.5 text-xs text-foreground/90">
                   {setup.technical_reasons.map((r, i) => (
                     <li key={i} className="flex items-start gap-2">
                       <span className="text-emerald-500 mt-0.5">•</span>
+                      <span>{r}</span>
+                    </li>
+                  ))}
+                  {setup.options_reasons?.map((r, i) => (
+                    <li key={`opt-${i}`} className="flex items-start gap-2">
+                      <span className="text-sky-500 mt-0.5">•</span>
                       <span>{r}</span>
                     </li>
                   ))}

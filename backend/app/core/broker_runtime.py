@@ -39,6 +39,55 @@ _PROVIDER_CRED_KEYS: Dict[str, Dict[str, str]] = {
 }
 
 
+# Tokens that are clearly not real broker credentials (test fixtures, docs
+# examples, copy-paste accidents). Treated as ABSENT everywhere so health
+# checks stay honest and the provider parks with "re-auth required" instead
+# of hammering the broker API with a 401 on every poll cycle.
+_KNOWN_DUMMY_TOKENS = frozenset({
+    "",
+    "mock-demo-token",
+    "changeme",
+    "test123",
+    "valid_fyers_jwt_token_123",
+})
+
+# Substrings that never appear in real FYERS access tokens but show up in
+# placeholders. Matched case-insensitively.
+_PLACEHOLDER_MARKERS = (
+    "mock",
+    "dummy",
+    "placeholder",
+    "example",
+    "changeme",
+    "sample",
+    "fake",
+    "valid_",
+    "test_",
+    "_test",
+    "testing",
+)
+
+
+def is_usable_access_token(token: object) -> bool:
+    """True only if `token` looks like a real broker access token.
+
+    Guards against placeholder values (e.g. ``valid_fyers_jwt_token_123``)
+    that would otherwise count as "configured" in health checks while every
+    live data call fails authentication.
+    """
+    if not isinstance(token, str):
+        return False
+    cleaned = token.strip().strip("\"'")
+    if not cleaned or cleaned in _KNOWN_DUMMY_TOKENS:
+        return False
+    # Real FYERS tokens are long opaque/JWT strings; anything this short is
+    # a stub, not a credential.
+    if len(cleaned) < 32:
+        return False
+    lowered = cleaned.lower()
+    return not any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+
+
 @dataclass
 class BrokerConfig:
     provider: str
@@ -72,7 +121,13 @@ def _env_config() -> BrokerConfig:
                 token = ""
 
     if token:
-        creds["access_token"] = token
+        if is_usable_access_token(token):
+            creds["access_token"] = token
+        else:
+            logger.warning(
+                "fyers_token_placeholder_ignored",
+                hint="Stored FYERS token looks like a placeholder, not a real credential — re-auth required via /api/v1/tokens/fyers/auth-url",
+            )
 
     return BrokerConfig(provider=provider, api_type="indian", credentials=creds)
 
@@ -103,7 +158,14 @@ def _creds_from_app_settings(app_settings: Dict[str, Any]) -> Dict[str, Any]:
     for f in token_fields:
         val = raw.get(f)
         if val not in (None, ""):
-            creds["access_token"] = val.strip().strip("\"'") if isinstance(val, str) else val
+            cleaned = val.strip().strip("\"'") if isinstance(val, str) else val
+            if is_usable_access_token(cleaned):
+                creds["access_token"] = cleaned
+            else:
+                logger.warning(
+                    "broker_saved_token_placeholder_ignored",
+                    hint="Saved broker token looks like a placeholder — re-auth required",
+                )
             break
     return creds
 

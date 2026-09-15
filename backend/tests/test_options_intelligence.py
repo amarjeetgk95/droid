@@ -1,6 +1,9 @@
 import math
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import pytest
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from app.signals.options_intelligence.greeks import BlackScholesGreeks, GreeksResult
 from app.signals.options_intelligence.path_simulator import (
@@ -132,6 +135,11 @@ class TestPathDependentOptionSimulation:
 class TestQuantitativeContractSelector:
     def test_strike_selection_nifty_call(self):
         selector = QuantitativeContractSelector()
+        # Pinned mid-week date (Wed 2026-09-16 → Tue 2026-09-22 expiry, 6 DTE)
+        # so theta drag is deterministic. Using "now" made this test
+        # weekday-dependent (near expiry, theta drag breaches the 20%
+        # ceiling, the score halves, and `> 50` fails).
+        as_of = datetime(2026, 9, 16, 10, 0, tzinfo=IST)
         result = selector.select_optimal_contract(
             underlying="NIFTY",
             spot_price=24915.0,
@@ -140,6 +148,7 @@ class TestQuantitativeContractSelector:
             stop_loss_points=25.0,
             target_horizon_hours=1.0,
             current_iv=0.15,
+            as_of_datetime=as_of,
         )
         assert result is not None
         assert result.underlying == "NIFTY"

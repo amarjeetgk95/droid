@@ -36,6 +36,23 @@ _provider_loop: asyncio.AbstractEventLoop | None = None
 # Serializes Telegram stack starts for the same reason.
 _telegram_lock: asyncio.Lock | None = None
 _telegram_loop: asyncio.AbstractEventLoop | None = None
+# Background Telegram webhook registration (started by start_telegram_stack,
+# cancelled by stop_telegram_stack). Kept at module level so shutdown can
+# cancel a still-retrying registration instead of letting it outlive the loop.
+_webhook_task: asyncio.Task | None = None
+
+
+def _discard_webhook_task(task: asyncio.Task) -> None:
+    global _webhook_task
+    if _webhook_task is task:
+        _webhook_task = None
+    try:
+        if not task.cancelled():
+            exc = task.exception()
+            if exc:
+                logger.warning("lifecycle_telegram_webhook_bg_failed", error=str(exc)[:200])
+    except Exception:
+        pass
 
 
 def _get_provider_lock() -> asyncio.Lock:
@@ -220,12 +237,29 @@ async def register_telegram_webhook_with_retry(max_attempts: int = 6) -> bool:
     """Register the Telegram webhook at backend startup with backoff retries.
 
     No-op when TELEGRAM_BOT_TOKEN / BACKEND_PUBLIC_URL are unset (bot simply
-    stays unregistered until configured — never crashes startup).
+    stays unregistered until configured — never crashes startup). Also a
+    no-op for loopback / non-https URLs: Telegram requires a public https
+    endpoint, so retrying `http://127.0.0.1:8000/...` would burn ~30s of
+    startup on every local boot for a registration that can never succeed.
     """
+    from urllib.parse import urlsplit
+
     from app.core.config import settings as cfg
 
     if not cfg.telegram_bot_token or not cfg.backend_public_url:
         logger.info("lifecycle_telegram_webhook_skipped", hint="bot token or public URL not configured")
+        return False
+
+    try:
+        host = (urlsplit(cfg.backend_public_url).hostname or "").lower()
+        scheme = urlsplit(cfg.backend_public_url).scheme.lower()
+    except Exception:
+        host, scheme = "", ""
+    if host in ("localhost", "127.0.0.1", "::1") or scheme != "https":
+        logger.info(
+            "lifecycle_telegram_webhook_skipped_localhost",
+            hint="Telegram needs a public https URL — expose one (tunnel) and set BACKEND_PUBLIC_URL to register",
+        )
         return False
 
     from app.institutional.telegram import set_telegram_webhook
@@ -261,6 +295,10 @@ async def start_telegram_stack() -> None:
     Each step is independent — one failing never prevents the others, and a
     failure here never affects the FYERS stream (separate try blocks in
     lifespan call this as one unit, but internally every step is guarded).
+
+    Webhook registration runs as a background task so slow Telegram API
+    round-trips and backoff retries never delay backend readiness — the
+    queues are already up and receiving by the time it completes.
     """
     try:
         from app.institutional.telegram import telegram_link_manager
@@ -286,11 +324,31 @@ async def start_telegram_stack() -> None:
     except Exception as e:
         logger.warning("lifecycle_telegram_queues_start_failed", error=str(e)[:200])
 
-    await register_telegram_webhook_with_retry()
+    global _webhook_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _webhook_task is None or _webhook_task.done():
+        if loop is not None:
+            _webhook_task = loop.create_task(
+                register_telegram_webhook_with_retry(), name="telegram-webhook-register"
+            )
+            _webhook_task.add_done_callback(_discard_webhook_task)
+        else:
+            await register_telegram_webhook_with_retry()
 
 
 async def stop_telegram_stack() -> None:
     """Backend-shutdown stop of the Telegram stack (lifespan teardown only)."""
+    global _webhook_task
+    if _webhook_task is not None and not _webhook_task.done():
+        _webhook_task.cancel()
+        try:
+            await _webhook_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _webhook_task = None
     async with _get_telegram_lock():
         try:
             from app.institutional.telegram import (

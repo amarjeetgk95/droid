@@ -6,9 +6,12 @@ import type { SwingSetupDTO, SwingPositionDTO, PortfolioRiskDTO } from '@/lib/ap
 
 export type SwingFilterParams = {
   strategy?: string;
+  underlying?: string;
   sector?: string;
   min_score?: number;
   state?: string;
+  direction?: string;
+  horizon?: string;
 };
 
 export function useSwingData(filters?: SwingFilterParams) {
@@ -48,17 +51,17 @@ export function useSwingData(filters?: SwingFilterParams) {
     } finally {
       setLoading(false);
     }
-  }, [filters?.strategy, filters?.sector, filters?.min_score, filters?.state]);
+  }, [filters?.strategy, filters?.underlying, filters?.sector, filters?.min_score, filters?.state, filters?.direction, filters?.horizon]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const triggerScan = useCallback(async (forceRefresh: boolean = false) => {
+  const triggerScan = useCallback(async (forceRefresh: boolean = false, horizon?: string) => {
     setScanning(true);
     try {
       setError(null);
-      const res = await api.triggerSwingScan({ force_refresh: forceRefresh });
+      const res = await api.triggerSwingScan({ force_refresh: forceRefresh, horizon: horizon || filters?.horizon });
       if (res?.data) {
         setSetups(res.data.setups || []);
         setOpenPositions(res.data.open_positions || []);
@@ -73,11 +76,11 @@ export function useSwingData(filters?: SwingFilterParams) {
     } finally {
       setScanning(false);
     }
-  }, []);
+  }, [filters?.horizon]);
 
-  const enterTrade = useCallback(async (setupId: string, fillPrice: number, quantity?: number) => {
+  const enterTrade = useCallback(async (setupId: string, fillPremium?: number, numLots?: number) => {
     try {
-      const res = await api.enterSwingPosition({ setup_id: setupId, fill_price: fillPrice, quantity });
+      const res = await api.enterSwingPosition({ setup_id: setupId, fill_premium: fillPremium, num_lots: numLots });
       await refresh();
       return res?.data;
     } catch (err: any) {
@@ -86,9 +89,9 @@ export function useSwingData(filters?: SwingFilterParams) {
     }
   }, [refresh]);
 
-  const exitTrade = useCallback(async (positionId: string, exitPrice: number, exitReason: string = 'MANUAL_EXIT') => {
+  const exitTrade = useCallback(async (positionId: string, exitPremium?: number, exitReason: string = 'MANUAL_EXIT') => {
     try {
-      const res = await api.exitSwingPosition({ position_id: positionId, exit_price: exitPrice, exit_reason: exitReason });
+      const res = await api.exitSwingPosition({ position_id: positionId, exit_premium: exitPremium, exit_reason: exitReason });
       await refresh();
       return res?.data;
     } catch (err: any) {

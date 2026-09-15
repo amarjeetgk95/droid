@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { EmptyNote, fmtINR, fmtNum } from '@/components/ui/desk';
+import { EmptyNote, TelemetryItem, TelemetryStrip, fmtINR, fmtNum } from '@/components/ui/desk';
 
 function toRegimeSymbol(instrument: string): string {
   if (instrument === 'NIFTY 50') return 'NIFTY';
@@ -80,62 +80,64 @@ export function WhyStrip({ instrument }: { instrument: string }) {
 
   if (loading && !ctx) {
     return (
-      <section className="card" aria-label="Market context">
-        <div className="card-hd">
-          <h2 className="card-title">Why this view — market context</h2>
-          <span className="card-meta">{instrument}</span>
-        </div>
-        <div className="card-bd">
-          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="skel" style={{ height: 76 }}>.</div>
-            ))}
+      <div aria-label="Market context">
+        <TelemetryStrip>
+          <div className="telemetry-item" style={{ background: 'var(--ds-surface-subtle)' }}>
+            <span className="t-label">CONTEXT</span>
+            <span className="t-val" style={{ fontSize: 12 }}>{instrument}</span>
           </div>
-        </div>
-      </section>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="telemetry-item" style={{ minWidth: 90 }}>
+              <div className="skel" style={{ height: 9, width: 40, marginBottom: 3 }}>.</div>
+              <div className="skel" style={{ height: 13, width: 65 }}>.</div>
+            </div>
+          ))}
+        </TelemetryStrip>
+      </div>
     );
   }
 
   if (!ctx) {
     return (
-      <section className="card" aria-label="Market context">
-        <div className="card-hd">
-          <h2 className="card-title">Why this view — market context</h2>
-          <span className="card-meta">{instrument}</span>
-        </div>
-        <div className="card-bd">
-          <EmptyNote>Market context unavailable.</EmptyNote>
-        </div>
-      </section>
+      <div aria-label="Market context">
+        <TelemetryStrip>
+          <div className="telemetry-item" style={{ background: 'var(--ds-surface-subtle)' }}>
+            <span className="t-label">CONTEXT</span>
+            <span className="t-val" style={{ fontSize: 12 }}>{instrument}</span>
+          </div>
+          <div className="telemetry-item" style={{ flex: 1 }}>
+            <EmptyNote>Market context telemetry unavailable.</EmptyNote>
+          </div>
+        </TelemetryStrip>
+      </div>
     );
   }
 
   const items: Array<{ label: string; value: string; sub: string }> = [
-    { label: 'Regime', value: ctx.regime ?? '—', sub: 'Trend state' },
-    { label: 'Support', value: fmtINR(ctx.support), sub: 'Nearest floor' },
-    { label: 'Resistance', value: fmtINR(ctx.resistance), sub: 'Nearest ceiling' },
-    { label: 'PCR · OI', value: fmtNum(ctx.pcr), sub: 'Positioning' },
-    { label: 'Call wall', value: fmtINR(ctx.callWall), sub: 'Supply zone' },
-    { label: 'Put wall', value: fmtINR(ctx.putWall), sub: 'Demand zone' },
+    { label: 'Regime', value: ctx.regime ?? '—', sub: 'Trend' },
+    { label: 'Support', value: fmtINR(ctx.support), sub: 'Floor' },
+    { label: 'Resistance', value: fmtINR(ctx.resistance), sub: 'Ceiling' },
+    { label: 'PCR · OI', value: fmtNum(ctx.pcr), sub: 'Flow' },
+    { label: 'Call wall', value: fmtINR(ctx.callWall), sub: 'Supply' },
+    { label: 'Put wall', value: fmtINR(ctx.putWall), sub: 'Demand' },
   ];
 
   return (
-    <section className="card" aria-label="Market context">
-      <div className="card-hd">
-        <h2 className="card-title">Why this view — market context</h2>
-        <span className="card-meta">{instrument}</span>
-      </div>
-      <div className="card-bd">
-        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-          {items.map((item) => (
-            <div key={item.label} className="stat">
-              <div className="stat-l">{item.label}</div>
-              <div className="stat-v num" style={{ fontSize: 16 }}>{item.value}</div>
-              <div className="stat-s">{item.sub}</div>
-            </div>
-          ))}
+    <div aria-label="Market context">
+      <TelemetryStrip>
+        <div className="telemetry-item" style={{ background: 'var(--ds-surface-subtle)' }}>
+          <span className="t-label">CONTEXT</span>
+          <span className="t-val" style={{ fontSize: 12 }}>{instrument}</span>
         </div>
-      </div>
-    </section>
+        {items.map((item) => (
+          <TelemetryItem
+            key={item.label}
+            label={item.label}
+            value={item.value}
+            sub={item.sub}
+          />
+        ))}
+      </TelemetryStrip>
+    </div>
   );
 }

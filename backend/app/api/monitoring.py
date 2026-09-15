@@ -17,11 +17,18 @@ Endpoints:
 - ``GET /api/v1/monitoring/forecast-config`` — current release bundle
   (code flags, model/calibrator artifacts, feature schema, target spec);
   HTTP 200 even when artifacts are missing.
+
+P2-3: every health response also carries a ``runtime`` block with the
+process-local counters for events that never become prediction rows —
+persistence failures, deadline aborts and contract violations — plus the
+recent latency ring (p50/p95). A failure inside the last
+``RUNTIME_FRESH_WINDOW_S`` marks the health verdict degraded with a reason, so
+these silent failures are now visible instead of only appearing in logs.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -31,9 +38,57 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/monitoring", tags=["Forecast Monitoring"])
 
+# A runtime failure older than this is reported as history, not as a live
+# degradation (the counters are process-lifetime, so without a window a single
+# old blip would pin the verdict to degraded forever).
+RUNTIME_FRESH_WINDOW_S = 15 * 60
+
+
+# Runtime counters that mean "something silently failed just now", paired with
+# the "last_<counter>_at" stamp that trend_forecast writes when it stamps them.
+_RUNTIME_FAILURE_KEYS = (
+    ("persist_failures", "last_persist_failures_at"),
+    ("deadline_exceeded", "last_deadline_exceeded_at"),
+    ("contract_invalid", "last_contract_invalid_at"),
+)
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _runtime_block() -> Dict[str, Any]:
+    """Process-local forecast runtime counters (never raises; {} on failure)."""
+    try:
+        from app.research.trend_forecast import forecast_runtime_metrics
+
+        return dict(forecast_runtime_metrics() or {})
+    except Exception as e:
+        logger.warning("forecast_health_runtime_counters_failed", error=str(e)[:200])
+        return {}
+
+
+def _fresh_runtime_failures(runtime: Dict[str, Any]) -> List[str]:
+    """Reasons for runtime failures seen inside RUNTIME_FRESH_WINDOW_S."""
+    reasons: List[str] = []
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=RUNTIME_FRESH_WINDOW_S)
+    for count_key, stamp_key in _RUNTIME_FAILURE_KEYS:
+        try:
+            total = int(runtime.get(count_key) or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if total <= 0:
+            continue
+        raw = runtime.get(stamp_key)
+        fresh = False
+        if isinstance(raw, str) and raw:
+            try:
+                fresh = datetime.fromisoformat(raw) >= cutoff
+            except ValueError:
+                fresh = False
+        reasons.append(f"{count_key}:{total}" + ("" if fresh else "(historical)"))
+    return reasons
 
 
 def _unknown_metrics(window: int) -> Dict[str, Any]:
@@ -118,6 +173,7 @@ async def forecast_health(
             "degraded": True,
             "reasons": ["health-probe-failed:monitoring-unavailable"],
             "metrics": _unknown_metrics(limit),
+            "runtime": _runtime_block(),
             "thresholds": {},
             "window": limit,
             "timestamp": _utcnow_iso(),
@@ -173,6 +229,7 @@ async def forecast_health(
                     "degraded": True,
                     "reasons": [f"health-probe-failed:{e}"[:200]],
                     "metrics": _unknown_metrics(limit),
+                    "runtime": _runtime_block(),
                     "thresholds": dict(mon.DEFAULT_THRESHOLDS),
                     "window": limit,
                     "timestamp": _utcnow_iso(),
@@ -183,7 +240,17 @@ async def forecast_health(
         verdict = mon.check_degrade(metrics)
         degraded = bool(verdict.get("degraded", False))
         reasons = list(verdict.get("reasons") or [])
-        if metrics.get("n") == 0:
+        # P2-3: persistence/deadline/contract failures are runtime events, not
+        # rows — surface them here (and let a *fresh* one degrade the verdict).
+        runtime = _runtime_block()
+        runtime_reasons = _fresh_runtime_failures(runtime)
+        fresh_runtime_failure = any(
+            not r.endswith("(historical)") for r in runtime_reasons
+        )
+        if fresh_runtime_failure:
+            degraded = True
+        reasons.extend(runtime_reasons)
+        if metrics.get("n") == 0 and not fresh_runtime_failure:
             status = "unknown"
             notes = ["warming-up-no-settled-rows"]
         else:
@@ -195,6 +262,7 @@ async def forecast_health(
             "reasons": reasons,
             "notes": notes,
             "metrics": metrics,
+            "runtime": runtime,
             "thresholds": dict(mon.DEFAULT_THRESHOLDS),
             "window": limit,
             "timestamp": _utcnow_iso(),
@@ -210,6 +278,7 @@ async def forecast_health(
             "degraded": True,
             "reasons": [f"health-probe-failed:{e}"[:200]],
             "metrics": _unknown_metrics(limit),
+            "runtime": _runtime_block(),
             "thresholds": thresholds,
             "window": limit,
             "timestamp": _utcnow_iso(),

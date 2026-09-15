@@ -132,5 +132,23 @@ class RegimeClassifier:
             reasons=reasons,
         )
 
+    def enrich_regime_with_iv(
+        self,
+        regime: MarketRegime,
+        current_iv: float,
+        iv_history: list[float] | None = None,
+    ) -> MarketRegime:
+        """
+        Enriches technical regime with IV percentile and classification.
+        """
+        from app.swing.technical import compute_iv_percentile, classify_iv_regime
+        pctl = compute_iv_percentile(current_iv, iv_history or [])
+        iv_reg = classify_iv_regime(pctl)
+        regime.iv_percentile = pctl
+        regime.iv_regime = iv_reg
+        regime.reasons.append(f"Implied Volatility environment: {iv_reg} (IV Rank: {pctl:.1f}%)")
+        return regime
+
 
 market_regime_classifier = RegimeClassifier(hysteresis_bars=2)
+

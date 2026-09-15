@@ -40,9 +40,9 @@ class ContractMasterService:
 
         benchmarks = [
             # (display, underlying, lot_size, tick_size) — no base_spot: strikes are FYERS-only
-            ("NIFTY 50", "NIFTY", 25, 0.05),
-            ("BANKNIFTY", "BANKNIFTY", 15, 0.05),
-            ("FINNIFTY", "FINNIFTY", 25, 0.05),
+            ("NIFTY 50", "NIFTY", 75, 0.05),
+            ("BANKNIFTY", "BANKNIFTY", 30, 0.05),
+            ("FINNIFTY", "FINNIFTY", 65, 0.05),
             ("SENSEX", "SENSEX", 10, 0.05),
         ]
 

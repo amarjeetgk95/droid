@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   ColorType,
@@ -11,8 +11,10 @@ import {
   CandlestickSeries,
   LineSeries,
 } from 'lightweight-charts';
-import { RefreshCw, BarChart2 } from 'lucide-react';
+import { RefreshCw, BarChart2, CornerDownRight } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useScalpContext } from './ScalpContext';
+import { useSmartInterval } from '@/hooks/useSmartInterval';
 
 interface CandleData {
   timestamp: string;
@@ -25,13 +27,13 @@ interface CandleData {
 }
 
 interface ScalperChartProps {
-  symbol: string;
+  symbol?: string;
   timeframe?: '1m' | '3m' | '5m';
   onTimeframeChange?: (tf: '1m' | '3m' | '5m') => void;
   spotPrice?: number | null;
-  /** Underlying-point bracket distances for SL/TP overlay (e.g. 8 / 16). */
   slDistance?: number | null;
   tpDistance?: number | null;
+  activeEntryPrice?: number | null;
 }
 
 interface VwapState {
@@ -46,7 +48,6 @@ function isFinitePositive(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0;
 }
 
-/** Distance beyond which VWAP is hidden to preserve candle scale. */
 function vwapHideThreshold(lastClose: number, symbol: string): number {
   const pctBased = Math.abs(lastClose) * 0.0025; // 0.25%
   const sym = (symbol || '').toUpperCase();
@@ -54,12 +55,8 @@ function vwapHideThreshold(lastClose: number, symbol: string): number {
   return Math.max(pctBased, floor);
 }
 
-function aggregateCandles(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sorted: any[],
-  factor: number,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any[] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function aggregateCandles(sorted: any[], factor: number): any[] {
   if (factor <= 1) return sorted;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const out: any[] = [];
@@ -81,13 +78,18 @@ function aggregateCandles(
 }
 
 export function ScalperChart({
-  symbol,
+  symbol: propSymbol,
   timeframe = '1m',
   onTimeframeChange,
-  spotPrice,
-  slDistance,
-  tpDistance,
+  spotPrice: propSpotPrice,
+  slDistance = 8,
+  tpDistance = 16,
+  activeEntryPrice,
 }: ScalperChartProps) {
+  const scalpCtx = useScalpContext();
+  const symbol = propSymbol || (scalpCtx.underlying === 'NIFTY' ? 'NIFTY 50' : scalpCtx.underlying);
+  const spotPrice = propSpotPrice !== undefined ? propSpotPrice : scalpCtx.spotPrice;
+
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,6 +108,7 @@ export function ScalperChart({
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [candleCount, setCandleCount] = useState(0);
   const [dataAgeSec, setDataAgeSec] = useState<number | null>(null);
+  const [lastBarTimeSec, setLastBarTimeSec] = useState<number | null>(null);
   const [vwap, setVwap] = useState<VwapState>({
     value: null,
     distance: null,
@@ -124,14 +127,13 @@ export function ScalperChart({
       try {
         series.removePriceLine(line);
       } catch {
-        // line already removed with series reset — ignore
+        // line already removed with series reset
       }
     }
     priceLinesRef.current = [];
   }, []);
 
   const fetchCandles = useCallback(async () => {
-    // Don't hammer backend when tab is hidden; the visibilitychange refetch covers it.
     if (typeof document !== 'undefined' && document.hidden) return;
     const reqId = ++requestIdRef.current;
     const isFirstLoad = !hasDataRef.current;
@@ -143,8 +145,6 @@ export function ScalperChart({
       if (!symbol || symbol.trim().length === 0) {
         throw new Error('Missing symbol for candle feed');
       }
-      // 3m is aggregated client-side from 1m so the label is truthful.
-      // 5m uses the native backend feed (180 x 5m bars); only 3m aggregates.
       const queryTf = timeframe === '3m' ? '1m' : timeframe;
       const res = await api.getCandles(symbol, queryTf, 180);
       if (reqId !== requestIdRef.current || !mountedRef.current) return;
@@ -155,8 +155,15 @@ export function ScalperChart({
         return;
       }
 
-      // Validate + normalise OHLC. Drop corrupt prints rather than breaking scale.
-      type Norm = { time: number; open: number; high: number; low: number; close: number; volume: number; backendVwap: number | null };
+      type Norm = {
+        time: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        backendVwap: number | null;
+      };
       const normalised: Norm[] = [];
       for (const c of rawCandles) {
         const t = Math.floor(new Date(c.timestamp).getTime() / 1000);
@@ -169,7 +176,10 @@ export function ScalperChart({
         const high = Math.max(o, h, l, cl);
         const low = Math.min(o, h, l, cl);
         const volRaw = Number(c.volume);
-        const backendVwap = c.vwap != null && Number.isFinite(Number(c.vwap)) && Number(c.vwap) > 0 ? Number(c.vwap) : null;
+        const backendVwap =
+          c.vwap != null && Number.isFinite(Number(c.vwap)) && Number(c.vwap) > 0
+            ? Number(c.vwap)
+            : null;
         normalised.push({
           time: t,
           open: o,
@@ -207,7 +217,7 @@ export function ScalperChart({
         candleSeriesRef.current.setData(chartRows as any);
       }
 
-      // VWAP: prefer backend session VWAP when present, else cumulative typical*volume.
+      // VWAP calculation
       const backendCount = deduped.filter((c) => c.backendVwap != null).length;
       const useBackendVwap = backendCount >= Math.ceil(deduped.length * 0.5);
       const volumes = deduped.map((c) => c.volume);
@@ -218,8 +228,8 @@ export function ScalperChart({
       let cumPv = 0;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const vwapData: any[] = deduped.map((c, idx) => {
-        // Map each 1m bar to its aggregated bucket so VWAP aligns with chartRows.
-        const bucketIdx = factor > 1 ? Math.min(Math.floor(idx / factor), chartRows.length - 1) : Math.min(idx, chartRows.length - 1);
+        const bucketIdx =
+          factor > 1 ? Math.min(Math.floor(idx / factor), chartRows.length - 1) : Math.min(idx, chartRows.length - 1);
         if (useBackendVwap && c.backendVwap != null) {
           return { time: chartRows[bucketIdx]?.time ?? c.time, value: Number(c.backendVwap.toFixed(2)) };
         }
@@ -229,7 +239,7 @@ export function ScalperChart({
         const v = cumVol > 0 ? cumPv / cumVol : c.close;
         return { time: chartRows[bucketIdx]?.time ?? c.time, value: Number(v.toFixed(2)) };
       });
-      // Dedupe VWAP times to match aggregated rows (last wins).
+
       const vwapByTime = new Map<number, number>();
       for (const p of vwapData) vwapByTime.set(Number(p.time), p.value);
       const vwapRows = [...vwapByTime.entries()]
@@ -249,7 +259,6 @@ export function ScalperChart({
 
       if (vwapSeriesRef.current) {
         try {
-          // Never let a far-away VWAP squash candle autoscale.
           vwapSeriesRef.current.applyOptions({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             autoscaleInfoProvider: () => null as any,
@@ -258,7 +267,7 @@ export function ScalperChart({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           vwapSeriesRef.current.setData(vwapRows as any);
         } catch {
-          // Non-fatal: candles are already painted.
+          // non-fatal
         }
       }
 
@@ -274,12 +283,12 @@ export function ScalperChart({
       setCandleCount(chartRows.length);
       const lastBarTime = chartRows[chartRows.length - 1]?.time;
       if (Number.isFinite(lastBarTime)) {
+        setLastBarTimeSec(Number(lastBarTime));
         setDataAgeSec(Math.max(0, Math.floor(Date.now() / 1000) - Number(lastBarTime)));
       }
       setLastUpdated(new Date().toLocaleTimeString('en-IN', { hour12: false }));
       setError(null);
 
-      // Fit viewport only on first paint / symbol+tf change so polling never yanks zoom.
       if (!hasFittedRef.current && chartRef.current) {
         try {
           chartRef.current.timeScale().fitContent();
@@ -299,7 +308,20 @@ export function ScalperChart({
     }
   }, [symbol, timeframe]);
 
-  // Initialize Chart once
+  // Use smart interval for candle polling (10s)
+  const { refresh: refreshCandles } = useSmartInterval(fetchCandles, 10000, {
+    fireOnMount: true,
+    fireOnVisible: true,
+    pauseWhenHidden: true,
+  });
+
+  // Immediate refetch on symbol/timeframe switch — the interval holds the
+  // callback in a ref and won't refire for the new symbol on its own.
+  useEffect(() => {
+    void refreshCandles();
+  }, [symbol, timeframe, refreshCandles]);
+
+  // Chart setup
   useEffect(() => {
     mountedRef.current = true;
     if (!chartContainerRef.current) return;
@@ -332,7 +354,6 @@ export function ScalperChart({
       handleScale: true,
     });
 
-    // In lightweight-charts v5: addSeries(CandlestickSeries, options)
     const activeCandleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#ef4444',
@@ -343,7 +364,6 @@ export function ScalperChart({
       priceLineSource: 0,
     });
 
-    // VWAP overlay — excluded from autoscale so a distant VWAP can't squash candles.
     const activeVwapSeries = chart.addSeries(LineSeries, {
       color: '#f59e0b',
       lineWidth: 2,
@@ -365,7 +385,7 @@ export function ScalperChart({
       try {
         chart.applyOptions({ width, height });
       } catch {
-        // ignore transient resize races
+        // ignore
       }
     };
     applySize();
@@ -382,7 +402,7 @@ export function ScalperChart({
       try {
         chart.remove();
       } catch {
-        // ignore double-unmount
+        // ignore
       }
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -391,26 +411,11 @@ export function ScalperChart({
     };
   }, []);
 
-  // Reset fit-on-change when the feed identity changes
   useEffect(() => {
     hasFittedRef.current = false;
     hasDataRef.current = false;
     priceLinesRef.current = [];
   }, [symbol, timeframe]);
-
-  // Fetch data on symbol/timeframe changes + 10s poll + refetch on tab visible
-  useEffect(() => {
-    fetchCandles();
-    const interval = setInterval(fetchCandles, 10000);
-    const onVisible = () => {
-      if (!document.hidden) fetchCandles();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [fetchCandles]);
 
   useEffect(() => {
     return () => {
@@ -418,7 +423,7 @@ export function ScalperChart({
     };
   }, []);
 
-  // SL/TP + entry overlay. Symmetric zones so both CE and PE scalps can read risk.
+  // SL/TP + entry overlay
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !hasDataRef.current) return;
@@ -427,6 +432,7 @@ export function ScalperChart({
     const sl = Number(slDistance);
     const tp = Number(tpDistance);
     if (!Number.isFinite(spot) || spot <= 0) return;
+
     try {
       if (Number.isFinite(sl) && sl > 0) {
         priceLinesRef.current.push(
@@ -437,17 +443,7 @@ export function ScalperChart({
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
             title: `SL -${sl}`,
-          }),
-        );
-        priceLinesRef.current.push(
-          series.createPriceLine({
-            price: spot + sl,
-            color: 'rgba(244,63,94,0.45)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dotted,
-            axisLabelVisible: false,
-            title: '',
-          }),
+          })
         );
       }
       if (Number.isFinite(tp) && tp > 0) {
@@ -459,17 +455,20 @@ export function ScalperChart({
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
             title: `TP +${tp}`,
-          }),
+          })
         );
+      }
+      // Prominent entry price line if active
+      if (Number.isFinite(activeEntryPrice) && (activeEntryPrice as number) > 0) {
         priceLinesRef.current.push(
           series.createPriceLine({
-            price: spot - tp,
-            color: 'rgba(16,185,129,0.45)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dotted,
-            axisLabelVisible: false,
-            title: '',
-          }),
+            price: Number(activeEntryPrice),
+            color: '#f59e0b',
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Entry Fill',
+          })
         );
       }
       priceLinesRef.current.push(
@@ -480,22 +479,47 @@ export function ScalperChart({
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
           title: 'Spot',
-        }),
+        })
       );
     } catch {
-      // Overlay is advisory; candles remain authoritative.
+      // overlay error ignored
     }
-    return () => {
-      // Removal happens on next effect run via clearPriceLines; keep lines mounted.
-    };
-  }, [spotPrice, slDistance, tpDistance, candleCount, clearPriceLines]);
+  }, [spotPrice, slDistance, tpDistance, activeEntryPrice, candleCount, clearPriceLines]);
 
-  const stale = dataAgeSec != null && dataAgeSec > 120;
+  const snapToNow = () => {
+    if (chartRef.current) {
+      try {
+        chartRef.current.timeScale().scrollToRealTime();
+      } catch {
+        chartRef.current.timeScale().fitContent();
+      }
+    }
+  };
+
   const busy = loading || refreshing;
   const tfLabel = timeframe.toUpperCase();
 
+  const sessionStatus = useMemo(() => {
+    if (dataAgeSec == null || candleCount === 0) {
+      return { label: 'CONNECTING', tone: 'neutral' as const };
+    }
+    if (dataAgeSec > 300) {
+      const d = lastBarTimeSec ? new Date(lastBarTimeSec * 1000) : null;
+      const timeStr = d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+      const dateStr = d ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
+      return {
+        label: d ? `CLOSED · ${dateStr} ${timeStr}` : 'CLOSED',
+        tone: 'closed' as const,
+      };
+    }
+    if (dataAgeSec > 30) {
+      return { label: `FEED LAG ${dataAgeSec}s`, tone: 'delayed' as const };
+    }
+    return { label: 'LIVE STREAM', tone: 'live' as const };
+  }, [dataAgeSec, candleCount, lastBarTimeSec]);
+
   return (
-    <div className="flex flex-col h-full bg-[#0a0c10] border border-border/80 rounded-lg overflow-hidden select-none">
+    <div className="flex flex-col h-full bg-[#0a0c10] border border-border/80 rounded-lg overflow-hidden select-none relative">
       {/* Chart Control Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-card/60 border-b border-border/60 text-xs">
         <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -503,6 +527,7 @@ export function ScalperChart({
             <BarChart2 className="w-3.5 h-3.5 text-amber-500" />
             {symbol} {tfLabel} Execution Chart
           </span>
+
           {isFinitePositive(spotPrice) ? (
             <span className="font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
               ₹{Number(spotPrice).toFixed(2)}
@@ -512,15 +537,12 @@ export function ScalperChart({
               no spot
             </span>
           )}
-          {vwap.hiddenForScale && vwap.distance != null ? (
+
+          {vwap.value != null ? (
             <span
-              className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30"
-              title={vwap.unreliable ? 'VWAP estimated from thin volume — treat with caution' : `Session VWAP ₹${vwap.value?.toFixed(2)} is off-scale`}
+              className="text-[10px] text-amber-500/90 font-mono flex items-center gap-1 ml-1"
+              title={`Session VWAP ₹${vwap.value.toFixed(2)}`}
             >
-              VWAP {vwap.distance > 0 ? '+' : ''}{vwap.distance.toFixed(1)} ({vwap.distancePct?.toFixed(2)}%) off-scale
-            </span>
-          ) : vwap.value != null ? (
-            <span className="text-[10px] text-amber-500/90 font-mono flex items-center gap-1 ml-1" title={`Session VWAP ₹${vwap.value.toFixed(2)}${vwap.unreliable ? ' (estimated, thin volume)' : ''}`}>
               <span className="w-2 h-0.5 bg-amber-500 inline-block" /> VWAP
               {vwap.distance != null ? (
                 <span className={vwap.distance >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
@@ -528,27 +550,44 @@ export function ScalperChart({
                 </span>
               ) : null}
             </span>
-          ) : (
-            <span className="text-[10px] text-amber-500/90 font-mono flex items-center gap-1 ml-1">
-              <span className="w-2 h-0.5 bg-amber-500 inline-block" /> VWAP
-            </span>
-          )}
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
-          <span
-            className={`hidden md:inline font-mono text-[10px] px-1.5 py-0.5 rounded border ${
-              stale
-                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                : 'bg-secondary/60 text-muted-foreground border-border/40'
-            }`}
-            title={lastUpdated ? `Candles refreshed at ${lastUpdated}` : 'Candles not loaded yet'}
+          {/* Snap to Now */}
+          <button
+            type="button"
+            onClick={snapToNow}
+            className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-secondary/70 hover:bg-secondary text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            title="Snap chart viewport to latest candle"
           >
-            {candleCount > 0 ? `${candleCount} bars` : '—'}
-            {dataAgeSec != null ? ` · ${dataAgeSec}s old` : ''}
+            <CornerDownRight className="w-3 h-3" />
+            <span>Now</span>
+          </button>
+
+          <span
+            className={`hidden sm:inline-flex items-center gap-1.5 font-mono text-[10px] px-2 py-0.5 rounded border ${
+              sessionStatus.tone === 'live'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : sessionStatus.tone === 'delayed'
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-secondary/70 text-muted-foreground border-border/50'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                sessionStatus.tone === 'live'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : sessionStatus.tone === 'delayed'
+                    ? 'bg-amber-400'
+                    : 'bg-muted-foreground'
+              }`}
+            />
+            <span>{sessionStatus.label}</span>
           </span>
-          {/* Timeframe selector */}
-          <div className="flex items-center bg-secondary/60 rounded p-0.5 border border-border/40" role="tablist" aria-label="Chart timeframe">
+
+          {/* Timeframe Selector */}
+          <div className="flex items-center bg-secondary/60 rounded p-0.5 border border-border/40" role="tablist">
             {(['1m', '3m', '5m'] as const).map((tf) => (
               <button
                 key={tf}
@@ -556,7 +595,7 @@ export function ScalperChart({
                 role="tab"
                 aria-selected={timeframe === tf}
                 onClick={() => onTimeframeChange?.(tf)}
-                className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
                   timeframe === tf
                     ? 'bg-amber-500 text-black font-bold shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
@@ -569,9 +608,9 @@ export function ScalperChart({
 
           <button
             type="button"
-            onClick={() => fetchCandles()}
+            onClick={() => void fetchCandles()}
             disabled={busy}
-            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            className="p-1 hover:bg-secondary rounded text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 cursor-pointer"
             title={`Last updated: ${lastUpdated || 'Never'}`}
           >
             <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />
@@ -580,25 +619,36 @@ export function ScalperChart({
       </div>
 
       {/* Chart Canvas Area */}
-      <div className="relative flex-1 min-h-[280px]">
+      <div className="relative flex-1 min-h-[260px]">
         {(loading || refreshing) && !error && (
           <div className="absolute top-2 left-2 z-10 font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border/50 text-muted-foreground pointer-events-none">
             {loading ? 'loading candles…' : 'updating…'}
           </div>
         )}
+
+        {/* Market closed informative overlay */}
+        {sessionStatus.tone === 'closed' && (
+          <div className="absolute top-2 right-2 z-10 bg-background/85 border border-border/60 rounded p-2 text-[10px] font-mono pointer-events-none shadow-md backdrop-blur-xs flex flex-col gap-0.5">
+            <span className="font-bold text-muted-foreground">MARKET CLOSED</span>
+            <span className="text-foreground">Session MTM: ₹{scalpCtx.sessionMTM.toFixed(1)}</span>
+            <span className="text-muted-foreground">Fired trades: {scalpCtx.autoTradesCount}</span>
+          </div>
+        )}
+
         {error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/85 z-10 text-xs p-4 text-center">
             <span className="text-rose-400">{error}</span>
             <button
               type="button"
-              onClick={() => fetchCandles()}
-              className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-foreground font-mono text-[11px] border border-border/60"
+              onClick={() => void fetchCandles()}
+              className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-foreground font-mono text-[11px] border border-border/60 cursor-pointer"
             >
               Retry feed
             </button>
           </div>
         )}
-        <div ref={chartContainerRef} className="w-full h-full min-h-[280px]" />
+
+        <div ref={chartContainerRef} className="w-full h-full min-h-[260px]" />
       </div>
     </div>
   );

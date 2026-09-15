@@ -33,15 +33,15 @@ class MeanReversionStrategy(Strategy):
         bb_lower = Decimal(str(bb.get("lower") or vol.get("bollinger_lower") or ind.get("bollinger_lower") or (spot * Decimal("0.99"))))
 
         # Check regime compatibility: primarily RANGE, LOW_VOL, or COMPRESSION_SQUEEZE
-        # AND ADX must be weak (< 22) — strong trend invalidates mean reversion
-        adx_val = float(ind.get("adx") or ind.get("momentum", {}).get("adx", 20.0))
-        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE") or adx_val >= 22.0:
+        # AND ADX must be weak (< 25) — strong trend invalidates mean reversion
+        adx_val = float(ind.get("adx") or ind.get("trend", {}).get("adx") or ind.get("momentum", {}).get("adx", 20.0))
+        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE") or adx_val >= 25.0:
             return None
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
-        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 32.0).
+        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 35.0).
         # Volume exhaustion: volume on approach should be declining (last vol < avg vol)
-        if (spot <= bb_lower * Decimal("1.003")) and rsi <= 32.0:
+        if (spot <= bb_lower * Decimal("1.005")) and rsi <= 35.0:
             vol_ok = True
             if len(ctx.candles) >= 3:
                 last_vol = float(ctx.candles[-1].get("volume", 0))
@@ -102,7 +102,7 @@ class MeanReversionStrategy(Strategy):
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
-        if (spot >= bb_upper * Decimal("0.997")) and rsi >= 68.0:
+        if (spot >= bb_upper * Decimal("0.995")) and rsi >= 65.0:
             vol_ok = True
             if len(ctx.candles) >= 3:
                 last_vol = float(ctx.candles[-1].get("volume", 0))

@@ -10,6 +10,7 @@ from app.models.market import (
 )
 from app.models.contracts import TickEvent, EventPriority
 from app.core.config import settings
+from app.core.broker_runtime import is_usable_access_token
 from app.core.token_manager import TokenManager, ConnectionState, TokenInfo
 from app.core.rate_limiter import TokenBucketRateLimiter
 from app.services.calendar_service import calendar_service
@@ -56,12 +57,20 @@ class FyersProvider(MarketDataProvider):
             enable_jitter=settings.ws_reconnect_jitter,
         )
         _eff_token = (access_token or _rt_token or settings.fyers_access_token or "").strip().strip("\"'")
-        if _eff_token:
+        if is_usable_access_token(_eff_token):
             self.token_manager.set_token(
                 TokenInfo(
                     access_token=_eff_token,
                     provider="fyers",
                 )
+            )
+        elif _eff_token:
+            # Placeholder/stub token (e.g. committed test fixture): do NOT seed
+            # the TokenManager — every live call would 401. Park with a clear
+            # re-auth hint instead.
+            logger.warning(
+                "fyers_token_placeholder_ignored",
+                hint="FYERS token looks like a placeholder, not a real credential — re-auth via /api/v1/tokens/fyers/auth-url",
             )
 
         self.rate_limiter = TokenBucketRateLimiter(
@@ -117,7 +126,7 @@ class FyersProvider(MarketDataProvider):
             if cfg_obj.provider == "fyers":
                 token = cfg_obj.credentials.get("access_token") or ""
 
-        if not token or token == "mock-demo-token":
+        if not is_usable_access_token(token):
             return {}
 
         app_id = self.app_id
@@ -217,7 +226,7 @@ class FyersProvider(MarketDataProvider):
             if cfg_obj.provider == "fyers":
                 token = cfg_obj.credentials.get("access_token") or ""
 
-        if not token or token == "mock-demo-token":
+        if not is_usable_access_token(token):
             return []
 
         app_id = self.app_id
@@ -569,7 +578,7 @@ class FyersProvider(MarketDataProvider):
             if cfg_obj.provider == "fyers":
                 app_id = cfg_obj.credentials.get("app_id") or ""
 
-        if token and token != "mock-demo-token":
+        if is_usable_access_token(token):
             auth_header = f"{app_id}:{token}" if app_id and ":" not in token else token
             try:
                 client = self._get_http_client(timeout=5.0)

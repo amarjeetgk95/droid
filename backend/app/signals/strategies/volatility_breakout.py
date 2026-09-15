@@ -35,8 +35,8 @@ class VolatilityBreakoutStrategy(Strategy):
 
         tick = Decimal("0.05")
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
-        vol_ratio = float(ind.get("volume_ratio", 1.2) or 1.2)
-        breakout_pressure = float(ind.get("breakout_pressure", ind.get("scores", {}).get("breakout_pressure", 65)) or 65)
+        vol_ratio = float(ind.get("volume_ratio") or ind.get("volume", {}).get("relative_volume") or 1.2)
+        breakout_pressure = float(ind.get("breakout_pressure") or ind.get("scores", {}).get("breakout_pressure") or 65.0)
         mtf_bias = str(ctx.mtf.get("overall_bias", "NEUTRAL")).upper()
 
         sr = ind.get("support_resistance", {})
@@ -70,9 +70,9 @@ class VolatilityBreakoutStrategy(Strategy):
         c_close = Decimal(str(last_c.get("close", spot)))
         curr_range = float(c_high - c_low)
 
-        # Expansion condition: current candle range >= 1.2x average prior range, or volume ratio >= 1.4
-        is_expanding = curr_range >= (avg_recent_range * 1.15) or vol_ratio >= 1.35
-        if not is_expanding and breakout_pressure < 70:
+        # Expansion condition: current candle range >= 1.1x average prior range, or volume ratio >= 1.25
+        is_expanding = curr_range >= (avg_recent_range * 1.10) or vol_ratio >= 1.25
+        if not is_expanding and breakout_pressure < 68:
             return None
 
         min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
@@ -80,7 +80,7 @@ class VolatilityBreakoutStrategy(Strategy):
         # ── BULLISH VOLATILITY BREAKOUT ──
         if resistances:
             key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
-            if (spot >= key_res or breakout_pressure >= 70) and mtf_bias != "BEARISH" and c_close >= c_open:
+            if (spot >= key_res or breakout_pressure >= 68) and mtf_bias != "BEARISH" and c_close >= c_open:
                 if spot < key_res:
                     trigger = normalize_price(key_res + min_gap, tick)
                     if trigger <= spot or abs(trigger - spot) < min_gap:
@@ -152,7 +152,7 @@ class VolatilityBreakoutStrategy(Strategy):
         # ── BEARISH VOLATILITY BREAKDOWN ──
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if (spot <= key_sup or breakout_pressure >= 70) and mtf_bias != "BEARISH" and c_close <= c_open:
+            if (spot <= key_sup or breakout_pressure >= 68) and mtf_bias != "BULLISH" and c_close <= c_open:
                 if spot > key_sup:
                     trigger = normalize_price(key_sup - min_gap, tick)
                     if trigger >= spot or abs(spot - trigger) < min_gap:

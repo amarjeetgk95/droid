@@ -75,9 +75,14 @@ async def test_1h_forecast_ensemble(mock_market_service, mock_ml_predictor):
     assert -100.0 <= result["score"] <= 100.0
     assert 0.0 <= result["confidence"] <= 1.0
     assert "layer_scores" in result
-    assert "mtf_features" in result
-    assert "indicator_outputs" in result
     assert "ml_forecast" in result
+    assert "explain" in result
+
+    # P1-6: the heavy debug layers are opt-in (they are not consumed by any
+    # client and dominated the response/replay payload).
+    assert "mtf_features" not in result
+    assert "indicator_outputs" not in result
+    assert "options_context" not in result
 
     # Should include all indicator layers
     layer_scores = result["layer_scores"]
@@ -86,6 +91,12 @@ async def test_1h_forecast_ensemble(mock_market_service, mock_ml_predictor):
     assert "ml" in layer_scores
     assert "options" in layer_scores
     assert "structure" in layer_scores
+
+    # ...but they are still available on request for debugging.
+    debug = await forecaster.forecast(instrument="NIFTY 50", record=False, include_layers=True)
+    assert "mtf_features" in debug
+    assert "indicator_outputs" in debug
+    assert "options_context" in debug
 
 
 @pytest.mark.asyncio

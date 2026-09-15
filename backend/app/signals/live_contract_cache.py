@@ -119,6 +119,77 @@ class LiveContractCache:
         except Exception:
             return None
 
+    def find_by_symbol(self, broker_symbol: str) -> Optional[LiveStrikeInfo]:
+        """Reverse lookup: exact broker symbol -> strike info (current session).
+
+        The cache is keyed by (underlying, expiry, strike, type); the mark
+        registry is keyed by broker symbol. This bridges the two without
+        scanning, and enforces the same same-session rule as `lookup`.
+        """
+        if not broker_symbol:
+            return None
+        target = str(broker_symbol).strip()
+        if not target:
+            return None
+        try:
+            with self._lock:
+                candidates = list(self._map.values())
+            for info in candidates:
+                if info.broker_symbol != target:
+                    continue
+                fetched_day = datetime.fromtimestamp(info.fetched_at_ms / 1000.0, tz=IST).date()
+                if fetched_day != _today_ist():
+                    return None
+                return info
+        except Exception:
+            return None
+        return None
+
+    def snapshot(self) -> dict[str, LiveStrikeInfo]:
+        """Shallow copy of the strike map for read-only consumers."""
+        with self._lock:
+            return dict(self._map)
+
+    def register_mark_info(
+        self,
+        underlying: str,
+        expiry: date,
+        strike: int,
+        option_type: str,
+        bid: float,
+        ask: float,
+        ltp: float,
+        broker_symbol: str,
+    ) -> None:
+        """Upsert a single strike's mark without a full chain refetch.
+
+        Used by the Tier-1 held-contract poller: it refreshes the price of a
+        contract we already hold, so the entry resolver and the mark registry
+        see current bid/ask rather than a 60s-old chain row.
+        """
+        try:
+            sym = str(broker_symbol or "").strip()
+            if not sym or strike <= 0:
+                return
+            otype = str(option_type or "").upper()
+            if otype not in ("CE", "PE"):
+                return
+            info = LiveStrikeInfo(
+                broker_symbol=sym,
+                underlying=str(underlying or "").upper(),
+                expiry_date=expiry,
+                strike=int(strike),
+                option_type=otype,
+                bid=float(bid or 0),
+                ask=float(ask or 0),
+                ltp=float(ltp or 0),
+                fetched_at_ms=int(time.time() * 1000),
+            )
+            with self._lock:
+                self._map[_key(underlying, expiry, int(strike), otype)] = info
+        except Exception as e:
+            logger.debug("live_contracts_register_mark_failed", error=str(e)[:150])
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             return {

@@ -60,6 +60,14 @@ class SwingFeatures(BaseModel):
     avg_range_20d_pct: float = 0.0
     range_contraction_ratio: float = 1.0     # 5d avg range / 20d avg range
 
+    # Intraday Specific Metrics
+    vwap: float | None = None
+    price_above_vwap: bool = False
+    opening_range_high: float = 0.0          # High of first 30m / ORB
+    opening_range_low: float = 0.0           # Low of first 30m / ORB
+    is_orb_bullish: bool = False             # Price > Opening Range High
+    is_orb_bearish: bool = False             # Price < Opening Range Low
+
 
 def compute_ema(series: list[float], period: int) -> list[float]:
     """Calculates Exponential Moving Average."""
@@ -218,3 +226,149 @@ def extract_swing_features(candles: list[dict[str, Any]]) -> SwingFeatures:
         avg_range_20d_pct=round(avg_range_20d, 2),
         range_contraction_ratio=round(contraction_ratio, 2),
     )
+
+
+def extract_intraday_swing_features(candles: list[dict[str, Any]]) -> SwingFeatures:
+    """
+    Extracts intraday swing features from 15M / 5M candles.
+    Computes:
+      - 20 EMA & 50 SMA on intraday timeframe
+      - Intraday VWAP (Volume Weighted Average Price)
+      - Opening Range (first 2 bars of 15M session or first 6 bars of 5M session)
+      - 14-period intraday ATR
+      - Intraday Relative Volume (RVOL)
+    """
+    if len(candles) < 5:
+        raise ValueError("Insufficient intraday candles to extract features (minimum 5 required).")
+
+    closes = [float(c["close"]) for c in candles]
+    highs = [float(c["high"]) for c in candles]
+    lows = [float(c["low"]) for c in candles]
+    opens = [float(c["open"]) for c in candles]
+    volumes = [int(c.get("volume", 0)) for c in candles]
+
+    curr_close = closes[-1]
+    curr_open = opens[-1]
+    curr_high = highs[-1]
+    curr_low = lows[-1]
+    curr_vol = volumes[-1]
+
+    # 1. Intraday Moving Averages
+    ema20_series = compute_ema(closes, min(20, len(closes)))
+    ema20 = ema20_series[-1] if not math.isnan(ema20_series[-1]) else None
+
+    sma50_series = compute_sma(closes, min(50, len(closes)))
+    sma50 = sma50_series[-1] if not math.isnan(sma50_series[-1]) else None
+
+    # 2. Intraday VWAP
+    cum_vol = 0.0
+    cum_tp_vol = 0.0
+    for h, l, c, v in zip(highs, lows, closes, volumes):
+        tp = (h + l + c) / 3.0
+        v_eff = max(1, v)
+        cum_tp_vol += tp * v_eff
+        cum_vol += v_eff
+    vwap_val = round(cum_tp_vol / cum_vol, 2) if cum_vol > 0 else curr_close
+    price_above_vwap = curr_close >= vwap_val
+
+    # 3. Opening Range
+    or_bars = min(len(candles), 2 if len(candles) <= 25 else 6)
+    or_high = round(max(highs[:or_bars]), 2)
+    or_low = round(min(lows[:or_bars]), 2)
+    is_orb_bull = curr_close > or_high
+    is_orb_bear = curr_close < or_low
+
+    # 4. Intraday ATR(14)
+    atr14_series = compute_atr(candles, period=min(14, len(candles) - 1))
+    atr14 = atr14_series[-1] if not math.isnan(atr14_series[-1]) else max(1.0, curr_high - curr_low)
+    atr_pct = (atr14 / curr_close) * 100.0 if curr_close > 0 else 0.0
+
+    # 5. Relative Volume
+    vol_period = min(20, len(volumes))
+    vol_sma20 = sum(volumes[-vol_period:]) / vol_period if vol_period > 0 else 1.0
+    rvol = curr_vol / vol_sma20 if vol_sma20 > 0 else 1.0
+
+    # 6. Intraday Swings
+    lookback_sw = min(15, len(candles))
+    recent_sw_high = max(highs[-lookback_sw:])
+    recent_sw_low = min(lows[-lookback_sw:])
+
+    return SwingFeatures(
+        close=curr_close,
+        open=curr_open,
+        high=curr_high,
+        low=curr_low,
+        volume=curr_vol,
+        ema_20=round(ema20, 2) if ema20 is not None else None,
+        sma_50=round(sma50, 2) if sma50 is not None else None,
+        sma_150=None,
+        sma_200=None,
+        price_above_ema20=(curr_close > ema20) if ema20 is not None else False,
+        price_above_sma50=(curr_close > sma50) if sma50 is not None else False,
+        price_above_sma200=False,
+        sma50_above_sma200=False,
+        sma200_slope_positive=False,
+        atr_14=round(atr14, 2),
+        atr_pct=round(atr_pct, 2),
+        volume_sma_20=round(vol_sma20, 0),
+        rvol=round(rvol, 2),
+        volume_dry_up=(curr_vol < 0.6 * vol_sma20) if vol_sma20 > 0 else False,
+        high_52w=recent_sw_high,
+        low_52w=recent_sw_low,
+        dist_from_52w_high_pct=0.0,
+        recent_swing_high=round(recent_sw_high, 2),
+        recent_swing_low=round(recent_sw_low, 2),
+        pivot_breakout_level=round(recent_sw_high, 2),
+        daily_range_pct=round(((curr_high - curr_low) / curr_close) * 100.0, 2) if curr_close > 0 else 0.0,
+        avg_range_5d_pct=round(atr_pct, 2),
+        avg_range_20d_pct=round(atr_pct, 2),
+        range_contraction_ratio=1.0,
+        vwap=vwap_val,
+        price_above_vwap=price_above_vwap,
+        opening_range_high=or_high,
+        opening_range_low=or_low,
+        is_orb_bullish=is_orb_bull,
+        is_orb_bearish=is_orb_bear,
+    )
+
+
+
+# ---------------------------------------------------------------------------
+# Options Volatility & IV Surface Helpers
+# ---------------------------------------------------------------------------
+def compute_iv_percentile(current_iv: float, iv_history: list[float]) -> float:
+    """
+    Computes IV percentile rank (0-100) — percentage of historical observations strictly below current_iv.
+    """
+    if not iv_history:
+        return 50.0
+    valid_obs = [x for x in iv_history if x is not None and not math.isnan(x) and x > 0]
+    if not valid_obs:
+        return 50.0
+    below = sum(1 for x in valid_obs if x < current_iv)
+    return round((below / len(valid_obs)) * 100.0, 1)
+
+
+def classify_iv_regime(iv_percentile: float) -> Literal["LOW", "NORMAL", "ELEVATED", "EXTREME"]:
+    """
+    Classifies volatility regime based on percentile rank:
+    LOW < 25, NORMAL 25-60, ELEVATED 60-85, EXTREME > 85.
+    """
+    if iv_percentile < 25.0:
+        return "LOW"
+    elif iv_percentile <= 60.0:
+        return "NORMAL"
+    elif iv_percentile <= 85.0:
+        return "ELEVATED"
+    else:
+        return "EXTREME"
+
+
+def compute_iv_edge(expected_move: float, implied_move: float) -> float:
+    """
+    Calculates expected_move / implied_move ratio.
+    Values > 1.0 favor long premium (realized move expected to exceed option premium implied move).
+    """
+    if implied_move <= 0:
+        return 1.0
+    return round(expected_move / implied_move, 2)

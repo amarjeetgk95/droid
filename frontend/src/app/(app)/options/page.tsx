@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { api } from '@/lib/api';
 import { OptionChainResponse, MaxPainResult } from '@/lib/types';
-import { Card, Stat, fmtINR, fmtNum } from '@/components/ui/desk';
+import { Card, fmtINR, fmtNum } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { OptionsHeader } from '@/components/options/OptionsHeader';
 import { OptionChainTable } from '@/components/options/OptionChainTable';
@@ -288,7 +288,7 @@ function OptionsPageInner() {
         </div>
       </header>
 
-      {/* 1. Header: underlying + expiry selects */}
+      {/* 1. Header: underlying + expiry selects + live telemetry ribbon */}
       <OptionsHeader
         analytics={chainData?.analytics || null}
         selectedSymbol={selectedSymbol}
@@ -301,6 +301,8 @@ function OptionsPageInner() {
         onSelectExpiry={(exp) => setSelectedExpiry(exp)}
         viewMode={viewMode}
         onToggleViewMode={setViewMode}
+        callWall={callWall}
+        putWall={putWall}
       />
 
       {error ? (
@@ -318,49 +320,6 @@ function OptionsPageInner() {
         <OptionChainSkeleton rows={12} />
       ) : (
         <>
-          {/* 2. Positioning strip: the numbers the 1h forecast consumes */}
-          <Card
-            title="Positioning"
-            meta="PCR · max pain · OI walls"
-          >
-            <p className="muted" style={{ margin: '0 0 12px', fontSize: 12.5 }}>
-              PCR, max pain and OI walls feeding the 1h forecast.
-            </p>
-            <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-              <Stat
-                label="PCR (OI)"
-                value={pcrOi !== undefined && pcrOi !== null ? fmtNum(Number(pcrOi)) : '—'}
-                sub={`Vol PCR ${pcrVol ?? '—'}`}
-              />
-              <Stat
-                label="Max pain"
-                value={maxPainStrike ? Number(maxPainStrike).toLocaleString('en-IN') : '—'}
-                sub={maxPainStrike && spotPrice ? `${fmtNum(Math.abs(spotPrice - maxPainStrike), 1)} pts from spot` : 'Least option payout'}
-              />
-              <Stat
-                label="Call wall"
-                value={callWall ? `${callWall.toLocaleString('en-IN')} CE` : '—'}
-                sub="Highest call OI"
-                tone="bear"
-              />
-              <Stat
-                label="Put wall"
-                value={putWall ? `${putWall.toLocaleString('en-IN')} PE` : '—'}
-                sub="Highest put OI"
-                tone="bull"
-              />
-              <Stat
-                label="ATM IV"
-                value={atmIv ? `${fmtNum(atmIv, 1)}%` : currentIv != null ? `${fmtNum(currentIv * 100, 1)}%` : '—'}
-                sub={`ATM ${analytics?.atm_strike?.toLocaleString('en-IN') ?? '—'}`}
-              />
-              <Stat
-                label="Spot"
-                value={spotPrice ? fmtINR(spotPrice) : '—'}
-                sub={analytics?.futures_price ? `Fut ${fmtINR(analytics.futures_price)}` : 'Fut —'}
-              />
-            </div>
-          </Card>
 
           {/* 3. Option chain dense table */}
           <OptionChainTable

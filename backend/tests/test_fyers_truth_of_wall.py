@@ -34,7 +34,12 @@ class _FakeClient:
         return self._resp
 
 
-def _provider_with(token="live-token-123", app_id="APP-100", resp=None):
+def _provider_with(token=None, app_id="APP-100", resp=None):
+    # Realistic-length credential for mocked-transport tests: must pass the
+    # production placeholder guard (is_usable_access_token) since these tests
+    # exercise the live-call path with a stubbed HTTP client.
+    if token is None:
+        token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9." + "a" * 64 + "." + "b" * 64
     p = FyersProvider(app_id=app_id, secret_key="sec", access_token=token)
     p._http_client = _FakeClient(resp or _FakeResp())
     return p

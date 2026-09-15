@@ -121,7 +121,7 @@ class CentralRiskEngine:
                     "5m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
                 }
             },
-            "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "FINNIFTY": 65, "MIDCPNIFTY": 120},
+            "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 20, "FINNIFTY": 65, "MIDCPNIFTY": 120},
             "options_scaling": {"default_atm_delta": 0.50, "expiry_day_time_stop_factor": 0.50}
         }
 

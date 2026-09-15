@@ -122,12 +122,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("morning_briefing_service_start_failed", error=str(e))
 
-    # Auto-provision & restore Executed Signals from Supabase PostgreSQL
+    # Auto-provision & restore Executed Signals from Supabase PostgreSQL.
+    # Bounded so a stalled DB connection can delay readiness by 25s at most —
+    # the engine runs degraded (local state) rather than never coming up.
     try:
         from app.signals.signals_persistence import ensure_signals_tables, restore_signals_from_db
-        await ensure_signals_tables()
-        restored = await restore_signals_from_db()
-        logger.info("signals_persistence_initialized", restored_count=restored)
+
+        async def _init_signals_persistence() -> int:
+            await ensure_signals_tables()
+            return await restore_signals_from_db()
+
+        try:
+            restored = await asyncio.wait_for(_init_signals_persistence(), timeout=25.0)
+            logger.info("signals_persistence_initialized", restored_count=restored)
+        except asyncio.TimeoutError:
+            logger.warning("signals_persistence_init_timeout", hint="DB slow — continuing degraded, will retry on next write")
     except Exception as e:
         logger.warning("signals_persistence_init_failed", error=str(e))
 
@@ -164,11 +173,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("flow_scheduler_start_failed", error=str(e))
 
-    # Initialize Event Intelligence Engine baseline (§2 Phase 1)
+    # Initialize Event Intelligence Engine baseline (§2 Phase 1).
+    # Bounded: external schedule fetches must not hold readiness hostage.
     try:
         from app.event_engine import event_engine_service
-        await event_engine_service.initialize()
-        logger.info("event_intelligence_engine_initialized")
+
+        try:
+            await asyncio.wait_for(event_engine_service.initialize(), timeout=25.0)
+            logger.info("event_intelligence_engine_initialized")
+        except asyncio.TimeoutError:
+            logger.warning("event_intelligence_engine_init_timeout", hint="Upstream schedules slow — continuing degraded")
     except Exception as e:
         logger.warning("event_intelligence_engine_init_failed", error=str(e))
 
@@ -264,8 +278,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Root endpoint
-    @app.api_route("/", methods=["GET", "HEAD"], tags=["root"])
+    # Root endpoint (HEAD excluded from schema so both methods don't share
+    # the same auto-generated operation ID).
+    @app.get("/", tags=["root"], operation_id="root_get")
+    @app.head("/", tags=["root"], operation_id="root_head", include_in_schema=False)
     async def root():
         return {
             "app": settings.app_name,

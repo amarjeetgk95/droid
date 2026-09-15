@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateSignalEligibility,
   AutoPilotGuardConfig,
+  calculateStrikeForSide,
 } from './autoPilotGuard';
 
 describe('Auto-Pilot Signal Eligibility and Circuit Breakers', () => {
@@ -137,5 +138,21 @@ describe('Auto-Pilot Signal Eligibility and Circuit Breakers', () => {
     });
 
     expect(res).toEqual({ eligible: false, reason: 'EXPIRED' });
+  });
+
+  it('calculates correct ITM, ATM, and OTM strikes for Call (CE) and Put (PE)', () => {
+    // Spot: 23398, step: 50 -> ATM = 23400
+    const spot = 23398;
+    const step = 50;
+
+    // CE
+    expect(calculateStrikeForSide(spot, step, 'ATM', 'CE')).toBe(23400);
+    expect(calculateStrikeForSide(spot, step, 'ITM', 'CE')).toBe(23350);
+    expect(calculateStrikeForSide(spot, step, 'OTM', 'CE')).toBe(23450);
+
+    // PE
+    expect(calculateStrikeForSide(spot, step, 'ATM', 'PE')).toBe(23400);
+    expect(calculateStrikeForSide(spot, step, 'ITM', 'PE')).toBe(23450);
+    expect(calculateStrikeForSide(spot, step, 'OTM', 'PE')).toBe(23350);
   });
 });

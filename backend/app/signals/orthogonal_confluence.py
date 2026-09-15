@@ -162,7 +162,7 @@ class OrthogonalConfluenceEngine:
         status: ConfluenceStatus = "NEUTRAL"
         if overall >= 72.0 and (not reasons or len(factors) >= 2):
             status = "SUPPORTIVE"
-        elif overall <= 40.0 or len(reasons) >= 2:
+        elif overall <= 35.0 or len(reasons) >= 3:
             status = "CONTRADICTORY"
 
         # Continuous Sizing Multiplier (Section 62)

@@ -21,9 +21,21 @@ Caches (FORECAST_CACHE=on/off, default on): MTF 30s / options 60s / ML 15s
 per (instrument, horizon) via app.research.cache.TTLCache (max 200 keys).
 Idempotency: minute-bucket key instrument|H|minute(T)|weights|model ->
 replay returns the same prediction_id within the bucket (see _IDEMPOTENCY).
+
+Robustness knobs (P1-2/P1-5/P1-6, all env-tunable and additive):
+  * FORECAST_DEADLINE_S (default 20) bounds one forecast() end to end; a timeout
+    raises ForecastDeadlineExceeded (never a fabricated verdict) and the API maps
+    it to 503. <=0 disables the watchdog.
+  * FORECAST_STAGE_TIMEOUT_S (default 3) bounds the auxiliary stages (options
+    context, ML predict) so they degrade inside the budget instead of eating it.
+  * Concurrent cache misses for the same key are coalesced (single-flight), and
+    an all-empty MTF picture is cached only briefly (cache.NEGATIVE_TTL_S).
+  * The heavy debug layers (mtf_features / indicator_outputs / options_context)
+    are opt-in via include_layers=True; see FORECAST_HEAVY_LAYER_KEYS.
 """
 
-from datetime import datetime, timezone
+from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import json
 import math
@@ -40,7 +52,7 @@ from app.research.enums import Direction, ForecastHorizon
 from app.research.features import FeatureLayer, classify_session_ist
 from app.research.models import IndicatorContext, IndicatorOutput, ResearchPrediction, ResearchSnapshot
 from app.research.options_context import ResearchOptionsContext
-from app.research.predictions import PredictionService, SnapshotService
+from app.research.predictions import PersistenceError, PredictionService, SnapshotService
 from app.research.registry import IndicatorRegistry
 from app.services.market_service import MarketService
 
@@ -220,6 +232,165 @@ FORECAST_V2_CALIBRATOR_VERSION_V1 = "cal-v1"
 
 FORECAST_V2_STATUSES = ("RESEARCH", "MVIG", "DEGRADED", "ABSTAIN")
 FORECAST_V2_DATA_QUALITY = ("HEALTHY", "DEGRADED", "HEURISTIC", "UNSETTLEABLE")
+
+# --- P1-2/P1-5/P1-6 additive robustness knobs (defaults preserve behaviour) ---
+# P1-2: end-to-end budget for one forecast() call, in seconds. <=0 disables the
+# watchdog (legacy unbounded path). On timeout we raise rather than return a
+# verdict we could not compute — the module never invents a forecast, and a fast
+# labeled failure beats holding the request open until the client's 60s abort.
+#
+# Kept above the sum of the per-stage bounds (12s primary TF fetch + 3s options +
+# 3s ML) on purpose: stage-level degradation must get the chance to win, so a
+# single slow timeframe returns a DEGRADED verdict instead of aborting the whole
+# request. The watchdog is the last resort, catching anything else (indicators,
+# explain, persistence) before the client gives up.
+FORECAST_DEADLINE_S_DEFAULT = 20.0
+# P1-2: per-stage budget for the auxiliary layers (options context, ML predict).
+# A slow stage degrades to unavailable *inside* the budget instead of eating it.
+FORECAST_STAGE_TIMEOUT_S_DEFAULT = 3.0
+# P1-6: layer payloads that dominate response/replay size (every TF's full
+# features incl. ta_suite, the model-dumped indicator outputs, raw F&O context).
+FORECAST_HEAVY_LAYER_KEYS = ("mtf_features", "indicator_outputs", "options_context")
+
+
+class ForecastDeadlineExceeded(RuntimeError):
+    """Raised when a forecast exceeds its end-to-end budget (P1-2)."""
+
+
+# P1-3: per-call cache provenance. A ContextVar (not an instance attribute on the
+# shared singleton) so two concurrent requests cannot clobber each other's hit
+# flag. The value set inside get_ml_forecast is visible to its direct caller
+# because an awaited coroutine shares its caller's task context; a mocked
+# forecaster simply never sets it, which reads as "no cache hit".
+_ML_CACHE_HIT_FLAG: ContextVar[bool] = ContextVar("forecast_ml_cache_hit", default=False)
+
+
+# ---------------------------------------------------------------------------
+# P2-3: process-local runtime counters for events that never become rows.
+# Persistence failures, deadline aborts and contract violations are per-request
+# events — they are not persisted predictions, so /monitoring/forecast-health
+# could not see them. These counters + the recent-latency ring give ops that
+# visibility. Bounded, best-effort, never raises, reset on process restart.
+# ---------------------------------------------------------------------------
+_RUNTIME_LATENCY_MAX_SAMPLES = 200
+_RUNTIME_STATE: Dict[str, Any] = {
+    "started_at": None,
+    "calls": 0,
+    "deadline_exceeded": 0,
+    "persist_failures": 0,
+    "contract_invalid": 0,
+    "degraded": 0,
+    "abstain": 0,
+    "bucket_replays": 0,
+    # "last_<counter>_at" stamps are written on demand by _bump_runtime(stamp=True).
+    "latency_ms": [],
+}
+
+
+def _bump_runtime(
+    name: Optional[str] = None,
+    *,
+    stamp: bool = False,
+    latency_ms: Any = None,
+) -> None:
+    """Bump runtime counter ``name`` and/or record a latency sample.
+
+    ``name=None`` records only the latency (nothing to count). Best-effort —
+    never raises.
+    """
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if _RUNTIME_STATE.get("started_at") is None:
+            _RUNTIME_STATE["started_at"] = now_iso
+        if name and name in _RUNTIME_STATE:
+            _RUNTIME_STATE[name] = int(_RUNTIME_STATE.get(name) or 0) + 1
+            if stamp:
+                _RUNTIME_STATE[f"last_{name}_at"] = now_iso
+        if latency_ms is not None:
+            try:
+                _RUNTIME_STATE["latency_ms"].append(float(latency_ms))
+                if len(_RUNTIME_STATE["latency_ms"]) > _RUNTIME_LATENCY_MAX_SAMPLES:
+                    _RUNTIME_STATE["latency_ms"] = _RUNTIME_STATE["latency_ms"][
+                        -_RUNTIME_LATENCY_MAX_SAMPLES:
+                    ]
+            except (TypeError, ValueError):
+                pass
+    except Exception:
+        pass
+
+
+def _percentile(samples: List[float], pct: float) -> Optional[float]:
+    """Nearest-rank percentile of ``samples`` (None when empty). Pure."""
+    try:
+        if not samples:
+            return None
+        ordered = sorted(float(s) for s in samples)
+        if len(ordered) == 1:
+            return round(ordered[0], 2)
+        idx = max(0, min(len(ordered) - 1, int(round((pct / 100.0) * (len(ordered) - 1)))))
+        return round(ordered[idx], 2)
+    except Exception:
+        return None
+
+
+def forecast_runtime_metrics() -> Dict[str, Any]:
+    """Snapshot of the process-local forecast runtime counters (P2-3).
+
+    Counters are monotonic since process start; only the latency ring is
+    bounded, so ``latency_ms_p50/p95`` describe the most recent samples.
+    """
+    try:
+        samples = list(_RUNTIME_STATE.get("latency_ms") or [])
+        return {
+            "started_at": _RUNTIME_STATE.get("started_at"),
+            "calls": int(_RUNTIME_STATE.get("calls") or 0),
+            "deadline_exceeded": int(_RUNTIME_STATE.get("deadline_exceeded") or 0),
+            "persist_failures": int(_RUNTIME_STATE.get("persist_failures") or 0),
+            "contract_invalid": int(_RUNTIME_STATE.get("contract_invalid") or 0),
+            "degraded": int(_RUNTIME_STATE.get("degraded") or 0),
+            "abstain": int(_RUNTIME_STATE.get("abstain") or 0),
+            "bucket_replays": int(_RUNTIME_STATE.get("bucket_replays") or 0),
+            "last_deadline_exceeded_at": _RUNTIME_STATE.get("last_deadline_exceeded_at"),
+            "last_persist_failures_at": _RUNTIME_STATE.get("last_persist_failures_at"),
+            "last_contract_invalid_at": _RUNTIME_STATE.get("last_contract_invalid_at"),
+            "latency_samples": len(samples),
+            "latency_ms_p50": _percentile(samples, 50),
+            "latency_ms_p95": _percentile(samples, 95),
+        }
+    except Exception:
+        return {}
+
+
+def reset_forecast_runtime_metrics() -> None:
+    """Test helper: zero the runtime counters."""
+    try:
+        for key in list(_RUNTIME_STATE.keys()):
+            if key == "latency_ms":
+                _RUNTIME_STATE[key] = []
+            elif key == "started_at" or key.startswith("last_"):
+                _RUNTIME_STATE.pop(key, None)
+            elif isinstance(_RUNTIME_STATE[key], int):
+                _RUNTIME_STATE[key] = 0
+    except Exception:
+        pass
+
+
+def forecast_deadline_s() -> float:
+    """End-to-end forecast budget in seconds (<=0 disables the watchdog)."""
+    try:
+        return float(os.getenv("FORECAST_DEADLINE_S", str(FORECAST_DEADLINE_S_DEFAULT)))
+    except (TypeError, ValueError):
+        return FORECAST_DEADLINE_S_DEFAULT
+
+
+def _stage_timeout_s() -> float:
+    """Per-stage budget for options/ML (<=0 disables the stage timeout)."""
+    try:
+        return float(
+            os.getenv("FORECAST_STAGE_TIMEOUT_S", str(FORECAST_STAGE_TIMEOUT_S_DEFAULT))
+        )
+    except (TypeError, ValueError):
+        return FORECAST_STAGE_TIMEOUT_S_DEFAULT
 
 
 def _forecast_weights_version() -> str:
@@ -595,12 +766,21 @@ class _MTFCandles(dict):
 
     fetch_multi_timeframe_candles returns this so forecast() can apply the
     P0-2 "resampled primary timeframe -> DEGRADED" gate. Plain-dict behaviour
-    is preserved for all existing callers.
+    is preserved for all existing callers. ``cache_hit`` is P1-3 per-call
+    provenance: it travels with the returned payload instead of living on the
+    shared singleton, where concurrent requests clobbered each other's flag.
     """
 
-    def __init__(self, *args: Any, resampled_tfs: Optional[List[str]] = None, **kwargs: Any):
+    def __init__(
+        self,
+        *args: Any,
+        resampled_tfs: Optional[List[str]] = None,
+        cache_hit: bool = False,
+        **kwargs: Any,
+    ):
         super().__init__(*args, **kwargs)
         self.resampled_tfs: List[str] = list(resampled_tfs or [])
+        self.cache_hit: bool = bool(cache_hit)
 
 
 def _candle_to_dict(c: Any) -> Dict[str, Any]:
@@ -642,6 +822,33 @@ class TrendForecaster:
             self._options_cache = None
             self._ml_cache = None
 
+    # P1-5: single-flight lock registry. Keyed exactly like the caches (via the
+    # same key helpers) and bounded, so a long-lived singleton cannot accumulate
+    # locks for retired instruments. Lazy (not created in __init__) so tests that
+    # build an instance with __new__ still work.
+    _FLIGHT_MAX_LOCKS = 200
+
+    def _flight_lock(self, key: Any) -> Any:
+        """Per-key :class:`asyncio.Lock` used to collapse concurrent cache misses."""
+        import asyncio
+
+        locks = getattr(self, "_flight_locks", None)
+        if locks is None:
+            locks = {}
+            try:
+                self._flight_locks = locks
+            except Exception:
+                pass
+        lock = locks.get(key)
+        if lock is None:
+            if len(locks) >= self._FLIGHT_MAX_LOCKS:
+                # Cheap bound. A holder that already captured its lock still
+                # finishes; only brand-new arrivals can briefly miss coalescing.
+                locks.clear()
+            lock = asyncio.Lock()
+            locks[key] = lock
+        return lock
+
     async def fetch_multi_timeframe_candles(
         self,
         instrument: str,
@@ -655,17 +862,14 @@ class TrendForecaster:
         a per-timeframe timeout keeps p95 latency to a single slow call.
         P3-3: MTF 30s TTL per (instrument, timeframes) when FORECAST_CACHE=on
         (default); identical behavior on miss; logs cache_hit.
+        P1-5: concurrent misses for the same key are coalesced — the first caller
+        fetches and stores, the rest wait on the per-key lock and pick up its
+        result instead of firing their own 7-request fan-out.
         """
-        import asyncio
-
         timeframes = timeframes or FORECAST_TIMEFRAMES
 
         # P3-3 additive cache lookup (instance-scoped; miss == legacy path).
         _mtf_key = None
-        try:
-            self._last_mtf_cache_hit = False
-        except Exception:
-            pass
         try:
             from app.research.cache import cache_enabled, make_mtf_key
 
@@ -673,19 +877,74 @@ class TrendForecaster:
                 _mtf_key = make_mtf_key(instrument, list(timeframes))
                 _cached = self._mtf_cache.get(_mtf_key)
                 if _cached is not None:
-                    try:
-                        self._last_mtf_cache_hit = True
-                    except Exception:
-                        pass
                     logger.info(
                         "forecast_mtf_cache_hit",
                         instrument=instrument,
                         cache_hit=True,
                         cache="mtf",
                     )
-                    return _cached
+                    return self._as_cache_hit(_cached)
         except Exception:
             _mtf_key = None
+
+        if _mtf_key is None:
+            # Caching off: there is no shared store for waiters to observe, so a
+            # lock would only serialize work without saving a single call.
+            return await self._fetch_mtf_payload(instrument, list(timeframes), None)
+
+        # P1-5 single-flight: re-check under a per-key lock so concurrent misses
+        # for the same (instrument, timeframes) collapse into one provider fetch —
+        # the winner stores its result before releasing the lock, so waiters find
+        # it and never touch the broker.
+        async with self._flight_lock(_mtf_key):
+            try:
+                _coalesced = self._mtf_cache.get(_mtf_key)
+            except Exception:
+                _coalesced = None
+            if _coalesced is not None:
+                logger.info(
+                    "forecast_mtf_cache_hit",
+                    instrument=instrument,
+                    cache_hit=True,
+                    cache="mtf",
+                    coalesced=True,
+                )
+                return self._as_cache_hit(_coalesced)
+            return await self._fetch_mtf_payload(instrument, list(timeframes), _mtf_key)
+
+    @staticmethod
+    def _as_cache_hit(payload: Any) -> Any:
+        """Return a cache-hit view of a stored MTF payload (P1-3). Never raises.
+
+        A shallow copy keeps each caller's ``cache_hit`` flag its own (mutating
+        the stored object would make an earlier caller read as a hit too) and
+        stops callers from mutating the cached value. The candle lists
+        themselves stay shared and must be treated as read-only.
+        """
+        try:
+            if isinstance(payload, _MTFCandles):
+                return _MTFCandles(
+                    payload,
+                    resampled_tfs=list(payload.resampled_tfs),
+                    cache_hit=True,
+                )
+            return payload
+        except Exception:
+            return payload
+
+    async def _fetch_mtf_payload(
+        self,
+        instrument: str,
+        timeframes: List[str],
+        mtf_key: Any,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch, resample and cache the MTF candle payload for one instrument.
+
+        Split out of :meth:`fetch_multi_timeframe_candles` so the cache/coalescing
+        wrapper above stays readable. Behaviour is unchanged: same per-timeframe
+        12s timeout, same 1m→higher-TF resample fallback, same skip-empty store.
+        """
+        import asyncio
 
         async def _fetch_one(tf: str) -> tuple[str, List[Dict[str, Any]]]:
             try:
@@ -735,16 +994,31 @@ class TrendForecaster:
                         )
         # P3-3 store on miss (best-effort; never changes the returned payload).
         try:
-            from app.research.cache import cache_enabled as _ce
+            from app.research.cache import NEGATIVE_TTL_S, cache_enabled as _ce
 
-            if _ce() and _mtf_key is not None and getattr(self, "_mtf_cache", None) is not None:
-                self._mtf_cache.set(_mtf_key, result)
-                logger.debug(
-                    "forecast_mtf_cache_store",
-                    instrument=instrument,
-                    cache_hit=False,
-                    cache="mtf",
-                )
+            if _ce() and mtf_key is not None and getattr(self, "_mtf_cache", None) is not None:
+                # P1-4: an all-empty picture must never inherit the full 30s read
+                # TTL — a transient broker/rate-limit blip would otherwise serve
+                # instant "Insufficient candles" long after the operator re-auths
+                # and hits Retry. It is still stored briefly (NEGATIVE_TTL_S) so
+                # concurrent callers coalesce here instead of queueing up behind
+                # the flight lock to re-run the whole fan-out against a dead feed.
+                if any(result.values()):
+                    self._mtf_cache.set(mtf_key, result)
+                    logger.debug(
+                        "forecast_mtf_cache_store",
+                        instrument=instrument,
+                        cache_hit=False,
+                        cache="mtf",
+                    )
+                else:
+                    self._mtf_cache.set(mtf_key, result, ttl_seconds=NEGATIVE_TTL_S)
+                    logger.info(
+                        "forecast_mtf_cache_negative_store",
+                        instrument=instrument,
+                        cache="mtf",
+                        ttl_s=NEGATIVE_TTL_S,
+                    )
         except Exception:
             pass
         return result
@@ -852,14 +1126,12 @@ class TrendForecaster:
         so the ensemble can degrade gracefully instead of failing.
         P3-3: ML 15s TTL per (instrument, horizon_minutes) when
         FORECAST_CACHE=on; identical on miss; logs cache_hit.
+        P1-5: concurrent misses for the same key share one model call.
         """
         if horizon_minutes is None:
             return None
         _ml_key = None
-        try:
-            self._last_ml_cache_hit = False
-        except Exception:
-            pass
+        _ML_CACHE_HIT_FLAG.set(False)
         try:
             from app.research.cache import cache_enabled, make_ml_key
 
@@ -867,10 +1139,7 @@ class TrendForecaster:
                 _ml_key = make_ml_key(instrument, horizon_minutes)
                 _hit = self._ml_cache.get(_ml_key)
                 if _hit is not None:
-                    try:
-                        self._last_ml_cache_hit = True
-                    except Exception:
-                        pass
+                    _ML_CACHE_HIT_FLAG.set(True)
                     logger.info(
                         "forecast_ml_cache_hit",
                         instrument=instrument,
@@ -881,10 +1150,52 @@ class TrendForecaster:
                     return dict(_hit) if isinstance(_hit, dict) else _hit
         except Exception:
             _ml_key = None
+
+        if _ml_key is None:
+            return await self._fetch_ml_payload(instrument, horizon_minutes, None)
+
+        # P1-5 single-flight: concurrent misses for the same (instrument, horizon)
+        # share one model call instead of stacking them on the predictor.
+        async with self._flight_lock(_ml_key):
+            try:
+                _coalesced = self._ml_cache.get(_ml_key)
+            except Exception:
+                _coalesced = None
+            if _coalesced is not None:
+                _ML_CACHE_HIT_FLAG.set(True)
+                logger.info(
+                    "forecast_ml_cache_hit",
+                    instrument=instrument,
+                    horizon_minutes=horizon_minutes,
+                    cache_hit=True,
+                    cache="ml",
+                    coalesced=True,
+                )
+                return dict(_coalesced) if isinstance(_coalesced, dict) else _coalesced
+            return await self._fetch_ml_payload(instrument, horizon_minutes, _ml_key)
+
+    async def _fetch_ml_payload(
+        self,
+        instrument: str,
+        horizon_minutes: Optional[int],
+        ml_key: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Call the ML predictor (bounded) and cache the normalized response.
+
+        P1-2: the model call is bounded by FORECAST_STAGE_TIMEOUT_S so a hung
+        predictor degrades the ML layer to unavailable (confidence capped) rather
+        than consuming the whole forecast budget. Returns None on any failure.
+        """
+        import asyncio
+
+        _timeout = _stage_timeout_s()
         try:
-            ml_response = await self.ml_predictor.predict_probabilities(
+            _call = self.ml_predictor.predict_probabilities(
                 symbol=instrument,
                 horizon_minutes=horizon_minutes,
+            )
+            ml_response = (
+                await asyncio.wait_for(_call, timeout=_timeout) if _timeout > 0 else await _call
             )
             # Coerce defensively: test doubles (MagicMock) auto-create attrs.
             _mv = getattr(ml_response, "model_version", None)
@@ -906,14 +1217,101 @@ class TrendForecaster:
             try:
                 from app.research.cache import cache_enabled as _ce2
 
-                if _ce2() and _ml_key is not None and getattr(self, "_ml_cache", None) is not None:
-                    self._ml_cache.set(_ml_key, dict(out))
+                if _ce2() and ml_key is not None and getattr(self, "_ml_cache", None) is not None:
+                    self._ml_cache.set(ml_key, dict(out))
             except Exception:
                 pass
             return out
+        except asyncio.TimeoutError:
+            logger.warning(
+                "forecast_ml_timeout",
+                instrument=instrument,
+                horizon_minutes=horizon_minutes,
+                timeout_s=_timeout,
+            )
+            return None
         except Exception as e:
             logger.warning("forecast_ml_failed", instrument=instrument, error=str(e))
             return None
+
+    async def _get_options_context(self, instrument: str) -> tuple[Dict[str, Any], bool]:
+        """Options context with cache, single-flight and a bounded fetch.
+
+        P3-3: 60s TTL per instrument (additive; miss == legacy path).
+        P1-2: the fetch is bounded by FORECAST_STAGE_TIMEOUT_S, so a hung F&O
+        provider degrades to an unavailable context (the existing
+        options-degraded gate + ATR-only targets) instead of eating the whole
+        forecast budget.
+        P1-5: concurrent misses for the same instrument share one fetch.
+        Returns ``(context, cache_hit)``; never raises.
+        """
+        import asyncio
+
+        _opt_key = None
+        try:
+            from app.research.cache import cache_enabled, make_options_key
+
+            if cache_enabled() and getattr(self, "_options_cache", None) is not None:
+                _opt_key = make_options_key(instrument)
+                _hit = self._options_cache.get(_opt_key)
+                if isinstance(_hit, dict):
+                    logger.info(
+                        "forecast_options_cache_hit",
+                        instrument=instrument,
+                        cache_hit=True,
+                        cache="options",
+                    )
+                    return dict(_hit), True
+        except Exception:
+            _opt_key = None
+
+        async def _load() -> Dict[str, Any]:
+            _timeout = _stage_timeout_s()
+            try:
+                if _timeout > 0:
+                    return await asyncio.wait_for(
+                        ResearchOptionsContext.get_context(instrument), timeout=_timeout
+                    )
+                return await ResearchOptionsContext.get_context(instrument)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "forecast_options_timeout",
+                    instrument=instrument,
+                    timeout_s=_timeout,
+                )
+                return {
+                    "instrument": instrument,
+                    "available": False,
+                    "data_quality": "FAILED",
+                    "timeout": True,
+                }
+            except Exception as e:
+                logger.warning("forecast_options_failed", instrument=instrument, error=str(e))
+                return {"instrument": instrument, "available": False}
+
+        if _opt_key is None:
+            return await _load(), False
+
+        async with self._flight_lock(_opt_key):
+            try:
+                _coalesced = self._options_cache.get(_opt_key)
+            except Exception:
+                _coalesced = None
+            if isinstance(_coalesced, dict):
+                logger.info(
+                    "forecast_options_cache_hit",
+                    instrument=instrument,
+                    cache_hit=True,
+                    cache="options",
+                    coalesced=True,
+                )
+                return dict(_coalesced), True
+            ctx = await _load()
+            try:
+                self._options_cache.set(_opt_key, dict(ctx))
+            except Exception:
+                pass
+            return ctx, False
 
     @staticmethod
     def validate_ml_artifact(
@@ -1349,14 +1747,27 @@ class TrendForecaster:
                 # 3. Risk v2: EM-aware targets, ATR-only fallback + limitation.
                 from app.research import risk_v2 as _risk_v2
 
-                try:
-                    em_v2 = _risk_v2.expected_move(
-                        current_price,
-                        (options_ctx or {}).get("atm_iv"),
-                        (options_ctx or {}).get("days_to_expiry"),
-                    )
-                except Exception:
-                    em_v2 = None
+                # P1-1: EM is only real when the F&O snapshot is. options_context
+                # returns synthetic defaults (atm_iv 15.0 / dte 1.0) with
+                # available=False and data_quality EMPTY/FAILED, so sizing targets
+                # from those would publish EM-backed levels derived from data we
+                # already know is absent. Synthetic -> ATR-only + limitation.
+                em_v2 = None
+                _opt_ctx = dict(options_ctx or {})
+                _opt_is_live = bool(_opt_ctx.get("available", True)) and (
+                    str(_opt_ctx.get("data_quality", "LIVE") or "LIVE").upper() == "LIVE"
+                )
+                if _opt_is_live:
+                    try:
+                        em_v2 = _risk_v2.expected_move(
+                            current_price,
+                            _opt_ctx.get("atm_iv"),
+                            _opt_ctx.get("days_to_expiry"),
+                        )
+                    except Exception:
+                        em_v2 = None
+                else:
+                    v2_limitations.append("em-unavailable-synthetic-options")
                 try:
                     ttc_v2 = (feat_primary or {}).get("minutes_to_close")
                 except Exception:
@@ -1431,8 +1842,79 @@ class TrendForecaster:
         instrument: str,
         horizon: str = "1h",
         record: bool = True,
+        session: Any = None,
+        include_layers: bool = False,
+        include_explain: bool = True,
     ) -> Dict[str, Any]:
-        """Generate a directional forecast for the given horizon and optionally persist it."""
+        """Generate a directional forecast for the given horizon and optionally persist it.
+
+        ``session`` (optional AsyncSession) is the durable store of record: when
+        supplied, the snapshot + immutable prediction are written through it with
+        strict failure semantics and ``result["persisted"]`` reports whether a
+        complete record exists. Without it, behaviour is unchanged (bounded
+        in-memory fallback; ``persisted`` stays False).
+
+        P1-2: the whole orchestration runs under a ``FORECAST_DEADLINE_S``
+        watchdog. A timeout raises :class:`ForecastDeadlineExceeded` instead of
+        returning a verdict that could not be computed (this module never
+        fabricates a forecast), so a stuck stage becomes a fast, labeled failure
+        rather than a request that outlives the client's own timeout.
+        ``include_layers=True`` re-attaches the heavy debug layers (P1-6), while
+        ``include_explain=False`` drops the explain bundle from the response
+        (P1-7: the query param clients already sent is now honoured; recordings
+        keep the bundle either way, so auditability is unaffected).
+        """
+        import asyncio
+
+        budget = forecast_deadline_s()
+        if budget <= 0:
+            return await self._forecast_inner(
+                instrument,
+                horizon,
+                record=record,
+                session=session,
+                include_layers=include_layers,
+                include_explain=include_explain,
+            )
+        _deadline_start = time.monotonic()
+        try:
+            return await asyncio.wait_for(
+                self._forecast_inner(
+                    instrument,
+                    horizon,
+                    record=record,
+                    session=session,
+                    include_layers=include_layers,
+                    include_explain=include_explain,
+                ),
+                timeout=budget,
+            )
+        except asyncio.TimeoutError:
+            _elapsed_ms = round((time.monotonic() - _deadline_start) * 1000.0, 2)
+            _bump_runtime("deadline_exceeded", stamp=True)
+            logger.warning(
+                "forecast_deadline_exceeded",
+                instrument=instrument,
+                horizon=horizon,
+                budget_s=budget,
+                elapsed_ms=_elapsed_ms,
+            )
+            raise ForecastDeadlineExceeded(
+                f"Forecast for {instrument} {horizon} exceeded its {budget:g}s budget "
+                f"({_elapsed_ms:.0f}ms elapsed). Retry shortly or raise "
+                f"FORECAST_DEADLINE_S."
+            ) from None
+
+    async def _forecast_inner(
+        self,
+        instrument: str,
+        horizon: str = "1h",
+        record: bool = True,
+        session: Any = None,
+        include_layers: bool = False,
+        include_explain: bool = True,
+    ) -> Dict[str, Any]:
+        """Compute one forecast — see :meth:`forecast` for the public contract."""
         cfg = HORIZON_CONFIG.get(horizon)
         if cfg is None:
             raise ValueError(f"Unsupported forecast horizon '{horizon}'. Supported: {sorted(HORIZON_CONFIG)}")
@@ -1445,13 +1927,15 @@ class TrendForecaster:
         _t_start = time.monotonic()
         _cache_hit = {"mtf": False, "options": False, "ml": False}
 
+        _bump_runtime("calls")
         logger.info("forecast_start", instrument=instrument, horizon=horizon)
 
         # 1. Fetch all timeframe candles (MTF cache lives inside
         # fetch_multi_timeframe_candles; hit flag mirrored for completion log).
         mtf_candles = await self.fetch_multi_timeframe_candles(instrument)
+        # P1-3: provenance travels with the payload (see _MTFCandles.cache_hit).
         try:
-            if bool(getattr(self, "_last_mtf_cache_hit", False)):
+            if bool(getattr(mtf_candles, "cache_hit", False)):
                 _cache_hit["mtf"] = True
         except Exception:
             pass
@@ -1464,38 +1948,10 @@ class TrendForecaster:
                 f"no candles — re-auth FYERS if the daily token expired, then Retry."
             )
 
-        # 2. Options context (P3-3: 60s TTL per instrument, additive).
-        _opt_key = None
-        options_ctx: Dict[str, Any]
-        try:
-            from app.research.cache import cache_enabled as _ce_o, make_options_key as _mok
-
-            if _ce_o() and getattr(self, "_options_cache", None) is not None:
-                _opt_key = _mok(instrument)
-                _opt_hit = self._options_cache.get(_opt_key)
-                if isinstance(_opt_hit, dict):
-                    options_ctx = dict(_opt_hit)
-                    _cache_hit["options"] = True
-                    logger.info(
-                        "forecast_options_cache_hit",
-                        instrument=instrument,
-                        cache_hit=True,
-                        cache="options",
-                    )
-                else:
-                    options_ctx = await ResearchOptionsContext.get_context(instrument)
-                    try:
-                        self._options_cache.set(_opt_key, dict(options_ctx))
-                    except Exception:
-                        pass
-            else:
-                options_ctx = await ResearchOptionsContext.get_context(instrument)
-        except Exception:
-            # Fallback: never let the cache break the legacy path.
-            try:
-                options_ctx = await ResearchOptionsContext.get_context(instrument)
-            except Exception:
-                options_ctx = {"instrument": instrument, "available": False}
+        # 2. Options context (P3-3 60s TTL; P1-2 bounded; P1-5 coalesced).
+        options_ctx, _opt_cache_hit = await self._get_options_context(instrument)
+        if _opt_cache_hit:
+            _cache_hit["options"] = True
 
         # 3. Multi-timeframe features
         mtf_features = FeatureLayer.compute_multi_timeframe_features(
@@ -1516,8 +1972,10 @@ class TrendForecaster:
 
         # 5. ML forecast for this horizon (None for horizons without artifacts)
         ml_forecast = await self.get_ml_forecast(instrument, cfg["ml_minutes"])
+        # P1-3: provenance from the ContextVar set inside get_ml_forecast (per
+        # task), never from a shared instance attribute.
         try:
-            if bool(getattr(self, "_last_ml_cache_hit", False)):
+            if bool(_ML_CACHE_HIT_FLAG.get()):
                 _cache_hit["ml"] = True
         except Exception:
             pass
@@ -1694,9 +2152,51 @@ class TrendForecaster:
         # 7. Snapshot + immutable prediction (P0-3). Never persist a prediction
         # without its snapshot: snapshot failure degrades to record=false
         # behaviour (no prediction row, prediction_id stays None).
+        #
+        # P0-1/P0-2 (durable store): when the caller supplies a session, both
+        # writes go through it with strict=True, so a failed insert raises
+        # PersistenceError instead of returning an id for a row that was never
+        # written. Without a session the legacy bounded in-memory fallback is
+        # used and result["persisted"] stays False.
+        #
+        # P0-3 (cross-process idempotency): before inserting, ask the DB whether
+        # this (instrument, indicator, minute bucket) was already recorded (e.g.
+        # by another worker). If so, reuse its ids and write nothing — the
+        # in-memory replay map cannot see other processes, so without this guard
+        # the same logical forecast would be inserted twice.
         prediction_id: Optional[str] = None
         snapshot_id: Optional[str] = None
-        if record:
+        _bucket_start = now_utc.replace(second=0, microsecond=0)
+        existing_bucket = None
+        if record and session is not None:
+            existing_bucket = await PredictionService.find_in_minute_bucket(
+                session,
+                instrument=instrument,
+                indicator_id=indicator_id,
+                bucket_start=_bucket_start,
+                bucket_end=_bucket_start + timedelta(minutes=1),
+            )
+        if record and existing_bucket:
+            prediction_id = existing_bucket.get("prediction_id")
+            snapshot_id = existing_bucket.get("snapshot_id")
+            if snapshot_id:
+                _bump_runtime("bucket_replays")
+                logger.info(
+                    "forecast_bucket_already_recorded",
+                    instrument=instrument,
+                    horizon=horizon,
+                    prediction_id=prediction_id,
+                )
+            else:
+                # Row predates snapshot enforcement: reuse the prediction id but
+                # report it as not fully persisted, and never write a duplicate.
+                logger.warning(
+                    "forecast_bucket_row_without_snapshot",
+                    instrument=instrument,
+                    horizon=horizon,
+                    prediction_id=prediction_id,
+                )
+        elif record:
             try:
                 from app.research.enums import DataQualityStatus as _DQ
 
@@ -1737,17 +2237,31 @@ class TrendForecaster:
                     data_quality=_DQ.DEGRADED if data_degraded else _DQ.LIVE,
                     created_at=now_utc,
                 )
-                snapshot_id = await SnapshotService.record_snapshot(snapshot)
+                snapshot_id = await SnapshotService.record_snapshot(
+                    snapshot, session=session, strict=session is not None
+                )
             except Exception as e:
-                logger.warning("forecast_snapshot_failed", instrument=instrument, error=str(e))
-                snapshot_id = None
+                logger.warning("forecast_persist_failed", instrument=instrument, error=str(e))
+                prediction_id = None
                 if status == "RESEARCH":
                     status = "DEGRADED"
                     result["status"] = status
                 if data_quality == "HEALTHY":
                     data_quality = "DEGRADED"
                     result["data_quality"] = data_quality
-                limitations.append("snapshot-unavailable")
+                if isinstance(e, PersistenceError):
+                    # DB write rejected/rolled back: say which stage, never claim
+                    # a record. A written snapshot is kept for audit when only
+                    # the prediction insert failed.
+                    _stage = "snapshot" if "snapshot" in str(e) else "prediction"
+                    _bump_runtime("persist_failures", stamp=True)
+                    limitations.append(f"persistence-failed:{_stage}")
+                elif snapshot_id:
+                    # Snapshot recorded, prediction not: keep the snapshot id.
+                    limitations.append("prediction-unavailable")
+                else:
+                    snapshot_id = None
+                    limitations.append("snapshot-unavailable")
                 result["limitations"] = limitations
             if snapshot_id:
                 pred = ResearchPrediction(
@@ -1790,17 +2304,71 @@ class TrendForecaster:
                     invalidation_price=result["invalidation_price"],
                     snapshot_id=snapshot_id,
                 )
-                prediction_id = await PredictionService.record_prediction(pred)
+                try:
+                    prediction_id = await PredictionService.record_prediction(
+                        pred, session=session, strict=session is not None
+                    )
+                except Exception as e:
+                    # Never claim a prediction that was not written: degrade
+                    # honestly and keep the (already recorded) snapshot id for
+                    # audit. Without this the insert error would escape the
+                    # snapshot handler and 500 the request.
+                    logger.warning(
+                        "forecast_prediction_record_failed",
+                        instrument=instrument,
+                        error=str(e),
+                    )
+                    prediction_id = None
+                    if status == "RESEARCH":
+                        status = "DEGRADED"
+                        result["status"] = status
+                    if data_quality == "HEALTHY":
+                        data_quality = "DEGRADED"
+                        result["data_quality"] = data_quality
+                    if isinstance(e, PersistenceError):
+                        _bump_runtime("persist_failures", stamp=True)
+                        limitations.append("persistence-failed:prediction")
+                    else:
+                        limitations.append("prediction-unavailable")
+                    result["limitations"] = limitations
+        recorded_now = bool(prediction_id and snapshot_id and not existing_bucket)
+        # Durable truth: ids alone (memory fallback, or a session that was never
+        # supplied) must never read as "recorded in the database".
+        persisted = bool(session is not None and prediction_id and snapshot_id)
         result["prediction_id"] = prediction_id
         result["snapshot_id"] = snapshot_id
+        # P0-1/P0-2: the durable-storage truth. Consumers must read this instead
+        # of inferring "recorded" from a non-null prediction_id.
+        result["persisted"] = persisted
+
+        # P1-6: the heavy layer payloads are opt-in. They dominated the response
+        # (every TF's full features incl. ta_suite, the dumped indicator outputs,
+        # the raw F&O context), were deep-copied into the replay cache, and are
+        # read by no consumer — the explain bundle carries the curated evidence.
+        if not include_layers:
+            for _heavy_key in FORECAST_HEAVY_LAYER_KEYS:
+                result.pop(_heavy_key, None)
+
+        # P1-7: the explain bundle is client-controllable. The persisted snapshot
+        # and prediction above always carry it, so dropping it here only trims the
+        # HTTP payload (a caller polling for the verdict can opt out).
+        if not include_explain:
+            result.pop("explain", None)
 
         # P0-1 contract validation: log + DEGRADED on failure, never 500.
         # (Missing primary 1h still raises 503 above — never synthetic.)
+        # Validate against the *recorded* fact: a failed/unavailable persistence
+        # already appends its own limitation, so don't also emit
+        # "missing-snapshot-for-record" for a response that honestly reports
+        # persisted=false.
         try:
-            contract_errors = validate_forecast_v2(result, record=record)
+            contract_errors = validate_forecast_v2(
+                result, record=bool(record and persisted)
+            )
         except Exception as e:
             contract_errors = [f"validator-crashed:{e}"]
         if contract_errors:
+            _bump_runtime("contract_invalid", stamp=True)
             logger.warning(
                 "forecast_v2_contract_invalid",
                 instrument=instrument,
@@ -1837,12 +2405,27 @@ class TrendForecaster:
             result["cache_hit"] = dict(_cache_hit)
         except Exception:
             result["cache_hit"] = {"mtf": False, "options": False, "ml": False}
-        _idempotent_replay = False
+        # P2-3: runtime counters surfaced by /monitoring/forecast-health. These
+        # events never become prediction rows, so the rolling DB metrics could
+        # not see them.
+        try:
+            _bump_runtime(None, latency_ms=_latency_ms)
+            _final_status = str(result.get("status") or "")
+            if _final_status == "DEGRADED":
+                _bump_runtime("degraded")
+            elif _final_status == "ABSTAIN":
+                _bump_runtime("abstain")
+        except Exception:
+            pass
+        # A call that found the bucket already recorded did not mint a new row;
+        # report it as a replay (it is idempotent by construction).
+        _idempotent_replay = bool(existing_bucket)
         # Minute-bucket idempotency: same instrument+H+minute+version replays
         # the same prediction_id instead of minting a new uuid. Only on
-        # successful record=True persists; record=False and snapshot-failure
-        # bypass so gates stay honest.
-        if record and prediction_id and snapshot_id:
+        # successful record=True persists by *this* call; record=False, a
+        # bucket already recorded by another worker, and snapshot-failure
+        # bypass so gates stay honest and no duplicate row is ever claimed.
+        if recorded_now and prediction_id and snapshot_id:
             try:
                 _wv = str(result.get("weights_version") or _forecast_weights_version())
                 _mf = _forecast_v2_model_flag()
@@ -1900,6 +2483,11 @@ class TrendForecaster:
                             _store_res = _copy2.deepcopy(result)
                         except Exception:
                             _store_res = dict(result)
+                        # P1-6: never retain the heavy layers in the replay map,
+                        # even for an include_layers=True caller (the replay is a
+                        # cached reply; debug layers are not replayed).
+                        for _heavy_key in FORECAST_HEAVY_LAYER_KEYS:
+                            _store_res.pop(_heavy_key, None)
                         _store_res["idempotent_replay"] = False
                         _IDEMPOTENCY.put(_ikey, prediction_id, snapshot_id, _store_res)
                     except Exception:
@@ -1950,9 +2538,12 @@ class TacticalHorizonEngine(TrendForecaster):
         instrument: str,
         horizon: str = "1h",
         record: bool = True,
+        session: Any = None,
     ) -> Dict[str, Any]:
         """Generate a tactical horizon bias and optionally persist it immutably."""
-        return await self.forecast(instrument=instrument, horizon=horizon, record=record)
+        return await self.forecast(
+            instrument=instrument, horizon=horizon, record=record, session=session
+        )
 
 
 # Backward-compatible class alias

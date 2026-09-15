@@ -1,4 +1,4 @@
-﻿"""
+"""
 Strategy Runner Module for Quantitative Scanning Pipeline (Phase 3)
 Executes registered strategies against StrategyContext and enforces:
   - Gap exemption filtering
@@ -49,11 +49,19 @@ def run_strategies(
             candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
             candidate.lunch_session = getattr(ctx, "lunch_session", False)
 
-            # Pre-market gap filter: suppress if gap > 0.5% within first 3 candles (except gap-exempt strategies)
+            # Pre-market gap filter: suppress if gap > 0.5% within first 15m of session (except gap-exempt strategies)
             gap_pct_val = float(getattr(ctx, "pre_market_gap_pct", 0.0) or 0.0)
-            if gap_pct_val > 0.5 and len(ctx.candles) <= 3 and strat_name not in GAP_EXEMPT_STRATEGIES:
+            is_opening_window = False
+            if ctx.timestamp_ms:
+                try:
+                    utc_min = (ctx.timestamp_ms // 60000) % 1440
+                    ist_min = (utc_min + 330) % 1440
+                    is_opening_window = (555 <= ist_min <= 570)
+                except Exception:
+                    pass
+            if gap_pct_val > 0.5 and is_opening_window and strat_name not in GAP_EXEMPT_STRATEGIES:
                 rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
-                logger.info("candidate_rejected_gap", strategy=strat_name, underlying=ctx.underlying, gap_pct=gap_pct_val)
+                logger.info("candidate_rejected_gap", strategy=strat_name, underlying=getattr(ctx, "underlying", "UNKNOWN"), gap_pct=gap_pct_val)
                 continue
 
             # Gating Fast Scalping setups through ScalpConfirmationEngine (§16)
@@ -117,6 +125,6 @@ def run_strategies(
             }
             candidates.append(candidate)
         except Exception as e:
-            logger.warning("strategy_detect_failed", strategy=strat_name, underlying=ctx.underlying, error=str(e))
+            logger.warning("strategy_detect_failed", strategy=strat_name, underlying=getattr(ctx, "underlying", "UNKNOWN"), error=str(e))
 
     return candidates, rejected_gates

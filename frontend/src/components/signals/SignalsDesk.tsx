@@ -582,7 +582,7 @@ export function SignalsDesk({
   /* ---- terminal layout: bar -> panel ---- */
 
   return (
-    <div className="ds-module ds-module-fill sg">
+    <div className={`ds-module ${tab === 'scalp' ? 'h-[calc(100vh-175px)] md:h-[calc(100vh-185px)] min-h-[600px] flex-1' : 'ds-module-fill'} sg`}>
       <header className="sg-bar">
         <span className="sg-brand">
           <span>
@@ -670,20 +670,19 @@ export function SignalsDesk({
         {statusError ? <p className="sg-err">{statusError}</p> : null}
       </header>
 
-      <section className="sg-panel">
-        <div className="sg-scroll">
-          {tab === 'history' && sanitizeNote ? (
-            <p className="sg-note sg-pad">{sanitizeNote}</p>
-          ) : null}
-          {tab === 'live' ? liveBody : null}
-          {tab === 'scalp' ? (
-            <div className="p-3">
-              <ScalperTerminal />
-            </div>
-          ) : null}
-          {tab === 'performance' ? perfBody : null}
-          {tab === 'history' ? ledgerBody : null}
-        </div>
+      <section className={`sg-panel ${tab === 'scalp' ? 'p-1.5 overflow-hidden flex-1 min-h-0 flex flex-col bg-background/50 border-0 shadow-none' : ''}`}>
+        {tab === 'scalp' ? (
+          <ScalperTerminal />
+        ) : (
+          <div className="sg-scroll">
+            {tab === 'history' && sanitizeNote ? (
+              <p className="sg-note sg-pad">{sanitizeNote}</p>
+            ) : null}
+            {tab === 'live' ? liveBody : null}
+            {tab === 'performance' ? perfBody : null}
+            {tab === 'history' ? ledgerBody : null}
+          </div>
+        )}
       </section>
 
       <SignalCreateDialog

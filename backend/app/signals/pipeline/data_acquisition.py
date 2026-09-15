@@ -1,4 +1,4 @@
-﻿"""
+"""
 Data Acquisition Module for Quantitative Scanning Pipeline (Phase 3)
 Encapsulates:
   - Market session validation & feed circuit check
@@ -132,11 +132,16 @@ def calculate_session_vwap(active_candles: list[dict]) -> tuple[Decimal | None, 
 def detect_market_regime(ta_analysis: dict[str, Any]) -> str:
     """
     Detects quantitative market regime:
-    TREND_UP / TREND_DOWN (ADX>=25 + trend), HIGH_VOL (atr_pct>=80),
+    TREND_UP / TREND_DOWN (ADX>=22 + trend), HIGH_VOL (atr_pct>=80),
     COMPRESSION_SQUEEZE (bb_width pct<=20 + adx<18), EVENT, else RANGE.
     """
     regime = "RANGE"
-    adx_val = float(ta_analysis.get("momentum", {}).get("adx", 20.0))
+    adx_val = float(
+        ta_analysis.get("trend", {}).get("adx")
+        or ta_analysis.get("momentum", {}).get("adx")
+        or ta_analysis.get("adx")
+        or 20.0
+    )
     trend_val = ta_analysis.get("trend", {}).get("trend", "RANGE")
     try:
         atr_pct = float(ta_analysis.get("volatility", {}).get("atr_percentile", 50.0))
@@ -150,9 +155,9 @@ def detect_market_regime(ta_analysis: dict[str, Any]) -> str:
     event_flag = bool(ta_analysis.get("event_flag", False) or ta_analysis.get("is_event_day", False))
     if event_flag:
         return "EVENT"
-    elif adx_val >= 25.0 and trend_val == "BULLISH":
+    elif adx_val >= 22.0 and trend_val == "BULLISH":
         return "TREND_UP"
-    elif adx_val >= 25.0 and trend_val == "BEARISH":
+    elif adx_val >= 22.0 and trend_val == "BEARISH":
         return "TREND_DOWN"
     elif atr_pct >= 80.0:
         return "HIGH_VOL"
@@ -229,10 +234,11 @@ async def acquire_market_context(
             if q_ts.tzinfo is None:
                 q_ts = q_ts.replace(tzinfo=UTC)
             age_sec = (datetime.now(UTC) - q_ts).total_seconds()
-            if age_sec > settings.scanner_quote_age_seconds:
+            max_age = max(float(settings.scanner_quote_age_seconds), 30.0)
+            if age_sec > max_age:
                 diag.data_quality = "DEGRADED"
                 diag.error = f"stale_quote_{round(age_sec, 1)}s"
-                diag.reasons.append(f"Quote age ({round(age_sec, 1)}s) exceeds max allowed ({settings.scanner_quote_age_seconds}s)")
+                diag.reasons.append(f"Quote age ({round(age_sec, 1)}s) exceeds max allowed ({max_age}s)")
                 diag.duration_ms = int((time.time() - started) * 1000)
                 return None, diag
         except Exception:
@@ -257,10 +263,10 @@ async def acquire_market_context(
 
     try:
         tf_results = await asyncio.wait_for(
-            asyncio.gather(*[_fetch_tf(tf_str) for tf_str in target_tfs]),
-            timeout=8.0,
+            asyncio.gather(*[_fetch_tf(tf_str) for tf_str in target_tfs], return_exceptions=True),
+            timeout=15.0,
         )
-        candles_dict = {tf_k: c_arr for tf_k, c_arr in tf_results if c_arr}
+        candles_dict = {res[0]: res[1] for res in tf_results if isinstance(res, tuple) and len(res) == 2 and res[1]}
     except TimeoutError:
         candles_dict = {}
         diag.reasons.append("Candle fetch timed out — indicators degraded")
@@ -316,6 +322,48 @@ async def acquire_market_context(
     # 6. Regime & VWAP
     regime = detect_market_regime(ta_analysis)
     vwap_val, vwap_degraded, vwap_coverage_pct = calculate_session_vwap(active_candles)
+
+    if ta_analysis:
+        trend_d = ta_analysis.get("trend", {})
+        mom_d = ta_analysis.get("momentum", {})
+        vol_d = ta_analysis.get("volatility", {})
+        volm_d = ta_analysis.get("volume", {})
+
+        ta_analysis["adx"] = float(trend_d.get("adx") or mom_d.get("adx") or 20.0)
+        ta_analysis["rsi"] = float(mom_d.get("rsi") or 50.0)
+        ta_analysis["atr"] = float(vol_d.get("atr") or 20.0)
+
+        rel_vol = volm_d.get("relative_volume") or volm_d.get("ratio") or 1.2
+        ta_analysis["volume_ratio"] = float(rel_vol)
+
+        bb_u = vol_d.get("bollinger_upper")
+        bb_m = vol_d.get("bollinger_middle")
+        bb_l = vol_d.get("bollinger_lower")
+        ta_analysis["bollinger_bands"] = {
+            "upper": bb_u,
+            "middle": bb_m,
+            "lower": bb_l,
+        }
+        ta_analysis["bollinger_upper"] = bb_u
+        ta_analysis["bollinger_middle"] = bb_m
+        ta_analysis["bollinger_lower"] = bb_l
+
+        # Compute breakout pressure from price action, trend, and volume
+        bp = 50.0
+        if trend_d.get("trend") == "BULLISH":
+            bp += 15.0
+        elif trend_d.get("trend") == "BEARISH":
+            bp -= 15.0
+        if float(rel_vol) > 1.2:
+            bp += 12.0
+        elif float(rel_vol) < 0.8:
+            bp -= 10.0
+        if vwap_val:
+            if spot >= vwap_val:
+                bp += 10.0
+            else:
+                bp -= 10.0
+        ta_analysis["breakout_pressure"] = max(0.0, min(100.0, bp))
 
     vol_ma = None
     if len(active_candles) >= 20:

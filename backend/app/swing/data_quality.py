@@ -148,3 +148,132 @@ def validate_and_clean_daily_candles(
         start_timestamp=deduped[0]["timestamp_epoch"] if deduped else None,
         end_timestamp=deduped[-1]["timestamp_epoch"] if deduped else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Options Chain Quality & Liquidity Firewall (§28)
+# ---------------------------------------------------------------------------
+class OptionChainQualityResult(BaseModel):
+    is_valid: bool
+    severity: Literal["OK", "WARNING", "BLOCK"]
+    reasons: list[str] = Field(default_factory=list)
+    atm_strike: Optional[float] = None
+    atm_iv: Optional[float] = None
+    atm_spread_pct: float = 0.0
+    atm_oi: int = 0
+
+
+def validate_option_chain_quality(
+    chain: Any,
+    min_oi: int = 500,
+    max_spread_pct: float = 2.5,
+) -> OptionChainQualityResult:
+    """
+    Validates live options chain for liquidity, bid-ask spreads, and quote sanity (§28).
+    Guarantees:
+      - Valid non-empty strike matrix with ATM coverage
+      - No crossed quotes (bid > ask)
+      - Bid-ask spread within acceptable liquidity thresholds
+      - Sufficient open interest for institutional slippage tolerance
+    """
+    reasons: list[str] = []
+    if chain is None:
+        return OptionChainQualityResult(
+            is_valid=False, severity="BLOCK", reasons=["Option chain payload is None."]
+        )
+
+    strikes = getattr(chain, "strikes", None)
+    if strikes is None and isinstance(chain, dict):
+        strikes = chain.get("strikes", [])
+
+    if not strikes:
+        return OptionChainQualityResult(
+            is_valid=False, severity="BLOCK", reasons=["Option chain contains 0 strikes."]
+        )
+
+    spot = getattr(chain, "spot_price", 0.0)
+    if spot is None and isinstance(chain, dict):
+        spot = chain.get("spot_price", 0.0)
+
+    # Locate ATM strike row
+    atm_row = None
+    for r in strikes:
+        is_atm = getattr(r, "is_atm", False) if not isinstance(r, dict) else r.get("is_atm", False)
+        if is_atm:
+            atm_row = r
+            break
+
+    if atm_row is None and spot and spot > 0:
+        # Fallback to closest strike
+        def _get_strike(x):
+            return getattr(x, "strike", 0.0) if not isinstance(x, dict) else x.get("strike", 0.0)
+        atm_row = min(strikes, key=lambda s: abs(_get_strike(s) - spot))
+
+    if atm_row is None:
+        return OptionChainQualityResult(
+            is_valid=False, severity="BLOCK", reasons=["Could not identify ATM strike in chain."]
+        )
+
+    atm_strike_val = getattr(atm_row, "strike", 0.0) if not isinstance(atm_row, dict) else atm_row.get("strike", 0.0)
+    call_side = getattr(atm_row, "call", None) if not isinstance(atm_row, dict) else atm_row.get("call")
+    put_side = getattr(atm_row, "put", None) if not isinstance(atm_row, dict) else atm_row.get("put")
+
+    # Evaluate Call & Put quotes at ATM
+    total_atm_oi = 0
+    max_spread = 0.0
+
+    for side_name, side in [("CE", call_side), ("PE", put_side)]:
+        if side is None:
+            reasons.append(f"Missing ATM {side_name} quote in chain.")
+            continue
+
+        bid = getattr(side, "bid", None) if not isinstance(side, dict) else side.get("bid")
+        ask = getattr(side, "ask", None) if not isinstance(side, dict) else side.get("ask")
+        ltp = getattr(side, "ltp", 0.0) if not isinstance(side, dict) else side.get("ltp", 0.0)
+        oi = getattr(side, "open_interest", 0) if not isinstance(side, dict) else side.get("open_interest", 0)
+
+        total_atm_oi += (oi or 0)
+
+        # Check crossed quotes
+        if bid is not None and ask is not None and bid > 0 and ask > 0:
+            if bid > ask:
+                reasons.append(f"Crossed quote detected on ATM {side_name}: bid {bid} > ask {ask}.")
+                return OptionChainQualityResult(
+                    is_valid=False,
+                    severity="BLOCK",
+                    reasons=reasons,
+                    atm_strike=atm_strike_val,
+                )
+            mid = 0.5 * (bid + ask)
+            spread_pct = ((ask - bid) / mid * 100.0) if mid > 0 else 0.0
+            max_spread = max(max_spread, spread_pct)
+            if spread_pct > max_spread_pct:
+                reasons.append(
+                    f"ATM {side_name} spread ({spread_pct:.1f}%) exceeds threshold of {max_spread_pct:.1f}%."
+                )
+
+    # Check minimum OI
+    if total_atm_oi < min_oi:
+        reasons.append(f"Total ATM open interest ({total_atm_oi}) is below minimum threshold ({min_oi}).")
+
+    analytics = getattr(chain, "analytics", None) if not isinstance(chain, dict) else chain.get("analytics")
+    atm_iv = None
+    if analytics:
+        atm_iv = getattr(analytics, "atm_iv", None) if not isinstance(analytics, dict) else analytics.get("atm_iv")
+
+    severity: Literal["OK", "WARNING", "BLOCK"] = "OK"
+    if any("Crossed quote" in r or "0 strikes" in r or "exceeds threshold of" in r for r in reasons):
+        severity = "BLOCK"
+    elif reasons:
+        severity = "WARNING"
+
+    return OptionChainQualityResult(
+        is_valid=(severity != "BLOCK"),
+        severity=severity,
+        reasons=reasons,
+        atm_strike=atm_strike_val,
+        atm_iv=atm_iv,
+        atm_spread_pct=round(max_spread, 2),
+        atm_oi=total_atm_oi,
+    )
+

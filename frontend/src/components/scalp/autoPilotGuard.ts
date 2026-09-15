@@ -86,3 +86,24 @@ export function evaluateSignalEligibility({
 
   return { eligible: true };
 }
+
+export type StrikeOffset = 'ITM' | 'ATM' | 'OTM';
+
+export function calculateStrikeForSide(
+  spotPrice: number,
+  step: number,
+  offset: StrikeOffset,
+  side: 'CE' | 'PE'
+): number {
+  if (!Number.isFinite(spotPrice) || spotPrice <= 0 || !Number.isFinite(step) || step <= 0) {
+    return 0;
+  }
+  const atm = Math.round(spotPrice / step) * step;
+  if (offset === 'ATM') return atm;
+
+  if (side === 'CE') {
+    return offset === 'ITM' ? atm - step : atm + step;
+  } else {
+    return offset === 'ITM' ? atm + step : atm - step;
+  }
+}

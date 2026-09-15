@@ -43,6 +43,30 @@ export const API_BASE = resolveApiBase();
 
 export type RequestOptions = RequestInit & { timeoutMs?: number };
 
+/**
+ * HTTP error carrying the response status.
+ *
+ * Callers used to get a bare `Error` with a message, so nothing could tell a
+ * 404 (route absent on this backend build) from a 503 (real backend failure)
+ * without string-matching the detail text. Still an `Error`, so existing
+ * `instanceof Error` handling keeps working.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** True only for an {@link ApiError} carrying one of `statuses`.
+ *  Network/timeout failures are plain Errors (no status) and return false. */
+export function isApiErrorStatus(err: unknown, ...statuses: number[]): boolean {
+  return err instanceof ApiError && statuses.includes(err.status);
+}
+
 export class ApiCore {
   private baseUrl: string;
   private token: string | null = null;
@@ -123,9 +147,12 @@ export class ApiCore {
           response.status === 502 && error.detail && error.detail.toLowerCase().includes('openrouter catalog')
             ? ' (Retrying will use cached model list if available)'
             : '';
-        throw new Error(`${detail}${extra}${retry}`);
+        throw new ApiError(`${detail}${extra}${retry}`, response.status);
       } else {
-        throw new Error(`Backend at ${this.baseUrl} returned error ${response.status} (${response.statusText}).`);
+        throw new ApiError(
+          `Backend at ${this.baseUrl} returned error ${response.status} (${response.statusText}).`,
+          response.status,
+        );
       }
     }
 

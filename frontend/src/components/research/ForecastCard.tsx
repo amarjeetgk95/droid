@@ -5,6 +5,9 @@ import {
   EmptyNote,
   Meter,
   RetryButton,
+  StackedProbabilityBar,
+  TelemetryItem,
+  TelemetryStrip,
   fmtINR,
   fmtPct01,
   fmtSigned,
@@ -75,6 +78,10 @@ export type HourForecast = {
   expected_range?: { lower?: number | null; mid?: number | null; upper?: number | null } | null;
   target_basis?: string | null;
   latency_ms?: number | null;
+  // Durable-storage truth from the backend (true only when the immutable
+  // snapshot+prediction were actually written to the database). Absent on
+  // pre-P0 responses, so treat undefined as unknown rather than false-y.
+  persisted?: boolean | null;
 };
 
 type ForecastCardProps = {
@@ -171,6 +178,12 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
   const limitations = asStringList(forecast.limitations);
   // — P3-4 prob UI: optional; v1 payloads (no probabilities) hide these —
   const probBars = probabilityBars(forecast);
+  const bullBar = probBars?.find((b) => b.key === 'bullish');
+  const neutBar = probBars?.find((b) => b.key === 'neutral');
+  const bearBar = probBars?.find((b) => b.key === 'bearish');
+  const bullPct = bullBar?.pct ?? 0;
+  const neutPct = neutBar?.pct ?? 0;
+  const bearPct = bearBar?.pct ?? 0;
   const maxP = maxProbability(forecast);
   const displayConfidence =
     typeof maxP === 'number' && Number.isFinite(maxP) ? maxP : Number(forecast.confidence) || 0;
@@ -216,50 +229,14 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
       style={degraded ? { borderColor: '#f59e0b' } : undefined}
     >
       <div className="forecast-hero-glow" aria-hidden />
-      <div style={{ position: 'relative', padding: '16px 20px' }}>
-        {/* top meta row */}
-        <div className="toolbar" style={{ marginBottom: 14 }}>
-          <DirectionBadge direction={forecast.direction} big />
+      <div style={{ position: 'relative', padding: '12px 14px' }}>
+        {/* top unified meta row */}
+        <div className="toolbar" style={{ marginBottom: 10, gap: 8 }}>
+          <DirectionBadge direction={forecast.direction} />
           <span className="card-meta num">
             {forecast.instrument} · {forecast.timeframe || timeframe}{price != null ? ` · ${fmtINR(price)}` : ''}
             {updatedAt ? ` · ${updatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ''}
           </span>
-          <span className="spacer" />
-          {shortForecastId(forecast.prediction_id) ? (
-            <span className="faint mono" title={forecast.prediction_id ?? undefined}>
-              #{shortForecastId(forecast.prediction_id)}
-            </span>
-          ) : null}
-          {shortForecastId(forecast.snapshot_id) ? (
-            <span className="faint mono" title={forecast.snapshot_id ?? undefined}>
-              snap {shortForecastId(forecast.snapshot_id)}
-            </span>
-          ) : null}
-        </div>
-        {error ? (
-          <div
-            role="alert"
-            className="muted"
-            style={{
-              marginBottom: 12,
-              padding: '6px 10px',
-              borderRadius: 4,
-              border: '1px solid var(--ds-border)',
-              background: 'var(--ds-inset)',
-              fontSize: 12,
-              display: 'flex',
-              gap: 8,
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <span>Showing last good bias — refresh failed: {String(error)}</span>
-            <RetryButton onRetry={onRetry}>Retry</RetryButton>
-          </div>
-        ) : null}
-
-        {/* v2 honesty badges — RESEARCH default until MVIG; hidden extras on v1 payloads */}
-        <div className="toolbar" style={{ marginBottom: 12, gap: 8 }} aria-label="Forecast status">
           <span className={statusBadgeClass} style={statusBadgeStyle} title={forecast.forecast_version ? `forecast ${forecast.forecast_version}` : 'forecast v1'}>
             {v2Status}
           </span>
@@ -274,95 +251,71 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
               style={settlement === 'YES' ? undefined : { color: '#92580a', background: '#fef3c7', borderColor: '#f59e0b' }}
               title={settleReason ?? 'Settlement eligibility'}
             >
-              SETTLEMENT · {settlement}
+              SETTLE · {settlement}
+            </span>
+          ) : null}
+          <span className="spacer" />
+          {shortForecastId(forecast.prediction_id) ? (
+            <span className="faint mono" title={forecast.prediction_id ?? undefined}>
+              #{shortForecastId(forecast.prediction_id)}
             </span>
           ) : null}
         </div>
-        {showModelLine ? (
-          <div className="faint mono" style={{ fontSize: 11, marginBottom: 12 }}>
-            model {forecast.model_version ?? '—'} · calibrator {forecast.calibrator_version ?? 'none-v0'}
-            {forecast.regime ? ` · regime ${forecast.regime}` : ''}
-            {forecast.session ? ` · session ${forecast.session}` : ''}
-          </div>
-        ) : null}
-        {forecast.settleable === false ? (
+
+        {error ? (
           <div
-            role="note"
+            role="alert"
             className="muted"
             style={{
-              marginBottom: 12,
-              padding: '6px 10px',
+              marginBottom: 10,
+              padding: '5px 8px',
               borderRadius: 4,
-              border: '1px solid #f59e0b',
-              background: '#fef3c7',
-              color: '#92580a',
-              fontSize: 12,
+              border: '1px solid var(--ds-border)',
+              background: 'var(--ds-inset)',
+              fontSize: 11.5,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              justifyContent: 'space-between',
             }}
-            title={settleReason ?? undefined}
           >
-            {UNSETTLEABLE_NOTE}{settleReason ? ` — ${settleReason}` : ''}
-          </div>
-        ) : null}
-        {limitations.length > 0 ? (
-          <div style={{ marginBottom: 12 }}>
-            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
-              LIMITATIONS
-            </div>
-            <ul className="muted" style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12, display: 'grid', gap: 2 }}>
-              {limitations.map((l, i) => (
-                <li key={i}>{l}</li>
-              ))}
-            </ul>
+            <span>Showing last good bias — refresh failed: {String(error)}</span>
+            <RetryButton onRetry={onRetry}>Retry</RetryButton>
           </div>
         ) : null}
 
-        {/* verdict row */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 24 }}>
-          <div>
+        {/* verdict row: dense horizontal presentation */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <div
               className={`num ${tone === 'bull' ? 'v-bull' : tone === 'bear' ? 'v-bear' : ''}`}
-              style={{ fontSize: 40, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' }}
+              style={{ fontSize: 28, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' }}
             >
               {fmtSigned(score, 0)}
             </div>
-            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', marginTop: 4 }}>
+            <div className="faint" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.06em' }}>
               SCORE / ±100
             </div>
           </div>
-          <div style={{ minWidth: 200, flex: 1, paddingBottom: 4 }}>
-            <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-              <span className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
-                CONFIDENCE
+          <div style={{ minWidth: 180, flex: 1 }}>
+            <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+              <span className="faint" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.06em' }}>
+                CONFIDENCE {fmtPct01(displayConfidence)}
               </span>
-              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                <span
-                  className="num"
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    padding: '2px 8px',
-                    borderRadius: 3,
-                    background: 'var(--ds-inset)',
-                    border: '1px solid var(--ds-border)',
-                  }}
-                  title={probBars ? 'Confidence = max(BULL, NEUT, BEAR)' : 'Confidence'}
-                >
-                  {fmtPct01(displayConfidence)}
-                </span>
-                <span
-                  className={calibrated ? 'badge b-bull' : 'badge b-neut'}
-                  title={
-                    calibrated
-                      ? `Calibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
-                      : `Uncalibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
-                  }
-                >
-                  {calibLabel}
-                </span>
+              <span
+                className={calibrated ? 'badge b-bull' : 'badge b-neut'}
+                style={{ fontSize: 10, padding: '1px 5px' }}
+                title={
+                  calibrated
+                    ? `Calibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
+                    : `Uncalibrated${forecast.calibrator_version ? ` · ${forecast.calibrator_version}` : ''}`
+                }
+              >
+                {calibLabel}
               </span>
             </div>
             <Meter value={displayConfidence} />
-            <div className="faint num" style={{ fontSize: 11.5, marginTop: 6 }}>
+            <div className="faint num" style={{ fontSize: 11, marginTop: 3 }}>
               {abstain
                 ? ABSTAIN_VERDICT
                 : confPct >= 70
@@ -374,103 +327,130 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
           </div>
         </div>
 
-        {/* v2 probability bars — hidden for v1 payloads without probabilities */}
+        {/* outcome probabilities: single stacked horizontal bar */}
         {probBars ? (
-          <div style={{ marginTop: 14, display: 'grid', gap: 8 }} aria-label="Outcome probabilities">
-            <div className="faint" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
-              PROBABILITIES
+          <div style={{ marginTop: 10 }} aria-label="Outcome probabilities">
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontWeight: 600, marginBottom: 3 }}>
+              <span className="v-bull">{bullPct}% Bull</span>
+              <span className="muted">{neutPct}% Neut</span>
+              <span className="v-bear">{bearPct}% Bear</span>
             </div>
-            {probBars.map((b) => (
-              <div
-                key={b.key}
-                style={{ display: 'grid', gridTemplateColumns: '52px 48px 1fr', gap: 10, alignItems: 'center' }}
-              >
-                <div style={{ fontSize: 11.5, fontWeight: 700 }}>{b.label}</div>
-                <div className="num" style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
-                  {b.pct}%
-                </div>
-                <div className="dbar" aria-hidden>
-                  <i
-                    className={b.key === 'bullish' ? 'pos' : b.key === 'bearish' ? 'neg' : undefined}
-                    style={{
-                      left: 0,
-                      width: `${Math.min(100, Math.max(0, b.pct))}%`,
-                      ...(b.key === 'neutral'
-                        ? { background: 'var(--ds-border)' }
-                        : {}),
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
+            <StackedProbabilityBar bullPct={bullPct} neutPct={neutPct} bearPct={bearPct} height={6} />
           </div>
         ) : null}
 
-        {/* targets */}
-        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 16 }}>
-          <div className="stat">
-            <div className="stat-l">Target</div>
-            <div className={`stat-v ${forecast.direction === 'BEARISH' ? 'v-bear' : 'v-bull'}`}>{fmtINR(forecast.target_price)}</div>
-            <div className="stat-s num">{price != null ? `${distPct(forecast.target_price, price)} from spot` : '—'}</div>
-          </div>
-          <div className="stat">
-            <div className="stat-l">Invalidation</div>
-            <div className="stat-v">{fmtINR(forecast.invalidation_price)}</div>
-            <div className="stat-s num">{price != null ? `${distPct(forecast.invalidation_price, price)} from spot` : '—'}</div>
-          </div>
-          <div className="stat">
-            <div className="stat-l">Spot</div>
-            <div className="stat-v">{fmtINR(price)}</div>
-            <div className="stat-s num">{forecast.forecast_horizon ? `horizon ${forecast.forecast_horizon}` : 'horizon 1h'}</div>
-          </div>
+        {/* targets and levels: 1-row telemetry strip */}
+        <div style={{ marginTop: 10 }}>
+          <TelemetryStrip>
+            <TelemetryItem
+              label="Target"
+              value={fmtINR(forecast.target_price)}
+              sub={price != null ? `${distPct(forecast.target_price, price)}` : '—'}
+              tone={forecast.direction === 'BEARISH' ? 'bear' : 'bull'}
+            />
+            <TelemetryItem
+              label="Invalidation"
+              value={fmtINR(forecast.invalidation_price)}
+              sub={price != null ? `${distPct(forecast.invalidation_price, price)}` : '—'}
+            />
+            <TelemetryItem
+              label="Spot"
+              value={fmtINR(price)}
+              sub={forecast.forecast_horizon ? `horizon ${forecast.forecast_horizon}` : 'horizon 1h'}
+            />
+            {forecast.direction === 'NEUTRAL' && expectedRange ? (
+              <>
+                <TelemetryItem
+                  label="Range Low"
+                  value={fmtINR(expectedRange.lower)}
+                  sub={price != null ? `${distPct(expectedRange.lower, price)}` : undefined}
+                />
+                <TelemetryItem
+                  label="Range Mid"
+                  value={fmtINR(expectedRange.mid)}
+                  sub="chop center"
+                />
+                <TelemetryItem
+                  label="Range High"
+                  value={fmtINR(expectedRange.upper)}
+                  sub={price != null ? `${distPct(expectedRange.upper, price)}` : undefined}
+                />
+              </>
+            ) : null}
+          </TelemetryStrip>
         </div>
-        {/* NEUTRAL expected range — only when the backend supplies it; v1 renders targets as before */}
-        {forecast.direction === 'NEUTRAL' && expectedRange ? (
-          <div
-            className="stat-grid"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', marginTop: 10 }}
-            aria-label="Expected range"
-          >
-            <div className="stat">
-              <div className="stat-l">Range low</div>
-              <div className="stat-v">{fmtINR(expectedRange.lower)}</div>
-              <div className="stat-s num">{price != null ? `${distPct(expectedRange.lower, price)} from spot` : '—'}</div>
+
+        {/* Collapsible model audit & limitations drawer */}
+        {showModelLine || limitations.length > 0 || forecast.settleable === false ? (
+          <details className="forecast-meta-drawer">
+            <summary>
+              Model Specifications &amp; Audit ({forecast.model_version ?? 'v1'}{forecast.regime ? ` · ${forecast.regime}` : ''}{limitations.length ? ` · ${limitations.length} notes` : ''})
+            </summary>
+            <div className="forecast-meta-content">
+              {showModelLine ? (
+                <div className="faint mono" style={{ fontSize: 11 }}>
+                  model {forecast.model_version ?? '—'} · calibrator {forecast.calibrator_version ?? 'none-v0'}
+                  {forecast.regime ? ` · regime ${forecast.regime}` : ''}
+                  {forecast.session ? ` · session ${forecast.session}` : ''}
+                  {shortForecastId(forecast.snapshot_id) ? ` · snap ${shortForecastId(forecast.snapshot_id)}` : ''}
+                </div>
+              ) : null}
+              {forecast.settleable === false ? (
+                <div
+                  role="note"
+                  className="muted"
+                  style={{
+                    marginTop: 6,
+                    padding: '4px 8px',
+                    borderRadius: 3,
+                    border: '1px solid #f59e0b',
+                    background: '#fef3c7',
+                    color: '#92580a',
+                    fontSize: 11.5,
+                  }}
+                  title={settleReason ?? undefined}
+                >
+                  {UNSETTLEABLE_NOTE}{settleReason ? ` — ${settleReason}` : ''}
+                </div>
+              ) : null}
+              {limitations.length > 0 ? (
+                <div style={{ marginTop: 6 }}>
+                  <div className="faint" style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.06em' }}>
+                    LIMITATIONS
+                  </div>
+                  <ul className="muted" style={{ margin: '3px 0 0', paddingLeft: 16, fontSize: 11, display: 'grid', gap: 2 }}>
+                    {limitations.map((l, i) => (
+                      <li key={i}>{l}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
-            <div className="stat">
-              <div className="stat-l">Range mid</div>
-              <div className="stat-v">{fmtINR(expectedRange.mid)}</div>
-              <div className="stat-s num">expected chop center</div>
-            </div>
-            <div className="stat">
-              <div className="stat-l">Range high</div>
-              <div className="stat-v">{fmtINR(expectedRange.upper)}</div>
-              <div className="stat-s num">{price != null ? `${distPct(expectedRange.upper, price)} from spot` : '—'}</div>
-            </div>
-          </div>
+          </details>
         ) : null}
 
-        <hr className="divider" />
+        <hr className="divider" style={{ margin: '8px 0' }} />
 
         {/* layers */}
-        <div style={{ display: 'grid', gap: 10 }}>
+        <div style={{ display: 'grid', gap: 6 }}>
           {LAYER_ROWS.map((row) => {
             const raw = forecast.layer_scores?.[row.key];
             const hint = row.key === 'ml' ? mlHint(forecast.timeframe || timeframe) : row.hint;
             const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
             const vtone = v === null ? null : toneFor(v);
             return (
-              <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '170px 56px 1fr', gap: 10, alignItems: 'center' }}>
+              <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '160px 52px 1fr', gap: 8, alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>{row.label}</div>
-                  <div className="faint" style={{ fontSize: 11 }}>{hint}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{row.label}</div>
+                  <div className="faint" style={{ fontSize: 10.5 }}>{hint}</div>
                 </div>
                 <div
                   className={`num ${vtone === 'bull' ? 'v-bull' : vtone === 'bear' ? 'v-bear' : ''}`}
                   style={{
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: 12,
-                    padding: '2px 0',
+                    fontSize: 11.5,
+                    padding: '1px 0',
                     borderRadius: 3,
                     background: v === null ? 'transparent' : vtone === 'bull' ? 'var(--ds-bull-wash)' : vtone === 'bear' ? 'var(--ds-bear-wash)' : 'var(--ds-neut-wash)',
                   }}
@@ -490,16 +470,16 @@ export default function ForecastCard({ forecast, loading, error, onRetry, update
           })}
         </div>
 
-        <hr className="divider" />
+        <hr className="divider" style={{ margin: '8px 0' }} />
 
         {/* explainability */}
         <details
           style={{
-            marginTop: 16,
+            marginTop: 8,
             border: '1px solid var(--ds-border)',
-            borderRadius: 12,
+            borderRadius: 6,
             background: 'var(--ds-inset)',
-            padding: '10px 14px',
+            padding: '7px 12px',
           }}
         >
           <summary style={{ cursor: 'pointer', fontSize: 13.5, fontWeight: 750 }}>

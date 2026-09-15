@@ -46,19 +46,21 @@ class BreakoutStrategy(Strategy):
                 pass
 
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
-        vol_ratio = float(ind.get("volume_ratio", 1.2))
-        breakout_pressure = float(ind.get("breakout_pressure", ind.get("scores", {}).get("breakout_pressure", 65)))
+        vol_ratio = float(ind.get("volume_ratio") or ind.get("volume", {}).get("relative_volume") or 1.2)
+        breakout_pressure = float(ind.get("breakout_pressure") or ind.get("scores", {}).get("breakout_pressure") or 65.0)
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
         # ── BULLISH BREAKOUT (LONG_CALL) ──
         if resistances:
             key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
-            if (spot >= key_res or breakout_pressure >= 72) and mtf_bias != "BEARISH":
-                # Close-price confirmation: require previous candle close above resistance
-                if len(ctx.candles) >= 2:
-                    prev_close = Decimal(str(ctx.candles[-2].get("close", spot)))
-                    if prev_close < key_res:
-                        return None  # Wick trap — previous candle didn't confirm breakout
+            if (spot >= key_res or breakout_pressure >= 68) and mtf_bias != "BEARISH":
+                # Wick trap check: only reject if prior candle spiked above resistance, closed below, and spot is retreating
+                if len(ctx.candles) >= 2 and spot < key_res:
+                    prev_c = ctx.candles[-2]
+                    prev_high = Decimal(str(prev_c.get("high", spot)))
+                    prev_close = Decimal(str(prev_c.get("close", spot)))
+                    if prev_high >= key_res and prev_close < key_res * Decimal("0.998") and spot < prev_close:
+                        return None  # Wick trap — rejected from resistance and falling
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 if spot < key_res:
                     # Pre-breakout setup: trigger above resistance
@@ -129,12 +131,14 @@ class BreakoutStrategy(Strategy):
         # ── BEARISH BREAKDOWN (LONG_PUT) ──
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if (spot <= key_sup or breakout_pressure >= 72) and mtf_bias != "BULLISH":
-                # Close-price confirmation: require previous candle close below support
-                if len(ctx.candles) >= 2:
-                    prev_close = Decimal(str(ctx.candles[-2].get("close", spot)))
-                    if prev_close > key_sup:
-                        return None  # Wick trap — previous candle didn't confirm breakdown
+            if (spot <= key_sup or breakout_pressure >= 68) and mtf_bias != "BULLISH":
+                # Wick trap check: only reject if prior candle spiked below support, closed above, and spot is bouncing
+                if len(ctx.candles) >= 2 and spot > key_sup:
+                    prev_c = ctx.candles[-2]
+                    prev_low = Decimal(str(prev_c.get("low", spot)))
+                    prev_close = Decimal(str(prev_c.get("close", spot)))
+                    if prev_low <= key_sup and prev_close > key_sup * Decimal("1.002") and spot > prev_close:
+                        return None  # Wick trap — rejected from support and bouncing
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 if spot > key_sup:
                     # Pre-breakdown setup: trigger below support

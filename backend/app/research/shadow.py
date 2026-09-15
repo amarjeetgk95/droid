@@ -107,6 +107,22 @@ def _model_kwarg_for(forecast_fn: Any) -> Optional[str]:
     return None
 
 
+def _accepts_kwarg(forecast_fn: Any, name: str) -> bool:
+    """True when the forecaster accepts ``name`` (explicitly or via **kwargs).
+
+    Pure introspection — never calls the forecaster. Keeps ``_call_forecast``
+    compatible with rigid test doubles that only accept (instrument, horizon,
+    record).
+    """
+    try:
+        params = inspect.signature(forecast_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    if name in params:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 async def _call_forecast(
     forecaster: Any,
     *,
@@ -121,17 +137,20 @@ async def _call_forecast(
     correct distinct ``indicator_id``) is handled by ``run_shadow_pair``.
     """
     kwarg = _model_kwarg_for(getattr(forecaster, "forecast"))
+    extra: Dict[str, Any] = {}
+    if kwarg:
+        extra[kwarg] = model
+    if _accepts_kwarg(getattr(forecaster, "forecast"), "include_layers"):
+        # P1-6: heavy layers are opt-in for public responses, but the shadow
+        # snapshot persists the raw options context, so request them here.
+        extra["include_layers"] = True
     with _shadow_model_scope(model):
         try:
-            if kwarg:
-                return await forecaster.forecast(
-                    instrument=instrument,
-                    horizon=horizon,
-                    record=False,
-                    **{kwarg: model},
-                )
             return await forecaster.forecast(
-                instrument=instrument, horizon=horizon, record=False
+                instrument=instrument,
+                horizon=horizon,
+                record=False,
+                **extra,
             )
         except TypeError:
             # Rigid mock signature (positional-only lambda etc.): retry

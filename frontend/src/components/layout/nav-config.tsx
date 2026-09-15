@@ -64,6 +64,17 @@ export const NAV_GROUPS: NavGroup[] = [
 
 export const STANDALONE_ITEMS: NavItem[] = [
   {
+    id: 'war-room',
+    href: '/war-room',
+    label: 'War Room',
+    icon: Zap,
+    description: 'Fast single-screen trading desk',
+    shortcut: '⌘0',
+    badge: 'FAST',
+    badgeVariant: 'success',
+    keywords: ['war room', 'fast', 'glance', 'verdict', 'trend', 'signals'],
+  },
+  {
     id: 'forecast',
     href: '/',
     label: 'Tactical Bias',

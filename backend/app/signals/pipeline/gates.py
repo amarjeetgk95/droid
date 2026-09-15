@@ -1,4 +1,4 @@
-﻿"""
+"""
 Confirmation Gates & Gate Chain for Signal Processing (Phase 3)
 Provides modular, independently testable confirmation gates:
   - KillSwitchGate
@@ -146,11 +146,11 @@ class RSIGate:
             strat = candidate.strategy.upper()
 
             if strat == "MEAN_REVERSION":
-                rsi_ok = (is_call and rsi_val <= 38.0) or (not is_call and rsi_val >= 62.0)
+                rsi_ok = (is_call and rsi_val <= 40.0) or (not is_call and rsi_val >= 60.0)
             elif strat in ("BREAKOUT", "MICRO_MOMENTUM", "GAMMA_SQUEEZE", "GAMMA_SPIKE"):
-                rsi_ok = (is_call and 52.0 <= rsi_val <= 82.0) or (not is_call and 18.0 <= rsi_val <= 48.0)
+                rsi_ok = (is_call and 48.0 <= rsi_val <= 85.0) or (not is_call and 15.0 <= rsi_val <= 52.0)
             elif strat in ("TREND_PULLBACK", "EMA_RIBBON", "ORB", "VWAP_SCALP"):
-                rsi_ok = (is_call and 40.0 <= rsi_val <= 70.0) or (not is_call and 30.0 <= rsi_val <= 60.0)
+                rsi_ok = (is_call and 38.0 <= rsi_val <= 75.0) or (not is_call and 25.0 <= rsi_val <= 62.0)
             else:
                 rsi_ok = (is_call and 35.0 <= rsi_val <= 80.0) or (not is_call and 20.0 <= rsi_val <= 65.0)
 

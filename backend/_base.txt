@@ -1,0 +1,25 @@
+﻿    def test_generate_signal_with_paper_execution(self, client):
+        payload = {
+            "instrument_id": "NIFTY",
+            "candle_timeframe": "5M",
+            "direction": "BULLISH",
+            "status": "CONFIRMED",
+            "trigger_level": 24940.0,
+            "current_price": 24915.0,
+            "confidence": 88.0,
+            "execute_paper": True,
+            "notify_telegram": False,
+            "allow_closed_market": True,
+        }
+        res = client.post("/api/v1/signals/generate", json=payload)
+>       assert res.status_code == 200
+E       assert 400 == 200
+E        +  where 400 = <Response [400 Bad Request]>.status_code
+
+tests\test_signals_paper_api.py:69: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_signal_centre_overhaul.py::TestInstitutionalSignalCentre::test_generate_and_execute_paper_signal
+FAILED tests/test_signal_fixes_and_features.py::test_signal_delete - KeyError...
+FAILED tests/test_signals_automated_audit.py::test_signals_audit_api_endpoints
+FAILED tests/test_signals_paper_api.py::TestSignalsPaperIntegration::test_generate_signal_with_paper_execution
+4 failed, 101 passed, 1141 deselected in 7.26s

@@ -65,3 +65,29 @@ def test_extract_swing_features():
     assert features.range_contraction_ratio < 0.85
     assert features.atr_14 > 0
     assert features.recent_swing_high > 0
+
+
+def test_iv_percentile_and_regimes():
+    from app.swing.technical import compute_iv_percentile, classify_iv_regime, compute_iv_edge
+
+    history = [12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 22.0]
+    # Current IV 13.5 is above 12.0 and 13.0 -> 2 out of 10 = 20%
+    pct = compute_iv_percentile(13.5, history)
+    assert pct == 20.0
+    assert classify_iv_regime(pct) == "LOW"
+
+    # Current IV 17.5 is above 6 out of 10 = 60%
+    pct_normal = compute_iv_percentile(17.5, history)
+    assert pct_normal == 60.0
+    assert classify_iv_regime(pct_normal) == "NORMAL"
+
+    # Elevated
+    assert classify_iv_regime(75.0) == "ELEVATED"
+    # Extreme
+    assert classify_iv_regime(92.0) == "EXTREME"
+
+    # IV Edge
+    edge = compute_iv_edge(expected_move=500.0, implied_move=350.0)
+    assert edge == 1.43
+    assert edge > 1.0
+

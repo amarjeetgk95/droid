@@ -101,6 +101,19 @@ class AuditTradeRecord(BaseModel):
     live_duration_seconds: Optional[int] = None
     live_duration_str: Optional[str] = None
 
+    # Mark provenance (single mark authority). Says WHICH price produced
+    # current_price, so a broker print is never confused with a model output:
+    #   CHAIN_BIDASK / CHAIN_LTP  real broker print
+    #   MODEL_BLACK76             labeled theoretical value
+    #   INDEX_SPOT                non-option instrument
+    #   UNAVAILABLE               fail-closed: MTM deliberately not updated
+    mark_source: Optional[str] = None
+    mark_age_ms: Optional[int] = None
+    mark_note: Optional[str] = None
+    #: True when the last MTM attempt had no usable price. Stale beats wrong:
+    #: the previous mark is retained and this flags the gap to the UI.
+    economics_unavailable: bool = False
+
     # Status
     status: str = "ARMED"
     outcome_label: Optional[str] = None
@@ -538,6 +551,10 @@ class SignalAuditLedger:
 
         updated: list[AuditTradeRecord] = []
 
+        # Single mark authority: entry, MTM, trigger and exit all price off the
+        # same object so a chain entry fill is never MTM'd by a spot-derived model.
+        from app.signals.option_marks import option_mark_service
+
         for rec in self._trades.values():
             try:
                 rec_u = validate_underlying(rec.underlying)
@@ -577,55 +594,76 @@ class SignalAuditLedger:
                         entry_price = rec.actual_fill_price or rec.trigger_price
                         qty = rec.quantity or (rec.lots * rec.lot_size)
 
+                        _mtm_ok = True
                         if is_option:
-                            # Domain guard: a spot-scale "fill" is corruption, not
-                            # data — estimate instead of persisting the lie.
-                            if entry_price is None or entry_price > 5000.0:
-                                try:
-                                    from app.signals.fill_reconciler import option_fill_reconciler
-                                    est_entry = option_fill_reconciler.estimate_option_premium(
-                                        spot=rec.trigger_price or rec.spot_price_at_creation,
-                                        strike=rec.option_strike or rec.trigger_price,
-                                        option_type=rec.option_type or ("CE" if is_bullish else "PE"),
-                                    )
-                                    entry_price = est_entry if est_entry and est_entry > 0 else 250.0
-                                except Exception:
-                                    entry_price = 250.0
+                            # ── ONE MARK AUTHORITY ──
+                            # Entry fill, MTM, trigger evaluation and exit must all
+                            # price off the same object. Chain mark first (a real
+                            # broker print), else a *labeled* Black-76 model mark,
+                            # else fail closed. The old code recomputed a premium
+                            # from spot here while the entry came from a chain
+                            # quote — two bases, one record, drifting P&L.
+                            mark = option_mark_service.mark_for_record(rec, spot=curr_p)
 
-                            try:
-                                from app.signals.fill_reconciler import option_fill_reconciler
-                                opt_type = rec.option_type or ("CE" if is_bullish else "PE")
-                                strike = rec.option_strike or curr_p
-                                curr_opt_price = option_fill_reconciler.estimate_option_premium(
-                                    spot=curr_p,
-                                    strike=strike,
-                                    option_type=opt_type,
+                            if not mark.is_usable:
+                                # Fail closed: no price, no P&L. Retaining the
+                                # previous mark (stale) beats inventing one.
+                                _mtm_ok = False
+                                rec.mark_source = mark.source
+                                rec.mark_age_ms = None
+                                rec.mark_note = mark.note
+                                rec.economics_unavailable = True
+                                logger.warning(
+                                    "economics_unavailable_mtm_skipped",
+                                    signal_id=rec.signal_id,
+                                    option_symbol=rec.option_symbol,
+                                    note=str(mark.note or ""),
                                 )
-                            except Exception:
-                                curr_opt_price = entry_price
+                            else:
+                                # A spot-scale "fill" is corruption, not data. It
+                                # is repaired from the SAME authority that prices
+                                # the MTM, so both agree by construction.
+                                if entry_price is None or entry_price > 5000.0:
+                                    entry_price = mark.price
+                                    rec.actual_fill_price = entry_price
+                                    logger.warning(
+                                        "fill_price_repaired_from_mark",
+                                        signal_id=rec.signal_id,
+                                        mark_source=mark.source,
+                                        repaired=entry_price,
+                                    )
 
-                            # Display the premium, never the spot index price.
-                            rec.current_price = round(float(curr_opt_price), 2)
-                            pts_diff = (curr_opt_price - entry_price) if side == "BUY" else (entry_price - curr_opt_price)
-                            if side == "BUY" and pts_diff < -entry_price:
-                                pts_diff = -entry_price
+                                # Display the premium, never the spot index price.
+                                rec.current_price = round(float(mark.price), 2)
+                                rec.mark_source = mark.source
+                                rec.mark_age_ms = mark.age_ms()
+                                rec.mark_note = mark.note
+                                rec.economics_unavailable = False
+                                pts_diff = (mark.price - entry_price) if side == "BUY" else (entry_price - mark.price)
+                                if side == "BUY" and pts_diff < -entry_price:
+                                    pts_diff = -entry_price
                         else:
                             rec.current_price = curr_p
+                            rec.mark_source = "INDEX_SPOT"
+                            rec.mark_age_ms = None
+                            rec.mark_note = None
+                            rec.economics_unavailable = False
                             pts_diff = (curr_p - entry_price) if is_bullish else (entry_price - curr_p)
 
-                        unrealized_inr = round(pts_diff * qty, 2)
-                        margin = rec.margin_used or (entry_price * qty)
-                        if is_option and side == "BUY" and unrealized_inr < -margin:
-                            unrealized_inr = -margin
-                        unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
-                        if is_option and side == "BUY":
-                            unrealized_pct = max(-100.0, unrealized_pct)
+                        if _mtm_ok:
+                            unrealized_inr = round(pts_diff * qty, 2)
+                            margin = rec.margin_used or (entry_price * qty)
+                            if is_option and side == "BUY" and unrealized_inr < -margin:
+                                unrealized_inr = -margin
+                            unrealized_pct = round((unrealized_inr / margin * 100.0), 2) if margin > 0 else 0.0
+                            if is_option and side == "BUY":
+                                unrealized_pct = max(-100.0, unrealized_pct)
 
-                        rec.unrealized_pnl_points = round(pts_diff, 2)
-                        rec.unrealized_pnl_inr = unrealized_inr
-                        rec.unrealized_pnl_pct = unrealized_pct
-                        rec.total_pnl_inr = unrealized_inr
-                        rec.is_winner = unrealized_inr > 0
+                            rec.unrealized_pnl_points = round(pts_diff, 2)
+                            rec.unrealized_pnl_inr = unrealized_inr
+                            rec.unrealized_pnl_pct = unrealized_pct
+                            rec.total_pnl_inr = unrealized_inr
+                            rec.is_winner = unrealized_inr > 0
 
                 dur_s, dur_str = rec.compute_live_duration(now_ms)
                 rec.live_duration_seconds = dur_s

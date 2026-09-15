@@ -21,6 +21,11 @@ MTF_TTL_S = 30.0
 OPTIONS_TTL_S = 60.0
 ML_TTL_S = 15.0
 MAX_KEYS = 200
+# Short TTL for a *negative* MTF result (every timeframe empty). Deliberately far
+# below MTF_TTL_S: it exists only to coalesce concurrent requests hitting a dead
+# broker (so they don't queue up behind each other re-running the full fan-out),
+# while staying short enough that a re-auth + Retry recovers almost immediately.
+NEGATIVE_TTL_S = 3.0
 
 
 def cache_enabled() -> bool:
@@ -74,15 +79,24 @@ class TTLCache:
         self.hits += 1
         return value
 
-    def set(self, key: Any, value: Any) -> None:
+    def set(self, key: Any, value: Any, ttl_seconds: Optional[float] = None) -> None:
+        """Store ``value``; ``ttl_seconds`` overrides the cache TTL for this entry.
+
+        The override exists for short negative entries (see ``NEGATIVE_TTL_S``)
+        that must not inherit the full read TTL.
+        """
         try:
             now = float(self._now())
         except Exception:
             now = 0.0
         try:
+            ttl = float(self.ttl_seconds) if ttl_seconds is None else float(ttl_seconds)
+        except (TypeError, ValueError):
+            ttl = float(self.ttl_seconds)
+        try:
             if key in self._store:
                 self._store.pop(key, None)
-            self._store[key] = (value, now + float(self.ttl_seconds))
+            self._store[key] = (value, now + ttl)
             while len(self._store) > self.max_keys:
                 self._store.popitem(last=False)
         except Exception:
@@ -203,6 +217,7 @@ __all__ = [
     "OPTIONS_TTL_S",
     "ML_TTL_S",
     "MAX_KEYS",
+    "NEGATIVE_TTL_S",
     "TTLCache",
     "cache_enabled",
     "make_mtf_key",

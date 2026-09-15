@@ -125,18 +125,81 @@ export function Stat({
   value,
   sub,
   tone,
+  compact = false,
 }: {
   label: string;
   value: ReactNode;
   sub?: ReactNode;
   tone?: 'bull' | 'bear' | 'neut';
+  compact?: boolean;
 }) {
   const cls = tone === 'bull' ? 'v-bull' : tone === 'bear' ? 'v-bear' : undefined;
   return (
-    <div className="stat">
+    <div className={`stat ${compact ? 'stat-compact' : ''}`}>
       <div className="stat-l">{label}</div>
       <div className={`stat-v ${cls ?? ''}`}>{value}</div>
       {sub ? <div className="stat-s num">{sub}</div> : null}
+    </div>
+  );
+}
+
+export function TelemetryStrip({
+  children,
+  className = '',
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <div className={`telemetry-strip ${className}`} style={style}>
+      {children}
+    </div>
+  );
+}
+
+export function TelemetryItem({
+  label,
+  value,
+  sub,
+  tone,
+  inline = false,
+  title,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: 'bull' | 'bear' | 'neut';
+  inline?: boolean;
+  title?: string;
+}) {
+  const cls = tone === 'bull' ? 'v-bull' : tone === 'bear' ? 'v-bear' : undefined;
+  return (
+    <div className={`telemetry-item ${inline ? 'inline' : ''}`} title={title}>
+      <span className="t-label">{label}</span>
+      <span className={`t-val ${cls ?? ''}`}>{value}</span>
+      {sub ? <span className="t-sub">{sub}</span> : null}
+    </div>
+  );
+}
+
+export function StackedProbabilityBar({
+  bullPct,
+  neutPct,
+  bearPct,
+  height = 8,
+}: {
+  bullPct: number;
+  neutPct: number;
+  bearPct: number;
+  height?: number;
+}) {
+  return (
+    <div className="prob-bar-stacked" style={{ height }} role="progressbar" aria-label="Outcome probabilities">
+      <div className="seg-bull" style={{ width: `${Math.max(0, Math.min(100, bullPct))}%` }} title={`Bullish ${bullPct}%`} />
+      <div className="seg-neut" style={{ width: `${Math.max(0, Math.min(100, neutPct))}%` }} title={`Neutral ${neutPct}%`} />
+      <div className="seg-bear" style={{ width: `${Math.max(0, Math.min(100, bearPct))}%` }} title={`Bearish ${bearPct}%`} />
     </div>
   );
 }
