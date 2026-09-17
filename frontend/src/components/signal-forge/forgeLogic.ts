@@ -30,11 +30,7 @@ export function finiteNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof Error && err.message) return err.message;
-  if (typeof err === 'string' && err) return err;
-  return fallback;
-}
+export { errorMessage } from '@/lib/errors';
 
 /** Normalize the engines endpoint payload (`{id,label}` objects or strings). */
 export function normalizeStrategyOptions(raw: unknown): SignalEngineStrategy[] {

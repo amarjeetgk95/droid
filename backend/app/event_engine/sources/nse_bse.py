@@ -3,14 +3,12 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone, date
 from typing import Any, Optional
-from zoneinfo import ZoneInfo
 import structlog
 
 from app.event_engine.models import RawSourceEvent
 from app.event_engine.sources.base import EventSourceAdapter
 
 logger = structlog.get_logger()
-IST = ZoneInfo("Asia/Kolkata")
 
 # Verified Sample Institutional Corporate Announcements Calendar
 KNOWN_CORPORATE_ANNOUNCEMENTS = [

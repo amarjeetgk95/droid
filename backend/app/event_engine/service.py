@@ -17,9 +17,10 @@ from app.event_engine.models import (
     LifecycleTransition,
     TemporalPhase,
 )
-from app.event_engine.sources.rbi import RBISourceAdapter, IST
+from app.event_engine.sources.rbi import RBISourceAdapter
 from app.event_engine.sources.nse_bse import NSECorporateSourceAdapter, BSECorporateSourceAdapter
 from app.event_engine.sources.sebi import SEBISourceAdapter
+from app.signals.safety.clocks import IST
 from app.event_engine.dedup_service import dedup_service
 from app.event_engine.impact_mapper import impact_mapping_service
 from app.event_engine.scoring_service import scoring_service

@@ -10,6 +10,7 @@ import React, {
   useState,
 } from 'react';
 import { api } from '@/lib/api';
+import { errorMessage as canonicalErrorMessage } from '@/lib/errors';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
 import { usePolling } from '@/hooks/usePolling';
 import { isUsableRegimeOverview } from '@/components/markets/truthful';
@@ -47,8 +48,9 @@ export function asStringArray(value: unknown): string[] {
   );
 }
 
+/** Intel-hub wrapper over the canonical helper; fallback text unchanged. */
 export function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Request failed';
+  return canonicalErrorMessage(err, 'Request failed');
 }
 
 /* ────────────────────────── parsed MI-full shapes ─────────────────────── */

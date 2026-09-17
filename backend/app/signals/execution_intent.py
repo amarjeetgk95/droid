@@ -17,6 +17,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from app.core.atomic_json import atomic_write_json, read_json
+
 logger = structlog.get_logger()
 
 _INTENT_LEDGER_FILE = Path(__file__).resolve().parents[3] / "intent_ledger.json"
@@ -170,26 +172,26 @@ class ExecutionIntentLedger:
         self._restore()
 
     def _restore(self) -> None:
-        try:
-            if _INTENT_LEDGER_FILE.exists():
-                data = json.loads(_INTENT_LEDGER_FILE.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        try:
-                            self._intents[k] = ExecutionIntent(**v)
-                        except Exception:
-                            continue
-        except Exception:
-            pass
+        data = read_json(_INTENT_LEDGER_FILE)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                try:
+                    self._intents[k] = ExecutionIntent(**v)
+                except Exception:
+                    continue
 
     def _persist(self) -> None:
         try:
             payload = {k: v.model_dump(mode="json") for k, v in self._intents.items()}
-            tmp = _INTENT_LEDGER_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-            tmp.replace(_INTENT_LEDGER_FILE)
-        except Exception:
-            pass
+            atomic_write_json(
+                _INTENT_LEDGER_FILE,
+                payload,
+                indent=2,
+                log_event="execution_intent_persist_failed",
+                log_level="debug",
+            )
+        except Exception as e:
+            logger.debug("execution_intent_persist_failed", error=str(e)[:200])
         # DB UNIQUE best-effort.
         try:
             from app.core.database import get_async_session_factory

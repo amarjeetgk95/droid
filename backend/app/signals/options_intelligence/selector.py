@@ -9,7 +9,7 @@ fail-closed None when nothing is acceptable, OI/spread pre-filter and a
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
@@ -22,8 +22,7 @@ from app.signals.options_intelligence.path_simulator import (
     IndianOptionCosts,
     VIABILITY_MIN_NET_RR,
 )
-
-IST = timezone(timedelta(hours=5, minutes=30))
+from app.signals.safety.clocks import IST
 
 # 0DTE veto thresholds: near-expiry gamma/charm explodes — a scalp that holds
 # through the last hour is gambling on pin noise.

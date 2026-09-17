@@ -3,6 +3,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { fmtNum } from '@/components/ui/desk';
 import { Card } from '../shared/Card';
 import { UNAVAILABLE, finiteNumber, signedINR, signedNumber, valueToneClass } from './riskUtils';
@@ -18,10 +19,6 @@ type GreeksSummary = {
   gross_vega?: unknown;
   total_open_positions?: unknown;
 };
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 function gross(label: string, v: unknown, digits: number): string {
   const n = finiteNumber(v);
@@ -51,7 +48,7 @@ export const PortfolioGreeksDisplay: React.FC = () => {
       setUpdatedAt(Date.now());
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
-      setError(messageOf(err, 'Portfolio greeks unavailable'));
+      setError(errorMessage(err, 'Portfolio greeks unavailable'));
     } finally {
       if (seq === requestSeqRef.current) setLoading(false);
     }

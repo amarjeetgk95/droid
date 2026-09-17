@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { EmptyNote, fmtINR } from '@/components/ui/desk';
+import { linearScale, pathFromPoints, plotBox } from '@/lib/chartGeometry';
 import { chartTokens } from '@/lib/chartTheme';
 import { computePayoffStats, splitPayoffBySign, type PayoffPoint } from './contracts';
 
@@ -18,8 +19,7 @@ export interface PayoffCurveChartProps {
 const W = 640;
 const H = 220;
 const PAD = { top: 16, right: 14, bottom: 30, left: 64 };
-const PLOT_W = W - PAD.left - PAD.right;
-const PLOT_H = H - PAD.top - PAD.bottom;
+const PLOT = plotBox(W, H, PAD);
 
 function compactINR(value: number): string {
   if (!Number.isFinite(value)) return '—';
@@ -64,15 +64,12 @@ export const PayoffCurveChart: React.FC<PayoffCurveChartProps> = ({
   }
 
   const yAbs = Math.max(Math.abs(stats.maxProfit), Math.abs(stats.maxLoss), 1);
-  const x = (spot: number) =>
-    PAD.left + ((spot - stats.spotMin) / (stats.spotMax - stats.spotMin || 1)) * PLOT_W;
-  const y = (pnl: number) => PAD.top + (1 - (pnl + yAbs) / (2 * yAbs)) * PLOT_H;
+  const x = linearScale([stats.spotMin, stats.spotMax], [PAD.left, PLOT.rightEdge]);
+  const y = (pnl: number) => PAD.top + (1 - (pnl + yAbs) / (2 * yAbs)) * PLOT.plotHeight;
 
   const segments = splitPayoffBySign(points);
   const pathFor = (segment: PayoffPoint[]) =>
-    segment
-      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(p.spot).toFixed(1)} ${y(p.pnl).toFixed(1)}`)
-      .join(' ');
+    pathFromPoints(segment.map((p) => ({ x: x(p.spot), y: y(p.pnl) })));
 
   const spotInRange = spotPrice !== null && spotPrice >= stats.spotMin && spotPrice <= stats.spotMax;
   const yTicks = Array.from(new Set([stats.maxProfit, 0, stats.maxLoss]));
@@ -138,7 +135,7 @@ export const PayoffCurveChart: React.FC<PayoffCurveChartProps> = ({
             <g key={`y-${tick}`}>
               <line
                 x1={PAD.left}
-                x2={W - PAD.right}
+                x2={PLOT.rightEdge}
                 y1={y(tick)}
                 y2={y(tick)}
                 stroke={tick === 0 ? tokens.axis : tokens.grid}
@@ -178,7 +175,7 @@ export const PayoffCurveChart: React.FC<PayoffCurveChartProps> = ({
                   x1={x(b)}
                   x2={x(b)}
                   y1={PAD.top}
-                  y2={H - PAD.bottom}
+                  y2={PLOT.baseY}
                   stroke={tokens.warn}
                   strokeDasharray="3 3"
                   strokeWidth={1}
@@ -196,7 +193,7 @@ export const PayoffCurveChart: React.FC<PayoffCurveChartProps> = ({
                 x1={x(spotPrice as number)}
                 x2={x(spotPrice as number)}
                 y1={PAD.top}
-                y2={H - PAD.bottom}
+                y2={PLOT.baseY}
                 stroke={tokens.accent}
                 strokeWidth={1}
                 strokeDasharray="2 2"
@@ -204,7 +201,7 @@ export const PayoffCurveChart: React.FC<PayoffCurveChartProps> = ({
               />
               <text
                 x={x(spotPrice as number)}
-                y={H - PAD.bottom + 12}
+                y={PLOT.baseY + 12}
                 textAnchor="middle"
                 fontSize={9}
                 fill={tokens.text}

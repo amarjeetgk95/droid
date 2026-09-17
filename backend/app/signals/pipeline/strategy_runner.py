@@ -10,7 +10,6 @@ Executes registered strategies against StrategyContext and enforces:
 from __future__ import annotations
 
 from typing import Any
-from zoneinfo import ZoneInfo
 import structlog
 
 from app.services.calendar_service import calendar_service
@@ -19,12 +18,11 @@ from app.signals.orthogonal_confluence import orthogonal_confluence_engine
 from app.signals.participation.oi_volume_engine import participation_engine
 from app.signals.risk.friction_gate import friction_gate
 from app.signals.scalp_confirmation import scalp_confirmation_engine
+from app.signals.safety.clocks import IST as IST_TZ
 from app.signals.strategies import SCALP_STRATEGIES
 from app.signals.strategies.base import SignalCandidate, Strategy, StrategyContext
 
 logger = structlog.get_logger()
-
-IST_TZ = ZoneInfo("Asia/Kolkata")
 
 # Strategies exempt from the opening pre-market gap filter (valuable on gap days).
 # Single source of truth — scanner.py imports this symbol, do not duplicate it there.

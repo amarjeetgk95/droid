@@ -2,8 +2,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import type { AlgoOrder } from '@/lib/api/algo';
 import type { BadgeVariant } from '../shared/Badge';
 import { ageLabel } from '@/lib/feedState';
@@ -25,10 +26,6 @@ const statusVariants: Record<string, BadgeVariant> = {
   REJECTED: 'danger',
 };
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown order error';
-}
-
 const priceLabel = (order: AlgoOrder): string => {
   const price = typeof order.price === 'number' && Number.isFinite(order.price) ? order.price : null;
   return price === null ? '—' : `₹${price.toLocaleString('en-IN')}`;
@@ -44,7 +41,10 @@ export const OrderBook: React.FC = () => {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown order error',
+    busyMessage: 'A cancellation is already in progress. Wait for it to finish.',
+  });
   const previousStatusesRef = useRef<Map<string, string>>(new Map());
 
   const refresh = useCallback(async () => {
@@ -58,7 +58,7 @@ export const OrderBook: React.FC = () => {
       setLastUpdated(Date.now());
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err));
+      setLoadError(errorMessage(err, 'Unknown order error'));
     }
   }, []);
 
@@ -87,30 +87,23 @@ export const OrderBook: React.FC = () => {
     setActionNotice(null);
     setCancellingId(target.client_order_id);
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const res = await api.cancelAlgoOrder(target.client_order_id);
-        const data = res?.data as { cancelled?: boolean } | undefined;
-        if (data?.cancelled !== true) {
-          throw new Error(
-            `Broker did not confirm cancellation of ${target.client_order_id} (cancelled: ${String(
-              data?.cancelled,
-            )}). The order may still be live.`,
-          );
-        }
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+    const outcome = await action.run(async () => {
+      const res = await api.cancelAlgoOrder(target.client_order_id);
+      const data = res?.data as { cancelled?: boolean } | undefined;
+      if (data?.cancelled !== true) {
+        throw new Error(
+          `Broker did not confirm cancellation of ${target.client_order_id} (cancelled: ${String(
+            data?.cancelled,
+          )}). The order may still be live.`,
+        );
       }
+      return true;
     });
 
     setCancellingId(null);
-    if (outcome === null) {
-      const message = failure ?? 'A cancellation is already in progress. Wait for it to finish.';
-      setActionError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setActionError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     await refresh();
@@ -215,7 +208,7 @@ export const OrderBook: React.FC = () => {
                             setActionNotice(null);
                             setCancelTarget(ord);
                           }}
-                          disabled={guard.isPending || cancellingId === ord.client_order_id}
+                          disabled={action.isPending || cancellingId === ord.client_order_id}
                           className="px-2 py-0.5 rounded bg-down-wash hover:opacity-80 border border-down-line text-down-strong text-[10px] font-semibold disabled:opacity-50"
                         >
                           {cancellingId === ord.client_order_id ? 'Cancelling…' : 'Cancel'}

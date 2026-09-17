@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { toNumber, pickFirst } from '@/lib/coerce';
 import type { BadgeVariant } from '../shared/Badge';
 import { ageLabel } from '@/lib/feedState';
 import { Card } from '../shared/Card';
@@ -16,11 +17,6 @@ interface ReconStatus {
   lastReconciled: number;
 }
 
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
 function toTimestamp(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value) {
@@ -28,10 +24,6 @@ function toTimestamp(value: unknown): number | null {
     if (Number.isFinite(ms)) return ms;
   }
   return null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown reconciliation error';
 }
 
 function engineVariant(state: string | null): BadgeVariant {
@@ -53,7 +45,10 @@ export const ReconciliationPanel: React.FC = () => {
   const [status, setStatus] = useState<ReconStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown reconciliation error',
+    busyMessage: 'A reconciliation run is already in progress. Wait for it to finish.',
+  });
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -63,41 +58,35 @@ export const ReconciliationPanel: React.FC = () => {
   const handleRunReconciliation = async () => {
     setError(null);
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const res = await api.runAlgoReconciliation();
-        const data = res?.data;
-        if (!data) throw new Error('Reconciliation endpoint returned no result.');
+    const outcome = await action.run(async () => {
+      const res = await api.runAlgoReconciliation();
+      const data = res?.data;
+      if (!data) throw new Error('Reconciliation endpoint returned no result.');
 
-        const meta = (res as { meta?: { timestamp?: string } }).meta;
-        const lastReconciled =
-          toTimestamp(data.last_reconciled) ??
-          toTimestamp(data.reconciled_at) ??
-          toTimestamp(meta?.timestamp) ??
-          Date.now();
+      const meta = (res as { meta?: { timestamp?: string } }).meta;
+      const lastReconciled =
+        toTimestamp(data.last_reconciled) ??
+        toTimestamp(data.reconciled_at) ??
+        toTimestamp(meta?.timestamp) ??
+        Date.now();
 
-        setStatus({
-          discrepancies: toNumber(data.discrepancies ?? data.discrepancy_count),
-          ordersMatched: toNumber(data.matched_orders ?? data.orders_matched),
-          positionsMatched: toNumber(data.matched_positions ?? data.positions_matched),
-          engineState:
-            typeof data.engine_state === 'string'
-              ? data.engine_state
-              : typeof data.status === 'string'
-                ? data.status
-                : null,
-          lastReconciled,
-        });
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
-      }
+      setStatus({
+        discrepancies: toNumber(pickFirst(data.discrepancies, data.discrepancy_count)),
+        ordersMatched: toNumber(pickFirst(data.matched_orders, data.orders_matched)),
+        positionsMatched: toNumber(pickFirst(data.matched_positions, data.positions_matched)),
+        engineState:
+          typeof data.engine_state === 'string'
+            ? data.engine_state
+            : typeof data.status === 'string'
+              ? data.status
+              : null,
+        lastReconciled,
+      });
+      return true;
     });
 
-    if (outcome === null) {
-      setError(failure ?? 'A reconciliation run is already in progress. Wait for it to finish.');
+    if (!outcome.ok) {
+      setError(outcome.message);
     }
   };
 
@@ -112,10 +101,10 @@ export const ReconciliationPanel: React.FC = () => {
         <button
           type="button"
           onClick={handleRunReconciliation}
-          disabled={guard.isPending}
+          disabled={action.isPending}
           className="px-2.5 py-1 rounded bg-muted hover:bg-muted-strong border border-border text-primary font-mono text-xs font-semibold disabled:opacity-50"
         >
-          {guard.isPending ? 'Reconciling…' : 'Run Audit Now'}
+          {action.isPending ? 'Reconciling…' : 'Run Audit Now'}
         </button>
       }
     >

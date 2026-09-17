@@ -1,3 +1,5 @@
+import { errorMessage as canonicalErrorMessage } from '@/lib/errors';
+
 export interface IndicatorDefinitionRow {
   indicator_id: string;
   name: string;
@@ -208,10 +210,9 @@ export function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
+/** Research-lab wrapper over the canonical helper; fallback text unchanged. */
 export function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  if (typeof err === 'string' && err) return err;
-  return 'Request failed';
+  return canonicalErrorMessage(err, 'Request failed');
 }
 
 export function isAbortError(err: unknown): boolean {

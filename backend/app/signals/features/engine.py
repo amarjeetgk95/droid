@@ -15,12 +15,10 @@ from datetime import datetime as _dt
 from decimal import Decimal
 from typing import Optional, Any
 from pydantic import BaseModel, Field
-from zoneinfo import ZoneInfo as _ZI
 
 from app.signals.features.ema_features import EMAFeatures, extract_ema_features
 from app.signals.features.structure import MarketStructureFeatures, extract_market_structure
-
-IST_TZ = _ZI("Asia/Kolkata")
+from app.signals.safety.clocks import IST as IST_TZ
 
 # P0-2 MIN_BARS (mirrors sub-modules; enforced here before any math).
 MIN_BARS_EMA50 = 60

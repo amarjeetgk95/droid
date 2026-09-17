@@ -12,11 +12,10 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Any, Optional
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-IST_TZ = ZoneInfo("Asia/Kolkata")
+from app.signals.safety.clocks import IST as IST_TZ
 
 
 class PITValidationResult(BaseModel):

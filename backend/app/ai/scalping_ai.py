@@ -6,28 +6,20 @@ One in-flight request per symbol; new context cancels/supersedes stale requests.
 """
 from __future__ import annotations
 
-import asyncio
-import time
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Literal
+from typing import Literal
+
 import structlog
 
+from app.ai.inflight import InFlightRequest, InFlightSignalMixin
+from app.ai.prompt_registry import prompt_registry
 from app.ai.schemas import (
     AISignal,
-    MarketContext,
     Decision,
-    SetupType,
+    MarketContext,
     Regime,
-    ValidationStatus,
-    LatencyBreakdown,
-    RejectionReason,
+    SetupType,
 )
-from app.ai.output_validator import ai_output_validator
-from app.ai.signal_scorer import signal_scorer
-from app.ai.context_builder import market_context_builder
-from app.ai.provider_manager import provider_manager
-from app.ai.prompt_registry import prompt_registry
 
 logger = structlog.get_logger()
 
@@ -39,17 +31,12 @@ SCALPING_HARD_MAX_TTL = 180
 
 SCALPING_SYSTEM_PROMPT = prompt_registry.get("scalping").system_prompt
 
-
-class InFlightRequest:
-    def __init__(self, request_id: str, context_hash: str, created_at: datetime):
-        self.request_id = request_id
-        self.context_hash = context_hash
-        self.created_at = created_at
-        self.cancelled = False
-        self.response_received = False
+# InFlightRequest is re-exported here for backward compatibility (it was
+# defined in this module before moving to app.ai.inflight).
+__all__ = ["InFlightRequest", "InFlightSignalMixin", "ScalpingAI", "scalping_ai"]
 
 
-class ScalpingAI:
+class ScalpingAI(InFlightSignalMixin):
     """
     Fast Scalping AI module for 1M/3M opportunities.
 
@@ -61,26 +48,19 @@ class ScalpingAI:
     - Cancellation when newer context arrives
     """
 
+    _path = "scalping"
+    _supersede_event = "superseding_in_flight_request"
+    _reuse_event = "reusing_cached_decision"
+    _superseded_event = "signal_superseded"
+    _timeout_event = "scalping_provider_timeout"
+    _hard_ceiling_event = "latency_exceeded_hard_ceiling"
+    _size_event = "context_exceeds_size_cap"
+    _error_event = "scalping_analysis_error"
+    _timeout_detail_ms = SCALPING_TIMEOUT_MS
+    _min_ttl = SCALPING_MIN_TTL
+
     def __init__(self):
-        self._in_flight: dict[str, InFlightRequest] = {}
-        self._last_context_hash: dict[str, str] = {}
-        self._last_decision: dict[str, AISignal] = {}
-        self._debounce_seconds = 2.0
-
-    def _get_in_flight(self, symbol: str) -> Optional[InFlightRequest]:
-        return self._in_flight.get(symbol.upper())
-
-    def _set_in_flight(self, symbol: str, request: InFlightRequest) -> None:
-        symbol = symbol.upper()
-        existing = self._get_in_flight(symbol)
-        if existing and not existing.cancelled:
-            existing.cancelled = True
-            logger.info("superseding_in_flight_request", symbol=symbol, old_request=existing.request_id)
-        self._in_flight[symbol] = request
-
-    def _clear_in_flight(self, symbol: str) -> None:
-        symbol = symbol.upper()
-        self._in_flight.pop(symbol, None)
+        super().__init__(debounce_seconds=2.0)
 
     async def analyze(
         self,
@@ -88,7 +68,7 @@ class ScalpingAI:
         provider,
         symbol: str,
         timeframe: Literal["1M", "3M"] = "1M",
-        override_timeout_ms: Optional[int] = None,
+        override_timeout_ms: int | None = None,
     ) -> AISignal:
         """
         Analyze market for scalping opportunity.
@@ -107,88 +87,17 @@ class ScalpingAI:
         timeout_ms = override_timeout_ms or SCALPING_TIMEOUT_MS
         hard_ceiling = max(SCALPING_HARD_CEILING_MS, timeout_ms + 1000)
 
-        context_hash = context.context_hash
-        last_hash = self._last_context_hash.get(symbol)
-        if last_hash == context_hash:
-            last_signal = self._last_decision.get(symbol)
-            if last_signal and not last_signal.superseded:
-                last_signal.reused = True
-                logger.info("reusing_cached_decision", symbol=symbol, signal_id=last_signal.signal_id)
-                return last_signal
-
-        request_id = str(uuid.uuid4())
-        in_flight = InFlightRequest(request_id, context_hash, datetime.now(timezone.utc))
-        self._set_in_flight(symbol, in_flight)
-
-        try:
-            serialized = context.model_dump_json()
-            if len(serialized.encode()) > 2048:
-                logger.warning("context_exceeds_size_cap", symbol=symbol, size=len(serialized))
-
-            prompt = self._build_prompt(context, timeframe)
-
-            start = time.perf_counter()
-            try:
-                raw_response = await asyncio.wait_for(
-                    provider.generate_analysis(symbol, SCALPING_SYSTEM_PROMPT, prompt),
-                    timeout=timeout_ms / 1000.0,
-                )
-                provider_latency_ms = int((time.perf_counter() - start) * 1000)
-            except asyncio.TimeoutError:
-                provider_manager.record_failure(provider.config.provider if hasattr(provider, 'config') else 'unknown', is_timeout=True)
-                logger.warning("scalping_provider_timeout", symbol=symbol, timeout_ms=timeout_ms)
-                signal = self._timeout_signal(symbol, timeframe)
-                return signal
-
-            parse_start = time.perf_counter()
-            signal, validation_result = ai_output_validator.validate(
-                raw_response,
-                path="scalping",
-                expected_symbol=symbol,
-                expected_timeframe=timeframe,
-            )
-            parse_latency_ms = int((time.perf_counter() - parse_start) * 1000)
-
-            total_latency_ms = int((time.perf_counter() - start) * 1000)
-
-            if in_flight.cancelled:
-                signal.superseded = True
-                logger.info("signal_superseded", symbol=symbol, request_id=request_id)
-                return signal
-
-            if total_latency_ms > hard_ceiling:
-                logger.warning("latency_exceeded_hard_ceiling", symbol=symbol, latency_ms=total_latency_ms, ceiling=hard_ceiling)
-                signal.superseded = True
-                return signal
-
-            signal.signal_id = request_id
-            signal.timeframe = timeframe
-            signal.latency_ms = total_latency_ms
-            signal.latency_breakdown = LatencyBreakdown(
-                provider_latency_ms=provider_latency_ms,
-                parse_latency_ms=parse_latency_ms,
-                validation_latency_ms=0,
-                total_latency_ms=total_latency_ms,
-            )
-
-            if validation_result.status == ValidationStatus.PASS:
-                provider_manager.record_success(provider.config.provider if hasattr(provider, 'config') else 'unknown')
-                signal.validation_result = ValidationStatus.PASS
-                self._last_context_hash[symbol] = context_hash
-                self._last_decision[symbol] = signal
-            else:
-                signal.validation_result = ValidationStatus.REJECT
-                signal.rejection_reason_code = validation_result.reason_code
-                signal.rejection_detail = validation_result.reason_detail
-
-            return signal
-
-        except Exception as e:
-            logger.error("scalping_analysis_error", symbol=symbol, error=str(e))
-            signal = self._error_signal(symbol, timeframe, str(e))
-            return signal
-        finally:
-            self._clear_in_flight(symbol)
+        return await self._run_analysis(
+            context,
+            provider,
+            symbol,
+            timeframe,
+            SCALPING_SYSTEM_PROMPT,
+            self._build_prompt(context, timeframe),
+            timeout_ms,
+            hard_ceiling,
+            2048,
+        )
 
     def _build_prompt(self, context: MarketContext, timeframe: str) -> str:
         lines = [
@@ -210,57 +119,16 @@ class ScalpingAI:
         lines.append("\nRespond with ONLY valid JSON.")
         return "\n".join(lines)
 
-    def _timeout_signal(self, symbol: str, timeframe: str) -> AISignal:
-        now = datetime.now(timezone.utc)
-        return AISignal(
-            signal_id=str(uuid.uuid4()),
-            symbol=symbol,
-            timestamp=now,
-            timeframe=timeframe,
-            decision=Decision.NO_TRADE,
-            validation_result=ValidationStatus.REJECT,
-            rejection_reason_code=RejectionReason.PROVIDER_TIMEOUT,
-            rejection_detail=f"Provider timeout after {SCALPING_TIMEOUT_MS}ms",
-            ttl_seconds=SCALPING_MIN_TTL,
-            expires_at=now + timedelta(seconds=SCALPING_MIN_TTL),
-        )
-
-    def _error_signal(self, symbol: str, timeframe: str, error: str) -> AISignal:
-        now = datetime.now(timezone.utc)
-        return AISignal(
-            signal_id=str(uuid.uuid4()),
-            symbol=symbol,
-            timestamp=now,
-            timeframe=timeframe,
-            decision=Decision.NO_TRADE,
-            validation_result=ValidationStatus.REJECT,
-            rejection_reason_code=RejectionReason.PROVIDER_ERROR,
-            rejection_detail=f"Analysis error: {error[:200]}",
-            ttl_seconds=SCALPING_MIN_TTL,
-            expires_at=now + timedelta(seconds=SCALPING_MIN_TTL),
-        )
-
-    def reset(self, symbol: Optional[str] = None) -> None:
-        """Reset in-flight state for symbol or all."""
-        if symbol:
-            self._in_flight.pop(symbol.upper(), None)
-            self._last_context_hash.pop(symbol.upper(), None)
-            self._last_decision.pop(symbol.upper(), None)
-        else:
-            self._in_flight.clear()
-            self._last_context_hash.clear()
-            self._last_decision.clear()
-
     async def generate(
         self,
         symbol: str,
-        regime: "Regime",
-        market_context: "MarketContext",
-        provider: Optional[str] = None,
-        model: Optional[str] = None,
-        openrouter_api_key: Optional[str] = None,
-        gemini_api_key: Optional[str] = None,
-    ) -> "AISignal":
+        regime: Regime,
+        market_context: MarketContext,
+        provider: str | None = None,
+        model: str | None = None,
+        openrouter_api_key: str | None = None,
+        gemini_api_key: str | None = None,
+    ) -> AISignal:
         """Generate a scalping signal. Returns NO_TRADE if no provider available."""
         from app.ai.provider_manager import provider_manager
         try:

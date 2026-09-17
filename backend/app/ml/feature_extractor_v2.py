@@ -261,9 +261,9 @@ def supertrend_agreement(d1h: Any, d15m: Any, d4h: Any) -> Optional[float]:
 
 def _minutes_to_close_ist(ts: datetime) -> int:
     """Minutes from an aware UTC instant to the 15:30 IST close (0 when closed/past)."""
-    from datetime import timedelta as _td
+    from app.signals.safety.clocks import to_ist
 
-    ist = ts.astimezone(timezone(_td(hours=5, minutes=30)))
+    ist = to_ist(ts)
     total = ist.hour * 60 + ist.minute
     close_min = 15 * 60 + 30  # 930
     open_min = 9 * 60 + 15  # 555

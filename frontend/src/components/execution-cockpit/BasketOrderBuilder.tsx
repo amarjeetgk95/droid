@@ -2,8 +2,11 @@
 
 import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { useExecutionGuard } from '@/hooks/useExecutionGuard';
 import { api } from '@/lib/api';
+import { toNumber, pickFirst } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import { Card } from '../shared/Card';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 
@@ -55,15 +58,6 @@ const EMPTY_QUOTE: QuoteState = {
 
 const BLOCKED_FEED_STATES = new Set(['STALE', 'DOWN', 'ERROR', 'INVALID', 'DISCONNECTED', 'OFFLINE']);
 
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown basket error';
-}
-
 const quoteKey = (symbol: string): string => symbol.trim().toUpperCase();
 
 type LegCheck =
@@ -79,6 +73,11 @@ export const BasketOrderBuilder: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const guard = useExecutionGuard();
+  const basketAction = useAsyncAction({
+    guard,
+    errorFallback: 'Unknown basket error',
+    busyMessage: 'A basket dispatch is already in progress. Wait for it to finish.',
+  });
   const legSeq = useRef(0);
 
   const nextLegId = () => {
@@ -117,7 +116,7 @@ export const BasketOrderBuilder: React.FC = () => {
               ltp: null,
               timestampMs: null,
               status: null,
-              error: errorMessage(err),
+              error: errorMessage(err, 'Unknown basket error'),
               loading: false,
             },
           }));
@@ -235,39 +234,31 @@ export const BasketOrderBuilder: React.FC = () => {
       );
     }
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const res = await api.createAlgoBasket(reviewed.payload);
-        const data = res?.data;
-        if (!data) throw new Error('Basket endpoint returned no result.');
-        const statusRaw = typeof data.status === 'string' ? data.status.toUpperCase() : null;
-        if (statusRaw && ['REJECTED', 'FAILED', 'ERROR'].includes(statusRaw)) {
-          const reason = typeof data.reason === 'string' ? `: ${data.reason}` : '';
-          throw new Error(`Basket rejected by the engine (${statusRaw})${reason}.`);
-        }
-        return {
-          accepted:
-            toNumber(data.accepted ?? data.orders_accepted ?? data.order_count) ??
-            reviewed.payload.orders.length,
-          status: statusRaw,
-        };
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+    const outcome = await basketAction.run(async () => {
+      const res = await api.createAlgoBasket(reviewed.payload);
+      const data = res?.data;
+      if (!data) throw new Error('Basket endpoint returned no result.');
+      const statusRaw = typeof data.status === 'string' ? data.status.toUpperCase() : null;
+      if (statusRaw && ['REJECTED', 'FAILED', 'ERROR'].includes(statusRaw)) {
+        const reason = typeof data.reason === 'string' ? `: ${data.reason}` : '';
+        throw new Error(`Basket rejected by the engine (${statusRaw})${reason}.`);
       }
+      return {
+        accepted:
+          toNumber(pickFirst(data.accepted, data.orders_accepted, data.order_count)) ??
+          reviewed.payload.orders.length,
+        status: statusRaw,
+      };
     });
 
-    if (outcome === null) {
-      const message =
-        failure ?? 'A basket dispatch is already in progress. Wait for it to finish.';
-      setActionError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setActionError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     setSuccess(
-      `Basket dispatched${outcome.status ? ` (${outcome.status})` : ''} — ${
-        outcome.accepted
+      `Basket dispatched${outcome.value.status ? ` (${outcome.value.status})` : ''} — ${
+        outcome.value.accepted
       } leg(s) accepted by the engine.`,
     );
   };
@@ -420,7 +411,7 @@ export const BasketOrderBuilder: React.FC = () => {
             </div>
           )}
 
-          {guard.lastRejectionReason === 'busy' && !actionError && (
+          {basketAction.lastRejectionReason === 'busy' && !actionError && (
             <div className="rounded border border-warn-line bg-warn-wash px-2.5 py-1.5 text-warn-strong">
               A previous basket action is still in progress — the duplicate click was ignored.
             </div>
@@ -438,10 +429,10 @@ export const BasketOrderBuilder: React.FC = () => {
           <button
             type="button"
             onClick={handleReviewBasket}
-            disabled={guard.isPending || legs.length === 0}
+            disabled={basketAction.isPending || legs.length === 0}
             className="w-full py-2.5 rounded-lg bg-primary hover:bg-accent-strong text-white font-bold tracking-wider shadow-sm transition-all disabled:opacity-40"
           >
-            {guard.isPending ? 'Dispatching Basket…' : 'REVIEW MULTI-LEG BASKET →'}
+            {basketAction.isPending ? 'Dispatching Basket…' : 'REVIEW MULTI-LEG BASKET →'}
           </button>
         </div>
       </Card>

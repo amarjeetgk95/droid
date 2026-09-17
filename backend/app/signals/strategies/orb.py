@@ -20,6 +20,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 class OpeningRangeBreakoutStrategy(Strategy):
@@ -138,12 +139,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 fno_score = 65.0
                 regime_score = 75.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     entry_min=entry_min,
                     entry_max=entry_max,
                     trigger=trigger,
@@ -165,7 +164,6 @@ class OpeningRangeBreakoutStrategy(Strategy):
                         f"Target 1 at 100% ORB Range Extension (₹{t1:,.2f})",
                     ],
                     option_contract=contract,
-                    ttl_seconds=300,
                 )
 
         # ── BEARISH ORB (LONG_PUT): 5M close beyond OR low ──
@@ -195,12 +193,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 fno_score = 65.0
                 regime_score = 75.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     entry_min=entry_min,
                     entry_max=entry_max,
                     trigger=trigger,
@@ -222,7 +218,6 @@ class OpeningRangeBreakoutStrategy(Strategy):
                         f"Target 1 at 100% ORB Range Extension (₹{t1:,.2f})",
                     ],
                     option_contract=contract,
-                    ttl_seconds=300,
                 )
 
         return None

@@ -6,11 +6,12 @@ Thread-safe (threading.Lock), monotonic clock, persisted + evented.
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
 import structlog
+
+from app.core.atomic_json import atomic_write_json, read_json
 
 logger = structlog.get_logger()
 
@@ -38,31 +39,28 @@ class GlobalKillSwitch:
 
     # ── persistence ──────────────────────────────────────────────
     def _restore(self) -> None:
-        try:
-            if _KILL_STATE_FILE.exists():
-                data = json.loads(_KILL_STATE_FILE.read_text(encoding="utf-8"))
-                if isinstance(data, dict) and data.get("active"):
-                    self._active = True
-                    self._reason = data.get("reason")
-                    self._activated_at_ms = data.get("activated_at_ms")
-                    self._activated_by = data.get("activated_by", "system")
-        except Exception:
-            pass
+        data = read_json(_KILL_STATE_FILE)
+        if isinstance(data, dict) and data.get("active"):
+            self._active = True
+            self._reason = data.get("reason")
+            self._activated_at_ms = data.get("activated_at_ms")
+            self._activated_by = data.get("activated_by", "system")
 
     def _persist(self) -> None:
-        try:
-            payload = {
-                "active": self._active,
-                "reason": self._reason,
-                "activated_at_ms": self._activated_at_ms,
-                "activated_by": self._activated_by,
-                "persisted_at_ms": int(time.time() * 1000),
-            }
-            tmp = _KILL_STATE_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            tmp.replace(_KILL_STATE_FILE)
-        except Exception as e:
-            logger.warning("kill_switch_persist_failed", error=str(e)[:150])
+        payload = {
+            "active": self._active,
+            "reason": self._reason,
+            "activated_at_ms": self._activated_at_ms,
+            "activated_by": self._activated_by,
+            "persisted_at_ms": int(time.time() * 1000),
+        }
+        atomic_write_json(
+            _KILL_STATE_FILE,
+            payload,
+            indent=2,
+            log_event="kill_switch_persist_failed",
+            max_error_chars=150,
+        )
         # Publish to DB when available (best-effort, never blocks)
         try:
             from app.core.database import get_async_session_factory

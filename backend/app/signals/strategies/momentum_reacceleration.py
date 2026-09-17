@@ -21,6 +21,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.features.ema_features import extract_ema_features
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_scores(
@@ -141,12 +142,10 @@ class MomentumReaccelerationStrategy(Strategy):
                     float(ema_feat.fast_slope or 0.0), body_ratio, pcr_val,
                     "LONG_CALL", ctx.regime, mtf_align, vol_ratio,
                 )
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,
@@ -202,12 +201,10 @@ class MomentumReaccelerationStrategy(Strategy):
                     float(ema_feat.fast_slope or 0.0), body_ratio, pcr_val,
                     "LONG_PUT", ctx.regime, mtf_align, vol_ratio,
                 )
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,

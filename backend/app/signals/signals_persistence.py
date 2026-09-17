@@ -19,6 +19,7 @@ from typing import Any, Optional
 import structlog
 from sqlalchemy import text
 
+from app.core.atomic_json import atomic_write_json
 from app.core.database import get_async_session_factory
 
 logger = structlog.get_logger()
@@ -148,27 +149,13 @@ def save_signals_state_local(
             "updated_at_utc": int(__import__("time").time() * 1000),
         }
 
-        tmp_file = SIGNALS_STATE_FILE.with_name(
-            f"{SIGNALS_STATE_FILE.stem}.{os.getpid()}.{int(_time.time()*1000)}.tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, default=str)
-        try:
-            tmp_file.replace(SIGNALS_STATE_FILE)
-        except PermissionError:
-            import time as _ts
-            _ts.sleep(0.05)
-            tmp_file.replace(SIGNALS_STATE_FILE)
-        # Cleanup stale tmp files from crashed saves.
-        try:
-            for _p in SIGNALS_STATE_FILE.parent.glob(f"{SIGNALS_STATE_FILE.stem}.*.tmp"):
-                try:
-                    if (_time.time() - _p.stat().st_mtime) > 60:
-                        _p.unlink()
-                except Exception as e:
-                    logger.debug("stale_tmp_cleanup_failed", path=str(_p), error=str(e)[:150])
-        except Exception as e:
-            logger.debug("tmp_cleanup_glob_failed", error=str(e)[:150])
-        return True
+        return atomic_write_json(
+            SIGNALS_STATE_FILE,
+            payload,
+            indent=2,
+            log_event="save_signals_state_local_failed",
+            max_error_chars=250,
+        )
     except Exception as e:
         logger.warning("save_signals_state_local_failed", error=str(e)[:250])
         return False

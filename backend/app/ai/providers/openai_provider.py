@@ -3,43 +3,36 @@ Direct Provider: OpenAI — §11
 Supports chat completions, streaming, and tool execution.
 """
 import json
-import httpx
-from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from app.ai.base import AIProvider
-from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
-from app.ai.capability_registry import should_use_structured_outputs
-from app.ai.streaming import ReasoningExtractor
+import httpx
 import structlog
+
+from app.ai.providers.openai_compatible import OpenAICompatibleProvider
+from app.ai.streaming import ReasoningExtractor
+from app.models.ai import AIChatMessage, AIChatStreamChunk
 
 logger = structlog.get_logger()
 
 
-class OpenAIProvider(AIProvider):
-    def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        # Per-request key fallback to config (env) — Settings UI is primary
-        from app.core.config import settings as _cfg
-        fallback = (getattr(_cfg, "openai_api_key", "") or "").strip()
-        self.api_key = ((api_key or "").strip() or fallback)
-        self.model = (model or getattr(_cfg, "openai_model", "gpt-4o-mini") or "gpt-4o-mini").strip()
-        self.base_url = (base_url or getattr(_cfg, "custom_openai_base_url", "") or "https://api.openai.com/v1").rstrip("/") or "https://api.openai.com/v1"
+class OpenAIProvider(OpenAICompatibleProvider):
+    _provider_name = "openai"
+    provider_label = "OpenAI"
+    api_key_setting = "openai_api_key"
+    model_setting = "openai_model"
+    base_url_setting = "custom_openai_base_url"
+    default_model = "gpt-4o-mini"
+    default_base_url = "https://api.openai.com/v1"
+    use_structured_outputs = True
 
-    @property
-    def provider_name(self) -> str:
-        return "openai"
-
-    async def list_models(self) -> list[dict]:
-        if not self.api_key:
-            raise ValueError("OpenAI API key missing")
-        url = f"{self.base_url}/models"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        async with httpx.AsyncClient(timeout=15.0) as c:
-            r = await c.get(url, headers=headers)
-            if r.status_code != 200:
-                raise ValueError(f"OpenAI list_models {r.status_code}: {r.text[:300]}")
-            data = r.json()
-            return data.get("data", [])
+    def _raise_for_status(self, resp: httpx.Response) -> None:
+        if resp.status_code == 401:
+            raise ValueError("OpenAI 401 Unauthorized – API key invalid")
+        if resp.status_code == 429:
+            raise ValueError("OpenAI 429 Rate Limited")
+        if resp.status_code != 200:
+            raise ValueError(f"OpenAI {resp.status_code}: {resp.text[:600]}")
 
     async def get_model_info(self, model_id: str) -> dict:
         models = await self.list_models()
@@ -47,103 +40,6 @@ class OpenAIProvider(AIProvider):
             if m.get("id") == model_id:
                 return m
         return {"id": model_id, "supports_structured_outputs": True}
-
-    async def test_connection(self) -> dict:
-        try:
-            await self.list_models()
-            return {"success": True, "provider": "openai", "model": self.model}
-        except Exception as e:
-            return {"success": False, "provider": "openai", "error": str(e)[:300]}
-
-    async def analyze(self, market_state: dict, task: str) -> dict:
-        from app.ai.prompt_builder import build_system_prompt
-        system_prompt = build_system_prompt()
-        user_prompt = f"Task: {task}\nMarketState: {json.dumps(market_state, default=str)}"
-        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
-        return insight.model_dump(mode="json")
-
-    async def generate_analysis(self, symbol: str, system_prompt: str, user_prompt: str) -> AIInsightResponse:
-        if not self.api_key:
-            raise ValueError("OpenAI API key missing")
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        base_payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.2,
-        }
-        if should_use_structured_outputs(self.model):
-            base_payload["response_format"] = {"type": "json_object"}
-        else:
-            base_payload["messages"][0]["content"] += "\n\nReturn ONLY one valid JSON object. Do not use markdown."
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=base_payload, headers=headers)
-            if resp.status_code == 401:
-                raise ValueError("OpenAI 401 Unauthorized – API key invalid")
-            if resp.status_code == 429:
-                raise ValueError("OpenAI 429 Rate Limited")
-            if resp.status_code != 200:
-                raise ValueError(f"OpenAI {resp.status_code}: {resp.text[:600]}")
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            if isinstance(content, str):
-                c = content.strip()
-                if c.startswith("```"):
-                    parts = c.split("```")
-                    if len(parts) >= 2:
-                        c = parts[1]
-                        if c.lstrip().startswith("json"):
-                            c = c.lstrip()[4:]
-                        c = c.strip()
-                    else:
-                        c = c.strip("`").strip()
-                try:
-                    parsed = json.loads(c)
-                except json.JSONDecodeError:
-                    start_idx = c.find("{")
-                    end_idx = c.rfind("}")
-                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        try:
-                            parsed = json.loads(c[start_idx : end_idx + 1])
-                        except json.JSONDecodeError as je:
-                            raise ValueError(f"OpenAI returned non-JSON content: {c[:400]} (json error: {je})")
-                    else:
-                        raise ValueError(f"OpenAI returned non-JSON content: {c[:400]}")
-            else:
-                parsed = content
-
-            if not isinstance(parsed, dict):
-                raise ValueError(f"OpenAI response root is not a JSON object: {type(parsed)}")
-
-            if "market_bias" in parsed:
-                raw_bias = str(parsed.get("market_bias", "NEUTRAL")).upper()
-                if raw_bias not in ("BULLISH", "BEARISH", "NEUTRAL", "VOLATILE"):
-                    if "BULL" in raw_bias:
-                        parsed["market_bias"] = "BULLISH"
-                    elif "BEAR" in raw_bias:
-                        parsed["market_bias"] = "BEARISH"
-                    else:
-                        parsed["market_bias"] = "NEUTRAL"
-
-            return AIInsightResponse(
-                symbol=symbol,
-                timestamp=datetime.now(timezone.utc),
-                market_bias=parsed.get("market_bias", "NEUTRAL"),
-                confidence=parsed.get("confidence", 75.0),
-                executive_summary=parsed.get("executive_summary", ""),
-                simple_takeaway=parsed.get("simple_takeaway", ""),
-                options_interpretation=parsed.get("options_interpretation", ""),
-                futures_flow_analysis=parsed.get("futures_flow_analysis", ""),
-                regime_and_levels=parsed.get("regime_and_levels", ""),
-                recommended_strategy_framework=parsed.get("recommended_strategy_framework", ""),
-                risk_management_notes=parsed.get("risk_management_notes", ""),
-                disclaimer=parsed.get("disclaimer", "Quantitative analysis for research only."),
-                provider_used=f"openai:{self.model}",
-            )
 
     async def stream_chat(
         self,

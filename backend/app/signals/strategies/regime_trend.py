@@ -18,6 +18,7 @@ from app.signals.strategies.base import (
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.features.structure import extract_market_structure
 from app.signals.features.ema_features import extract_ema_features
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_scores(
@@ -148,14 +149,10 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 adx_val, float(ema_feat.fast_slope or 0.0), pcr_val, "LONG_CALL",
                 ctx.regime, mtf_score_raw, vol_ratio,
             )
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_CALL",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
-                signal_type="INTRADAY",
-                is_scalp=False,
                 entry_min=entry_min,
                 entry_max=entry_max,
                 trigger=trigger,
@@ -165,7 +162,6 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 risk_points=risk_pts,
                 risk_reward_t1=1.5,
                 risk_reward_t2=2.5,
-                max_chase_fraction=0.50,
                 ttl_seconds=900,
                 time_stop_seconds=2700,
                 runner_ttl_seconds=4500,
@@ -203,14 +199,10 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 adx_val, float(ema_feat.fast_slope or 0.0), pcr_val, "LONG_PUT",
                 ctx.regime, mtf_score_raw, vol_ratio,
             )
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_PUT",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
-                signal_type="INTRADAY",
-                is_scalp=False,
                 entry_min=entry_min,
                 entry_max=entry_max,
                 trigger=trigger,
@@ -220,7 +212,6 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 risk_points=risk_pts,
                 risk_reward_t1=1.5,
                 risk_reward_t2=2.5,
-                max_chase_fraction=0.50,
                 ttl_seconds=900,
                 time_stop_seconds=2700,
                 runner_ttl_seconds=4500,

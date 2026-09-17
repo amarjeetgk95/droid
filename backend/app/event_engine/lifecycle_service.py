@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
-from zoneinfo import ZoneInfo
 import structlog
 
 from app.event_engine.models import (
@@ -13,7 +12,6 @@ from app.event_engine.models import (
 )
 
 logger = structlog.get_logger()
-IST = ZoneInfo("Asia/Kolkata")
 
 
 class EventLifecycleService:

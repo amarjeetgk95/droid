@@ -2,15 +2,12 @@
 
 import React, { useCallback, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import type { AlgoKillSwitchStatus } from '@/lib/api/algo';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { StatusDot } from '../shared/StatusDot';
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown kill-switch error';
-}
 
 export const KillSwitchButton: React.FC = () => {
   const [halt, setHalt] = useState<AlgoKillSwitchStatus | null>(null);
@@ -20,7 +17,10 @@ export const KillSwitchButton: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [exitError, setExitError] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown kill-switch error',
+    busyMessage: 'A kill request is already in progress.',
+  });
 
   const readStatus = useCallback(async () => {
     try {
@@ -35,7 +35,7 @@ export const KillSwitchButton: React.FC = () => {
       setStatusLoaded(true);
       setStatusError(null);
     } catch (err) {
-      setStatusError(errorMessage(err));
+      setStatusError(errorMessage(err, 'Unknown kill-switch error'));
     }
   }, []);
 
@@ -46,47 +46,39 @@ export const KillSwitchButton: React.FC = () => {
     setActionNotice(null);
     setExitError(null);
 
-    let killFailure: string | null = null;
-    const killOutcome = await guard.execute(async () => {
-      try {
-        const res = await api.triggerAlgoKillSwitch(
-          'FULL_EXECUTION_STOP',
-          'Emergency Kill Switch Triggered by Cockpit Operator',
+    const killOutcome = await action.run(async () => {
+      const res = await api.triggerAlgoKillSwitch(
+        'FULL_EXECUTION_STOP',
+        'Emergency Kill Switch Triggered by Cockpit Operator',
+      );
+      const data = res?.data;
+      if (!data || data.is_killed !== true) {
+        throw new Error(
+          `Kill switch was not confirmed by the backend (is_killed: ${String(
+            data?.is_killed,
+          )}). Engines may still be live.`,
         );
-        const data = res?.data;
-        if (!data || data.is_killed !== true) {
-          throw new Error(
-            `Kill switch was not confirmed by the backend (is_killed: ${String(
-              data?.is_killed,
-            )}). Engines may still be live.`,
-          );
-        }
-        return data;
-      } catch (err) {
-        killFailure = errorMessage(err);
-        throw err;
       }
+      return data;
     });
 
-    if (killOutcome === null) {
-      const message = killFailure ?? 'A kill request is already in progress.';
-      setActionError(message);
-      throw new Error(message);
+    if (!killOutcome.ok) {
+      setActionError(killOutcome.message);
+      throw new Error(killOutcome.message);
     }
 
     setHalt({
       is_killed: true,
-      kill_level: killOutcome.kill_level ?? 'FULL_EXECUTION_STOP',
-      killed_at: killOutcome.killed_at,
-      reason: killOutcome.reason,
+      kill_level: killOutcome.value.kill_level ?? 'FULL_EXECUTION_STOP',
+      killed_at: killOutcome.value.killed_at,
+      reason: killOutcome.value.reason,
     });
     setStatusLoaded(true);
     setStatusError(null);
 
-    let exitFailure: string | null = null;
     let closedCount: number | null = null;
-    const exitOutcome = await guard.execute(async () => {
-      try {
+    const exitOutcome = await action.run(
+      async () => {
         const res = await api.exitAllAlgoPositions();
         const count = res?.data?.closed_count;
         if (typeof count !== 'number' || !Number.isFinite(count)) {
@@ -94,17 +86,13 @@ export const KillSwitchButton: React.FC = () => {
         }
         closedCount = count;
         return true;
-      } catch (err) {
-        exitFailure = errorMessage(err);
-        throw err;
-      }
-    });
+      },
+      { busyMessage: 'unknown error' },
+    );
 
-    if (exitOutcome === null) {
+    if (!exitOutcome.ok) {
       setExitError(
-        `Engines halted, but exiting open algo positions failed: ${
-          exitFailure ?? 'unknown error'
-        }. Positions may remain open — use Square Off All or retry the exit.`,
+        `Engines halted, but exiting open algo positions failed: ${exitOutcome.message}. Positions may remain open — use Square Off All or retry the exit.`,
       );
     } else {
       setActionNotice(
@@ -126,12 +114,12 @@ export const KillSwitchButton: React.FC = () => {
           setExitError(null);
           setModalOpen(true);
         }}
-        disabled={guard.isPending || halted}
+        disabled={action.isPending || halted}
         className="btn btn-sell w-full py-3.5 px-4 rounded-xl font-mono font-black text-sm tracking-widest shadow-md transition-all flex items-center justify-center gap-3 group disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <StatusDot status={halted ? 'error' : 'warning'} />
         <span className="group-hover:tracking-[0.2em] transition-all">
-          {guard.isPending
+          {action.isPending
             ? 'HALTING…'
             : halted
               ? 'EXECUTION ENGINES HALTED'

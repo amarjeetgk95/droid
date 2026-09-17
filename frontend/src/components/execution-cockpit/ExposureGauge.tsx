@@ -3,6 +3,8 @@
 import React, { useCallback, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import { ageLabel } from '@/lib/feedState';
 import { Card } from '../shared/Card';
 import { Gauge } from '../shared/Gauge';
@@ -20,15 +22,6 @@ const EMPTY_EXPOSURE: ExposureState = {
   margin_utilization_pct: null,
   portfolio_delta: null,
 };
-
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown exposure error';
-}
 
 export const ExposureGauge: React.FC = () => {
   const [exposure, setExposure] = useState<ExposureState>(EMPTY_EXPOSURE);
@@ -51,7 +44,7 @@ export const ExposureGauge: React.FC = () => {
       setLastUpdated(Date.now());
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err));
+      setLoadError(errorMessage(err, 'Unknown exposure error'));
     }
   }, []);
 

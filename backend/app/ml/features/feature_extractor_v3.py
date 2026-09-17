@@ -8,7 +8,7 @@ Any violation immediately raises a TemporalLeakageError.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.ml.features.schema import (
@@ -17,8 +17,7 @@ from app.ml.features.schema import (
     NEUTRAL_IMPUTE_V3,
     FeatureVectorV3,
 )
-
-IST = timezone(timedelta(hours=5, minutes=30))
+from app.signals.safety.clocks import IST
 
 
 class TemporalLeakageError(ValueError):

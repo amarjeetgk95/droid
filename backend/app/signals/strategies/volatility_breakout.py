@@ -25,6 +25,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 def _has_squeeze(ctx: StrategyContext, ind: dict, candles: list[dict], atr: Decimal) -> bool:
@@ -208,14 +209,10 @@ class VolatilityBreakoutStrategy(Strategy):
                     regime_score = 90.0 if ctx.regime == "COMPRESSION_SQUEEZE" else (75.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 50.0)
                     overall_conf = round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1)
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_CALL",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
-                        signal_type="INTRADAY",
-                        is_scalp=False,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,
@@ -280,14 +277,10 @@ class VolatilityBreakoutStrategy(Strategy):
                     regime_score = 90.0 if ctx.regime == "COMPRESSION_SQUEEZE" else (75.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 50.0)
                     overall_conf = round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1)
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_PUT",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
-                        signal_type="INTRADAY",
-                        is_scalp=False,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,

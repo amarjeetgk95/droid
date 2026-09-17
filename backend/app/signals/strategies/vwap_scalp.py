@@ -23,6 +23,7 @@ from app.signals.strategies.base import (
     VOLUME_SCALP_MIN,
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.strategies.candidate import make_candidate
 
 
 class VWAPScalpStrategy(Strategy):
@@ -141,12 +142,10 @@ class VWAPScalpStrategy(Strategy):
                 reg_score = 80.0 if ctx.regime in ("RANGE", "LOW_VOL") else (55.0 if ctx.regime == "HIGH_VOL" else 60.0)
                 conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * reg_score, 1)
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,
@@ -203,12 +202,10 @@ class VWAPScalpStrategy(Strategy):
                 reg_score = 85.0 if ctx.regime in ("RANGE", "LOW_VOL") else (55.0 if ctx.regime == "HIGH_VOL" else 60.0)
                 conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * reg_score, 1)
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,

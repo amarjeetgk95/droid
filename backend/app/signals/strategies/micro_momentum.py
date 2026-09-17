@@ -22,6 +22,7 @@ from app.signals.strategies.base import (
     VOLUME_MICRO_MIN,
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_scores(vol_ratio: float, rsi_val: float, direction: str, regime: str, pcr: float = 1.0) -> tuple[float, float, float, float, float]:
@@ -154,12 +155,10 @@ class MicroMomentumStrategy(Strategy):
                 vol_ratio, rsi_val, "LONG_CALL", ctx.regime, pcr_val
             )
 
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_CALL",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
                 signal_type="SCALP",
                 is_scalp=True,
                 entry_min=entry_min,
@@ -216,12 +215,10 @@ class MicroMomentumStrategy(Strategy):
                 vol_ratio, rsi_val, "LONG_PUT", ctx.regime, pcr_val
             )
 
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_PUT",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
                 signal_type="SCALP",
                 is_scalp=True,
                 entry_min=entry_min,

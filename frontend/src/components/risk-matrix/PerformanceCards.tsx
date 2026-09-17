@@ -3,6 +3,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { UNAVAILABLE, finiteNumber, signedNumber, valueToneClass } from './riskUtils';
 
 type PerformanceSummary = {
@@ -14,10 +15,6 @@ type PerformanceSummary = {
   average_rr?: unknown;
   expectancy_r?: unknown;
 };
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 function winRateTone(completed: number, winRate: number | null): string {
   if (completed === 0 || winRate === null) return valueToneClass(null);
@@ -55,7 +52,7 @@ export const PerformanceCards: React.FC = () => {
       setUpdatedAt(Date.now());
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
-      setError(messageOf(err, 'Performance metrics unavailable'));
+      setError(errorMessage(err, 'Performance metrics unavailable'));
     } finally {
       if (seq === requestSeqRef.current) setLoading(false);
     }

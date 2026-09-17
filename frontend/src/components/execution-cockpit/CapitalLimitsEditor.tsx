@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import type { AlgoCapitalConfig } from '@/lib/api/algo';
 import { Card } from '../shared/Card';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
@@ -39,15 +41,6 @@ const LIMIT_LABELS: Record<LimitKey, string> = {
 
 const LIMIT_KEYS = Object.keys(LIMIT_LABELS) as LimitKey[];
 
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown capital-config error';
-}
-
 const money = (value: number | null): string => (value === null ? '—' : `₹${value.toLocaleString('en-IN')}`);
 
 export const CapitalLimitsEditor: React.FC = () => {
@@ -58,7 +51,10 @@ export const CapitalLimitsEditor: React.FC = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resultError, setResultError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown capital-config error',
+    busyMessage: 'A capital update is already in progress. Wait for it to finish.',
+  });
 
   const load = useCallback(async () => {
     setLoadState('loading');
@@ -80,7 +76,7 @@ export const CapitalLimitsEditor: React.FC = () => {
       setLoadError(null);
     } catch (err) {
       setLoadState('error');
-      setLoadError(errorMessage(err));
+      setLoadError(errorMessage(err, 'Unknown capital-config error'));
     }
   }, []);
 
@@ -145,43 +141,36 @@ export const CapitalLimitsEditor: React.FC = () => {
     setResultError(null);
     setSuccess(null);
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const payload: AlgoCapitalConfig = {
-          investment_limit: config.investment_limit as number,
-          max_capital_per_trade: config.max_capital_per_trade as number,
-          max_daily_loss: config.max_daily_loss as number,
-          max_loss_per_trade: config.max_loss_per_trade as number,
-          max_open_positions: config.max_open_positions as number,
-          max_trades_per_day: config.max_trades_per_day as number,
-          confirm: true,
-        };
-        const res = await api.updateAlgoCapital(payload);
-        const data = res?.data;
-        if (!data) throw new Error('Risk engine returned no result — update not confirmed.');
-        if (data.updated === false) {
-          throw new Error(data.reason ? `Risk engine refused the update: ${data.reason}` : 'Risk engine refused the update.');
-        }
-        if (typeof data.limit_exceeded === 'string' && data.limit_exceeded) {
-          throw new Error(`Risk limit exceeded: ${data.limit_exceeded}`);
-        }
-        return { reason: typeof data.reason === 'string' && data.reason ? data.reason : null };
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+    const outcome = await action.run(async () => {
+      const payload: AlgoCapitalConfig = {
+        investment_limit: config.investment_limit as number,
+        max_capital_per_trade: config.max_capital_per_trade as number,
+        max_daily_loss: config.max_daily_loss as number,
+        max_loss_per_trade: config.max_loss_per_trade as number,
+        max_open_positions: config.max_open_positions as number,
+        max_trades_per_day: config.max_trades_per_day as number,
+        confirm: true,
+      };
+      const res = await api.updateAlgoCapital(payload);
+      const data = res?.data;
+      if (!data) throw new Error('Risk engine returned no result — update not confirmed.');
+      if (data.updated === false) {
+        throw new Error(data.reason ? `Risk engine refused the update: ${data.reason}` : 'Risk engine refused the update.');
       }
+      if (typeof data.limit_exceeded === 'string' && data.limit_exceeded) {
+        throw new Error(`Risk limit exceeded: ${data.limit_exceeded}`);
+      }
+      return { reason: typeof data.reason === 'string' && data.reason ? data.reason : null };
     });
 
-    if (outcome === null) {
-      const message = failure ?? 'A capital update is already in progress. Wait for it to finish.';
-      setResultError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setResultError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     setSuccess(
-      outcome.reason
-        ? `Risk mandate updated: ${outcome.reason}`
+      outcome.value.reason
+        ? `Risk mandate updated: ${outcome.value.reason}`
         : 'Risk mandate updated and verified by the risk engine.',
     );
     await load();
@@ -260,10 +249,10 @@ export const CapitalLimitsEditor: React.FC = () => {
             </span>
             <button
               type="submit"
-              disabled={guard.isPending || loadState !== 'ready' || !isDirty}
+              disabled={action.isPending || loadState !== 'ready' || !isDirty}
               className="btn btn-primary disabled:opacity-40"
             >
-              {guard.isPending ? 'Saving…' : 'Apply & Confirm Capital Limits'}
+              {action.isPending ? 'Saving…' : 'Apply & Confirm Capital Limits'}
             </button>
           </div>
         </form>

@@ -1,13 +1,16 @@
 import json
-import httpx
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from typing import Any
+
+import httpx
+import structlog
 
 from app.ai.base import BaseLLMProvider
-from app.models.ai import AIInsightResponse, AIChatMessage, AIChatStreamChunk
+from app.ai.provider_utils import analyze_market_state, extract_json_object
 from app.ai.streaming import ReasoningExtractor
 from app.core.config import settings
-import structlog
+from app.models.ai import AIChatMessage, AIChatStreamChunk, AIInsightResponse
 
 logger = structlog.get_logger()
 
@@ -52,11 +55,7 @@ class GeminiProvider(BaseLLMProvider):
             return {"success": False, "provider": "gemini", "error": str(e)[:300]}
 
     async def analyze(self, market_state: dict, task: str) -> dict:
-        from app.ai.prompt_builder import build_system_prompt
-        system_prompt = build_system_prompt()
-        user_prompt = f"Task: {task}\nMarketState: {json.dumps(market_state, default=str)}"
-        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, user_prompt)
-        return insight.model_dump(mode="json")
+        return await analyze_market_state(self, market_state, task)
 
     async def generate_analysis(
         self,
@@ -92,28 +91,7 @@ class GeminiProvider(BaseLLMProvider):
                         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
                     except (KeyError, IndexError):
                         raise ValueError(f"Gemini returned unexpected shape: {json.dumps(data)[:400]}")
-                    c = raw_text.strip()
-                    if c.startswith("```"):
-                        parts = c.split("```")
-                        if len(parts) >= 2:
-                            c = parts[1]
-                            if c.lstrip().startswith("json"):
-                                c = c.lstrip()[4:]
-                            c = c.strip()
-                        else:
-                            c = c.strip("`").strip()
-                    try:
-                        parsed = json.loads(c)
-                    except json.JSONDecodeError:
-                        start_idx = c.find("{")
-                        end_idx = c.rfind("}")
-                        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                            try:
-                                parsed = json.loads(c[start_idx : end_idx + 1])
-                            except json.JSONDecodeError as je:
-                                raise ValueError(f"Gemini returned non-JSON content: {c[:400]} (json error: {je})")
-                        else:
-                            raise ValueError(f"Gemini returned non-JSON content: {c[:400]}")
+                    parsed = extract_json_object(raw_text, "Gemini")
 
                     if not isinstance(parsed, dict):
                         raise ValueError(f"Gemini response root is not a JSON object: {type(parsed)}")

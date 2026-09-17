@@ -6,30 +6,22 @@ Shared deterministic validator as final authority.
 """
 from __future__ import annotations
 
-import asyncio
-import time
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Literal
+from typing import Literal
+
 import structlog
 
+from app.ai.inflight import InFlightSignalMixin
+from app.ai.prompt_registry import prompt_registry
 from app.ai.schemas import (
     AISignal,
-    MarketContext,
     Decision,
-    SetupType,
-    Regime,
-    ValidationStatus,
-    LatencyBreakdown,
-    RejectionReason,
     HistoricalEvidence,
+    MarketContext,
     OptionsContext,
+    Regime,
+    SetupType,
 )
-from app.ai.output_validator import ai_output_validator
-from app.ai.signal_scorer import signal_scorer
-from app.ai.context_builder import market_context_builder
-from app.ai.provider_manager import provider_manager
-from app.ai.prompt_registry import prompt_registry
 
 logger = structlog.get_logger()
 
@@ -42,7 +34,7 @@ CORE_HARD_MAX_TTL = 1200
 CORE_SYSTEM_PROMPT = prompt_registry.get("core_intraday").system_prompt
 
 
-class CoreIntradayAI:
+class CoreIntradayAI(InFlightSignalMixin):
     """
     Core Intraday AI module for 5M/15M opportunities.
 
@@ -57,25 +49,19 @@ class CoreIntradayAI:
     - Signal TTL: 120-900s
     """
 
+    _path = "core"
+    _supersede_event = "superseding_core_in_flight"
+    _reuse_event = "reusing_core_cached_decision"
+    _superseded_event = "core_signal_superseded"
+    _timeout_event = "core_provider_timeout"
+    _hard_ceiling_event = "core_latency_exceeded_hard_ceiling"
+    _size_event = "core_context_exceeds_size_cap"
+    _error_event = "core_analysis_error"
+    _timeout_detail_ms = CORE_TIMEOUT_MS
+    _min_ttl = CORE_MIN_TTL
+
     def __init__(self):
-        self._in_flight: dict[str, dict] = {}
-        self._last_context_hash: dict[str, str] = {}
-        self._last_decision: dict[str, AISignal] = {}
-        self._debounce_seconds = 5.0
-
-    def _get_in_flight(self, symbol: str) -> Optional[dict]:
-        return self._in_flight.get(symbol.upper())
-
-    def _set_in_flight(self, symbol: str, request: dict) -> None:
-        symbol = symbol.upper()
-        existing = self._get_in_flight(symbol)
-        if existing:
-            existing["cancelled"] = True
-            logger.info("superseding_core_in_flight", symbol=symbol)
-        self._in_flight[symbol] = request
-
-    def _clear_in_flight(self, symbol: str) -> None:
-        self._in_flight.pop(symbol.upper(), None)
+        super().__init__(debounce_seconds=5.0)
 
     async def analyze(
         self,
@@ -83,9 +69,9 @@ class CoreIntradayAI:
         provider,
         symbol: str,
         timeframe: Literal["5M", "15M"] = "5M",
-        historical: Optional[HistoricalEvidence] = None,
-        options: Optional[OptionsContext] = None,
-        override_timeout_ms: Optional[int] = None,
+        historical: HistoricalEvidence | None = None,
+        options: OptionsContext | None = None,
+        override_timeout_ms: int | None = None,
     ) -> AISignal:
         """
         Analyze market for intraday opportunity.
@@ -106,107 +92,28 @@ class CoreIntradayAI:
         timeout_ms = override_timeout_ms or CORE_TIMEOUT_MS
         hard_ceiling = max(CORE_HARD_CEILING_MS, timeout_ms + 1000)
 
-        context_hash = context.context_hash
-        last_hash = self._last_context_hash.get(symbol)
-        if last_hash == context_hash:
-            last_signal = self._last_decision.get(symbol)
-            if last_signal and not last_signal.superseded:
-                last_signal.reused = True
-                logger.info("reusing_core_cached_decision", symbol=symbol, signal_id=last_signal.signal_id)
-                return last_signal
-
-        request_id = str(uuid.uuid4())
-        in_flight = {
-            "request_id": request_id,
-            "context_hash": context_hash,
-            "created_at": datetime.now(timezone.utc),
-            "cancelled": False,
-        }
-        self._set_in_flight(symbol, in_flight)
-
-        try:
-            serialized = context.model_dump_json()
-            if len(serialized.encode()) > 6144:
-                logger.warning("core_context_exceeds_size_cap", symbol=symbol, size=len(serialized))
-
-            prompt = self._build_prompt(context, timeframe, historical, options)
-
-            start = time.perf_counter()
-            try:
-                raw_response = await asyncio.wait_for(
-                    provider.generate_analysis(symbol, CORE_SYSTEM_PROMPT, prompt),
-                    timeout=timeout_ms / 1000.0,
-                )
-                provider_latency_ms = int((time.perf_counter() - start) * 1000)
-            except asyncio.TimeoutError:
-                provider_manager.record_failure(provider.config.provider if hasattr(provider, 'config') else 'unknown', is_timeout=True)
-                logger.warning("core_provider_timeout", symbol=symbol, timeout_ms=timeout_ms)
-                signal = self._timeout_signal(symbol, timeframe)
-                return signal
-
-            parse_start = time.perf_counter()
-            signal, validation_result = ai_output_validator.validate(
-                raw_response,
-                path="core",
-                expected_symbol=symbol,
-                expected_timeframe=timeframe,
-            )
-            parse_latency_ms = int((time.perf_counter() - parse_start) * 1000)
-
-            total_latency_ms = int((time.perf_counter() - start) * 1000)
-
-            if in_flight["cancelled"]:
-                signal.superseded = True
-                logger.info("core_signal_superseded", symbol=symbol, request_id=request_id)
-                return signal
-
-            if total_latency_ms > hard_ceiling:
-                logger.warning("core_latency_exceeded_hard_ceiling", symbol=symbol, latency_ms=total_latency_ms, ceiling=hard_ceiling)
-                signal.superseded = True
-                return signal
-
-            signal.signal_id = request_id
-            signal.timeframe = timeframe
-            signal.latency_ms = total_latency_ms
-            signal.latency_breakdown = LatencyBreakdown(
-                provider_latency_ms=provider_latency_ms,
-                parse_latency_ms=parse_latency_ms,
-                validation_latency_ms=0,
-                total_latency_ms=total_latency_ms,
-            )
-
-            signal.historical_context = historical
-            signal.options_context = options
-
-            if validation_result.status == ValidationStatus.PASS:
-                provider_manager.record_success(provider.config.provider if hasattr(provider, 'config') else 'unknown')
-                signal.validation_result = ValidationStatus.PASS
-
-                score = signal_scorer.score(signal, context.regime, historical, options)
-                signal.calibrated_confidence = score
-
-                self._last_context_hash[symbol] = context_hash
-                self._last_decision[symbol] = signal
-            else:
-                signal.validation_result = ValidationStatus.REJECT
-                signal.rejection_reason_code = validation_result.reason_code
-                signal.rejection_detail = validation_result.reason_detail
-
-            return signal
-
-        except Exception as e:
-            logger.error("core_analysis_error", symbol=symbol, error=str(e))
-            signal = self._error_signal(symbol, timeframe, str(e))
-            return signal
-        finally:
-            self._clear_in_flight(symbol)
+        return await self._run_analysis(
+            context,
+            provider,
+            symbol,
+            timeframe,
+            CORE_SYSTEM_PROMPT,
+            self._build_prompt(context, timeframe, historical, options),
+            timeout_ms,
+            hard_ceiling,
+            6144,
+            historical=historical,
+            options=options,
+            score_on_pass=True,
+            apply_context=True,
+        )
 
     def _build_prompt(
         self,
         context: MarketContext,
         timeframe: str,
-        historical: Optional[HistoricalEvidence] = None,
-        options: Optional[OptionsContext] = None,
+        historical: HistoricalEvidence | None = None,
+        options: OptionsContext | None = None,
     ) -> str:
         lines = [
             f"Symbol: {context.symbol}",
@@ -259,57 +166,16 @@ class CoreIntradayAI:
 
         return "\n".join(lines)
 
-    def _timeout_signal(self, symbol: str, timeframe: str) -> AISignal:
-        now = datetime.now(timezone.utc)
-        return AISignal(
-            signal_id=str(uuid.uuid4()),
-            symbol=symbol,
-            timestamp=now,
-            timeframe=timeframe,
-            decision=Decision.NO_TRADE,
-            validation_result=ValidationStatus.REJECT,
-            rejection_reason_code=RejectionReason.PROVIDER_TIMEOUT,
-            rejection_detail=f"Provider timeout after {CORE_TIMEOUT_MS}ms",
-            ttl_seconds=CORE_MIN_TTL,
-            expires_at=now + timedelta(seconds=CORE_MIN_TTL),
-        )
-
-    def _error_signal(self, symbol: str, timeframe: str, error: str) -> AISignal:
-        now = datetime.now(timezone.utc)
-        return AISignal(
-            signal_id=str(uuid.uuid4()),
-            symbol=symbol,
-            timestamp=now,
-            timeframe=timeframe,
-            decision=Decision.NO_TRADE,
-            validation_result=ValidationStatus.REJECT,
-            rejection_reason_code=RejectionReason.PROVIDER_ERROR,
-            rejection_detail=f"Analysis error: {error[:200]}",
-            ttl_seconds=CORE_MIN_TTL,
-            expires_at=now + timedelta(seconds=CORE_MIN_TTL),
-        )
-
-    def reset(self, symbol: Optional[str] = None) -> None:
-        """Reset in-flight state for symbol or all."""
-        if symbol:
-            self._in_flight.pop(symbol.upper(), None)
-            self._last_context_hash.pop(symbol.upper(), None)
-            self._last_decision.pop(symbol.upper(), None)
-        else:
-            self._in_flight.clear()
-            self._last_context_hash.clear()
-            self._last_decision.clear()
-
     async def generate(
         self,
         symbol: str,
-        regime: "Regime",
-        market_context: "MarketContext",
-        provider: Optional[str] = None,
-        model: Optional[str] = None,
-        openrouter_api_key: Optional[str] = None,
-        gemini_api_key: Optional[str] = None,
-    ) -> "AISignal":
+        regime: Regime,
+        market_context: MarketContext,
+        provider: str | None = None,
+        model: str | None = None,
+        openrouter_api_key: str | None = None,
+        gemini_api_key: str | None = None,
+    ) -> AISignal:
         """Generate a core intraday signal. Returns NO_TRADE if no provider available."""
         from app.ai.provider_manager import provider_manager
         try:

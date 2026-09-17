@@ -19,6 +19,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 def _extract_bb(ind: dict) -> tuple[Optional[Decimal], Optional[Decimal], Optional[Decimal]]:
@@ -136,12 +137,10 @@ class MeanReversionStrategy(Strategy):
                 fno_score = 65.0
                 regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     entry_min=entry_min,
                     entry_max=entry_max,
                     trigger=trigger,
@@ -163,7 +162,6 @@ class MeanReversionStrategy(Strategy):
                         f"Target 1 at Mean / VWAP (₹{bb_middle:,.2f})",
                     ],
                     option_contract=contract,
-                    ttl_seconds=300,
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
@@ -206,12 +204,10 @@ class MeanReversionStrategy(Strategy):
                 fno_score = 65.0
                 regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0
 
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     entry_min=entry_min,
                     entry_max=entry_max,
                     trigger=trigger,
@@ -233,7 +229,6 @@ class MeanReversionStrategy(Strategy):
                         f"Target 1 at Mean / VWAP (₹{bb_middle:,.2f})",
                     ],
                     option_contract=contract,
-                    ttl_seconds=300,
                 )
 
         return None

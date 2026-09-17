@@ -1,9 +1,9 @@
 import asyncio
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from app.models.timeseries import SnapshotPayload
+from app.core.atomic_json import atomic_write_json
 from app.core.config import settings
 import structlog
 
@@ -72,15 +72,15 @@ class SnapshotService:
             )
 
             # Atomic write via temporary file
-            temp_path = self.snapshot_path.with_suffix(".tmp")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(payload.model_dump(mode="json"), f, indent=2)
-
-            if os.path.exists(temp_path):
-                if os.path.exists(self.snapshot_path):
-                    os.replace(temp_path, self.snapshot_path)
-                else:
-                    os.rename(temp_path, self.snapshot_path)
+            if not atomic_write_json(
+                self.snapshot_path,
+                payload.model_dump(mode="json"),
+                indent=2,
+                log_event="snapshot_save_failed",
+                log_level="error",
+                max_error_chars=None,
+            ):
+                return False
 
             self.total_saved += 1
             self.last_saved_at = datetime.now(timezone.utc)

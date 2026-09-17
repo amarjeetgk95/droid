@@ -1,10 +1,11 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 import structlog
 from app.services.calendar_service import calendar_service
 from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, TelegramOutbound
 from app.institutional.telegram_templates import format_morning_briefing
+from app.signals.safety.clocks import to_ist
 
 logger = structlog.get_logger()
 
@@ -24,7 +25,7 @@ class MorningBriefingService:
     async def generate_briefing_data(self) -> dict[str, Any]:
         """Aggregate real-time / cached market levels for the morning briefing."""
         now = datetime.now(timezone.utc)
-        ist_now = now + timedelta(hours=5, minutes=30)
+        ist_now = to_ist(now)
         date_str = ist_now.strftime("%A, %d %b %Y")
 
         from app.services.market_service import MarketService
@@ -163,7 +164,7 @@ class MorningBriefingService:
         while self._running:
             try:
                 now = datetime.now(timezone.utc)
-                ist_now = now + timedelta(hours=5, minutes=30)
+                ist_now = to_ist(now)
                 today_str = ist_now.strftime("%Y-%m-%d")
 
                 # Check if 08:50 AM IST reached and not already sent today

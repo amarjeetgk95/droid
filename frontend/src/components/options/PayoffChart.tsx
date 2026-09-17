@@ -1,14 +1,14 @@
 'use client';
 
 import { Card, EmptyNote, fmtINR } from '@/components/ui/desk';
+import { linearScale, pathFromPoints, plotBox, tickIndices } from '@/lib/chartGeometry';
 import { chartTokens } from '@/lib/chartTheme';
 import type { MaxPainResult } from '@/lib/types';
 
 const W = 640;
 const H = 240;
 const PAD = { top: 16, right: 14, bottom: 36, left: 54 };
-const PLOT_W = W - PAD.left - PAD.right;
-const PLOT_H = H - PAD.top - PAD.bottom;
+const PLOT = plotBox(W, H, PAD);
 
 export function fmtCompactINR(v: number | null | undefined): string {
   if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
@@ -50,27 +50,18 @@ export function PayoffChart({
   const tokens = chartTokens();
   const sMin = series[0].strike;
   const sMax = series[series.length - 1].strike;
-  const strikeSpan = sMax - sMin || 1;
   const maxPayout = Math.max(...series.map((p) => p.payout), 1);
-  const base = H - PAD.bottom;
+  const base = PLOT.baseY;
 
-  const x = (strike: number) => PAD.left + ((strike - sMin) / strikeSpan) * PLOT_W;
-  const y = (payout: number) => base - (Math.max(0, payout) / maxPayout) * PLOT_H;
+  const x = linearScale([sMin, sMax], [PAD.left, PLOT.rightEdge]);
+  const yScale = linearScale([0, maxPayout], [base, PAD.top]);
+  const y = (payout: number) => yScale(Math.max(0, payout));
 
-  const line = series
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(p.strike).toFixed(1)} ${y(p.payout).toFixed(1)}`)
-    .join(' ');
+  const line = pathFromPoints(series.map((p) => ({ x: x(p.strike), y: y(p.payout) })));
   const area = `M ${x(sMin).toFixed(1)} ${base} ${line.slice(1)} L ${x(sMax).toFixed(1)} ${base} Z`;
 
   const yTicks = [0, maxPayout / 2, maxPayout];
-  const tickCount = Math.min(5, series.length);
-  const xTickIdx = Array.from(
-    new Set(
-      Array.from({ length: tickCount }, (_, i) =>
-        Math.round((i * (series.length - 1)) / Math.max(1, tickCount - 1)),
-      ),
-    ),
-  );
+  const xTickIdx = tickIndices(series.length);
 
   const maxPainInRange = data.max_pain_strike >= sMin && data.max_pain_strike <= sMax;
   const spotInRange = spotPrice >= sMin && spotPrice <= sMax;
@@ -103,7 +94,7 @@ export function PayoffChart({
             <g key={`y-${tick}`}>
               <line
                 x1={PAD.left}
-                x2={W - PAD.right}
+                x2={PLOT.rightEdge}
                 y1={y(tick)}
                 y2={y(tick)}
                 stroke={tokens.grid}
@@ -120,7 +111,7 @@ export function PayoffChart({
             <text
               key={`x-${idx}`}
               x={x(series[idx].strike)}
-              y={H - PAD.bottom + 14}
+              y={base + 14}
               textAnchor="middle"
               fontSize={10}
               fill={tokens.text}
@@ -128,7 +119,7 @@ export function PayoffChart({
               {series[idx].strike.toLocaleString('en-IN')}
             </text>
           ))}
-          <text x={W - PAD.right} y={H - 6} textAnchor="end" fontSize={10} fill={tokens.text}>
+          <text x={PLOT.rightEdge} y={H - 6} textAnchor="end" fontSize={10} fill={tokens.text}>
             Strike
           </text>
           <text x={4} y={11} fontSize={10} fill={tokens.text}>

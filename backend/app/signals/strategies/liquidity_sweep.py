@@ -24,6 +24,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.features.structure import extract_market_structure
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_scores(
@@ -141,12 +142,10 @@ class LiquiditySweepReclaimStrategy(Strategy):
                     tech_s, mtf_s, fno_s, reg_s, conf = _dynamic_scores(
                         sweep_depth, wick, vol_ratio, pcr_val, "LONG_CALL", mtf_align
                     )
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_CALL",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
                         signal_type="SCALP",
                         is_scalp=True,
                         entry_min=entry_min,
@@ -201,12 +200,10 @@ class LiquiditySweepReclaimStrategy(Strategy):
                 tech_s, mtf_s, fno_s, reg_s, conf = _dynamic_scores(
                     sweep_depth, wick, vol_ratio, pcr_val, "LONG_PUT", mtf_align
                 )
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,

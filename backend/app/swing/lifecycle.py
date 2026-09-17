@@ -156,11 +156,9 @@ def update_position(
     # DUAL-LAYER STOP & LIFECYCLE CHECK:
     # 0. Intraday Hard Time Stop (15:15 IST)
     if getattr(pos, "horizon", "POSITIONAL") == "INTRADAY" and check_time_stop:
-        from datetime import datetime, timezone, timedelta
-        if current_time is not None:
-            ist_now = current_time
-        else:
-            ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        from datetime import datetime
+        from app.signals.safety.clocks import now_ist
+        ist_now = current_time if current_time is not None else now_ist()
         if ist_now.time() >= datetime.strptime("15:15:00", "%H:%M:%S").time():
             return close_position(pos, current_premium, "TIME_STOP")
 

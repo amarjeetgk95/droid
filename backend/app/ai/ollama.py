@@ -1,9 +1,11 @@
-import json
-import httpx
 from datetime import datetime, timezone
-from app.ai.base import BaseLLMProvider
-from app.models.ai import AIInsightResponse
+
+import httpx
 import structlog
+
+from app.ai.base import BaseLLMProvider
+from app.ai.provider_utils import analyze_market_state, extract_json_object
+from app.models.ai import AIInsightResponse
 
 logger = structlog.get_logger()
 
@@ -49,12 +51,7 @@ class OllamaProvider(BaseLLMProvider):
             return {"success": False, "provider": "ollama", "error": str(e)[:400], "base_url": self.base_url}
 
     async def analyze(self, market_state: dict, task: str) -> dict:
-        from app.ai.prompt_builder import build_system_prompt
-        system_prompt = build_system_prompt()
-        user_prompt = f"Task: {task}\nMarketState: {market_state}"
-        import json as _j
-        insight = await self.generate_analysis(market_state.get("symbol", "NIFTY"), system_prompt, _j.dumps(market_state, default=str))
-        return insight.model_dump(mode="json")
+        return await analyze_market_state(self, market_state, task)
 
     async def _check_connectivity(self):
         # 1. Check if Ollama server is reachable (works for remote URLs, but for localhost from server it will fail – caller must handle)
@@ -123,18 +120,7 @@ class OllamaProvider(BaseLLMProvider):
                 response_text = data.get("response", "").strip()
                 if not response_text:
                     raise ValueError("Ollama returned empty response.")
-                try:
-                    parsed_json = json.loads(response_text)
-                except json.JSONDecodeError:
-                    start_idx = response_text.find("{")
-                    end_idx = response_text.rfind("}")
-                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        try:
-                            parsed_json = json.loads(response_text[start_idx : end_idx + 1])
-                        except json.JSONDecodeError as je:
-                            raise ValueError(f"Ollama returned non-JSON content: {response_text[:300]} (json error: {je})")
-                    else:
-                        raise ValueError(f"Ollama returned non-JSON content: {response_text[:300]}")
+                parsed_json = extract_json_object(response_text, "Ollama")
 
                 if not isinstance(parsed_json, dict):
                     raise ValueError(f"Ollama response root is not a JSON object: {type(parsed_json)}")

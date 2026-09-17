@@ -17,6 +17,23 @@ IST = ZoneInfo("Asia/Kolkata")
 
 SessionState = Literal["PRE_OPEN", "OPEN", "CLOSING", "CLOSED"]
 
+
+def now_ist() -> datetime:
+    """Current wall-clock time in IST (canonical ZoneInfo instance)."""
+    return datetime.now(IST)
+
+
+def to_ist(value: datetime) -> datetime:
+    """Convert ``value`` to IST; naive datetimes are interpreted as IST wall time."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=IST)
+    return value.astimezone(IST)
+
+
+def ist_from_timestamp(epoch_seconds: float) -> datetime:
+    """IST datetime for a POSIX timestamp (UTC epoch seconds, fractional allowed)."""
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).astimezone(IST)
+
 # Max allowable future skew before a tick is rejected as future-dated.
 MAX_FUTURE_SKEW_MS: int = 2_000
 

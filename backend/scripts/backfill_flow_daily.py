@@ -5,7 +5,8 @@ import pathlib
 from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 
-IST = ZoneInfo("Asia/Kolkata")
+from app.signals.safety.clocks import IST
+
 UTC = ZoneInfo("UTC")
 
 

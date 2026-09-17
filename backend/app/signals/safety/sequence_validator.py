@@ -6,12 +6,13 @@ LRU via OrderedDict (bounded), OUT_OF_ORDER emission, _last persisted, wired to 
 """
 from __future__ import annotations
 
-import json
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 import structlog
+
+from app.core.atomic_json import atomic_write_json, read_json
 
 logger = structlog.get_logger()
 
@@ -70,30 +71,24 @@ class SequenceValidator:
         self._recent.append(seq)
 
     def _persist_last(self) -> None:
-        try:
-            key = f"{self.instrument_id}:{self.source_id}"
-            data: dict = {}
-            if _SEQ_STATE_FILE.exists():
-                try:
-                    data = json.loads(_SEQ_STATE_FILE.read_text(encoding="utf-8"))
-                except Exception:
-                    data = {}
-            data[key] = self._last_source_seq
-            tmp = _SEQ_STATE_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            tmp.replace(_SEQ_STATE_FILE)
-        except Exception:
-            pass
+        key = f"{self.instrument_id}:{self.source_id}"
+        data = read_json(_SEQ_STATE_FILE, default={})
+        if not isinstance(data, dict):
+            data = {}
+        data[key] = self._last_source_seq
+        atomic_write_json(
+            _SEQ_STATE_FILE,
+            data,
+            log_event="sequence_state_persist_failed",
+            log_level="debug",
+        )
 
     def _restore_last(self) -> None:
-        try:
-            if _SEQ_STATE_FILE.exists():
-                data = json.loads(_SEQ_STATE_FILE.read_text(encoding="utf-8"))
-                v = data.get(f"{self.instrument_id}:{self.source_id}")
-                if isinstance(v, int):
-                    self._last_source_seq = v
-        except Exception:
-            pass
+        data = read_json(_SEQ_STATE_FILE)
+        if isinstance(data, dict):
+            v = data.get(f"{self.instrument_id}:{self.source_id}")
+            if isinstance(v, int):
+                self._last_source_seq = v
 
     def check(self, source_sequence_id: int | None, sequence_id: int | None = None) -> SequenceCheckResult:
         # sequence_id fallback: prefer source_sequence_id, else sequence_id, else internal.

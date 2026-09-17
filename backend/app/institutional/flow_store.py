@@ -28,13 +28,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta, time as dtime
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 import statistics
 
 from app.ml.pit_store import pit_store
 from app.ml.leakage_gate import leakage_gate
+from app.signals.safety.clocks import IST
 
-IST = ZoneInfo("Asia/Kolkata")
 SOURCE = "nse_daily_files_via_static_seed"
 HISTORY_SOURCE = "mrchartist_proxy_fetch-pipeline"
 FLOW_AVAILABLE_HOUR_IST = 18  # T+1 18:00 IST

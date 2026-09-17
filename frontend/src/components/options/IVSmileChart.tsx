@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Card, EmptyNote, fmtNum } from '@/components/ui/desk';
+import { linearScale, pathFromPoints, plotBox, tickIndices } from '@/lib/chartGeometry';
 import { chartTokens } from '@/lib/chartTheme';
 import type { OptionChainStrikeRow } from '@/lib/types';
 
@@ -12,26 +13,13 @@ interface IvPoint {
   isAtm: boolean;
 }
 
-interface Point {
-  x: number;
-  y: number;
-}
-
 const W = 640;
 const H = 240;
 const PAD = { top: 16, right: 14, bottom: 36, left: 46 };
-const PLOT_W = W - PAD.left - PAD.right;
-const PLOT_H = H - PAD.top - PAD.bottom;
+const PLOT = plotBox(W, H, PAD);
 
 function ivOf(v: number | null | undefined): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
-}
-
-function pathThrough(pts: Point[]): string {
-  if (pts.length === 0) return '';
-  return pts
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
-    .join(' ');
 }
 
 export function IVSmileChart({
@@ -69,7 +57,6 @@ export function IVSmileChart({
   const tokens = chartTokens();
   const sMin = points[0].strike;
   const sMax = points[points.length - 1].strike;
-  const strikeSpan = sMax - sMin || 1;
 
   const ivs: number[] = [];
   for (const p of points) {
@@ -82,21 +69,14 @@ export function IVSmileChart({
   const yMaxRaw = Math.ceil(maxIv + 1);
   const yMax = yMaxRaw > yMin ? yMaxRaw : yMin + 1;
 
-  const x = (strike: number) => PAD.left + ((strike - sMin) / strikeSpan) * PLOT_W;
-  const y = (iv: number) => H - PAD.bottom - ((iv - yMin) / (yMax - yMin)) * PLOT_H;
+  const x = linearScale([sMin, sMax], [PAD.left, PLOT.rightEdge]);
+  const y = linearScale([yMin, yMax], [PLOT.baseY, PAD.top]);
 
   const cePts = points.filter((p) => p.ce !== null).map((p) => ({ x: x(p.strike), y: y(p.ce as number) }));
   const pePts = points.filter((p) => p.pe !== null).map((p) => ({ x: x(p.strike), y: y(p.pe as number) }));
 
   const yTicks = [yMin, (yMin + yMax) / 2, yMax];
-  const tickCount = Math.min(5, points.length);
-  const xTickIdx = Array.from(
-    new Set(
-      Array.from({ length: tickCount }, (_, i) =>
-        Math.round((i * (points.length - 1)) / Math.max(1, tickCount - 1)),
-      ),
-    ),
-  );
+  const xTickIdx = tickIndices(points.length);
 
   const ceVals = points.map((p) => p.ce).filter((v): v is number => v !== null);
   const peVals = points.map((p) => p.pe).filter((v): v is number => v !== null);
@@ -132,7 +112,7 @@ export function IVSmileChart({
           <g key={`y-${tick}`}>
             <line
               x1={PAD.left}
-              x2={W - PAD.right}
+              x2={PLOT.rightEdge}
               y1={y(tick)}
               y2={y(tick)}
               stroke={tokens.grid}
@@ -149,7 +129,7 @@ export function IVSmileChart({
           <text
             key={`x-${idx}`}
             x={x(points[idx].strike)}
-            y={H - PAD.bottom + 14}
+            y={PLOT.baseY + 14}
             textAnchor="middle"
             fontSize={10}
             fill={tokens.text}
@@ -157,7 +137,7 @@ export function IVSmileChart({
             {points[idx].strike.toLocaleString('en-IN')}
           </text>
         ))}
-        <text x={W - PAD.right} y={H - 6} textAnchor="end" fontSize={10} fill={tokens.text}>
+        <text x={PLOT.rightEdge} y={H - 6} textAnchor="end" fontSize={10} fill={tokens.text}>
           Strike
         </text>
         <text x={4} y={11} fontSize={10} fill={tokens.text}>
@@ -170,7 +150,7 @@ export function IVSmileChart({
               x1={atmLine}
               x2={atmLine}
               y1={PAD.top}
-              y2={H - PAD.bottom}
+              y2={PLOT.baseY}
               stroke={tokens.crosshair}
               strokeWidth={1}
               strokeDasharray="3 3"
@@ -184,7 +164,7 @@ export function IVSmileChart({
 
         {cePts.length > 0 && (
           <path
-            d={pathThrough(cePts)}
+            d={pathFromPoints(cePts)}
             fill="none"
             stroke={tokens.accent}
             strokeWidth={2}
@@ -193,7 +173,7 @@ export function IVSmileChart({
         )}
         {pePts.length > 0 && (
           <path
-            d={pathThrough(pePts)}
+            d={pathFromPoints(pePts)}
             fill="none"
             stroke={tokens.warn}
             strokeWidth={2}

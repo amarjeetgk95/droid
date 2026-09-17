@@ -37,9 +37,7 @@ def _nearest_fyers_expiry(expiry_data: object) -> "date | None":
     if not items:
         return None
     try:
-        from zoneinfo import ZoneInfo
-
-        _ist = ZoneInfo("Asia/Kolkata")
+        from app.signals.safety.clocks import IST as _ist
     except Exception:
         _ist = timezone.utc  # type: ignore[assignment]
     today = datetime.now(_ist).date()

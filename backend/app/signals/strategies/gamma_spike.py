@@ -30,6 +30,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 class GammaSpikeStrategy(Strategy):
@@ -177,12 +178,10 @@ class GammaSpikeStrategy(Strategy):
             regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP", "EVENT") else 60.0
             conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.25 * fno_score + 0.15 * regime_score, 1)
 
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_CALL",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
                 signal_type="SCALP",
                 is_scalp=True,
                 entry_min=entry_min,
@@ -239,12 +238,10 @@ class GammaSpikeStrategy(Strategy):
             regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN", "EVENT") else 60.0
             conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.25 * fno_score + 0.15 * regime_score, 1)
 
-            return SignalCandidate(
-                underlying=ctx.underlying,
+            return make_candidate(
+                ctx,
                 strategy=self.name,
                 direction="LONG_PUT",
-                timeframe=ctx.timeframe,
-                spot_price=spot,
                 signal_type="SCALP",
                 is_scalp=True,
                 entry_min=entry_min,

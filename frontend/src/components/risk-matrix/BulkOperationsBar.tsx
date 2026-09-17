@@ -2,6 +2,7 @@
 
 import React, { useCallback, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 
 type PurgePreview = {
@@ -14,10 +15,6 @@ type PurgePreview = {
 };
 
 type PurgeResult = { deleted: number; requested: number };
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 /**
  * Signal database maintenance.
@@ -52,7 +49,7 @@ export const BulkOperationsBar: React.FC = () => {
       const reason =
         statusRes.status === 'rejected' ? statusRes.reason : (auditRes as PromiseRejectedResult).reason;
       setPreview(null);
-      setPreviewError(messageOf(reason, 'backend did not return purge counts'));
+      setPreviewError(errorMessage(reason, 'backend did not return purge counts'));
     } else {
       const summary = auditRes.value?.summary ?? {};
       setPreview({
@@ -82,7 +79,7 @@ export const BulkOperationsBar: React.FC = () => {
       setResult({ deleted: res?.deleted_count ?? 0, requested: res?.requested_count ?? 0 });
       setPreview(null);
     } catch (err) {
-      const msg = messageOf(err, 'Purge failed — no confirmation was recorded.');
+      const msg = errorMessage(err, 'Purge failed — no confirmation was recorded.');
       setFailure(msg);
       // Rethrow so ConfirmDialog keeps itself open and shows the failure inline.
       throw err instanceof Error ? err : new Error(msg);

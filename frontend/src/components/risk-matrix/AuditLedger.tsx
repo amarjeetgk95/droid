@@ -3,6 +3,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { fmtINR } from '@/components/ui/desk';
 import { Card } from '../shared/Card';
 import { Badge, type BadgeVariant } from '../shared/Badge';
@@ -15,10 +16,6 @@ import {
   signedINR,
   valueToneClass,
 } from './riskUtils';
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 function statusVariant(status: string | null | undefined): BadgeVariant {
   switch (status) {
@@ -78,7 +75,7 @@ export const AuditLedger: React.FC = () => {
       setUpdatedAt(Date.now());
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
-      setError(messageOf(err, 'Audit ledger unavailable'));
+      setError(errorMessage(err, 'Audit ledger unavailable'));
     } finally {
       if (seq === requestSeqRef.current) setLoading(false);
     }
@@ -116,7 +113,7 @@ export const AuditLedger: React.FC = () => {
       );
       void fetchAudit();
     } catch (err) {
-      setActionError(messageOf(err, 'Sanitize failed — ledger left unchanged.'));
+      setActionError(errorMessage(err, 'Sanitize failed — ledger left unchanged.'));
     } finally {
       setSanitizing(false);
     }

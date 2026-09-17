@@ -10,13 +10,14 @@ resolver consults it first and falls back to the formula offline.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 import structlog
+
+from app.core.atomic_json import atomic_write_json, read_json
 
 logger = structlog.get_logger()
 
@@ -106,10 +107,13 @@ class LiveContractCache:
                 "updated_at_ms": int(time.time() * 1000),
                 "strikes": {k: v.model_dump(mode="json") for k, v in self._map.items()},
             }
-            tmp = CACHE_FILE.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, default=str)
-            tmp.replace(CACHE_FILE)
+            atomic_write_json(
+                CACHE_FILE,
+                payload,
+                log_event="live_contracts_save_failed",
+                log_level="debug",
+                max_error_chars=150,
+            )
         except Exception as e:
             logger.debug("live_contracts_save_failed", error=str(e)[:150])
 
@@ -117,7 +121,7 @@ class LiveContractCache:
         try:
             if not CACHE_FILE.exists() or CACHE_FILE.stat().st_size <= 10:
                 return 0
-            payload = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            payload = read_json(CACHE_FILE, default={})
             count = 0
             for k, v in (payload.get("strikes") or {}).items():
                 try:

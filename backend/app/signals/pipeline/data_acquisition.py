@@ -16,7 +16,6 @@ from datetime import datetime, UTC
 from datetime import time as dt_time
 from decimal import Decimal
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import structlog
 from pydantic import BaseModel, Field
@@ -27,11 +26,11 @@ from app.multi_timeframe.alignment import compute_alignment
 from app.services.calendar_service import calendar_service
 from app.signals.contract_resolver import validate_underlying
 from app.signals.features.engine import compute_feature_snapshot
+from app.signals.safety.clocks import IST as IST_TZ
 from app.signals.strategies.base import StrategyContext
 from app.technical_analysis.analyzer import analyze_timeframe
 
 logger = structlog.get_logger()
-IST_TZ = ZoneInfo("Asia/Kolkata")
 
 
 class ScanDiagnostics(BaseModel):

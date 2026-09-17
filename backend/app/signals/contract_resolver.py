@@ -10,12 +10,12 @@ Enforces:
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Optional
 from pydantic import BaseModel
 
-IST = timezone(timedelta(hours=5, minutes=30))
+from app.signals.safety.clocks import IST
 APPROVED_UNDERLYINGS = {"NIFTY", "BANKNIFTY", "SENSEX"}
 
 # FYERS v3 option symbology (authoritative: symbol master / fyers-skills):

@@ -7,9 +7,10 @@ Schedules:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import structlog
 from app.services.calendar_service import calendar_service
+from app.signals.safety.clocks import to_ist
 from app.swing.scanner import swing_scanner
 
 logger = structlog.get_logger()
@@ -40,7 +41,7 @@ class SwingWorker:
             try:
                 # IST is UTC + 5:30
                 now_utc = datetime.now(timezone.utc)
-                now_ist = now_utc + timedelta(hours=5, minutes=30)
+                now_ist = to_ist(now_utc)
                 today_ist_date = now_ist.date()
 
                 is_trading_day = now_ist.weekday() < 5 and not calendar_service.is_holiday(today_ist_date)

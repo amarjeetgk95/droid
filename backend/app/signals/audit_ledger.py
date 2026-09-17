@@ -14,6 +14,8 @@ from typing import Any, Optional, Literal
 from pydantic import BaseModel, Field, computed_field
 import structlog
 
+from app.signals.safety.clocks import ist_from_timestamp
+
 logger = structlog.get_logger()
 
 # Unified status enum with FSM: ledger stores BOTH fsm_state (canonical) and
@@ -53,9 +55,7 @@ def format_timestamp_ist(epoch_ms: Optional[int]) -> Optional[str]:
     if not epoch_ms:
         return None
     try:
-        from zoneinfo import ZoneInfo
-        from datetime import datetime
-        dt = datetime.fromtimestamp(epoch_ms / 1000.0, tz=ZoneInfo("Asia/Kolkata"))
+        dt = ist_from_timestamp(epoch_ms / 1000.0)
         return dt.strftime("%d %b %Y, %H:%M:%S IST")
     except Exception:
         return None

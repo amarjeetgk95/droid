@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from app.signals.safety.clocks import to_ist
+
 logger = structlog.get_logger(__name__)
 
 FLAG = "FORECAST_SCHEDULER_ENABLED"
@@ -33,13 +35,12 @@ def scheduler_enabled() -> bool:
 def seconds_until_next_run(now_utc: Optional[datetime] = None) -> float:
     """Seconds until next :05 past the hour IST (Asia/Kolkata = UTC+5:30).
 
-    Pure — unit-testable. IST has no DST so a fixed offset is correct.
+    Pure — unit-testable. IST has no DST; canonical ZoneInfo offset is fixed.
     """
     now = now_utc or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    ist_offset = timedelta(hours=5, minutes=30)
-    now_ist = now + ist_offset
+    now_ist = to_ist(now)
     # Next hour at minute 5 IST.
     nxt = now_ist.replace(minute=5, second=0, microsecond=0)
     if nxt <= now_ist:

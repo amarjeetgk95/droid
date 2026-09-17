@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { toNumber, pickFirst } from '@/lib/coerce';
 import { lotSizeFor } from '@/lib/paperLots';
 import { Card } from '../shared/Card';
 
@@ -12,22 +13,16 @@ interface SizingResult {
   derived: boolean;
 }
 
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown sizing error';
-}
-
 export const SizingPreview: React.FC = () => {
   const [symbol, setSymbol] = useState('NIFTY');
   const [riskAmount, setRiskAmount] = useState(5000);
   const [stopDistance, setStopDistance] = useState(40);
   const [result, setResult] = useState<SizingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown sizing error',
+    busyMessage: 'A sizing request is already in progress. Wait for it to finish.',
+  });
 
   const resetResult = () => {
     setResult(null);
@@ -45,52 +40,46 @@ export const SizingPreview: React.FC = () => {
       return;
     }
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const res = await api.previewAlgoSizing({
-          symbol,
-          risk_amount: riskAmount,
-          stop_distance: stopDistance,
-        });
-        const data = res?.data as Record<string, unknown> | undefined;
-        if (!data) throw new Error('Sizing engine returned no data.');
+    const outcome = await action.run(async () => {
+      const res = await api.previewAlgoSizing({
+        symbol,
+        risk_amount: riskAmount,
+        stop_distance: stopDistance,
+      });
+      const data = res?.data as Record<string, unknown> | undefined;
+      if (!data) throw new Error('Sizing engine returned no data.');
 
-        const engineLots = toNumber(data.lots ?? data.recommended_lots);
-        const engineMaxLoss = toNumber(data.max_loss ?? data.worst_case_loss);
-        const marginPerLot = toNumber(
-          data.margin_per_lot ?? data.required_margin ?? data.margin_required,
-        );
+      const engineLots = toNumber(pickFirst(data.lots, data.recommended_lots));
+      const engineMaxLoss = toNumber(pickFirst(data.max_loss, data.worst_case_loss));
+      const marginPerLot = toNumber(
+        pickFirst(data.margin_per_lot, data.required_margin, data.margin_required),
+      );
 
-        let lots = engineLots;
-        let derived = false;
-        if (lots === null && marginPerLot !== null && marginPerLot > 0) {
-          lots = Math.floor(riskAmount / marginPerLot);
-          derived = true;
-        }
-        if (lots === null) {
-          throw new Error(
-            'Sizing engine returned no lot recommendation and no real margin figure — unavailable rather than fabricated.',
-          );
-        }
-
-        let maxLoss = engineMaxLoss;
-        if (maxLoss === null) {
-          maxLoss = lots * stopDistance * lotSizeFor(symbol);
-          derived = true;
-        }
-
-        setResult({ lots, maxLoss, derived });
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+      let lots = engineLots;
+      let derived = false;
+      if (lots === null && marginPerLot !== null && marginPerLot > 0) {
+        lots = Math.floor(riskAmount / marginPerLot);
+        derived = true;
       }
+      if (lots === null) {
+        throw new Error(
+          'Sizing engine returned no lot recommendation and no real margin figure — unavailable rather than fabricated.',
+        );
+      }
+
+      let maxLoss = engineMaxLoss;
+      if (maxLoss === null) {
+        maxLoss = lots * stopDistance * lotSizeFor(symbol);
+        derived = true;
+      }
+
+      setResult({ lots, maxLoss, derived });
+      return true;
     });
 
-    if (outcome === null) {
+    if (!outcome.ok) {
       setResult(null);
-      setError(failure ?? 'A sizing request is already in progress. Wait for it to finish.');
+      setError(outcome.message);
     }
   };
 
@@ -158,10 +147,10 @@ export const SizingPreview: React.FC = () => {
         <button
           type="button"
           onClick={calculateSizing}
-          disabled={guard.isPending}
+          disabled={action.isPending}
           className="w-full py-1.5 rounded bg-muted hover:bg-muted-strong border border-border text-primary font-semibold disabled:opacity-50"
         >
-          {guard.isPending ? 'Computing…' : 'Compute Volatility-Adjusted Size'}
+          {action.isPending ? 'Computing…' : 'Compute Volatility-Adjusted Size'}
         </button>
 
         {error && (

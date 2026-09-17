@@ -4,7 +4,7 @@ Computes point-in-time technical, statistical, structural, and options
 features once to be reused across all indicators and validation runs.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import math
 from typing import Any, Dict, List, Optional
 import structlog
@@ -19,6 +19,7 @@ from app.quant.indicators import (
     calculate_supertrend,
 )
 from app.research.enums import DataQualityStatus, MarketRegime, MarketSession
+from app.signals.safety.clocks import to_ist
 from app.technical_analysis.analyzer import analyze_timeframe
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +29,7 @@ def classify_session_ist(dt: datetime) -> MarketSession:
     """Classify candle timestamp into Indian market sessions (IST: UTC + 5:30)."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    ist_time = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    ist_time = to_ist(dt)
     total_minutes = ist_time.hour * 60 + ist_time.minute
 
     # 09:15 = 555, 09:45 = 585, 11:30 = 690, 13:30 = 810, 15:00 = 900, 15:30 = 930
@@ -361,7 +362,7 @@ def minutes_to_close_ist(ts: Any) -> Optional[int]:
         return None
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
-    ist = ts.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    ist = to_ist(ts)
     total = ist.hour * 60 + ist.minute
     if total >= IST_CLOSE_MINUTES:
         return 0

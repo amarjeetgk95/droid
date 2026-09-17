@@ -2,8 +2,9 @@
 
 import React, { useCallback, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { Badge } from '../shared/Badge';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 
@@ -11,10 +12,6 @@ type Mode = 'OFF' | 'PAPER' | 'LIVE';
 type ModeState = 'loading' | 'ready' | 'error';
 
 const MODES: readonly Mode[] = ['OFF', 'PAPER', 'LIVE'];
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown mode error';
-}
 
 export const ExecutionModeSwitcher: React.FC = () => {
   const [mode, setMode] = useState<Mode | null>(null);
@@ -27,7 +24,10 @@ export const ExecutionModeSwitcher: React.FC = () => {
   const [liveAck, setLiveAck] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown mode error',
+    busyMessage: 'A mode update is already in progress. Wait for it to finish.',
+  });
 
   const readState = useCallback(async () => {
     try {
@@ -39,7 +39,7 @@ export const ExecutionModeSwitcher: React.FC = () => {
     } catch (err) {
       setMode(null);
       setModeState('error');
-      setModeError(errorMessage(err));
+      setModeError(errorMessage(err, 'Unknown mode error'));
     }
 
     try {
@@ -51,7 +51,7 @@ export const ExecutionModeSwitcher: React.FC = () => {
     } catch (err) {
       setConsentOk(false);
       setDisclosureVersion(null);
-      setConsentError(errorMessage(err));
+      setConsentError(errorMessage(err, 'Unknown mode error'));
     }
   }, []);
 
@@ -79,34 +79,27 @@ export const ExecutionModeSwitcher: React.FC = () => {
       }
     }
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        if (target === 'LIVE' && !consentOk) {
-          const ackRes = await api.acknowledgeAlgoConsent(disclosureVersion as string, true);
-          if (ackRes?.data?.acknowledged !== true) {
-            throw new Error('Risk-disclosure acknowledgment was not recorded by the backend.');
-          }
-          setConsentOk(true);
+    const outcome = await action.run(async () => {
+      if (target === 'LIVE' && !consentOk) {
+        const ackRes = await api.acknowledgeAlgoConsent(disclosureVersion as string, true);
+        if (ackRes?.data?.acknowledged !== true) {
+          throw new Error('Risk-disclosure acknowledgment was not recorded by the backend.');
         }
-        const res = await api.setAlgoMode(target);
-        const applied = res?.data?.mode;
-        if (applied !== target) {
-          throw new Error(
-            `Backend did not confirm the mode switch (reported: ${String(applied)}). Mode unchanged.`,
-          );
-        }
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+        setConsentOk(true);
       }
+      const res = await api.setAlgoMode(target);
+      const applied = res?.data?.mode;
+      if (applied !== target) {
+        throw new Error(
+          `Backend did not confirm the mode switch (reported: ${String(applied)}). Mode unchanged.`,
+        );
+      }
+      return true;
     });
 
-    if (outcome === null) {
-      const message = failure ?? 'A mode update is already in progress. Wait for it to finish.';
-      setActionError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setActionError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     setMode(target);
@@ -117,7 +110,7 @@ export const ExecutionModeSwitcher: React.FC = () => {
   };
 
   const modeLabel = mode ?? 'UNKNOWN';
-  const switchingDisabled = modeState !== 'ready' || guard.isPending;
+  const switchingDisabled = modeState !== 'ready' || action.isPending;
 
   return (
     <>

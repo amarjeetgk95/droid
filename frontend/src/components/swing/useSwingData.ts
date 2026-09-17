@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import type { SwingSetupDTO, SwingPositionDTO, PortfolioRiskDTO } from '@/lib/api/swing';
 
 export type SwingFilterParams = {
@@ -41,10 +42,6 @@ export type SwingError = { kind: SwingErrorKind; message: string };
 
 /** Filter chips are debounced so a keystroke in Min Score is one request. */
 const FILTER_DEBOUNCE_MS = 300;
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 /**
  * Data layer for the swing desk.
@@ -114,13 +111,13 @@ export function useSwingData(filters?: SwingFilterParams) {
     if (!mountedRef.current || seq !== requestSeqRef.current) return;
 
     const nextSetupsError =
-      setupsRes.status === 'rejected' ? messageOf(setupsRes.reason, 'setups unavailable') : null;
+      setupsRes.status === 'rejected' ? errorMessage(setupsRes.reason, 'setups unavailable') : null;
     const nextPositionsError =
       positionsRes.status === 'rejected'
-        ? messageOf(positionsRes.reason, 'positions unavailable')
+        ? errorMessage(positionsRes.reason, 'positions unavailable')
         : null;
     const nextRegimeError =
-      regimeRes.status === 'rejected' ? messageOf(regimeRes.reason, 'regime unavailable') : null;
+      regimeRes.status === 'rejected' ? errorMessage(regimeRes.reason, 'regime unavailable') : null;
 
     if (setupsRes.status === 'fulfilled') {
       setSetups(setupsRes.value?.data?.setups ?? []);
@@ -199,7 +196,7 @@ export function useSwingData(filters?: SwingFilterParams) {
         return res?.data ?? null;
       } catch (err) {
         if (mountedRef.current) {
-          setScanError(messageOf(err, 'Scan execution failed.'));
+          setScanError(errorMessage(err, 'Scan execution failed.'));
           setErrorDismissed(false);
         }
         return null;

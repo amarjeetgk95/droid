@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import structlog
 
+from app.signals.safety.clocks import to_ist
+
 logger = structlog.get_logger(__name__)
 
 FLAG = "FLOW_SCHEDULER_ENABLED"
@@ -80,7 +82,7 @@ async def _loop() -> None:
     while True:
         try:
             now = datetime.now(timezone.utc)
-            ist = now + timedelta(hours=5, minutes=30)
+            ist = to_ist(now)
             nxt = ist.replace(hour=19, minute=30, second=0, microsecond=0)
             if nxt <= ist:
                 nxt += timedelta(days=1)

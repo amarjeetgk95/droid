@@ -8,28 +8,23 @@ Every sub-component is fully transparent and exposed in the output.
 """
 
 import math
-from typing import Any, Dict, Optional
-from datetime import datetime, timezone
+from typing import Any
 
 from app.quant.indicators import (
-    calculate_adx,
-    calculate_atr,
     calculate_bollinger_bands,
     calculate_ema,
     calculate_rsi,
 )
 from app.research.enums import (
     DataQualityStatus,
-    Direction,
-    ForecastHorizon,
     IndicatorCategory,
     IndicatorLifecycle,
 )
-from app.research.indicator_base import IndicatorBase
+from app.research.indicators.base import BuiltinIndicator
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
-class OMPIIndicator(IndicatorBase):
+class OMPIIndicator(BuiltinIndicator):
     """Option Market Pressure Index (OMPI) v0.1 (§15-§18).
     
     Synthesizes five structural market pressure vectors:
@@ -78,7 +73,7 @@ class OMPIIndicator(IndicatorBase):
         )
 
     @property
-    def default_parameters(self) -> Dict[str, Any]:
+    def default_parameters(self) -> dict[str, Any]:
         return {
             "w_dir": 0.30,
             "w_opt": 0.25,
@@ -90,22 +85,19 @@ class OMPIIndicator(IndicatorBase):
         }
 
     async def calculate(self, context: IndicatorContext) -> IndicatorOutput:
-        w_dir = float(context.parameters.get("w_dir", 0.30))
-        w_opt = float(context.parameters.get("w_opt", 0.25))
-        w_part = float(context.parameters.get("w_part", 0.20))
-        w_vol = float(context.parameters.get("w_vol", 0.15))
-        w_decay = float(context.parameters.get("w_decay", 0.10))
-        bull_th = float(context.parameters.get("bull_threshold", 20.0))
-        bear_th = float(context.parameters.get("bear_threshold", -20.0))
+        w_dir = self._float_param(context, "w_dir", 0.30)
+        w_opt = self._float_param(context, "w_opt", 0.25)
+        w_part = self._float_param(context, "w_part", 0.20)
+        w_vol = self._float_param(context, "w_vol", 0.15)
+        w_decay = self._float_param(context, "w_decay", 0.10)
+        bull_th = self._float_param(context, "bull_threshold", 20.0)
+        bear_th = self._float_param(context, "bear_threshold", -20.0)
 
-        closes = [float(c["close"]) for c in context.candles]
-        highs = [float(c["high"]) for c in context.candles]
-        lows = [float(c["low"]) for c in context.candles]
-        opens = [float(c["open"]) for c in context.candles]
-        volumes = [float(c.get("volume", 0.0) or 0.0) for c in context.candles]
+        closes, highs, lows, current_price = self._extract_series(context)
+        opens = self._extract_opens(context.candles)
+        volumes = self._extract_volumes(context.candles)
 
-        current_price = closes[-1] if closes else context.current_price
-        atr = calculate_atr(highs, lows, closes, 14) if len(closes) >= 14 else (current_price * 0.005)
+        atr = self._guarded_atr(highs, lows, closes, current_price)
 
         # -------------------------------------------------------------
         # Vector 1: Directional Price Pressure (P_dir) [-100, +100]
@@ -166,8 +158,8 @@ class OMPIIndicator(IndicatorBase):
         # -------------------------------------------------------------
         # Vector 3: Participation Pressure (P_part) [-100, +100]
         # -------------------------------------------------------------
-        vol_len = min(len(volumes), 20)
-        vol_sub = volumes[-vol_len:]
+        vol_sub = self._last(volumes, 20)
+        vol_len = len(vol_sub)
         avg_vol = sum(vol_sub) / vol_len if vol_len > 0 else 1.0
         curr_vol = volumes[-1] if volumes else 1.0
         rel_vol = curr_vol / avg_vol if avg_vol > 0 else 1.0
@@ -182,7 +174,7 @@ class OMPIIndicator(IndicatorBase):
         # -------------------------------------------------------------
         # Vector 4: Volatility Regime Pressure (P_vol) [-100, +100]
         # -------------------------------------------------------------
-        _, _, _, bb_bandwidth, bb_pct_b = calculate_bollinger_bands(closes, 20, 2.0)
+        _, _, _, _, bb_pct_b = calculate_bollinger_bands(closes, 20, 2.0)
         atm_iv = float(opt_ctx.get("atm_iv", 15.0) or 15.0)
 
         # High IV + expanding bands amplifies momentum; low IV + squeeze dampens
@@ -216,41 +208,24 @@ class OMPIIndicator(IndicatorBase):
         total_weight = w_dir + w_opt + w_part + w_vol + w_decay
         normalized_score = round(max(-100.0, min(100.0, raw_composite / total_weight)), 2)
 
-        # Direction determination
-        if normalized_score >= bull_th:
-            direction = Direction.BULLISH
-        elif normalized_score <= bear_th:
-            direction = Direction.BEARISH
-        else:
-            direction = Direction.NEUTRAL
+        direction = self._resolve_direction(normalized_score, bull_th, bear_th)
 
         # Analytical confidence calculation
-        confidence = round(min(1.0, abs(normalized_score) / 60.0), 3)
+        confidence = self._resolve_confidence(normalized_score, 60.0)
 
         # Target and Invalidation
-        if direction == Direction.BULLISH:
-            target_price = round(current_price + (1.6 * atr), 2)
-            invalidation_price = round(current_price - (1.0 * atr), 2)
-        elif direction == Direction.BEARISH:
-            target_price = round(current_price - (1.6 * atr), 2)
-            invalidation_price = round(current_price + (1.0 * atr), 2)
-        else:
-            target_price = None
-            invalidation_price = None
+        target_price, invalidation_price = self._bracket_prices(
+            current_price, atr, direction, 1.6, 1.0
+        )
 
         data_quality = DataQualityStatus.LIVE if opt_ctx.get("available", False) else DataQualityStatus.DEGRADED
 
-        return IndicatorOutput(
-            indicator_id=self.indicator_id,
-            version=self.version,
-            timestamp=context.timestamp,
-            instrument=context.instrument,
-            timeframe=context.timeframe,
+        return self._build_output(
+            context,
             direction=direction,
             score=normalized_score,
             confidence=confidence,
             raw_value=raw_composite,
-            normalized_value=normalized_score,
             component_values={
                 "p_dir": p_dir,
                 "p_opt": p_opt,
@@ -272,9 +247,6 @@ class OMPIIndicator(IndicatorBase):
                     "w_decay": w_decay,
                 },
             },
-            regime_context=context.market_regime.value if context.market_regime else None,
-            horizon=ForecastHorizon.HORIZON_15M,
-            horizon_candles=5,
             target_price=target_price,
             invalidation_price=invalidation_price,
             data_quality=data_quality,

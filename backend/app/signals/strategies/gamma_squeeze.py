@@ -21,6 +21,7 @@ from app.signals.strategies.base import (
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 def _extract_oi_change_pct(fno: dict) -> Optional[float]:
@@ -176,12 +177,10 @@ class GammaSqueezeStrategy(Strategy):
                     fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
                     regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_CALL",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,
@@ -235,12 +234,10 @@ class GammaSqueezeStrategy(Strategy):
                     fno_score = min(88.0, max(45.0, 50.0 + (oi_change * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
                     regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_PUT",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,

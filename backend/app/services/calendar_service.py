@@ -1,8 +1,7 @@
 from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
 from typing import NamedTuple
 
-IST = ZoneInfo("Asia/Kolkata")
+from app.signals.safety.clocks import IST
 
 
 class TradingSessionInfo(NamedTuple):

@@ -2,8 +2,10 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import type { AlgoPosition } from '@/lib/api/algo';
 import type { VirtualPosition } from '@/lib/types';
 import { ageLabel } from '@/lib/feedState';
@@ -24,15 +26,6 @@ interface CockpitPosition {
   product: string | null;
   is_open: boolean;
   source: Desk;
-}
-
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown execution error';
 }
 
 function mapPaper(p: VirtualPosition): CockpitPosition {
@@ -81,7 +74,10 @@ export const PositionsTable: React.FC = () => {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown execution error',
+    busyMessage: 'An exit is already in progress. Wait for it to finish.',
+  });
 
   const refresh = useCallback(async () => {
     const [paperRes, algoRes] = await Promise.allSettled([
@@ -103,7 +99,7 @@ export const PositionsTable: React.FC = () => {
         failures.push('paper desk returned an invalid payload');
       }
     } else {
-      failures.push(`paper desk: ${errorMessage(paperRes.reason)}`);
+      failures.push(`paper desk: ${errorMessage(paperRes.reason, 'Unknown execution error')}`);
     }
 
     if (algoRes.status === 'fulfilled') {
@@ -113,7 +109,7 @@ export const PositionsTable: React.FC = () => {
         failures.push('algo desk returned an invalid payload');
       }
     } else {
-      failures.push(`algo desk: ${errorMessage(algoRes.reason)}`);
+      failures.push(`algo desk: ${errorMessage(algoRes.reason, 'Unknown execution error')}`);
     }
 
     if (paperRes.status === 'fulfilled' || algoRes.status === 'fulfilled') {
@@ -142,43 +138,36 @@ export const PositionsTable: React.FC = () => {
     setActionNotice(null);
     setClosingId(target.position_id);
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        if (target.source === 'ALGO') {
-          const res = await api.exitAlgoPosition(target.position_id);
-          const data = res?.data as { closed?: boolean } | undefined;
-          if (data?.closed !== true) {
-            throw new Error(
-              `Broker did not confirm the exit for ${target.symbol} (closed: ${String(
-                data?.closed,
-              )}). The position remains open.`,
-            );
-          }
-        } else {
-          const res = await api.closePaperPosition(target.position_id);
-          const data = res?.data as unknown as
-            | { closed?: boolean; is_open?: boolean }
-            | undefined;
-          const confirmed = data?.closed === true || (data?.closed === undefined && data?.is_open === false);
-          if (!confirmed) {
-            throw new Error(
-              `Paper desk did not confirm the close for ${target.symbol}. The position remains open.`,
-            );
-          }
+    const outcome = await action.run(async () => {
+      if (target.source === 'ALGO') {
+        const res = await api.exitAlgoPosition(target.position_id);
+        const data = res?.data as { closed?: boolean } | undefined;
+        if (data?.closed !== true) {
+          throw new Error(
+            `Broker did not confirm the exit for ${target.symbol} (closed: ${String(
+              data?.closed,
+            )}). The position remains open.`,
+          );
         }
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+      } else {
+        const res = await api.closePaperPosition(target.position_id);
+        const data = res?.data as unknown as
+          | { closed?: boolean; is_open?: boolean }
+          | undefined;
+        const confirmed = data?.closed === true || (data?.closed === undefined && data?.is_open === false);
+        if (!confirmed) {
+          throw new Error(
+            `Paper desk did not confirm the close for ${target.symbol}. The position remains open.`,
+          );
+        }
       }
+      return true;
     });
 
     setClosingId(null);
-    if (outcome === null) {
-      const message = failure ?? 'An exit is already in progress. Wait for it to finish.';
-      setActionError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setActionError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     await refresh();
@@ -286,7 +275,7 @@ export const PositionsTable: React.FC = () => {
                           setActionNotice(null);
                           setExitTarget(pos);
                         }}
-                        disabled={guard.isPending || closingId === pos.position_id}
+                        disabled={action.isPending || closingId === pos.position_id}
                         className="px-2.5 py-1 rounded bg-down-wash hover:opacity-80 border border-down-line text-down-strong text-[11px] font-semibold transition-all disabled:opacity-50"
                       >
                         {closingId === pos.position_id ? 'Exiting…' : 'Exit'}

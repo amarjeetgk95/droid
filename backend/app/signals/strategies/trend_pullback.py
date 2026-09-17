@@ -24,6 +24,7 @@ from app.signals.strategies.base import (
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.options_intelligence.selector import quantitative_contract_selector
 from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_fno_score(fno: dict, direction: str) -> float:
@@ -157,13 +158,10 @@ class TrendPullbackStrategy(Strategy):
                     ]
                     base_rationale.extend(contract_rationale[:2])
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_CALL",
-                        timeframe=ctx.timeframe,
-                        signal_type="INTRADAY",
-                        spot_price=spot,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,
@@ -255,13 +253,10 @@ class TrendPullbackStrategy(Strategy):
                     ]
                     base_rationale.extend(contract_rationale[:2])
 
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
+                    return make_candidate(
+                        ctx,
                         strategy=self.name,
                         direction="LONG_PUT",
-                        timeframe=ctx.timeframe,
-                        signal_type="INTRADAY",
-                        spot_price=spot,
                         entry_min=entry_min,
                         entry_max=entry_max,
                         trigger=trigger,

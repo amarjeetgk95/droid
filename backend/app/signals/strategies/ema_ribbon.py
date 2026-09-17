@@ -27,6 +27,7 @@ from app.signals.strategies.base import (
     VOLUME_SCALP_MIN,
 )
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.strategies.candidate import make_candidate
 
 
 def _dynamic_scores(
@@ -163,12 +164,10 @@ class EMARibbonScalpStrategy(Strategy):
                     wick_ratio, pocket_width * 100.0, pcr_val, "LONG_CALL",
                     ctx.regime, mtf_align, vol_ratio,
                 )
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_CALL",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,
@@ -223,12 +222,10 @@ class EMARibbonScalpStrategy(Strategy):
                     wick_ratio, pocket_width * 100.0, pcr_val, "LONG_PUT",
                     ctx.regime, mtf_align, vol_ratio,
                 )
-                return SignalCandidate(
-                    underlying=ctx.underlying,
+                return make_candidate(
+                    ctx,
                     strategy=self.name,
                     direction="LONG_PUT",
-                    timeframe=ctx.timeframe,
-                    spot_price=spot,
                     signal_type="SCALP",
                     is_scalp=True,
                     entry_min=entry_min,

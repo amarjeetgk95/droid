@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.institutional.telegram_notifications import SignalEvent
+from app.signals.safety.clocks import ist_from_timestamp, now_ist
 
 DIRECTION_LONG = {"BULLISH", "LONG", "BUY"}
 DIRECTION_SHORT = {"BEARISH", "SHORT", "SELL"}
@@ -50,12 +51,7 @@ def _label(event: SignalEvent) -> str:
 
 
 def _format_ist_timestamp(ts_ms: int | None) -> str:
-    from datetime import datetime, timezone, timedelta
-    ist_tz = timezone(timedelta(hours=5, minutes=30))
-    if not ts_ms:
-        dt = datetime.now(ist_tz)
-    else:
-        dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=ist_tz)
+    dt = now_ist() if not ts_ms else ist_from_timestamp(ts_ms / 1000.0)
     return dt.strftime("%d %b %Y, %H:%M:%S IST")
 
 

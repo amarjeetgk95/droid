@@ -102,6 +102,45 @@ def test_intraday_orb_strategy():
     assert setup.target_premium_2 > setup.target_premium_1
 
 
+def test_intraday_orb_implied_move_is_delta_normalized(monkeypatch):
+    """Regression: implied move is entry_premium / |delta|, never the collapsed entry_premium."""
+    import app.swing.strategies.base as base_module
+
+    seen: dict[str, float] = {}
+    real_compute_iv_edge = base_module.compute_iv_edge
+
+    def spy(expected_move, implied_move):
+        seen["implied_move"] = implied_move
+        return real_compute_iv_edge(expected_move, implied_move)
+
+    monkeypatch.setattr(base_module, "compute_iv_edge", spy)
+
+    candles = _generate_synthetic_intraday_candles(count=20, base=24000.0, step=20.0)
+    feat = extract_intraday_swing_features(candles)
+    regime = MarketRegime(regime="BULL", confidence=80.0)
+
+    from types import SimpleNamespace
+    chain = SimpleNamespace(strikes=[
+        SimpleNamespace(strike=24350.0, call=SimpleNamespace(ltp=70.0)),
+        SimpleNamespace(strike=24400.0, call=SimpleNamespace(ltp=55.0)),
+        SimpleNamespace(strike=24450.0, call=SimpleNamespace(ltp=40.0)),
+    ])
+
+    setup = IntradayORBStrategy().evaluate(
+        underlying="NIFTY",
+        features=feat,
+        candles=candles,
+        regime=regime,
+        portfolio_equity=1_000_000.0,
+        options_chain=chain,
+    )
+
+    assert setup is not None
+    delta_mag = max(0.40, min(0.75, abs(setup.greeks["delta"])))
+    assert seen["implied_move"] == round(setup.entry_premium / delta_mag, 1)
+    assert seen["implied_move"] != setup.entry_premium
+
+
 def test_intraday_accelerated_breakeven_trailing():
     pos = SwingPosition(
         setup_id="test-intra-1",

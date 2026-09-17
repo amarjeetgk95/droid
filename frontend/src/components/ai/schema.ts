@@ -7,11 +7,7 @@ import type {
 } from '@/lib/types';
 
 /** Human-readable message from an unknown thrown value, with a fallback. */
-export function errorMessage(reason: unknown, fallback: string): string {
-  if (reason instanceof Error && reason.message) return reason.message;
-  if (typeof reason === 'string' && reason.trim()) return reason;
-  return fallback;
-}
+export { errorMessage } from '@/lib/errors';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);

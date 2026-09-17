@@ -1,7 +1,6 @@
-import zoneinfo
 from datetime import datetime, date, time, timezone
 
-IST = zoneinfo.ZoneInfo("Asia/Kolkata")
+from app.signals.safety.clocks import IST
 MIN_TIME_TO_EXPIRY: float = 1e-5  # ~5 minutes, prevents zero division in pricing / IV
 DEFAULT_RISK_FREE_RATE: float = 0.0675  # 6.75% Indian sovereign benchmark fallback
 

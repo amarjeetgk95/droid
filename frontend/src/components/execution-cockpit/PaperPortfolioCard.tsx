@@ -2,22 +2,15 @@
 
 import React, { useCallback, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
-import { useExecutionGuard } from '@/hooks/useExecutionGuard';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import type { PortfolioSummary } from '@/lib/types';
 import { ageLabel } from '@/lib/feedState';
 import { Card } from '../shared/Card';
 import { Gauge } from '../shared/Gauge';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
-
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Unknown portfolio error';
-}
 
 const money = (value: number | null): string =>
   value === null ? '—' : `₹${value.toLocaleString('en-IN')}`;
@@ -30,7 +23,10 @@ export const PaperPortfolioCard: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [partialWarning, setPartialWarning] = useState<string | null>(null);
-  const guard = useExecutionGuard();
+  const action = useAsyncAction({
+    errorFallback: 'Unknown portfolio error',
+    busyMessage: 'A square-off is already in progress. Wait for it to finish.',
+  });
 
   const refresh = useCallback(async () => {
     try {
@@ -41,7 +37,7 @@ export const PaperPortfolioCard: React.FC = () => {
       setLastUpdated(Date.now());
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err));
+      setLoadError(errorMessage(err, 'Unknown portfolio error'));
     }
   }, []);
 
@@ -68,34 +64,27 @@ export const PaperPortfolioCard: React.FC = () => {
     setActionNotice(null);
     setPartialWarning(null);
 
-    let failure: string | null = null;
-    const outcome = await guard.execute(async () => {
-      try {
-        const res = await api.closeAllPaperPositions();
-        if (res?.error) throw new Error(res.error);
-        const rows: unknown = res?.data;
-        if (!Array.isArray(rows)) {
-          throw new Error('Paper desk did not return a square-off result — verify positions manually.');
-        }
-        const closedCount = rows.length;
-        if (openBefore > 0 && closedCount < openBefore) {
-          setPartialWarning(
-            `Square-off incomplete: ${closedCount} of ${openBefore} position(s) confirmed closed. Refresh and retry the remainder.`,
-          );
-        } else {
-          setActionNotice(`Square-off confirmed: ${closedCount} position(s) closed.`);
-        }
-        return true;
-      } catch (err) {
-        failure = errorMessage(err);
-        throw err;
+    const outcome = await action.run(async () => {
+      const res = await api.closeAllPaperPositions();
+      if (res?.error) throw new Error(res.error);
+      const rows: unknown = res?.data;
+      if (!Array.isArray(rows)) {
+        throw new Error('Paper desk did not return a square-off result — verify positions manually.');
       }
+      const closedCount = rows.length;
+      if (openBefore > 0 && closedCount < openBefore) {
+        setPartialWarning(
+          `Square-off incomplete: ${closedCount} of ${openBefore} position(s) confirmed closed. Refresh and retry the remainder.`,
+        );
+      } else {
+        setActionNotice(`Square-off confirmed: ${closedCount} position(s) closed.`);
+      }
+      return true;
     });
 
-    if (outcome === null) {
-      const message = failure ?? 'A square-off is already in progress. Wait for it to finish.';
-      setActionError(message);
-      throw new Error(message);
+    if (!outcome.ok) {
+      setActionError(outcome.message);
+      throw new Error(outcome.message);
     }
 
     await refresh();
@@ -103,7 +92,7 @@ export const PaperPortfolioCard: React.FC = () => {
 
   const lastAge = lastUpdated === null ? null : ageLabel(lastUpdated);
   const squareOffDisabled =
-    openPositions === null || openPositions === 0 || guard.isPending || data === null;
+    openPositions === null || openPositions === 0 || action.isPending || data === null;
 
   return (
     <>

@@ -12,7 +12,6 @@ import json
 import os
 import math
 import uuid
-from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,7 +24,6 @@ from app.ml.features.schema import FEATURE_NAMES_V3, FEATURE_SCHEMA_V3
 from app.signals.strategies.base import StrategyContext, SignalCandidate
 from app.signals.strategies.trend_pullback import TrendPullbackStrategy
 
-IST = timezone(timedelta(hours=5, minutes=30))
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "ml_datasets")
 os.makedirs(DATA_DIR, exist_ok=True)
 

@@ -10,31 +10,33 @@ rank/percentile over a rolling window (persisted to backend/data/vix_history.jso
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from app.core.atomic_json import atomic_write_json, read_json
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
 def _load(path: Path) -> List[float]:
-    try:
-        if path.exists():
-            v = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(v, list):
-                return [float(x) for x in v[-120:]]
-    except Exception:
-        pass
+    v = read_json(path)
+    if isinstance(v, list):
+        try:
+            return [float(x) for x in v[-120:]]
+        except Exception:
+            return []
     return []
 
 
 def _save(path: Path, vals: List[float]) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(vals[-120:]), encoding="utf-8")
-    except Exception:
-        pass
+    atomic_write_json(
+        path,
+        vals[-120:],
+        create_parents=True,
+        log_event="market_engine_history_persist_failed",
+        log_level="debug",
+    )
 
 
 def _pct_rank(val: float, hist: List[float]) -> Optional[float]:

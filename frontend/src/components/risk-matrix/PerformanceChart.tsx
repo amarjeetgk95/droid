@@ -3,6 +3,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
+import { linearScale, polylinePoints } from '@/lib/chartGeometry';
 import { Card } from '../shared/Card';
 import {
   type AuditTradeLike,
@@ -72,12 +73,13 @@ export const PerformanceChart: React.FC = () => {
     const minV = Math.min(0, ...values);
     const maxV = Math.max(0, ...values);
     const spanV = maxV - minV;
+    const xScale = linearScale([minT, maxT], [0, VIEW_W]);
+    const yScale = linearScale([minV, maxV], [VIEW_H - PAD_Y, PAD_Y]);
     const xOf = (i: number) =>
-      maxT > minT ? ((points[i].t - minT) / (maxT - minT)) * VIEW_W : (i / (points.length - 1)) * VIEW_W;
-    const yOf = (v: number) =>
-      spanV > 0 ? VIEW_H - PAD_Y - ((v - minV) / spanV) * (VIEW_H - PAD_Y * 2) : VIEW_H / 2;
+      maxT > minT ? xScale(points[i].t) : (i / (points.length - 1)) * VIEW_W;
+    const yOf = (v: number) => (spanV > 0 ? yScale(v) : VIEW_H / 2);
     return {
-      polyline: points.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.cumulative).toFixed(1)}`).join(' '),
+      polyline: polylinePoints(points.map((p, i) => ({ x: xOf(i), y: yOf(p.cumulative) }))),
       zeroY: minV < 0 && maxV > 0 ? yOf(0) : null,
     };
   }, [curve]);

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 import structlog
+from app.core.atomic_json import atomic_write_json
 from app.swing.models import SwingSetup, SwingPosition, MarketRegime
 
 logger = structlog.get_logger()
@@ -21,11 +22,12 @@ SWING_STATE_SCHEMA_VERSION = 2
 def save_candles_cache(cache: dict[str, list[dict[str, Any]]]) -> bool:
     """Saves finalized daily candles cache to atomic disk file."""
     try:
-        tmp_file = SWING_CANDLES_CACHE_FILE.with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(cache, f, default=str)
-        tmp_file.replace(SWING_CANDLES_CACHE_FILE)
-        return True
+        return atomic_write_json(
+            SWING_CANDLES_CACHE_FILE,
+            cache,
+            log_event="save_candles_cache_failed",
+            max_error_chars=200,
+        )
     except Exception as e:
         logger.warning("save_candles_cache_failed", error=str(e)[:200])
         return False
@@ -60,11 +62,13 @@ def save_swing_state(
             "updated_at_utc": int(time.time() * 1000),
         }
 
-        tmp_file = SWING_STATE_FILE.with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, default=str)
-        tmp_file.replace(SWING_STATE_FILE)
-        return True
+        return atomic_write_json(
+            SWING_STATE_FILE,
+            payload,
+            indent=2,
+            log_event="save_swing_state_failed",
+            max_error_chars=200,
+        )
     except Exception as e:
         logger.warning("save_swing_state_failed", error=str(e)[:200])
         return False

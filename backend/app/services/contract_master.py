@@ -1,5 +1,4 @@
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from typing import Sequence
 from app.models.contracts import (
     ContractMaster, ContractType, OptionType, OptionStyle,
@@ -7,8 +6,7 @@ from app.models.contracts import (
     ExpiryResolution
 )
 from app.services.calendar_service import calendar_service
-
-IST = ZoneInfo("Asia/Kolkata")
+from app.signals.safety.clocks import IST
 
 
 class ContractMasterService:

@@ -15,6 +15,8 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, Field, computed_field
 
+from app.signals.safety.clocks import ist_from_timestamp
+
 logger = structlog.get_logger()
 
 SignalFSMState = Literal[
@@ -237,9 +239,7 @@ class SignalInstance(BaseModel):
     @property
     def created_at_str(self) -> str:
         try:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            dt = datetime.fromtimestamp(self.created_at_utc / 1000.0, tz=ZoneInfo("Asia/Kolkata"))
+            dt = ist_from_timestamp(self.created_at_utc / 1000.0)
             return dt.strftime("%d %b %Y, %H:%M:%S IST")
         except Exception:
             return ""
@@ -661,18 +661,15 @@ class SignalFSMManager:
             now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
             expired = 0
             runner_stopped = 0
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
 
             from app.services.calendar_service import calendar_service
-            ist_tz = ZoneInfo("Asia/Kolkata")
-            now_ist = datetime.fromtimestamp(now_ms / 1000.0, tz=ist_tz)
+            now_ist = ist_from_timestamp(now_ms / 1000.0)
             today_ist = now_ist.date()
             is_market_closed = not calendar_service.can_trade_now().allowed
 
             for sig in list(self._signals.values()):
                 try:
-                    sig_dt = datetime.fromtimestamp(sig.created_at_utc / 1000.0, tz=ist_tz)
+                    sig_dt = ist_from_timestamp(sig.created_at_utc / 1000.0)
                     is_prior_day = sig_dt.date() < today_ist
 
                     # 1. Market-close or Prior-day expiry for Pre-trigger (DETECTED/VALIDATED/ARMED/TRIGGERED)
