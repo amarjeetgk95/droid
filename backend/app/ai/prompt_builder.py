@@ -1,8 +1,47 @@
 import math
 from typing import Any
+
+from app.ai.prompt_registry import PromptRegistry, prompt_registry
 from app.models.options import OptionsAnalytics, MaxPainResult
 from app.models.regime import MarketRegimeOverview
 from app.core.config import settings
+
+
+def get_prompt_registry() -> PromptRegistry:
+    """Return the global prompt registry singleton."""
+    return prompt_registry
+
+
+def get_system_prompt(mode: str = "market_analysis", **kwargs: Any) -> str:
+    """Return the system prompt for the given analysis mode.
+
+    Supported modes:
+      - market_analysis (default): multi-timeframe F&O qualitative report
+      - scalping: 1M/3M fast-path signal prompt
+      - core_intraday: 5M/15M multi-timeframe signal prompt
+      - copilot: conversational assistant
+      - strategy_recommend: options strategy recommendation
+      - trade_validate: trade thesis validation
+    """
+    template = prompt_registry.get(mode)
+    if template is None:
+        raise ValueError(
+            f"Unknown prompt mode '{mode}'. Available: {prompt_registry.names()}"
+        )
+    return template.build_system(**kwargs)
+
+
+def build_full_prompt(
+    mode: str,
+    context: str,
+    system_kwargs: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Return (system_prompt, user_prompt) for the given mode.
+
+    The user prompt is the grounded context plus any output-schema appendix
+    defined by the template.
+    """
+    return prompt_registry.build(mode, context=context, system_kwargs=system_kwargs)
 
 
 def build_system_prompt() -> str:

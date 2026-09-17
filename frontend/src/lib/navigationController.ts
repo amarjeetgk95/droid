@@ -35,10 +35,18 @@ class NavigationController {
   /**
    * Complete a navigation. If navId is provided and does not match the latest
    * active navigation, the completion event is safely discarded.
+   *
+   * While idle this is a no-op: `RouteProgress` calls `complete()` from a
+   * pathname effect, and duplicate/stale route commits must not notify
+   * subscribers (which would animate the bar to 100% and schedule extra hides).
    */
   complete(navId?: number): void {
     if (navId !== undefined && navId !== this.currentNavId) {
       // Stale completion event from an older navigation — ignore
+      return;
+    }
+    if (!this.isNavigating) {
+      this.clearTimeout();
       return;
     }
     this.clearTimeout();
@@ -47,10 +55,15 @@ class NavigationController {
   }
 
   /**
-   * Cancel the active navigation.
+   * Cancel the active navigation. Stale navIds are ignored and an idle
+   * controller is a no-op for the same reason as `complete()`.
    */
   cancel(navId?: number): void {
     if (navId !== undefined && navId !== this.currentNavId) return;
+    if (!this.isNavigating) {
+      this.clearTimeout();
+      return;
+    }
     this.clearTimeout();
     this.isNavigating = false;
     this.notify();
@@ -81,6 +94,9 @@ class NavigationController {
   private resetTimeout(navId: number): void {
     this.clearTimeout();
     this.timeoutId = setTimeout(() => {
+      // Retire the handle first so a later clearTimeout() does not touch a
+      // timer that already fired.
+      this.timeoutId = null;
       if (this.currentNavId === navId && this.isNavigating) {
         this.isNavigating = false;
         this.notify();

@@ -88,7 +88,7 @@ export function migrateLegacyDevConfig(settings: AppSettings): AppSettings {
       merged.broker = { ...merged.broker, binance: { apiKey: merged.broker.binance?.apiKey || '', apiSecret: legacy.binanceSecretKey } };
     }
 
-    try { localStorage.removeItem(LEGACY_DEV_CONFIG_KEY); } catch {}
+    try { localStorage.removeItem(LEGACY_DEV_CONFIG_KEY); } catch (err) { console.error('Failed to remove legacy dev config key:', err); }
     return merged;
   } catch {
     return settings;

@@ -97,7 +97,11 @@ export function OptionsHeader({
           <TelemetryItem
             label="ATM Strike"
             value={analytics?.atm_strike ? Number(analytics.atm_strike).toLocaleString('en-IN') : '—'}
-            sub={analytics?.atm_iv ? `IV ${fmtNum(analytics.atm_iv, 1)}%` : 'IV —'}
+            sub={
+              typeof analytics?.atm_iv === 'number' && analytics.atm_iv > 0
+                ? `IV ${fmtNum(analytics.atm_iv, 1)}%`
+                : 'IV —'
+            }
           />
           <TelemetryItem
             label="PCR (OI)"

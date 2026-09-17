@@ -12,9 +12,23 @@ class TestHealthEndpoints:
         assert r.json()["status"] == "ok"
 
     def test_readiness(self):
+        """Honest readiness (Truth of Wall): ok ⟺ central_feed really running.
+
+        A bare TestClient never runs the app lifespan, so central_feed is not
+        started and readiness MUST be 503/unavailable. The old contract
+        (unconditional hardcoded "ok") was the exact fabrication this
+        endpoint was rewritten to remove.
+        """
         r = client.get("/health/ready")
-        assert r.status_code == 200
-        assert r.json()["status"] == "ok"
+        body = r.json()
+        assert r.status_code in (200, 503)
+        if body["status"] == "ok":
+            assert r.status_code == 200
+            assert body["checks"]["central_feed"] == "ok"
+        else:
+            assert r.status_code == 503
+            assert body["status"] == "unavailable"
+            assert body["checks"]["central_feed"] == "down"
 
     def test_market_data_health(self):
         r = client.get("/api/v1/health/market-data")

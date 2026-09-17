@@ -48,8 +48,8 @@ function resolveSystemStatus(
       tone: 'offline',
       label: 'OFFLINE',
       mobileLabel: 'OFFLINE',
-      dot: 'bg-rose-500',
-      badge: 'bg-rose-500/10 text-rose-600 border-rose-500/25 hover:bg-rose-500/20',
+      dot: 'bg-down',
+      badge: 'bg-down/10 text-down border-down/25 hover:bg-down/20',
       animate: false,
     };
   }
@@ -60,8 +60,8 @@ function resolveSystemStatus(
       tone: 'degraded',
       label: 'SYNCING…',
       mobileLabel: 'SYNC',
-      dot: 'bg-amber-500',
-      badge: 'bg-amber-500/10 text-amber-700 border-amber-500/30 hover:bg-amber-500/20',
+      dot: 'bg-warn',
+      badge: 'bg-warn/10 text-warn-strong border-warn/30 hover:bg-warn/20',
       animate: true,
     };
   }
@@ -73,7 +73,7 @@ function resolveSystemStatus(
         tone: 'live',
         label: `${brokerName} LIVE`,
         mobileLabel: brokerName,
-        dot: 'bg-emerald-500',
+        dot: 'bg-up',
         badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
         animate: true,
       };
@@ -83,7 +83,7 @@ function resolveSystemStatus(
         tone: 'live',
         label: `${brokerName} PRE-OPEN`,
         mobileLabel: brokerName,
-        dot: 'bg-emerald-500',
+        dot: 'bg-up',
         badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
         animate: false,
       };
@@ -93,7 +93,7 @@ function resolveSystemStatus(
       tone: 'live',
       label: brokerName,
       mobileLabel: brokerName,
-      dot: 'bg-emerald-500',
+      dot: 'bg-up',
       badge: 'bg-card hover:bg-secondary/80 border-border/80 text-foreground',
       animate: false,
     };
@@ -106,7 +106,7 @@ function resolveSystemStatus(
         tone: 'closed',
         label: marketStatus?.is_trading_day === false ? `${brokerName} HOLIDAY` : `${brokerName} CLOSED`,
         mobileLabel: marketStatus?.is_trading_day === false ? 'HOLIDAY' : 'CLOSED',
-        dot: 'bg-amber-500',
+        dot: 'bg-warn',
         badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
         animate: false,
       };
@@ -116,8 +116,8 @@ function resolveSystemStatus(
       tone: 'degraded',
       label: `AUTH ${brokerName}`,
       mobileLabel: 'AUTH',
-      dot: 'bg-amber-500',
-      badge: 'bg-amber-500/10 text-amber-700 border-amber-500/30 hover:bg-amber-500/20',
+      dot: 'bg-warn',
+      badge: 'bg-warn/10 text-warn-strong border-warn/30 hover:bg-warn/20',
       animate: true,
     };
   }
@@ -128,7 +128,7 @@ function resolveSystemStatus(
       tone: 'demo',
       label: session === 'OPEN' ? `${brokerName} DEMO` : 'DEMO',
       mobileLabel: 'DEMO',
-      dot: 'bg-amber-500',
+      dot: 'bg-warn',
       badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
       animate: false,
     };
@@ -139,7 +139,7 @@ function resolveSystemStatus(
     tone: 'closed',
     label: `${brokerName} CLOSED`,
     mobileLabel: 'CLOSED',
-    dot: 'bg-slate-400',
+    dot: 'bg-ink-4',
     badge: 'bg-card hover:bg-secondary/80 border-border/80 text-muted-foreground',
     animate: false,
   };
@@ -183,7 +183,9 @@ export function HeaderBrokerGateway({
           setActiveBroker(stored.broker.provider || 'fyers');
           setIsIndian((stored.broker.apiType as string) !== 'crypto');
         }
-      } catch {}
+      } catch {
+        // Settings storage unavailable — keep the last known broker label.
+      }
     };
 
     window.addEventListener('storage', syncBroker);
@@ -241,7 +243,7 @@ export function HeaderBrokerGateway({
         >
           <span className="relative flex h-2 w-2 shrink-0">
             {(status.animate || isAuthorizing) && (
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-up opacity-75" />
             )}
             <span className={cn('relative inline-flex rounded-full h-2 w-2', status.dot)} />
           </span>
@@ -266,10 +268,10 @@ export function HeaderBrokerGateway({
               className={cn(
                 'text-[10px] font-bold px-2 py-0.5 rounded-full border',
                 isHealthy
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  ? 'bg-up-wash text-up-strong border-up-line'
                   : isAuthorizing
-                  ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse'
-                  : 'bg-amber-50 text-amber-800 border-amber-200',
+                  ? 'bg-warn-wash text-warn-strong border-warn-line animate-pulse'
+                  : 'bg-warn-wash text-warn-strong border-warn-line',
               )}
             >
               {isHealthy ? 'CONNECTED' : isAuthorizing ? 'AUTHORIZING' : 'ACTION REQUIRED'}
@@ -294,9 +296,9 @@ export function HeaderBrokerGateway({
               className={cn(
                 'flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-semibold transition-all shadow-2xs cursor-pointer',
                 isAuthorizing
-                  ? 'bg-amber-400 text-slate-950 font-bold animate-pulse cursor-wait'
+                  ? 'bg-warn text-foreground font-bold animate-pulse cursor-wait'
                   : !isHealthy
-                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold'
+                  ? 'bg-warn hover:bg-warn text-foreground font-bold'
                   : 'bg-secondary hover:bg-secondary/80 text-foreground border border-border',
               )}
             >

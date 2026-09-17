@@ -1,18 +1,54 @@
 """
-Mean Reversion & Volatility Exhaustion Strategy
+Mean Reversion & Volatility Exhaustion Strategy (P1 overhaul)
 Mathematical rules:
-  - LONG_CALL: Price <= Lower Bollinger Band (2.0σ/2.5σ), RSI <= 32, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
-  - LONG_PUT: Price >= Upper Bollinger Band (2.0σ/2.5σ), RSI >= 68, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
+  - LONG_CALL: Price <= Lower Bollinger Band (2.0σ/2.5σ), RSI <= 35, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
+  - LONG_PUT: Price >= Upper Bollinger Band (2.0σ/2.5σ), RSI >= 65, Regime == RANGE/LOW_VOL/COMPRESSION, ADX < 22
+  - P1: fail-closed BB (no spot* synthetic bands); rejection wick + close back
+    inside + second-candle confirmation required.
   - T1 = Middle BB (20 SMA / VWAP), T2 = Opposite Bollinger Band
-  - Quality target: 80% win rate — neutral baseline scoring.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    ADX_TREND_CUTOFF,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+
+
+def _extract_bb(ind: dict) -> tuple[Optional[Decimal], Optional[Decimal], Optional[Decimal]]:
+    vol = ind.get("volatility", {}) if isinstance(ind.get("volatility"), dict) else {}
+    bb = ind.get("bollinger_bands") or vol.get("bollinger_bands", {})
+    if not isinstance(bb, dict):
+        bb = {}
+    raw_u = bb.get("upper", vol.get("bollinger_upper", ind.get("bollinger_upper")))
+    raw_m = bb.get("middle", vol.get("bollinger_middle", ind.get("bollinger_middle")))
+    raw_l = bb.get("lower", vol.get("bollinger_lower", ind.get("bollinger_lower")))
+    # P1 fail-closed: no spot* synthetic fallbacks.
+    if raw_u is None or raw_m is None or raw_l is None:
+        return None, None, None
+    try:
+        return Decimal(str(raw_u)), Decimal(str(raw_m)), Decimal(str(raw_l))
+    except Exception:
+        return None, None, None
+
+
+def _wick_ratios(c: dict, spot: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    o = Decimal(str(c.get("open", spot)))
+    h = Decimal(str(c.get("high", spot)))
+    lo = Decimal(str(c.get("low", spot)))
+    cl = Decimal(str(c.get("close", spot)))
+    rng = h - lo
+    if rng <= Decimal("0"):
+        return Decimal("0"), Decimal("0"), rng
+    lower_wick = min(o, cl) - lo
+    upper_wick = h - max(o, cl)
+    return lower_wick / rng, upper_wick / rng, rng
 
 
 class MeanReversionStrategy(Strategy):
@@ -24,24 +60,52 @@ class MeanReversionStrategy(Strategy):
         tick = Decimal("0.05")
 
         vol = ind.get("volatility", {})
-        bb = ind.get("bollinger_bands") or vol.get("bollinger_bands", {})
         rsi = float(ind.get("rsi") or ind.get("momentum", {}).get("rsi", 50.0))
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
-        
-        bb_upper = Decimal(str(bb.get("upper") or vol.get("bollinger_upper") or ind.get("bollinger_upper") or (spot * Decimal("1.01"))))
-        bb_middle = Decimal(str(bb.get("middle") or vol.get("bollinger_middle") or ind.get("bollinger_middle") or spot))
-        bb_lower = Decimal(str(bb.get("lower") or vol.get("bollinger_lower") or ind.get("bollinger_lower") or (spot * Decimal("0.99"))))
+
+        # P1 fail-closed BB.
+        bb_upper, bb_middle, bb_lower = _extract_bb(ind)
+        if bb_upper is None or bb_middle is None or bb_lower is None:
+            return None
+        if bb_upper <= bb_middle or bb_middle <= bb_lower:
+            return None
 
         # Check regime compatibility: primarily RANGE, LOW_VOL, or COMPRESSION_SQUEEZE
-        # AND ADX must be weak (< 25) — strong trend invalidates mean reversion
+        # AND ADX must be weak (< 22, single shared cutoff) — strong trend invalidates mean reversion
         adx_val = float(ind.get("adx") or ind.get("trend", {}).get("adx") or ind.get("momentum", {}).get("adx", 20.0))
-        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE") or adx_val >= 25.0:
+        if ctx.regime not in ("RANGE", "LOW_VOL", "UNKNOWN", "COMPRESSION_SQUEEZE") or adx_val >= ADX_TREND_CUTOFF:
+            return None
+
+        if not ctx.candles or len(ctx.candles) < 3:
+            return None
+        last_c = ctx.candles[-1]
+        prev_c = ctx.candles[-2]
+        try:
+            last_close = Decimal(str(last_c.get("close", spot)))
+            last_low = Decimal(str(last_c.get("low", spot)))
+            last_high = Decimal(str(last_c.get("high", spot)))
+            prev_close = Decimal(str(prev_c.get("close", spot)))
+        except Exception:
             return None
 
         # ── BULLISH OVERSOLD REVERSAL (LONG_CALL) ──
-        # Both BB touch AND RSI exhaustion required (calibrated to RSI <= 35.0).
-        # Volume exhaustion: volume on approach should be declining (last vol < avg vol)
+        # BB touch AND RSI exhaustion (RSI <= 35) + rejection wick + close back
+        # inside + second-candle confirmation required (P1).
         if (spot <= bb_lower * Decimal("1.005")) and rsi <= 35.0:
+            lower_wick_ratio, _, _ = _wick_ratios(last_c, spot)
+            # Rejection wick >= 25% of bar.
+            if lower_wick_ratio < Decimal("0.25"):
+                return None
+            # Close back inside: last close must be back above lower band.
+            if last_close <= bb_lower:
+                return None
+            # Second-candle confirmation: prev candle also showed exhaustion
+            # (prev close near/below band) and current confirms higher.
+            if not (prev_close <= bb_lower * Decimal("1.01") and last_close > prev_close):
+                return None
+            # Wick pierced below band (sweep) on last or prev bar.
+            if not (last_low <= bb_lower or Decimal(str(prev_c.get("low", spot))) <= bb_lower):
+                return None
             vol_ok = True
             if len(ctx.candles) >= 3:
                 last_vol = float(ctx.candles[-1].get("volume", 0))
@@ -66,7 +130,8 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = min(90.0, max(50.0, 50.0 + max(0.0, (32.0 - rsi) * 2.0) + 10.0))
+                # Dynamic earn-from-50: RSI depth + wick quality.
+                tech_score = round(min(90.0, max(50.0, 50.0 + max(0.0, (35.0 - rsi) * 2.0) + float(lower_wick_ratio) * 20.0)), 1)
                 mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 65.0)) - 10.0)
                 fno_score = 65.0
                 regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0
@@ -103,6 +168,15 @@ class MeanReversionStrategy(Strategy):
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
         if (spot >= bb_upper * Decimal("0.995")) and rsi >= 65.0:
+            _, upper_wick_ratio, _ = _wick_ratios(last_c, spot)
+            if upper_wick_ratio < Decimal("0.25"):
+                return None
+            if last_close >= bb_upper:
+                return None
+            if not (prev_close >= bb_upper * Decimal("0.99") and last_close < prev_close):
+                return None
+            if not (last_high >= bb_upper or Decimal(str(prev_c.get("high", spot))) >= bb_upper):
+                return None
             vol_ok = True
             if len(ctx.candles) >= 3:
                 last_vol = float(ctx.candles[-1].get("volume", 0))
@@ -127,7 +201,7 @@ class MeanReversionStrategy(Strategy):
                 rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = min(90.0, max(50.0, 50.0 + max(0.0, (rsi - 68.0) * 2.0) + 10.0))
+                tech_score = round(min(90.0, max(50.0, 50.0 + max(0.0, (rsi - 65.0) * 2.0) + float(upper_wick_ratio) * 20.0)), 1)
                 mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 65.0)) - 10.0)
                 fno_score = 65.0
                 regime_score = 80.0 if ctx.regime in ("RANGE", "COMPRESSION_SQUEEZE") else 55.0

@@ -1,0 +1,27 @@
+{
+  "trained_at": "2026-09-17T11:56:23.890852+00:00",
+  "n_samples": 1669,
+  "feature_names": [
+    "rsi_norm",
+    "adx_strength",
+    "supertrend_signal",
+    "bollinger_pct_b",
+    "pcr_oi_deviation",
+    "max_pain_distance_pct",
+    "futures_basis_pct",
+    "price_above_ema20",
+    "price_above_sma200",
+    "pivot_position"
+  ],
+  "n_features": 10,
+  "horizon_minutes": 15,
+  "target_spec_version": "v1-atr-band",
+  "model_version": "XGBoost-LightGBM-Ensemble-v2.0-h15",
+  "metrics": {
+    "xgb_accuracy": 0.3892,
+    "xgb_logloss": 1.0903,
+    "lgb_accuracy": 0.3892,
+    "lgb_logloss": 1.0903,
+    "ensemble_accuracy": 0.3892
+  }
+}

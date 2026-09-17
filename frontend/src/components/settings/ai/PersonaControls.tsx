@@ -34,9 +34,11 @@ export function PersonaControls({ settings, onChange }: Props) {
       <SettingRow
         label={`Sampling Temperature (${settings.temperature})`}
         description="Controls model randomness: 0.0 is deterministic and quantitative; 0.7 is exploratory."
+        htmlFor="ai-temperature"
       >
         <div className="w-full max-w-xs space-y-1">
           <input
+            id="ai-temperature"
             type="range"
             min="0.0"
             max="0.7"
@@ -55,9 +57,11 @@ export function PersonaControls({ settings, onChange }: Props) {
       <SettingRow
         label={`Analysis Cache TTL (${settings.cacheTtlSeconds}s)`}
         description="Duration AI market insights remain cached before re-querying the inference engine."
+        htmlFor="ai-cache-ttl"
       >
         <div className="w-full max-w-xs space-y-1">
           <input
+            id="ai-cache-ttl"
             type="range"
             min="30"
             max="300"

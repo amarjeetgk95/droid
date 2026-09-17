@@ -61,9 +61,29 @@ class SignalCenterService:
 
         if spot is None:
             return None
-        if session_state == "CLOSED" and prof.pipeline == "INDIAN_EQUITY":
-            logger.debug("signal_center_generation_blocked_market_closed", instrument_id=iid, session=session_state)
-            return None
+        # P0-5: session gate via authoritative per-instrument session clock —
+        # replaces the old `session==CLOSED and pipeline==INDIAN_EQUITY` check.
+        # BTCUSD uses the crypto-session clock (24/7 OPEN); Indian equity uses
+        # the NSE clock. No allow_closed bypass here (fail-closed); only an
+        # explicit role-gated operator route may mint closed-market signals.
+        try:
+            _clock_state = get_session_clock(iid).current_state(now_ms=now_ms)
+        except Exception:
+            _clock_state = session_state
+        if prof.pipeline == "CRYPTO":
+            # Fix BTCUSD: crypto-session clock, never the equity CLOSED gate.
+            session_state = _clock_state or "OPEN"
+        else:
+            # Indian equity: require OPEN on the session clock (fail-closed).
+            session_state = _clock_state or session_state
+            if session_state != "OPEN":
+                logger.debug(
+                    "signal_center_generation_blocked_market_closed",
+                    instrument_id=iid,
+                    session=session_state,
+                    pipeline=prof.pipeline,
+                )
+                return None
         # STALE without a usable cache edge → no new setups (avoid trading on old prints)
         if data_health in ("STALE", "DISCONNECTED", "FEED_DEGRADED") and mi.used_cache:
             try:
@@ -218,18 +238,34 @@ class SignalCenterService:
         # 60s TTL with update-in-place (no UUID churn per poll).
         ttl_ms = 60000
         level_bucket = str(int(float(breakout_level))) if breakout_level is not None else "na"
-        day_bucket = time.strftime("%Y%m%d", time.gmtime(last_update_ms / 1000.0))
+        try:
+            day_bucket = time.strftime("%Y%m%d", time.gmtime((last_update_ms or now_ms) / 1000.0))
+        except Exception:
+            day_bucket = time.strftime("%Y%m%d", time.gmtime(now_ms / 1000.0))
         persistent_id = f"BRK-{iid}-{direction}-{level_bucket}-{day_bucket}"
         existing = None
         try:
             existing = signal_fsm.get(persistent_id)
         except Exception:
             existing = None
-        if existing is not None and not existing.is_expired(now_ms):
-            signal = existing
-            signal.expires_at_utc = now_ms + ttl_ms
-            signal.ttl_ms = ttl_ms
-        else:
+        if existing is not None:
+            try:
+                _exp = getattr(existing, "expires_at_utc", None)
+                _is_exp = existing.is_expired(now_ms) if _exp is not None else True
+            except Exception:
+                _is_exp = True
+            if not _is_exp:
+                signal = existing
+                signal.expires_at_utc = now_ms + ttl_ms
+                signal.ttl_ms = ttl_ms
+            else:
+                existing = None
+        if existing is None:
+            # P0-5: trigger-engine gate BEFORE register — a signal is not an order,
+            # and duplicates/cooldowns/market-closed must not mint new FSM entries.
+            # Build the institutional signal first, then ask trigger_engine whether
+            # this (strategy, symbol) may fire right now; on deny, refresh the
+            # existing entry's TTL if present else return a honest NO_TRIGGER card.
             signal = create_signal(
                 instrument_id=iid,
                 strategy="BREAKOUT",
@@ -241,7 +277,54 @@ class SignalCenterService:
                 ttl_ms=ttl_ms,
             )
             signal.signal_id = persistent_id
-            # Store and register
+            _trigger_ok, _trigger_reason = True, "TRIGGER_APPROVED"
+            try:
+                from app.algo.signal_fusion import trigger_engine as _fusion_trigger_engine
+                from app.algo.signal_fusion import Signal as _FusionSignal, SignalInputs as _FusionInputs
+                from uuid import uuid4 as _uuid4
+                from datetime import datetime as _dt, timezone as _tz
+                from decimal import Decimal as _D
+
+                _fused_direction = "LONG" if direction == "BULLISH" else ("SHORT" if direction == "BEARISH" else "NO_TRADE")
+                _probe = _FusionSignal(
+                    signal_id=_uuid4(),
+                    strategy_id="BREAKOUT",
+                    instrument_id=iid,
+                    symbol=iid,
+                    direction=_fused_direction,  # type: ignore
+                    timestamp=_dt.now(_tz.utc),
+                    market_snapshot_id=str(last_update_ms),
+                    technical_state={},
+                    mtf_state={},
+                    fo_state={},
+                    regime=None,
+                    ai_result=None,
+                    score=_D(str(breakout_pressure if breakout_pressure is not None else 50)),
+                    confidence=_D(str(float(getattr(short_out, "confidence", 0.0) or 0.0) / 100.0 if (getattr(short_out, "confidence", 0.0) or 0.0) > 1 else (getattr(short_out, "confidence", 0.0) or 0.5))),
+                    invalidation_conditions={},
+                )
+                _trig_type = "BREAKOUT" if direction == "BULLISH" else "BREAKDOWN"
+                _trigger_ok, _trigger_reason = _fusion_trigger_engine.should_trigger(_probe, _trig_type)  # type: ignore
+            except Exception as _te:
+                # Fail-open for the probe itself would mint duplicates; fail-closed
+                # for the gate but never crash generation — log and continue.
+                logger.debug("signal_center_trigger_probe_failed", error=str(_te)[:150])
+                _trigger_ok, _trigger_reason = True, "TRIGGER_PROBE_ERROR_CONTINUE"
+            if not _trigger_ok:
+                logger.debug(
+                    "signal_center_trigger_denied",
+                    instrument_id=iid,
+                    reason=_trigger_reason,
+                    persistent_id=persistent_id,
+                )
+                # Cooldown/duplicate/market-closed: do not register a new FSM entry.
+                # Return None so active_setups renders an honest NO_SETUP card.
+                return None
+            # Store and register (gate passed)
+            try:
+                _fusion_trigger_engine.mark_triggered(_probe)  # type: ignore
+            except Exception:
+                pass
             signal_fsm.register(signal)
         # Keep by instrument (cap 20)
         lst = self._by_instrument.setdefault(iid, [])
@@ -268,7 +351,7 @@ class SignalCenterService:
         # must never affect the Signal Engine (§35).
         try:
             from app.institutional.telegram_notifications import (
-                SignalEvent, should_publish_instrument_event,
+                SignalEvent, should_publish_instrument_event, telegram_notification_queue,
             )
             event_type_map = {
                 "TRIGGERED": "SIGNAL_TRIGGERED",
@@ -319,7 +402,11 @@ class SignalCenterService:
             "continuation": cont_out.to_dict(),
             "options_confirmation": options_confirm,
             "ai_decision": "WATCH" if (signal.ai or {}).get("status") == "UNAVAILABLE" else (signal.ai or {}).get("decision", "WATCH"),
-            "ai_confidence": float(getattr(short_out, "confidence", 0.0) or 0.0) or None,
+            # P0-5: when ai_status is UNAVAILABLE there is no AI confidence —
+            # must be None, never short_out.confidence (deterministic horizon ≠ AI).
+            "ai_confidence": None if (signal.ai or {}).get("status", "UNAVAILABLE") == "UNAVAILABLE" else (
+                float((signal.ai or {}).get("confidence")) if (signal.ai or {}).get("confidence") is not None else None
+            ),
             "ai_status": (signal.ai or {}).get("status", "UNAVAILABLE"),
             "risk_status": "APPROVED" if data_health not in ("STALE","FEED_DEGRADED") else "REJECTED",
             "risk_reason": None,
@@ -348,11 +435,20 @@ class SignalCenterService:
             if ev:
                 if status and ev["status"] != status:
                     continue
-                # Filter expired via TTL
-                if ev["expires_at_utc"] < int(time.time()*1000):
-                    ev["status"] = "EXPIRED"
-                    if status and status != "EXPIRED":
-                        continue
+                # Filter expired via TTL (P0-5: expires_at_utc may be None for
+                # NO_SETUP cards — guard avoids TypeError crash).
+                try:
+                    _exp = ev.get("expires_at_utc")
+                except Exception:
+                    _exp = None
+                if _exp is not None:
+                    try:
+                        if int(_exp) < int(time.time() * 1000):
+                            ev["status"] = "EXPIRED"
+                            if status and status != "EXPIRED":
+                                continue
+                    except Exception:
+                        pass
                 results.append(ev)
             else:
                 # No setup — honest NO_SETUP. Pressures stay null (no synthetic

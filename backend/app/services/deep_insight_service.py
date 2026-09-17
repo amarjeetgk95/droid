@@ -157,6 +157,25 @@ class DeepInsightService:
             pcr = analytics.pcr_oi if analytics else 1.0
             spot = analytics.spot_price if analytics else 0.0
 
+            # A non-positive PCR means the chain snapshot has no usable OI
+            # (zero/missing), not extreme call dominance — calling it BULLISH
+            # prints "BULLISH · PCR 0" on bearish days. Treat as unknown.
+            try:
+                pcr_f = float(pcr)
+            except (TypeError, ValueError):
+                pcr_f = 0.0
+            if pcr_f <= 0:
+                return DeepInsightOptionsEvidence(
+                    bias=Direction.NEUTRAL,
+                    pcr=0.0,
+                    put_support=0.0,
+                    call_resistance=0.0,
+                    oi_trend="Stable",
+                    iv="Unknown",
+                    interpretation="Options PCR unavailable — bias unknown. Ignore options bias on this card.",
+                )
+            pcr = pcr_f
+
             # Determine bias
             if pcr > 1.2:
                 bias = Direction.BEARISH

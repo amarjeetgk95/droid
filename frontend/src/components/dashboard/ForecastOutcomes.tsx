@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { usePolling } from '@/hooks/usePolling';
+import { useMarketSession } from '@/hooks/useMarketSession';
 import { Card, DirectionBadge, EmptyNote, fmtClock, fmtNum, fmtSigned } from '@/components/ui/desk';
+import { FreshnessClock } from '@/components/common/FreshnessClock';
 
 type Outcome = {
   outcome_id?: string;
@@ -15,79 +18,84 @@ type Outcome = {
 function isSettleablePred(p: Record<string, unknown>): boolean {
   if (p.settleable === false) return false;
   const cv = p.component_values;
-  if (cv !== null && typeof cv === 'object') {
-    try {
-      if ((cv as Record<string, unknown>).settleable === false) return false;
-    } catch {
-      // ignore — treat as settleable
-    }
+  if (cv !== null && typeof cv === 'object' && (cv as Record<string, unknown>).settleable === false) {
+    return false;
   }
   return true;
 }
 
-export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument: string; timeframe?: string }) {
+/** Predictions carry `forecast_horizon` (legacy rows may only have `horizon`). */
+function predictionHorizon(p: Record<string, unknown>): string {
+  const raw = p.forecast_horizon ?? p.horizon;
+  return typeof raw === 'string' ? raw : '';
+}
+
+export function ForecastOutcomes({
+  instrument,
+  horizon = '1h',
+}: {
+  instrument: string;
+  horizon?: string;
+}) {
+  const { isOpen } = useMarketSession();
   const [predictions, setPredictions] = useState<Array<Record<string, unknown>>>([]);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [measuringId, setMeasuringId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [lastAt, setLastAt] = useState<Date | null>(null);
+  const loadedRef = useRef(false);
+  const hasDataRef = useRef(false);
   // P3-4: settleable-only toggle, default on (unsettled/late-session excluded).
   const [settleableOnly, setSettleableOnly] = useState(true);
 
-  const load = useCallback(
-    async (isInitial: boolean) => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      if (isInitial) setLoading(true);
-      else setRefreshing(true);
-      try {
-        const preds = (await api.listResearchPredictions({ instrument, limit: 50 })) as Array<
-          Record<string, unknown>
-        >;
-        const list = Array.isArray(preds)
-          ? preds.filter((p) => !timeframe || String(p.timeframe ?? '') === timeframe).slice(0, 10)
-          : [];
-        setPredictions(list);
-        const outcomeMap: Record<string, Outcome> = {};
-        await Promise.allSettled(
-          list.map(async (p) => {
-            const pid = p.prediction_id as string | undefined;
-            if (!pid) return;
-            try {
-              const out = (await api.getResearchPredictionOutcome(pid)) as Outcome & {
-                outcome_id?: string;
-              };
-              if (out && (out as { outcome_id?: string }).outcome_id) {
-                outcomeMap[pid] = out;
-              }
-            } catch {
-              // Outcome not measured yet — leave pending.
-            }
-          }),
-        );
-        if (Object.keys(outcomeMap).length > 0) {
-          setOutcomes((prev) => ({ ...prev, ...outcomeMap }));
-        }
-      } catch {
-        setPredictions([]);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
+  const load = useCallback(async () => {
+    const initial = !loadedRef.current;
+    if (initial) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const preds = (await api.listResearchPredictions({
+        instrument,
+        limit: 50,
+      })) as Array<Record<string, unknown>>;
+      const list = Array.isArray(preds)
+        ? preds.filter((p) => predictionHorizon(p) === horizon).slice(0, 10)
+        : [];
+      setPredictions(list);
+      setError(null);
+      setLastAt(new Date());
+      hasDataRef.current = true;
+      const outcomeMap: Record<string, Outcome> = {};
+      await Promise.allSettled(
+        list.map(async (p) => {
+          const pid = p.prediction_id as string | undefined;
+          if (!pid) return;
+          const out = (await api
+            .getResearchPredictionOutcome(pid)
+            .catch(() => null)) as (Outcome & { outcome_id?: string }) | null;
+          if (out && out.outcome_id) {
+            outcomeMap[pid] = out;
+          }
+        }),
+      );
+      if (Object.keys(outcomeMap).length > 0) {
+        setOutcomes((prev) => ({ ...prev, ...outcomeMap }));
       }
-    },
-    [instrument, timeframe],
-  );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Research predictions unavailable');
+    } finally {
+      loadedRef.current = true;
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [instrument, horizon]);
 
-  useEffect(() => {
-    void load(true);
-  }, [load]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      void load(false);
-    }, 60000);
-    return () => clearInterval(id);
-  }, [load]);
+  usePolling(() => {
+    if (!isOpen && hasDataRef.current) return;
+    return load();
+  }, 60000);
 
   const stats = useMemo(() => {
     const visible = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
@@ -112,13 +120,14 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
 
   const handleMeasure = useCallback(async (predictionId: string) => {
     setMeasuringId(predictionId);
+    setActionError(null);
     try {
       const out = (await api.measureResearchPrediction(predictionId)) as Outcome;
       if (out) {
         setOutcomes((prev) => ({ ...prev, [predictionId]: out }));
       }
-    } catch {
-      // Measurement pending — leave as pending, never fake.
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Outcome measurement failed');
     } finally {
       setMeasuringId(null);
     }
@@ -131,15 +140,17 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
         } · avg MAE ${stats.avgMae !== null ? fmtNum(stats.avgMae, 1) : '—'}`
       : 'No measured outcomes yet';
 
+  const visiblePredictions = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
+
   return (
     <Card
       title="Track record"
-      meta={`${instrument} · ${timeframe}`}
+      meta={`${instrument} · horizon ${horizon}`}
       action={
         <button
           type="button"
           className="btn"
-          onClick={() => void load(false)}
+          onClick={() => void load()}
           disabled={refreshing || loading}
         >
           {refreshing ? 'Refreshing…' : 'Refresh'}
@@ -164,16 +175,41 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
         </label>
       </div>
       <p className="faint" style={{ margin: '0 0 10px', fontSize: 11.5 }}>
-        Reference costs ref-v1, diagnostic.
+        Outcomes are measured after the {horizon} horizon elapses; unsettled rows stay pending.
       </p>
+      {error ? (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: '6px 10px',
+            border: '1px solid var(--ds-border)',
+            borderRadius: 8,
+            fontSize: 12,
+          }}
+        >
+          <span className="v-bear">Predictions unavailable — {error}</span>
+          {predictions.length > 0 ? <span className="muted"> Showing last known rows.</span> : null}
+        </div>
+      ) : null}
+      {actionError ? (
+        <div style={{ marginBottom: 10 }}>
+          <span className="v-bear" style={{ fontSize: 12 }}>
+            {actionError}
+          </span>
+        </div>
+      ) : null}
       {loading && predictions.length === 0 ? (
         <div style={{ display: 'grid', gap: 8 }}>
           <div className="skel" style={{ height: 14, width: '75%' }}>.</div>
           <div className="skel" style={{ height: 14, width: '60%' }}>.</div>
           <div className="skel" style={{ height: 14, width: '68%' }}>.</div>
         </div>
-      ) : (settleableOnly ? predictions.filter(isSettleablePred) : predictions).length === 0 ? (
-        <EmptyNote>No predictions recorded yet.</EmptyNote>
+      ) : visiblePredictions.length === 0 ? (
+        <EmptyNote>
+          {error
+            ? 'No prediction rows available.'
+            : `No predictions recorded for ${instrument} at horizon ${horizon}.`}
+        </EmptyNote>
       ) : (
         <div className="tbl-wrap">
           <table className="tbl">
@@ -189,7 +225,7 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
               </tr>
             </thead>
             <tbody>
-              {(settleableOnly ? predictions.filter(isSettleablePred) : predictions).map((p) => {
+              {visiblePredictions.map((p, idx) => {
                 const pid = String(p.prediction_id ?? '');
                 const outcome = pid ? outcomes[pid] : null;
                 const busy = measuringId === pid;
@@ -200,7 +236,7 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
                       ? { label: 'Wrong', cls: 'v-bear' }
                       : { label: 'Pending', cls: 'faint' };
                 return (
-                  <tr key={pid || String(p.timestamp ?? Math.random())}>
+                  <tr key={pid || `${p.timestamp ?? 'pred'}-${idx}`}>
                     <td className="num">{fmtClock(p.timestamp)}</td>
                     <td>
                       <DirectionBadge direction={p.direction} />
@@ -230,6 +266,15 @@ export function ForecastOutcomes({ instrument, timeframe = '1h' }: { instrument:
           </table>
         </div>
       )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+        <FreshnessClock
+          lastAt={lastAt}
+          fetching={refreshing}
+          marketClosed={!isOpen}
+          dataQuality={error ? 'DEGRADED' : null}
+          sourceLabel="REST · 60s poll"
+        />
+      </div>
     </Card>
   );
 }

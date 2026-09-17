@@ -22,8 +22,19 @@ from app.ai.schemas import (
 
 logger = structlog.get_logger()
 
+# P0-5: execution gate. A composite score >= 70 is the minimum for any live
+# execution path; the confluence ARMED threshold (scoring_weights.json, 78.0) is
+# stricter. Use `meets_execution_threshold(score)` — never re-hardcode 70.
 DEFAULT_EXECUTION_THRESHOLD = 70
 MIN_HISTORICAL_QUALITY_FOR_WEIGHT = SampleQuality.GOOD
+
+
+def meets_execution_threshold(score: float | int) -> bool:
+    """P0-5 helper: True when composite score clears DEFAULT_EXECUTION_THRESHOLD."""
+    try:
+        return float(score) >= float(DEFAULT_EXECUTION_THRESHOLD)
+    except Exception:
+        return False
 
 
 class SignalScorer:
@@ -73,6 +84,22 @@ class SignalScorer:
         direction_score = self._score_direction_alignment(signal, regime)
         historical_score = self._score_historical(historical)
         options_score = self._score_options(options, signal)
+        subscores = {
+            "confidence": float(confidence_score),
+            "regime": float(regime_score),
+            "structure": float(structure_score),
+            "direction": float(direction_score),
+            "historical": float(historical_score),
+            "options": float(options_score),
+        }
+        # Stash for ai_evaluator ExecutionDecision provenance (no extra recompute).
+        try:
+            object.__setattr__(signal, "_last_subscores", dict(subscores))
+        except Exception:
+            try:
+                signal.__dict__["_last_subscores"] = dict(subscores)
+            except Exception:
+                pass
 
         if historical is None:
             # Redistribute 0.15 historical weight explicitly (no neutral wash)
@@ -93,15 +120,46 @@ class SignalScorer:
                 + options_score * self.OPTIONS_WEIGHT
             )
 
+        # P0-5: uncalibrated confidence is not trustworthy — penalise, don't wash.
+        # `calibration_method` may live as a real attr (future schema) or inside
+        # pydantic model_extra / __dict__ (current AISignal has no such field).
+        calib_method = None
+        try:
+            calib_method = getattr(signal, "calibration_method", None)
+        except Exception:
+            calib_method = None
+        if not calib_method:
+            try:
+                extra = getattr(signal, "model_extra", None) or {}
+                calib_method = extra.get("calibration_method")
+            except Exception:
+                calib_method = None
+        if not calib_method:
+            try:
+                calib_method = (signal.__dict__ or {}).get("calibration_method")
+            except Exception:
+                calib_method = None
+        if not calib_method:
+            raw_score -= 10.0
+
         return min(100, max(0, int(raw_score)))
 
     def _score_confidence(self, signal: AISignal) -> float:
-        calibrated = signal.calibrated_confidence or signal.raw_confidence
-        return float(calibrated)
+        # P0-5: clamp to [0,100]; calibrated preferred, raw fallback.
+        try:
+            raw = signal.calibrated_confidence if signal.calibrated_confidence not in (None, 0) else signal.raw_confidence
+        except Exception:
+            raw = getattr(signal, "raw_confidence", 50)
+        try:
+            v = float(raw if raw is not None else 50.0)
+        except Exception:
+            v = 50.0
+        return float(max(0.0, min(100.0, v)))
 
     def _score_regime_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            return 50.0
+            # P0-5: missing regime is a risk signal — penalise (30), never neutral-wash (50).
+            return 30.0
 
         if signal.regime == Regime.UNKNOWN:
             return 0.0
@@ -120,7 +178,8 @@ class SignalScorer:
 
     def _score_structure_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            return 50.0
+            # P0-5: penalise missing regime context.
+            return 30.0
 
         base_score = 50.0
 
@@ -149,7 +208,8 @@ class SignalScorer:
 
     def _score_direction_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            return 50.0
+            # P0-5: penalise missing regime context.
+            return 30.0
 
         if regime.direction == Direction.NEUTRAL:
             return 50.0
@@ -187,7 +247,8 @@ class SignalScorer:
 
     def _score_options(self, options: Optional[OptionsContext], signal: AISignal) -> float:
         if options is None:
-            return 50.0
+            # P0-5: missing options context is penalised (30), not neutral (50).
+            return 30.0
 
         base_score = 50.0
 

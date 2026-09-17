@@ -57,8 +57,13 @@ async def test_audit_ledger_event_driven_transition():
     assert rec is not None
     assert rec.status == "TARGET_1_HIT"
     assert rec.is_winner is True
-    assert rec.current_price == 25060.0
-    assert any(e.to_state == "TARGET_1_HIT" for e in rec.state_history)
+    # Option records are premium-domain: an index-scale tick (25060 > 5000) must
+    # NOT be written to option MTM `current_price` (domain guard). The tick is
+    # still preserved in the state history as context.
+    assert rec.current_price is None
+    assert rec.mark_source is None
+    hit = next(e for e in rec.state_history if e.to_state == "TARGET_1_HIT")
+    assert hit.market_price == 25060.0
 
 
 @pytest.mark.asyncio

@@ -1,493 +1,332 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import { ChevronDown } from 'lucide-react';
-import { getStoredSettings } from '@/lib/settings';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { Power } from 'lucide-react';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import {
-  NAV_GROUPS,
-  STANDALONE_ITEMS,
-  ALL_NAV_ITEMS,
-  isActivePath,
-  isGroupActive,
-} from './nav-config';
-import { TooltipProvider } from '@/components/ui/tooltip';
-import { SidebarHeader, SidebarNavItem, SidebarFlyout, SidebarStatusDock } from './Sidebar/index';
+import { useToast } from '@/components/ui/toast';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
-import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
-import { navigationController } from '@/lib/navigationController';
-import type { StreamConnectionState } from '@/hooks/useMarketStream';
+import { useStreamHealth } from '@/context/LiveMarketContext';
+import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { StatusDot } from '../shared/StatusDot';
+import { SidebarHeader } from './Sidebar/SidebarHeader';
+import { SidebarNavItem } from './Sidebar/SidebarNavItem';
+import { SidebarFlyout } from './Sidebar/SidebarFlyout';
+import { SidebarStatusDock } from './Sidebar/SidebarStatusDock';
+import { BOTTOM_ITEMS, NAV_GROUPS, isActivePath, type NavItem } from './nav-config';
 
-// ---------------------------------------------------------------------------
-// Storage key & helpers
-// ---------------------------------------------------------------------------
-const SIDEBAR_COLLAPSED_KEY = 'droid:sidebar:collapsed';
-const SIDEBAR_GROUPS_KEY = 'droid:sidebar:groups';
-
-function loadCollapsed(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function saveCollapsed(v: boolean) {
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? '1' : '0');
-  } catch {}
-}
-
-function defaultGroupOpen(): Record<string, boolean> {
-  const out: Record<string, boolean> = {};
-  for (const g of NAV_GROUPS) out[g.id] = g.defaultOpen !== false;
-  return out;
-}
-
-function loadGroupOpen(): Record<string, boolean> {
-  const fallback = defaultGroupOpen();
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const raw = localStorage.getItem(SIDEBAR_GROUPS_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Record<string, boolean>;
-    return { ...fallback, ...parsed };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveGroupOpen(v: Record<string, boolean>) {
-  try {
-    localStorage.setItem(SIDEBAR_GROUPS_KEY, JSON.stringify(v));
-  } catch {}
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-export type SidebarProps = {
+interface SidebarProps {
+  /** Desktop rail collapse (lg+ only). */
   collapsed?: boolean;
-  onCollapsedChange?: (collapsed: boolean) => void;
+  onToggleCollapse?: () => void;
+  /** Under-lg drawer visibility, controlled by the shell. */
   mobileOpen?: boolean;
-  onMobileOpenChange?: (open: boolean) => void;
-};
-
-export type TelemetryBadges = Record<string, { label: string; color: string; pulse?: boolean }>;
-
-type SidebarNavContentProps = {
-  collapsed: boolean;
-  isMobile?: boolean;
-  pathname: string;
-  openGroups: Record<string, boolean>;
-  onToggleGroup: (id: string) => void;
-  onToggleCollapse: () => void;
-  onCloseMobile: () => void;
-  onExpand: () => void;
-  onNavigate: () => void;
-  telemetryBadges: TelemetryBadges;
-  apiType: string;
-  brokerProvider: string;
-  streamState: StreamConnectionState;
-};
-
-// ---------------------------------------------------------------------------
-// Static navigation content — top-level component so identity is stable
-// across renders (avoids remount / scroll + focus loss on every tick).
-// ---------------------------------------------------------------------------
-function SidebarNavContent({
-  collapsed,
-  isMobile,
-  pathname,
-  openGroups,
-  onToggleGroup,
-  onToggleCollapse,
-  onCloseMobile,
-  onExpand,
-  onNavigate,
-  telemetryBadges,
-  apiType,
-  brokerProvider,
-  streamState,
-}: SidebarNavContentProps) {
-  const rail = collapsed && !isMobile;
-  const standaloneItems = STANDALONE_ITEMS;
-
-  return (
-    <div className="flex h-full min-h-0 flex-col select-none">
-      {/* 1. Header (Brand + Pulse + Collapse toggle) */}
-      <SidebarHeader
-        collapsed={collapsed}
-        isMobile={isMobile}
-        streamState={streamState}
-        onToggleCollapse={onToggleCollapse}
-        onCloseMobile={onCloseMobile}
-      />
-
-      {/* 2. Main Navigation Items (scrolls when short viewport) */}
-      <nav
-        aria-label="Primary"
-        className={cn(
-          'flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-1 py-3 px-3 [scrollbar-width:thin]',
-          rail && 'items-center px-2 overflow-x-hidden',
-        )}
-      >
-        {/* Home + standalone (Forecast, Signals, ...) */}
-        <ul className={cn('flex flex-col gap-0.5', rail && 'items-center w-full')}>
-          {standaloneItems.map((standaloneItem) => (
-            <li key={standaloneItem.href} className={cn(rail && 'w-full flex justify-center')}>
-              <SidebarNavItem
-                item={standaloneItem}
-                active={isActivePath(pathname, standaloneItem.href)}
-                collapsed={rail}
-                onNavigate={onNavigate}
-                badgeData={standaloneItem.badgeKey ? telemetryBadges[standaloneItem.badgeKey] : undefined}
-              />
-            </li>
-          ))}
-        </ul>
-
-        {/* Section divider */}
-        <div
-          className={cn(
-            'border-t border-border/50 my-2 transition-all duration-150',
-            rail ? 'w-6 mx-auto' : 'mx-1',
-          )}
-          aria-hidden
-        />
-
-        {/* Workflow groups */}
-        {NAV_GROUPS.map((group) => {
-          // Collapsed rail: floating flyout
-          if (rail) {
-            return (
-              <div key={group.id} className="flex w-full justify-center py-0.5">
-                <SidebarFlyout group={group} onNavigate={onNavigate} telemetryBadges={telemetryBadges} />
-              </div>
-            );
-          }
-
-          const isOpen = openGroups[group.id] !== false;
-
-          // Expanded / mobile: collapsible section
-          return (
-            <section
-              key={group.id}
-              aria-labelledby={`sidebar-group-${group.id}`}
-              className="flex flex-col mt-0.5"
-            >
-              <h2 id={`sidebar-group-${group.id}`} className="sr-only">
-                {group.label}
-              </h2>
-              <button
-                type="button"
-                onClick={() => onToggleGroup(group.id)}
-                aria-expanded={isOpen}
-                aria-controls={`sidebar-section-${group.id}`}
-                className="group flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring select-none"
-              >
-                <span className="truncate">{group.label}</span>
-                <ChevronDown
-                  className={cn(
-                    'w-3.5 h-3.5 shrink-0 text-muted-foreground/40 transition-transform duration-200 group-hover:text-foreground/70',
-                    !isOpen && '-rotate-90',
-                  )}
-                  aria-hidden
-                />
-              </button>
-
-              {isOpen && (
-                <ul id={`sidebar-section-${group.id}`} className="flex flex-col gap-0.5 mt-0.5">
-                  {group.items.map((item) => {
-                    const active = isActivePath(pathname, item.href);
-                    const badgeData = item.badgeKey ? telemetryBadges[item.badgeKey] : undefined;
-                    return (
-                      <li key={item.href}>
-                        <SidebarNavItem
-                          item={item}
-                          active={active}
-                          onNavigate={onNavigate}
-                          badgeData={badgeData}
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
-          );
-        })}
-      </nav>
-
-      {/* 3. Bottom status dock (always visible) */}
-      <SidebarStatusDock
-        collapsed={collapsed}
-        isMobile={isMobile}
-        apiType={apiType}
-        provider={brokerProvider}
-        streamState={streamState}
-        onExpand={onExpand}
-        onNavigate={onNavigate}
-      />
-    </div>
-  );
+  onCloseMobile?: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Main Confined, Zero-Scroll Side Navigation Bar
-// ---------------------------------------------------------------------------
-export function Sidebar({
-  collapsed: controlledCollapsed,
-  onCollapsedChange,
-  mobileOpen: controlledMobileOpen,
-  onMobileOpenChange,
-}: SidebarProps) {
-  const router = useRouter();
-  const pathname = usePathname();
+/** Real active-signal count used for the Signals badge (60s poll). */
+function useSignalsBadge(): number | null {
+  const [count, setCount] = useState<number | null>(null);
 
-  // Telemetry / stream health — prefer LiveMarket (stable health context),
-  // fall back to Dashboard context for isolated usage.
-  // Hooks are called unconditionally; optional contexts return null outside providers.
-  const liveMarket = useOptionalLiveMarketContext();
-  const marketData = useOptionalMarketDataContext();
-  const streamState: StreamConnectionState =
-    liveMarket?.streamState ?? marketData?.streamState ?? 'CONNECTED';
-
-  // Collapsed state
-  const [internalCollapsed, setInternalCollapsed] = useState<boolean>(() => loadCollapsed());
-  const collapsed = controlledCollapsed ?? internalCollapsed;
-  const setCollapsed = useCallback(
-    (next: boolean | ((prev: boolean) => boolean)) => {
-      const value = typeof next === 'function' ? (next as (p: boolean) => boolean)(collapsed) : next;
-      if (onCollapsedChange) onCollapsedChange(value);
-      else setInternalCollapsed(value);
-      saveCollapsed(value);
-    },
-    [collapsed, onCollapsedChange],
-  );
-
-  // Mobile state
-  const [internalMobileOpen, setInternalMobileOpen] = useState(false);
-  const mobileOpen = controlledMobileOpen ?? internalMobileOpen;
-  const setMobileOpen = useCallback(
-    (v: boolean) => {
-      if (onMobileOpenChange) onMobileOpenChange(v);
-      else setInternalMobileOpen(v);
-    },
-    [onMobileOpenChange],
-  );
-
-  const [apiType, setApiType] = useState<string>(() => {
-    try {
-      return getStoredSettings().broker.apiType;
-    } catch {
-      return 'indian';
-    }
-  });
-  const [brokerProvider, setBrokerProvider] = useState<string>(() => {
-    try {
-      return getStoredSettings().broker.provider;
-    } catch {
-      return 'fyers';
-    }
-  });
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => loadGroupOpen());
-
-  const toggleGroup = useCallback((id: string) => {
-    setOpenGroups((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      saveGroupOpen(next);
-      return next;
-    });
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const res = await api.getSignalsStatus();
+        if (mounted) setCount(typeof res.active_count === 'number' ? res.active_count : null);
+      } catch {
+        // Endpoint unavailable: show no badge rather than claiming zero active.
+        if (mounted) setCount(null);
+      }
+    };
+    void load();
+    const id = setInterval(load, 60000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
   }, []);
 
-  const handleToggleCollapse = useCallback(() => setCollapsed((p) => !p), [setCollapsed]);
-  const handleCloseMobile = useCallback(() => setMobileOpen(false), [setMobileOpen]);
-  const handleExpand = useCallback(() => setCollapsed(false), [setCollapsed]);
+  return count;
+}
 
-  // Auto-expand the group that contains the current page (e.g. deep-link reload)
-  // Intentional external->state sync on route change.
-  /* eslint-disable react-hooks/set-state-in-effect -- route-driven group expansion */
-  useEffect(() => {
-    const active = NAV_GROUPS.find((g) => isGroupActive(pathname, g));
-    if (active) {
-      setOpenGroups((prev) => {
-        if (prev[active.id]) return prev;
-        const next = { ...prev, [active.id]: true };
-        saveGroupOpen(next);
-        return next;
-      });
-    }
-  }, [pathname]);
+export const Sidebar: React.FC<SidebarProps> = ({
+  collapsed = false,
+  onToggleCollapse,
+  mobileOpen = false,
+  onCloseMobile,
+}) => {
+  const pathname = usePathname();
+  const toast = useToast();
+  const market = useOptionalMarketDataContext();
+  const { streamState } = useStreamHealth();
+  const signalsCount = useSignalsBadge();
 
-  // Truthful telemetry badges — derived from real stream state, never fake.
-  // Signals/AI counts will be wired when a global engine context lands;
-  // until then show connection truth (LIVE / SYNC / OFF).
-  const telemetryBadges = useMemo<TelemetryBadges>(() => {
-    const live = streamState === 'CONNECTED';
-    const syncing = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
-    const dot = live
-      ? { label: 'LIVE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: true }
-      : syncing
-        ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
-        : { label: 'OFF', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false };
+  const [killModalOpen, setKillModalOpen] = useState(false);
+  const [isKilling, setIsKilling] = useState(false);
+  const mobileDrawerRef = useRef<HTMLElement>(null);
+
+  const provider = market?.health?.provider ?? market?.marketStatus?.provider ?? 'FYERS';
+
+  const telemetryBadges = useMemo<
+    Record<string, { label: string; color: string; pulse?: boolean }> | undefined
+  >(() => {
+    if (signalsCount === null || signalsCount <= 0) return undefined;
     return {
-      signals: dot,
-      ai: live
-        ? { label: 'READY', color: 'bg-purple-500/10 text-purple-600 border-purple-500/30', pulse: false }
-        : syncing
-          ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
-          : { label: 'OFF', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false },
-      broker: live
-        ? { label: 'ONLINE', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30', pulse: false }
-        : syncing
-          ? { label: 'SYNC', color: 'bg-amber-500/10 text-amber-600 border-amber-500/30', pulse: true }
-          : { label: 'OFFLINE', color: 'bg-rose-500/10 text-rose-600 border-rose-500/30', pulse: false },
+      signals: {
+        label: String(signalsCount),
+        color: 'bg-up-wash text-up-strong border-up-line',
+        pulse: true,
+      },
     };
-  }, [streamState]);
+  }, [signalsCount]);
 
-  // Hydrate settings (localStorage -> state sync + cross-tab updates)
-  /* eslint-disable react-hooks/set-state-in-effect -- hydration from localStorage */
+  // Escape closes the mobile drawer; lock page scroll while it is open.
+  // Focus moves into the drawer and is trapped there until it closes.
   useEffect(() => {
-    try {
-      const s = getStoredSettings();
-      setApiType(s.broker.apiType);
-      setBrokerProvider(s.broker.provider);
-    } catch {}
-
-    if (controlledCollapsed === undefined) {
-      setInternalCollapsed(loadCollapsed());
-    }
-
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === SIDEBAR_COLLAPSED_KEY && controlledCollapsed === undefined) {
-        setInternalCollapsed(e.newValue === '1');
-      }
-      if (e.key === 'droid_app_settings_v1') {
-        try {
-          const s = getStoredSettings();
-          setApiType(s.broker.apiType);
-          setBrokerProvider(s.broker.provider);
-        } catch {}
-      }
+    if (!mobileOpen) return;
+    const drawer = mobileDrawerRef.current;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = (): HTMLElement[] => {
+      if (!drawer) return [];
+      return Array.from(
+        drawer.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null);
     };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [controlledCollapsed]);
+    focusable()[0]?.focus();
 
-  // Keyboard Shortcuts: Cmd/Ctrl+B (toggle sidebar), Cmd/Ctrl+1..0 + Cmd+, (quick jumps)
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      const isInput =
-        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable;
-
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        if (window.innerWidth >= 768) setCollapsed((p) => !p);
-        else setMobileOpen(!mobileOpen);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseMobile?.();
+        return;
       }
-
-      // Quick jumps when not typing: Cmd+1..9, Cmd+0, Cmd+,
-      if ((e.metaKey || e.ctrlKey) && !isInput) {
-        let shortcut: string | null = null;
-        if (e.key >= '0' && e.key <= '9') shortcut = `⌘${e.key}`;
-        else if (e.key === ',') shortcut = '⌘,';
-        if (shortcut) {
-          const targetItem = ALL_NAV_ITEMS.find((item) => item.shortcut === shortcut);
-          if (targetItem) {
-            e.preventDefault();
-            navigationController.start();
-            router.push(targetItem.href);
-          }
+      if (e.key !== 'Tab' || !drawer) return;
+      const candidates = focusable();
+      if (candidates.length === 0) return;
+      const first = candidates[0];
+      const last = candidates[candidates.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !drawer.contains(active)) {
+          e.preventDefault();
+          last.focus();
         }
-      }
-
-      if (e.key === 'Escape' && mobileOpen) {
-        setMobileOpen(false);
+      } else if (active === last || !drawer.contains(active)) {
+        e.preventDefault();
+        first.focus();
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [mobileOpen, setCollapsed, setMobileOpen, router]);
 
-  // Prevent body scroll when mobile drawer is open
-  useEffect(() => {
-    if (mobileOpen) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = prev;
-      };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKey, true);
+      previouslyFocused?.focus();
+    };
+  }, [mobileOpen, onCloseMobile]);
+
+  const handleKillSwitch = useCallback(async () => {
+    if (isKilling) return;
+    setIsKilling(true);
+    const reason = 'Emergency operator kill switch triggered from Sidebar';
+    let signalsHalted = false;
+    try {
+      await api.toggleSignalsKillSwitch(true, reason);
+      signalsHalted = true;
+      await api.triggerAlgoKillSwitch('FULL_EXECUTION_STOP', 'Sidebar emergency stop');
+      toast.success('Kill switch engaged', 'Signals halted and all execution engines stopped.');
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? err.message : 'Kill switch request failed.';
+      if (signalsHalted) {
+        toast.error('Execution stop failed', `Signals were halted, but the algo engine stop failed: ${detail}`);
+      } else {
+        toast.error('Kill switch failed', detail);
+      }
+      // Re-throw so ConfirmDialog keeps the dialog open and shows the failure.
+      throw err instanceof Error ? err : new Error(detail);
+    } finally {
+      setIsKilling(false);
     }
-  }, [mobileOpen]);
+  }, [isKilling, toast]);
 
-  const handleNavigate = useCallback(() => {
-    if (mobileOpen) setMobileOpen(false);
-  }, [mobileOpen, setMobileOpen]);
+  const badgeFor = useCallback(
+    (item: NavItem) => (item.badgeKey ? telemetryBadges?.[item.badgeKey] : undefined),
+    [telemetryBadges],
+  );
 
-  const navContentProps = {
-    pathname,
-    openGroups,
-    onToggleGroup: toggleGroup,
-    onToggleCollapse: handleToggleCollapse,
-    onCloseMobile: handleCloseMobile,
-    onExpand: handleExpand,
-    onNavigate: handleNavigate,
-    telemetryBadges,
-    apiType,
-    brokerProvider,
-    streamState,
+  const renderNav = (railCollapsed: boolean) => {
+    if (railCollapsed) {
+      return (
+        <nav
+          className="flex-1 min-h-0 overflow-y-auto py-2 flex flex-col items-center gap-1"
+          aria-label="Primary navigation"
+        >
+          {NAV_GROUPS.map((group) => (
+            <SidebarFlyout
+              key={group.id}
+              group={group}
+              onNavigate={onCloseMobile}
+              telemetryBadges={telemetryBadges}
+            />
+          ))}
+          <div className="my-1 h-px w-8 bg-border" aria-hidden />
+          {BOTTOM_ITEMS.map((item) => (
+            <SidebarNavItem
+              key={item.href}
+              item={item}
+              active={isActivePath(pathname, item.href)}
+              collapsed
+              onNavigate={onCloseMobile}
+              badgeData={badgeFor(item)}
+            />
+          ))}
+        </nav>
+      );
+    }
+
+    return (
+      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-4" aria-label="Primary navigation">
+        {NAV_GROUPS.map((group) => (
+          <section key={group.id} aria-label={group.label}>
+            <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-4">
+              {group.label}
+            </div>
+            <div className="space-y-0.5">
+              {group.items.map((item) => (
+                <SidebarNavItem
+                  key={item.href}
+                  item={item}
+                  active={isActivePath(pathname, item.href)}
+                  onNavigate={onCloseMobile}
+                  badgeData={badgeFor(item)}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+
+        <section aria-label="System">
+          <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-4">System</div>
+          <div className="space-y-0.5">
+            {BOTTOM_ITEMS.map((item) => (
+              <SidebarNavItem
+                key={item.href}
+                item={item}
+                active={isActivePath(pathname, item.href)}
+                onNavigate={onCloseMobile}
+                badgeData={badgeFor(item)}
+              />
+            ))}
+          </div>
+        </section>
+      </nav>
+    );
   };
 
+  const renderKillSwitch = (railCollapsed: boolean) => (
+    <div className={cn('shrink-0 border-t border-border', railCollapsed ? 'p-2' : 'p-3')}>
+      {railCollapsed ? (
+        <button
+          type="button"
+          onClick={() => setKillModalOpen(true)}
+          disabled={isKilling}
+          aria-busy={isKilling}
+          aria-label="Emergency kill switch"
+          title="Emergency kill switch — halt all engines"
+          className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-down-line bg-down-wash text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Power className="h-4 w-4" aria-hidden />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setKillModalOpen(true)}
+          disabled={isKilling}
+          aria-busy={isKilling}
+          className="group flex w-full items-center justify-center gap-2 rounded-lg border border-down-line bg-down-wash px-3 py-2 font-mono text-xs font-semibold tracking-wider text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <StatusDot status="error" pulse={false} />
+          <span>{isKilling ? 'HALTING…' : 'KILL SWITCH'}</span>
+        </button>
+      )}
+    </div>
+  );
+
   return (
-    <TooltipProvider delayDuration={150}>
-      {/* Desktop Persistent Sidebar */}
+    <>
+      {/* Desktop rail (lg+) — collapse is always reversible here */}
       <aside
-        aria-label="Primary navigation"
         className={cn(
-          'hidden md:flex shrink-0 flex-col border-r border-border bg-card/80 backdrop-blur-xl transition-[width] duration-200 ease-out overflow-hidden select-none',
-          collapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]',
+          'hidden lg:flex h-full flex-col border-r border-border bg-card select-none transition-[width] duration-200',
+          collapsed ? 'w-16' : 'w-64',
         )}
+        aria-label="Primary navigation"
       >
-        <SidebarNavContent collapsed={collapsed} {...navContentProps} />
+        <SidebarHeader
+          collapsed={collapsed}
+          streamState={streamState}
+          onToggleCollapse={onToggleCollapse}
+        />
+        {renderNav(collapsed)}
+        {renderKillSwitch(collapsed)}
+        <SidebarStatusDock
+          collapsed={collapsed}
+          provider={provider}
+          streamState={streamState}
+          onExpand={onToggleCollapse}
+          showSettingsLink={false}
+        />
       </aside>
 
-      {/* Mobile Modal Drawer */}
-      <div
-        className={cn(
-          'md:hidden fixed inset-0 z-50 transition',
-          mobileOpen ? 'visible' : 'invisible pointer-events-none',
-        )}
-        aria-hidden={!mobileOpen}
-      >
-        {/* Backdrop */}
-        <div
-          onClick={() => setMobileOpen(false)}
-          className={cn(
-            'absolute inset-0 bg-black/50 transition-opacity duration-200',
-            mobileOpen ? 'opacity-100' : 'opacity-0',
-          )}
-        />
-        {/* Slide-out Drawer */}
-        <aside
-          aria-label="Primary navigation"
-          className={cn(
-            'absolute left-0 top-0 h-full w-[80vw] max-w-[300px] bg-card border-r border-border shadow-xl flex flex-col transition-transform duration-300 ease-out will-change-transform',
-            mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          )}
-        >
-          <SidebarNavContent collapsed={false} isMobile {...navContentProps} />
-        </aside>
-      </div>
-    </TooltipProvider>
-  );
-}
+      {/* Mobile drawer (<lg) — overlay + backdrop, never traps the user */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-[45] lg:hidden">
+          <div className="absolute inset-0 bg-scrim" onClick={onCloseMobile} aria-hidden="true" />
+          <aside
+            ref={mobileDrawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Primary navigation"
+            className="absolute inset-y-0 left-0 flex w-64 max-w-[85vw] flex-col border-r border-border bg-card shadow-lg animate-in slide-in-from-left duration-200"
+          >
+            <SidebarHeader
+              collapsed={false}
+              isMobile
+              streamState={streamState}
+              onCloseMobile={onCloseMobile}
+            />
+            {renderNav(false)}
+            {renderKillSwitch(false)}
+            <SidebarStatusDock
+              collapsed={false}
+              isMobile
+              provider={provider}
+              streamState={streamState}
+              onNavigate={onCloseMobile}
+              showSettingsLink={false}
+            />
+          </aside>
+        </div>
+      )}
 
-export function useSidebarMobile() {
-  const [open, setOpen] = useState(false);
-  return { open, setOpen };
-}
+      {/* Shared confirmation modal — rendered outside the drawer so its fixed
+          overlay is never re-parented by the drawer's transform. */}
+      <ConfirmDialog
+        isOpen={killModalOpen}
+        onClose={() => setKillModalOpen(false)}
+        onConfirm={handleKillSwitch}
+        title="EMERGENCY KILL SWITCH"
+        message="Triggering the Global Kill Switch halts all execution engines, cancels outstanding orders, stops all auto-trading, and transitions signals to SAFE mode immediately. This affects all active desks."
+        confirmLabel="HALT ALL ENGINES"
+        destructive
+        requireTypedConfirmation="KILL"
+      />
+    </>
+  );
+};

@@ -19,6 +19,7 @@ from typing import Any, Protocol
 import structlog
 from pydantic import BaseModel, Field
 
+from app.signals.contract_resolver import has_chain_mark
 from app.signals.fsm import signal_fsm
 from app.signals.risk.cross_desk_arbiter import cross_desk_arbiter
 from app.signals.safety.feed_circuit import feed_circuit
@@ -59,8 +60,8 @@ class FeedCircuitGate:
 class FNOIntegrityGate:
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
         if getattr(candidate, "fno_degraded", False):
-            # Flagged in candidate, does not necessarily drop if can be validated, but records rejection code for ARMED
-            return GateResult(passed=True, gate_name="FNOIntegrityGate", reason_code="ARMED_BLOCKED_FNO_DEGRADED")
+            # P0-2 FAIL-CLOSE: degraded F&O can never arm — hard reject.
+            return GateResult(passed=False, gate_name="FNOIntegrityGate", reason_code="ARMED_BLOCKED_FNO_DEGRADED")
         return GateResult(passed=True, gate_name="FNOIntegrityGate")
 
 
@@ -139,32 +140,38 @@ class CrossDeskArbiterGate:
 class RSIGate:
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
         indicators_snap = getattr(candidate, "context_snapshot", {}).get("indicators", {}) or {}
-        rsi_explicit = indicators_snap.get("rsi") or indicators_snap.get("momentum", {}).get("rsi")
-        if rsi_explicit is not None:
-            rsi_val = float(rsi_explicit)
-            is_call = "CALL" in candidate.direction
-            strat = candidate.strategy.upper()
+        rsi_explicit = indicators_snap.get("rsi")
+        if rsi_explicit is None:
+            try:
+                rsi_explicit = (indicators_snap.get("momentum") or {}).get("rsi")
+            except Exception:
+                rsi_explicit = None
+        # P0-2 FAIL-CLOSE: missing RSI cannot be assumed neutral — reject.
+        if rsi_explicit is None:
+            return GateResult(passed=False, gate_name="RSIGate", reason_code="RSI_MISSING")
+        rsi_val = float(rsi_explicit)
+        is_call = "CALL" in candidate.direction
+        strat = candidate.strategy.upper()
 
-            if strat == "MEAN_REVERSION":
-                rsi_ok = (is_call and rsi_val <= 40.0) or (not is_call and rsi_val >= 60.0)
-            elif strat in ("BREAKOUT", "MICRO_MOMENTUM", "GAMMA_SQUEEZE", "GAMMA_SPIKE"):
-                rsi_ok = (is_call and 48.0 <= rsi_val <= 85.0) or (not is_call and 15.0 <= rsi_val <= 52.0)
-            elif strat in ("TREND_PULLBACK", "EMA_RIBBON", "ORB", "VWAP_SCALP"):
-                rsi_ok = (is_call and 38.0 <= rsi_val <= 75.0) or (not is_call and 25.0 <= rsi_val <= 62.0)
-            else:
-                rsi_ok = (is_call and 35.0 <= rsi_val <= 80.0) or (not is_call and 20.0 <= rsi_val <= 65.0)
+        if strat == "MEAN_REVERSION":
+            rsi_ok = (is_call and rsi_val <= 40.0) or (not is_call and rsi_val >= 60.0)
+        elif strat in ("BREAKOUT", "MICRO_MOMENTUM", "GAMMA_SQUEEZE", "GAMMA_SPIKE"):
+            rsi_ok = (is_call and 48.0 <= rsi_val <= 85.0) or (not is_call and 15.0 <= rsi_val <= 52.0)
+        elif strat in ("TREND_PULLBACK", "EMA_RIBBON", "ORB", "VWAP_SCALP"):
+            rsi_ok = (is_call and 38.0 <= rsi_val <= 75.0) or (not is_call and 25.0 <= rsi_val <= 62.0)
+        else:
+            rsi_ok = (is_call and 35.0 <= rsi_val <= 80.0) or (not is_call and 20.0 <= rsi_val <= 65.0)
 
-            if not rsi_ok:
-                return GateResult(passed=False, gate_name="RSIGate", reason_code=f"RSI_REJECTION_{rsi_val:.1f}")
+        if not rsi_ok:
+            return GateResult(passed=False, gate_name="RSIGate", reason_code=f"RSI_REJECTION_{rsi_val:.1f}")
         return GateResult(passed=True, gate_name="RSIGate")
 
 
 class MarketStructureGate:
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
-        strat = candidate.strategy.upper()
-        if strat in ("BREAKOUT", "MEAN_REVERSION", "VWAP_SCALP"):
-            return GateResult(passed=True, gate_name="MarketStructureGate")
-
+        # P0-2 FAIL-CLOSE: no strategy is exempt from S/R obstruction checks.
+        # BREAKOUT/MEAN_REVERSION/VWAP_SCALP auto-pass removed — every
+        # candidate must prove it is not buried inside a wall.
         indicators_snap = getattr(candidate, "context_snapshot", {}).get("indicators", {}) or {}
         atr_val = Decimal(str(indicators_snap.get("volatility", {}).get("atr") or float(candidate.risk_points or 20.0)))
         sr_data = indicators_snap.get("support_resistance", {})
@@ -230,11 +237,52 @@ class TriggerIntegrityGate:
 
 class OptionViabilityGate:
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
-        if candidate.path_simulation and not candidate.path_simulation.get("is_economically_viable", True):
+        # P0-2 FAIL-CLOSE: viability must be positively proven. A missing
+        # path_simulation means the option leg was never priced — admitting it
+        # lets uneconomic premium masquerade as edge.
+        if candidate.path_simulation is None:
+            return GateResult(passed=False, gate_name="OptionViabilityGate", reason_code="VIABILITY_UNEVALUATED")
+        if not candidate.path_simulation.get("is_economically_viable", True):
             viab_reasons = candidate.path_simulation.get("viability_rationale") or ["OPTION_NOT_ECONOMICALLY_VIABLE"]
             rejection_lbl = viab_reasons[0][:40].replace(" ", "_").upper()
             return GateResult(passed=False, gate_name="OptionViabilityGate", reason_code=rejection_lbl)
         return GateResult(passed=True, gate_name="OptionViabilityGate")
+
+
+class ChainMarkGate:
+    """Fail-closed admission gate: no live FYERS chain mark, no signal.
+
+    Every entry, mark-to-market tick and exit prices off the broker's own quote
+    for the exact contract. When the chain is unavailable (expired token, API
+    down) the resolver falls back to a formula-derived symbol with
+    `live_premium=None` — a contract nobody has actually quoted. Admitting such
+    a candidate is how the ledger ends up valuing a real position with a
+    Black-76 number, so it is rejected here instead.
+    """
+
+    def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
+        contract = getattr(candidate, "option_contract", None)
+        if contract is None:
+            return GateResult(
+                passed=False,
+                gate_name="ChainMarkGate",
+                reason_code="CHAIN_MARK_UNAVAILABLE",
+                message="Candidate has no option contract resolved",
+            )
+        if not has_chain_mark(contract):
+            try:
+                src = contract.get("contract_source") if isinstance(contract, dict) else getattr(contract, "contract_source", "?")
+                sym = contract.get("broker_symbol") if isinstance(contract, dict) else getattr(contract, "broker_symbol", "?")
+            except Exception:
+                src, sym = "?", "?"
+            return GateResult(
+                passed=False,
+                gate_name="ChainMarkGate",
+                reason_code="CHAIN_MARK_UNAVAILABLE",
+                message=f"No live FYERS chain quote for {sym} (contract_source={src})",
+                metadata={"broker_symbol": str(sym), "contract_source": str(src)},
+            )
+        return GateResult(passed=True, gate_name="ChainMarkGate")
 
 
 class GateChain:
@@ -251,13 +299,21 @@ class GateChain:
             MarketStructureGate(),
             TriggerIntegrityGate(),
             OptionViabilityGate(),
+            ChainMarkGate(),
         ]
 
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> tuple[bool, list[GateResult]]:
-        results = []
+        # P0-2 FAIL-CLOSE: evaluate EVERY gate and collect ALL failures.
+        # Short-circuiting on the first rejection hides compounding risk
+        # (e.g. RSI + structure + viability all failing together) from
+        # diagnostics and lets a single-gate fix mask deeper invalidity.
+        results: list[GateResult] = []
         for gate in self.gates:
-            res = gate.evaluate(candidate, **kwargs)
+            try:
+                res = gate.evaluate(candidate, **kwargs)
+            except Exception as exc:
+                gate_name = type(gate).__name__
+                res = GateResult(passed=False, gate_name=gate_name, reason_code="GATE_EVAL_ERROR", message=str(exc)[:200])
             results.append(res)
-            if not res.passed:
-                return False, results
-        return True, results
+        passed = all(r.passed for r in results)
+        return passed, results

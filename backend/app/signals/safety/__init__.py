@@ -10,6 +10,7 @@ Provides:
 """
 from app.signals.safety.decimal_types import (
     D,
+    D_strict,
     Price,
     Quantity,
     Money,
@@ -23,6 +24,7 @@ from app.signals.safety.decimal_types import (
     validate_quantity,
     serialize_decimal,
     serialize_money,
+    is_decimal_string,
 )
 from app.signals.safety.sequence_validator import (
     SequenceAnomaly,
@@ -45,6 +47,11 @@ from app.signals.safety.clocks import (
     get_session_clock,
     get_monotonic_clock,
 )
+from app.signals.safety.feed_health_monitor import (
+    FeedStatus,
+    FeedHealthMonitor,
+    feed_health_monitor,
+)
 from app.signals.safety.kill_switch import (
     GlobalKillSwitch,
     kill_switch,
@@ -56,6 +63,7 @@ from app.signals.safety.execution_guard import (
 
 __all__ = [
     "D",
+    "D_strict",
     "Price",
     "Quantity",
     "Money",
@@ -69,6 +77,10 @@ __all__ = [
     "validate_quantity",
     "serialize_decimal",
     "serialize_money",
+    "is_decimal_string",
+    "FeedHealthMonitor",
+    "feed_health_monitor",
+    "FeedStatus",
     "SequenceAnomaly",
     "SequenceCheckResult",
     "SequenceValidator",

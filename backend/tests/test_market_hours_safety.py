@@ -339,7 +339,10 @@ def test_sanitize_persisted_signals_sweeps_closed_market():
     from app.signals.fsm import signal_fsm
     from app.signals.signals_persistence import sanitize_persisted_signals
 
-    sig = make_test_signal("sig-persist-sanitize-1", fsm_state="ARMED")
+    # Production-like id: the test-prefix purge list is covered by
+    # test_sanitize_purges_test_signals_case_insensitively, so this fixture
+    # must survive sanitize to prove the closed-market sweep reaches EXPIRED.
+    sig = make_test_signal("SIG-SWEEP-CLOSED-01", fsm_state="ARMED")
     signal_fsm._signals[sig.signal_id] = sig
 
     # Add corrupt audit trade with exit_price = 0.0

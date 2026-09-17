@@ -7,6 +7,8 @@ Verifies:
   - Signal factory construction
 """
 from decimal import Decimal
+from datetime import datetime, time as dt_time, timedelta
+from zoneinfo import ZoneInfo
 import pytest
 from app.signals.strategies.base import SignalCandidate
 from app.signals.pipeline.gates import (
@@ -55,14 +57,45 @@ def _sample_candidate(strategy="BREAKOUT", direction="LONG_CALL", spot=Decimal("
 
 
 def test_session_vwap_calculation():
-    candles = [
+    """P0-2 fail-closed: a stale candle pool must NOT yield a VWAP.
+
+    Only true session-anchored bars (>= 09:15:00 IST of the latest bar's date)
+    may price the VWAP; otherwise the honest answer is (None, degraded=True, 0).
+    """
+    stale_candles = [
         {"timestamp": 1700000000000, "high": 24050.0, "low": 23950.0, "close": 24000.0, "volume": 1000},
         {"timestamp": 1700000300000, "high": 24080.0, "low": 23980.0, "close": 24050.0, "volume": 2000},
     ]
-    vwap, degraded, cov = calculate_session_vwap(candles)
-    assert vwap is not None
-    assert isinstance(vwap, Decimal)
-    assert vwap > 0
+    vwap, degraded, cov = calculate_session_vwap(stale_candles)
+    assert vwap is None
+    assert degraded is True
+    assert cov == 0.0
+
+    # Positive case: true session candles anchored at today's 09:15 IST.
+    ist = ZoneInfo("Asia/Kolkata")
+    session_open = datetime.combine(datetime.now(ist).date(), dt_time(9, 15), tzinfo=ist)
+    session_candles = [
+        {
+            "timestamp": int((session_open + timedelta(minutes=5)).timestamp() * 1000),
+            "high": 24050.0,
+            "low": 23950.0,
+            "close": 24000.0,
+            "volume": 1000,
+        },
+        {
+            "timestamp": int((session_open + timedelta(minutes=10)).timestamp() * 1000),
+            "high": 24080.0,
+            "low": 23980.0,
+            "close": 24050.0,
+            "volume": 2000,
+        },
+    ]
+    vwap2, degraded2, cov2 = calculate_session_vwap(session_candles)
+    assert vwap2 is not None
+    assert isinstance(vwap2, Decimal)
+    assert vwap2 > 0
+    assert degraded2 is False
+    assert cov2 == 100.0
 
 
 def test_detect_market_regime():

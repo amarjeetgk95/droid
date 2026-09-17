@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -97,10 +97,68 @@ class InstrumentMaster(BaseModel):
     strike_interval: Decimal
     contract_version: str = "v1.0"
     active: bool = True
+    # Executable gates order paths: only a chain-verified contract may be
+    # executed or valued. Formula-only contracts carry active=False AND
+    # executable=False (fail-closed — no model price is ever tradable).
+    executable: bool = True
     # Provenance: "fyers_chain" when broker_symbol came from the live option
     # chain cache, "formula" when derived from weekday rules (offline).
     contract_source: str = "formula"
     live_premium: Optional[float] = None
+
+    @property
+    def has_chain_mark(self) -> bool:
+        """True only when this contract carries a live FYERS chain quote.
+
+        Fail-closed policy: `contract_source == "formula"` means the symbol was
+        derived from weekday/holiday rules offline, and `live_premium` is None
+        because the broker chain never confirmed the strike. Nothing may be
+        executed or valued off such a contract — no Black-76 substitute.
+        `chain_quotes` is also accepted: an explicit broker quote map supplied
+        by the caller (e.g. live chain snapshot), not a model value.
+        """
+        if str(self.contract_source or "").lower() not in ("fyers_chain", "chain_quotes"):
+            return False
+        try:
+            return self.live_premium is not None and float(self.live_premium) > 0
+        except Exception:
+            return False
+
+    @property
+    def chain_premium(self) -> Optional[float]:
+        """The broker's mid for this contract, or None. Never a model value."""
+        return float(self.live_premium) if self.has_chain_mark else None
+
+
+def has_chain_mark(contract: Any) -> bool:
+    """Fail-closed chain-mark check for an option contract (model or dict).
+
+    Accepts either an `InstrumentMaster` or the plain dict produced by
+    `model_dump()`/`SignalInstance.option_contract`. A dict must carry BOTH
+    provenance (`contract_source == "fyers_chain"`) and a positive premium —
+    the two together are what a real broker chain row looks like.
+    """
+    if contract is None:
+        return False
+    if isinstance(contract, InstrumentMaster):
+        return contract.has_chain_mark
+    try:
+        src = str(contract.get("contract_source") or "").lower()
+        prem = contract.get("live_premium")
+        return src in ("fyers_chain", "chain_quotes") and prem is not None and float(prem) > 0
+    except Exception:
+        return False
+
+
+def chain_premium_of(contract: Any) -> Optional[float]:
+    """Broker mid for the contract when verified, else None."""
+    if not has_chain_mark(contract):
+        return None
+    try:
+        prem = contract.live_premium if isinstance(contract, InstrumentMaster) else contract.get("live_premium")
+        return float(prem)
+    except Exception:
+        return None
 
 
 def validate_underlying(underlying: str) -> str:
@@ -205,8 +263,25 @@ def resolve_option_contract(
     strike_offset: int = 0,
     ref_date: Optional[date] = None,
     exact_strike: Optional[Decimal | float] = None,
+    require_chain_mark: bool = True,
 ) -> InstrumentMaster:
-    """Resolve authoritative InstrumentMaster for an option contract."""
+    """Resolve authoritative InstrumentMaster for an option contract.
+
+    P0-4 manual-path rewiring:
+
+    * Live chain first — the broker's own symbol/premium for the exact
+      (expiry, strike, type) when the chain cache holds a fresh row.
+    * ``require_chain_mark`` (default True) marks the *live* expectation:
+      callers on a live path (paper execution, fills, MTM) must check
+      ``active``/``executable``/``has_chain_mark`` before trading. The
+      resolver itself stays non-raising so offline/manual registration can
+      still describe the intended contract — but a formula-only contract
+      carries ``active=False`` + ``executable=False`` and no premium, so no
+      execution path can mistake it for a verified instrument.
+    * ``instrument_id`` embeds the expiry kind (``WEEKLY``/``MONTHLY``/
+      ``EXPIRING_TODAY``) so weekly and monthly strikes for the same day
+      never collide.
+    """
     u = validate_underlying(underlying)
     cfg = INDEX_CONTRACT_CONFIGS[u]
     step = cfg["strike_interval"]
@@ -219,9 +294,9 @@ def resolve_option_contract(
             selected_strike = atm_strike + (Decimal(strike_offset) * step)
         else:
             selected_strike = atm_strike - (Decimal(strike_offset) * step)
-        
+
     expiry, expiry_type = resolve_nearest_expiry(u, ref_date)
-    
+
     strike_int = int(selected_strike)
     yy = str(expiry.year)[-2:]
     if expiry_type == "MONTHLY":
@@ -234,12 +309,15 @@ def resolve_option_contract(
         date_part = f"{yy}{m_code}{dd}"
 
     fyers_symbol = f"{cfg['fyers_opt_prefix']}{date_part}{strike_int}{option_type}"
-    instr_id = f"{u}_{expiry.strftime('%Y%m%d')}_{strike_int}_{option_type}"
+    # Expiry kind is part of identity: a weekly and a monthly contract can
+    # share (date, strike, type) on month-end Tuesdays/Thursdays.
+    instr_id = f"{u}_{expiry.strftime('%Y%m%d')}_{expiry_type}_{strike_int}_{option_type}"
 
     # Live source of truth first: the broker's own symbol for this exact
-    # (expiry, strike, type) when the chain cache has it (same session).
+    # (expiry, strike, type) when the chain cache has it (same session, fresh).
     contract_source = "formula"
     live_premium: Optional[float] = None
+    chain_verified = False
     try:
         from app.signals.live_contract_cache import live_contract_cache
         live = live_contract_cache.lookup(u, expiry, strike_int, option_type)
@@ -247,10 +325,31 @@ def resolve_option_contract(
             fyers_symbol = live.broker_symbol
             if live.mid > 0:
                 live_premium = live.mid
-            contract_source = "fyers_chain"
+            # A chain row without any usable premium is still chain provenance,
+            # but only a positive premium counts as a verified mark.
+            chain_verified = live_premium is not None and float(live_premium) > 0
+            if chain_verified:
+                contract_source = "fyers_chain"
     except Exception:
-        pass
-    
+        chain_verified = False
+
+    if chain_verified:
+        is_active, is_executable = True, True
+    else:
+        # Formula-only: derived offline from weekday/holiday rules, never
+        # confirmed by the broker chain. Not tradable, not valuable.
+        is_active, is_executable = False, False
+        if require_chain_mark:
+            import structlog as _sl
+
+            _sl.get_logger().debug(
+                "contract_formula_only_no_chain_mark",
+                underlying=u,
+                expiry=expiry.isoformat(),
+                strike=strike_int,
+                option_type=option_type,
+            )
+
     return InstrumentMaster(
         instrument_id=instr_id,
         broker_symbol=fyers_symbol,
@@ -266,7 +365,8 @@ def resolve_option_contract(
         contract_multiplier=cfg["contract_multiplier"],
         strike_interval=step,
         contract_version="v1.0",
-        active=True,
+        active=is_active,
+        executable=is_executable,
         contract_source=contract_source,
         live_premium=live_premium,
     )
@@ -434,4 +534,71 @@ def calculate_option_buyer_sizing(
         "allowed": final_lots >= 1,
         "reason": "OK" if final_lots >= 1 else f"Insufficient risk capital (requires ₹{risk_per_lot:,.2f} for 1 lot)",
     }
+
+
+#: Default sizing entry-point for option legs. Long-option risk is the
+#: premium paid (bounded loss), NOT index-spot points — spot-based
+#: ``calculate_position_sizing`` mis-sizes option legs by orders of magnitude
+#: (index points vs rupees of premium). Every manual/live path that sizes an
+#: OPTION contract must dispatch here.
+DEFAULT_OPTION_SIZING_FN = calculate_option_buyer_sizing
+
+
+def resolve_sizing_for_contract(
+    contract: Any,
+    available_capital: Decimal | float,
+    risk_percent: float = 2.0,
+    option_entry_premium: Optional[Decimal | float] = None,
+    option_stop_premium: Optional[Decimal | float] = None,
+    entry_price: Optional[Decimal | float] = None,
+    stop_loss: Optional[Decimal | float] = None,
+    max_lots: int = 50,
+) -> dict:
+    """Size a position off the correct domain for the instrument.
+
+    * OPTION contracts (or an explicit ``option_entry_premium``) →
+      :func:`calculate_option_buyer_sizing` (premium domain).
+    * Anything else → :func:`calculate_position_sizing` (spot domain).
+
+    Returns the sizing dict plus ``sizing_basis`` ("OPTION_PREMIUM" or
+    "SPOT") so callers can audit which domain priced the trade.
+    """
+    lot_size = 75
+    try:
+        if isinstance(contract, InstrumentMaster):
+            lot_size = int(contract.lot_size or 75)
+            is_option = contract.instrument_type == "OPTION"
+            premium = option_entry_premium if option_entry_premium is not None else contract.live_premium
+        elif isinstance(contract, dict):
+            lot_size = int(contract.get("lot_size", 75) or 75)
+            is_option = str(contract.get("instrument_type", "OPTION")).upper() == "OPTION" or contract.get("option_type") is not None
+            premium = option_entry_premium if option_entry_premium is not None else contract.get("live_premium")
+        else:
+            is_option = option_entry_premium is not None
+            premium = option_entry_premium
+    except Exception:
+        is_option, premium = option_entry_premium is not None, option_entry_premium
+
+    if is_option and premium is not None and float(premium) > 0:
+        out = calculate_option_buyer_sizing(
+            available_capital=available_capital,
+            risk_percent=risk_percent,
+            option_entry_premium=premium,
+            option_stop_premium=option_stop_premium,
+            lot_size=lot_size,
+            max_lots=max_lots,
+        )
+        out["sizing_basis"] = "OPTION_PREMIUM"
+        return out
+
+    out = calculate_position_sizing(
+        available_capital=available_capital,
+        risk_percent=risk_percent,
+        entry_price=entry_price if entry_price is not None else 0,
+        stop_loss=stop_loss if stop_loss is not None else 0,
+        lot_size=lot_size,
+        max_lots=max_lots,
+    )
+    out["sizing_basis"] = "SPOT"
+    return out
 

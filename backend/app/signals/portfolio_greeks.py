@@ -55,7 +55,13 @@ class PortfolioGreeksSummary(BaseModel):
     total_gamma: float = 0.0
     total_theta_day: float = 0.0
     total_vega: float = 0.0
+    # Gross (sum of |leg|) tracks leverage even when net is hedged.
+    gross_delta: float = 0.0
+    gross_gamma: float = 0.0
+    gross_theta_day: float = 0.0
+    gross_vega: float = 0.0
     net_exposure_by_underlying: dict[str, float] = Field(default_factory=dict)
+    gross_exposure_by_underlying: dict[str, float] = Field(default_factory=dict)
     positions_by_horizon: dict[str, int] = Field(default_factory=dict)
     expiry_concentrations: dict[str, float] = Field(default_factory=dict)
     total_open_positions: int = 0
@@ -70,6 +76,10 @@ class MarginalGreekCheckResult(BaseModel):
     marginal_vega: float
     projected_total_delta: float
     projected_total_theta_day: float
+    projected_gross_delta: float = 0.0
+    projected_gross_gamma: float = 0.0
+    projected_gross_vega: float = 0.0
+    projected_expiry_concentration_pct: float = 0.0
     cross_horizon_overlap_detected: bool = False
     warning_notes: list[str] = Field(default_factory=list)
 
@@ -79,6 +89,14 @@ class PortfolioRiskLimits(BaseModel):
     max_portfolio_theta_day_rupees: float = 15000.0  # Max ₹15,000/day total theta burn
     max_expiry_concentration_pct: float = 70.0  # No more than 70% in single expiry
     max_same_direction_horizons: int = 2  # Max 2 horizons in same direction without hedge
+    # Gross leverage ceilings (sum of |legs| — hedged books still bleed).
+    max_gross_delta: float = 700.0
+    max_gross_gamma: float = 2.0
+    max_gross_vega: float = 20000.0
+    # Capital-relative mode: when capital_inr is set, the net-delta ceiling
+    # scales with account size instead of the static default.
+    capital_inr: Optional[float] = None
+    max_net_delta_per_1lakh: float = 35.0
 
 
 class PortfolioGreeksLedger:
@@ -120,7 +138,12 @@ class PortfolioGreeksLedger:
             total_gamma = 0.0
             total_theta = 0.0
             total_vega = 0.0
+            gross_delta = 0.0
+            gross_gamma = 0.0
+            gross_theta = 0.0
+            gross_vega = 0.0
             by_und: dict[str, float] = {}
+            by_und_gross: dict[str, float] = {}
             by_horiz: dict[str, int] = {}
             by_exp: dict[str, int] = {}
 
@@ -129,8 +152,13 @@ class PortfolioGreeksLedger:
                 total_gamma += p.total_gamma
                 total_theta += p.total_theta_day
                 total_vega += p.total_vega
+                gross_delta += abs(p.total_delta)
+                gross_gamma += abs(p.total_gamma)
+                gross_theta += abs(p.total_theta_day)
+                gross_vega += abs(p.total_vega)
 
                 by_und[p.underlying] = round(by_und.get(p.underlying, 0.0) + p.total_delta, 2)
+                by_und_gross[p.underlying] = round(by_und_gross.get(p.underlying, 0.0) + abs(p.total_delta), 2)
                 by_horiz[p.horizon] = by_horiz.get(p.horizon, 0) + 1
                 by_exp[p.expiry_date] = by_exp.get(p.expiry_date, 0) + p.quantity
 
@@ -142,11 +170,42 @@ class PortfolioGreeksLedger:
                 total_gamma=round(total_gamma, 4),
                 total_theta_day=round(total_theta, 2),
                 total_vega=round(total_vega, 2),
+                gross_delta=round(gross_delta, 2),
+                gross_gamma=round(gross_gamma, 4),
+                gross_theta_day=round(gross_theta, 2),
+                gross_vega=round(gross_vega, 2),
                 net_exposure_by_underlying=by_und,
+                gross_exposure_by_underlying=by_und_gross,
                 positions_by_horizon=by_horiz,
                 expiry_concentrations=exp_pct,
                 total_open_positions=len(self._positions),
             )
+
+    def refresh_mark(
+        self,
+        position_id: str,
+        unit_delta: Optional[float] = None,
+        unit_gamma: Optional[float] = None,
+        unit_theta_day: Optional[float] = None,
+        unit_vega: Optional[float] = None,
+    ) -> bool:
+        """Refresh per-unit Greeks on MTM (delta/gamma drift into expiry)."""
+        with self._lock:
+            pos = self._positions.get(position_id)
+            if pos is None:
+                return False
+            try:
+                if unit_delta is not None:
+                    pos.unit_delta = float(unit_delta)
+                if unit_gamma is not None:
+                    pos.unit_gamma = float(unit_gamma)
+                if unit_theta_day is not None:
+                    pos.unit_theta_day = float(unit_theta_day)
+                if unit_vega is not None:
+                    pos.unit_vega = float(unit_vega)
+                return True
+            except Exception:
+                return False
 
     def evaluate_marginal_trade(
         self,
@@ -174,12 +233,60 @@ class PortfolioGreeksLedger:
 
         proj_delta = round(current.total_delta + marginal_delta, 2)
         proj_theta = round(current.total_theta_day + marginal_theta, 2)
+        proj_gross_delta = round(current.gross_delta + abs(marginal_delta), 2)
+        proj_gross_gamma = round(current.gross_gamma + abs(marginal_gamma), 4)
+        proj_gross_vega = round(current.gross_vega + abs(marginal_vega), 2)
+
+        # Projected expiry concentration for the candidate's expiry.
+        with self._lock:
+            _qty_by_exp: dict[str, int] = {}
+            for p in self._positions.values():
+                _qty_by_exp[p.expiry_date] = _qty_by_exp.get(p.expiry_date, 0) + p.quantity
+        _existing_qty = sum(_qty_by_exp.values())
+        _total_qty = _existing_qty + quantity
+        _exp_qty = _qty_by_exp.get(expiry_date, 0) + quantity
+        proj_exp_pct = round(_exp_qty / _total_qty * 100.0, 1) if _total_qty > 0 else 100.0
 
         und_current_delta = current.net_exposure_by_underlying.get(underlying, 0.0)
         proj_und_delta = abs(und_current_delta + marginal_delta)
 
+        # Capital-relative ceiling (when an account size is configured).
+        effective_delta_cap = self.limits.max_net_delta_per_underlying
+        try:
+            if self.limits.capital_inr and float(self.limits.capital_inr) > 0:
+                dyn = float(self.limits.capital_inr) / 100000.0 * float(self.limits.max_net_delta_per_1lakh)
+                effective_delta_cap = min(effective_delta_cap, max(1.0, dyn))
+        except Exception:
+            pass
+
         warnings: list[str] = []
         overlap_detected = False
+
+        def _deny(code: str) -> MarginalGreekCheckResult:
+            return MarginalGreekCheckResult(
+                allowed=False,
+                rejection_reason=code,
+                marginal_delta=marginal_delta,
+                marginal_gamma=marginal_gamma,
+                marginal_theta_day=marginal_theta,
+                marginal_vega=marginal_vega,
+                projected_total_delta=proj_delta,
+                projected_total_theta_day=proj_theta,
+                projected_gross_delta=proj_gross_delta,
+                projected_gross_gamma=proj_gross_gamma,
+                projected_gross_vega=proj_gross_vega,
+                projected_expiry_concentration_pct=proj_exp_pct,
+                cross_horizon_overlap_detected=overlap_detected,
+                warning_notes=warnings,
+            )
+
+        # 0. Expiry concentration (70% — a single expiry must not own the book).
+        # Skipped on an empty book: the first position is trivially 100%.
+        if _existing_qty > 0 and proj_exp_pct > self.limits.max_expiry_concentration_pct:
+            return _deny(
+                f"EXPIRY_CONCENTRATION_BREACH: Projected {proj_exp_pct:.1f}% in {expiry_date} "
+                f"exceeds {self.limits.max_expiry_concentration_pct:.0f}% ceiling."
+            )
 
         # 1. Cross-Horizon Compounding Exposure Guard (§51)
         # Check how many existing positions in this underlying share the same direction
@@ -206,17 +313,21 @@ class PortfolioGreeksLedger:
                     marginal_vega=marginal_vega,
                     projected_total_delta=proj_delta,
                     projected_total_theta_day=proj_theta,
+                    projected_gross_delta=proj_gross_delta,
+                    projected_gross_gamma=proj_gross_gamma,
+                    projected_gross_vega=proj_gross_vega,
+                    projected_expiry_concentration_pct=proj_exp_pct,
                     cross_horizon_overlap_detected=True,
                     warning_notes=warnings,
                 )
 
-        # 2. Portfolio Delta Ceiling
-        if proj_und_delta > self.limits.max_net_delta_per_underlying:
+        # 2. Portfolio Delta Ceiling (capital-relative when configured)
+        if proj_und_delta > effective_delta_cap:
             return MarginalGreekCheckResult(
                 allowed=False,
                 rejection_reason=(
                     f"PORTFOLIO_DELTA_BREACH: Projected net delta ({proj_und_delta:.1f}) exceeds "
-                    f"ceiling ({self.limits.max_net_delta_per_underlying:.1f}) for {underlying}."
+                    f"ceiling ({effective_delta_cap:.1f}) for {underlying}."
                 ),
                 marginal_delta=marginal_delta,
                 marginal_gamma=marginal_gamma,
@@ -224,8 +335,29 @@ class PortfolioGreeksLedger:
                 marginal_vega=marginal_vega,
                 projected_total_delta=proj_delta,
                 projected_total_theta_day=proj_theta,
+                projected_gross_delta=proj_gross_delta,
+                projected_gross_gamma=proj_gross_gamma,
+                projected_gross_vega=proj_gross_vega,
+                projected_expiry_concentration_pct=proj_exp_pct,
                 cross_horizon_overlap_detected=overlap_detected,
                 warning_notes=warnings,
+            )
+
+        # 2b. Gross leverage ceilings (hedged net can still bleed).
+        if proj_gross_delta > self.limits.max_gross_delta:
+            return _deny(
+                f"PORTFOLIO_GROSS_DELTA_BREACH: Projected gross delta ({proj_gross_delta:.1f}) "
+                f"exceeds {self.limits.max_gross_delta:.1f}."
+            )
+        if proj_gross_gamma > self.limits.max_gross_gamma:
+            return _deny(
+                f"PORTFOLIO_GROSS_GAMMA_BREACH: Projected gross gamma ({proj_gross_gamma:.4f}) "
+                f"exceeds {self.limits.max_gross_gamma:.4f}."
+            )
+        if proj_gross_vega > self.limits.max_gross_vega:
+            return _deny(
+                f"PORTFOLIO_GROSS_VEGA_BREACH: Projected gross vega ({proj_gross_vega:.1f}) "
+                f"exceeds {self.limits.max_gross_vega:.1f}."
             )
 
         # 3. Portfolio Daily Theta Burn Ceiling
@@ -242,6 +374,10 @@ class PortfolioGreeksLedger:
                 marginal_vega=marginal_vega,
                 projected_total_delta=proj_delta,
                 projected_total_theta_day=proj_theta,
+                projected_gross_delta=proj_gross_delta,
+                projected_gross_gamma=proj_gross_gamma,
+                projected_gross_vega=proj_gross_vega,
+                projected_expiry_concentration_pct=proj_exp_pct,
                 cross_horizon_overlap_detected=overlap_detected,
                 warning_notes=warnings,
             )
@@ -254,6 +390,10 @@ class PortfolioGreeksLedger:
             marginal_vega=marginal_vega,
             projected_total_delta=proj_delta,
             projected_total_theta_day=proj_theta,
+            projected_gross_delta=proj_gross_delta,
+            projected_gross_gamma=proj_gross_gamma,
+            projected_gross_vega=proj_gross_vega,
+            projected_expiry_concentration_pct=proj_exp_pct,
             cross_horizon_overlap_detected=overlap_detected,
             warning_notes=warnings,
         )

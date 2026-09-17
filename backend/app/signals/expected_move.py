@@ -151,12 +151,34 @@ class ExpectedMoveProjection(BaseModel):
     atr_excursion_points: float = Field(..., description="Volatility-based excursion from ATR")
     expected_duration_hours: float = Field(..., description="Expected time required to reach target in trading hours")
     expected_velocity_pts_per_hour: float = Field(..., description="Expected price movement speed in points/hour")
+    # P1: normalized velocity (ATR multiples/hr), live-IV provenance, delta/DTE.
+    velocity_atr_per_hour: float = Field(default=0.0, description="Velocity normalized to ATR multiples per hour")
+    live_iv: Optional[float] = Field(default=None, description="Live ATM IV backing this projection (solve_iv)")
+    iv_source: str = Field(default="explicit", description="explicit|live_solve|fallback")
+    option_delta: Optional[float] = Field(default=None, description="Real delta used for theta math (not 0.50)")
+    dte_days: Optional[float] = Field(default=None, description="Days to expiry backing the horizon")
+    expiry_crush_haircut_applied: bool = Field(default=False)
     
     # Velocity vs Theta Analysis (§8)
     is_fast_enough_for_option: bool = Field(..., description="True if velocity comfortably outpaces theta decay")
     velocity_assessment: str = Field(..., description="Institutional verdict on move speed vs option theta")
     calibration_confidence: float = Field(..., description="Model calibration confidence (0-100)")
     forecast_rationale: list[str] = Field(default_factory=list)
+
+    @property
+    def duration(self) -> float:
+        """Alias consumed by friction_gate (hours)."""
+        try:
+            return float(self.expected_duration_hours or 0.0)
+        except Exception:
+            return 0.0
+
+    @property
+    def duration_seconds(self) -> int:
+        try:
+            return int(float(self.expected_duration_hours or 0.0) * 3600)
+        except Exception:
+            return 0
 
 
 class ExpectedMoveEngine:
@@ -186,31 +208,91 @@ class ExpectedMoveEngine:
         t_years = duration_hours / self.ANNUAL_TRADING_HOURS
         return spot * iv * math.sqrt(t_years)
 
+    def resolve_live_atm_iv(
+        self,
+        underlying: str,
+        spot: float,
+        atm_premium: Optional[float] = None,
+        atm_strike: Optional[float] = None,
+        dte_days: Optional[float] = None,
+        option_type: str = "CE",
+    ) -> Optional[float]:
+        """Solve live ATM IV from a broker premium (fail-closed: None when unresolvable)."""
+        try:
+            if atm_premium is None or float(atm_premium) <= 0 or spot <= 0:
+                return None
+            strike = float(atm_strike) if atm_strike and float(atm_strike) > 0 else float(spot)
+            dte = float(dte_days) if dte_days and float(dte_days) > 0 else None
+            if dte is None or dte <= 0:
+                return None
+            from app.signals.options_intelligence.greeks import BlackScholesGreeks
+            return BlackScholesGreeks.solve_iv(
+                float(atm_premium), float(spot), strike, dte / 365.0, option_type,  # type: ignore[arg-type]
+            )
+        except Exception:
+            return None
+
     def project_move(
         self,
         underlying: str,
         spot: float,
         direction: DirectionalBias,
         horizon: TradingHorizon = "INTRADAY",
-        current_iv: float = 0.15,
+        current_iv: Optional[float] = None,
         atr: Optional[float] = None,
         structural_target: Optional[float] = None,
         regime: str = "TREND_UP",
         hourly_theta_decay: Optional[float] = None,
+        option_delta: Optional[float] = None,
+        dte_days: Optional[float] = None,
+        atm_premium: Optional[float] = None,
+        atm_strike: Optional[float] = None,
+        option_type: str = "CE",
     ) -> ExpectedMoveProjection:
         """
         Generates comprehensive expected move projection for underlying instrument.
+
+        P1 fail-closed IV: pass explicit ``current_iv`` OR broker-backed
+        (atm_premium + dte_days) so IV solves via Black-Scholes. No 15%
+        silent default — unresolvable IV raises.
         """
         u = underlying.upper()
         if spot <= 0:
             raise ValueError("Spot price must be positive and non-zero")
+
+        # Horizon / DTE guard: long-horizon structures need real expiry runway.
+        if dte_days is not None:
+            try:
+                _dte = float(dte_days)
+                if horizon == "POSITIONAL" and _dte < 7:
+                    raise ValueError(f"POSITIONAL horizon requires DTE>=7 (got {_dte:.1f})")
+                if horizon == "SWING" and _dte < 3:
+                    raise ValueError(f"SWING horizon requires DTE>=3 (got {_dte:.1f})")
+            except ValueError:
+                raise
+            except Exception:
+                pass
+
+        # Resolve IV: explicit > live solve > fail-closed (never 0.15 default).
+        iv_source = "explicit"
+        iv: Optional[float] = None
+        if current_iv is not None and float(current_iv) > 0:
+            iv = float(current_iv)
+        else:
+            solved = self.resolve_live_atm_iv(u, spot, atm_premium, atm_strike, dte_days, option_type)
+            if solved is not None and solved > 0:
+                iv = float(solved)
+                iv_source = "live_solve"
+        if iv is None or iv <= 0:
+            raise ValueError("LIVE_IV_REQUIRED: pass current_iv or atm_premium+dte_days to solve ATM IV")
+        current_iv_f = float(iv)
         inst_configs = self.configs.get(u, self.configs["NIFTY"])
         params = inst_configs.get(horizon, inst_configs["INTRADAY"])
 
         duration_hours = params.duration_hours
 
         # 1. IV-Implied Move (1 Sigma)
-        iv_move = self.calculate_iv_implied_move(spot, current_iv, duration_hours)
+        iv_move = self.calculate_iv_implied_move(spot, current_iv_f, duration_hours)
 
         # 2. ATR-Based Excursion
         if atr is None or atr <= 0:
@@ -253,8 +335,29 @@ class ExpectedMoveEngine:
         conservative_pts = round(expected_move_pts * 0.70, 2)
         aggressive_pts = round(expected_move_pts * 1.45, 2)
 
-        # 4. Velocity Calculation (Points per Hour)
+        # 4. Velocity Calculation (Points per Hour) + ATR-normalized k*ATR/hr.
         velocity_pts_per_hr = round(expected_move_pts / duration_hours, 2) if duration_hours > 0 else 0.0
+        try:
+            velocity_atr_per_hour = round((velocity_pts_per_hr / atr_val), 3) if atr_val > 0 else 0.0
+        except Exception:
+            velocity_atr_per_hour = 0.0
+
+        # Expiry crush haircut: into expiry the same spot move pays less
+        # (IV collapse + gamma risk). Haircut the projection, don't hide it.
+        crush_applied = False
+        if dte_days is not None:
+            try:
+                _d = float(dte_days)
+                if _d <= 1.0:
+                    expected_move_pts = round(expected_move_pts * 0.85, 2)
+                    conservative_pts = round(expected_move_pts * 0.70, 2)
+                    aggressive_pts = round(expected_move_pts * 1.45, 2)
+                    expected_move_pct = round((expected_move_pts / spot * 100.0), 2) if spot > 0 else 0.0
+                    velocity_pts_per_hr = round(expected_move_pts / duration_hours, 2) if duration_hours > 0 else 0.0
+                    velocity_atr_per_hour = round((velocity_pts_per_hr / atr_val), 3) if atr_val > 0 else 0.0
+                    crush_applied = True
+            except Exception:
+                pass
 
         # 5. Velocity vs Option Theta Decoupling (§8)
         # Check if move speed outpaces option theta
@@ -270,8 +373,11 @@ class ExpectedMoveEngine:
             rationale.append(assessment)
 
         if hourly_theta_decay is not None and hourly_theta_decay > 0:
-            # Approximate ATM delta ~0.50
-            delta_gain_per_hr = velocity_pts_per_hr * 0.50
+            # Real delta when the selector priced it; never assume 0.50.
+            _d = abs(float(option_delta)) if option_delta else 0.50
+            if _d < 0.05 or _d > 1.0:
+                _d = 0.50
+            delta_gain_per_hr = velocity_pts_per_hr * _d
             theta_velocity_ratio = delta_gain_per_hr / hourly_theta_decay if hourly_theta_decay > 0 else 10.0
             if theta_velocity_ratio < 1.5:
                 is_fast_enough = False
@@ -287,7 +393,10 @@ class ExpectedMoveEngine:
             confidence -= 12.0
 
         rationale.append(f"Horizon {horizon} ({duration_hours:.2f}h) target: ±{expected_move_pts} pts (T1: ±{conservative_pts}, T2: ±{aggressive_pts})")
-        rationale.append(f"IV 1-sigma move: {iv_move:.1f} pts ({current_iv*100.0:.1f}% IV), ATR excursion: {atr_move:.1f} pts")
+        rationale.append(f"IV 1-sigma move: {iv_move:.1f} pts ({current_iv_f*100.0:.1f}% IV [{iv_source}], DTE={dte_days}), ATR excursion: {atr_move:.1f} pts")
+        rationale.append(f"Velocity {velocity_pts_per_hr:.1f} pts/hr = {velocity_atr_per_hour:.2f}xATR/hr")
+        if crush_applied:
+            rationale.append("EXPIRY_CRUSH_HAIRCUT: -15% into DTE<=1 (IV collapse + pin risk)")
 
         return ExpectedMoveProjection(
             underlying=u,
@@ -302,6 +411,12 @@ class ExpectedMoveEngine:
             atr_excursion_points=round(atr_move, 2),
             expected_duration_hours=round(duration_hours, 2),
             expected_velocity_pts_per_hour=velocity_pts_per_hr,
+            velocity_atr_per_hour=velocity_atr_per_hour,
+            live_iv=round(current_iv_f, 4),
+            iv_source=iv_source,
+            option_delta=float(option_delta) if option_delta else None,
+            dte_days=float(dte_days) if dte_days is not None else None,
+            expiry_crush_haircut_applied=crush_applied,
             is_fast_enough_for_option=is_fast_enough,
             velocity_assessment=assessment,
             calibration_confidence=min(95.0, max(40.0, confidence)),

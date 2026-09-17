@@ -42,6 +42,14 @@ DEFAULT_TTL_MS = 5_000
 #: Chain (Tier-2) marks stay valid for one refresh cycle + slack.
 CHAIN_TTL_MS = 90_000
 
+#: P1 usability gates — spread as % of premium, age per desk, liquidity floors.
+MAX_SPREAD_PCT = 2.5
+SCALP_MAX_AGE_MS = 15_000
+INTRADAY_MAX_AGE_MS = 60_000
+MIN_OI_CONTRACTS = 1000
+MIN_VOLUME_CONTRACTS = 50
+STALE_IV_DTE_DAYS = 1.0
+
 #: Max contracts per /data/quotes call. FYERS accepts long comma lists but we
 #: keep batches modest so a slow response cannot stall the 3s risk loop.
 MAX_SYMBOLS_PER_FETCH = 50
@@ -69,6 +77,11 @@ class OptionMark(BaseModel):
     ask: Optional[float] = None
     ltp: Optional[float] = None
 
+    # Liquidity / vol context (when the chain row carries it).
+    oi: Optional[float] = None
+    volume: Optional[float] = None
+    iv: Optional[float] = None
+
     source: str = UNAVAILABLE
     #: When the underlying observation was taken (epoch ms).
     as_of_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
@@ -91,6 +104,99 @@ class OptionMark(BaseModel):
             return m
         if self.ltp is not None and self.ltp > 0:
             return round(float(self.ltp), 2)
+        return None
+
+    @property
+    def spread_pts(self) -> Optional[float]:
+        """Ask - bid when both sides are real, else None (unknown, not zero)."""
+        try:
+            if self.bid and self.ask and self.bid > 0 and self.ask > 0 and self.ask >= self.bid:
+                return round(float(self.ask) - float(self.bid), 2)
+        except Exception:
+            pass
+        return None
+
+    @property
+    def spread_pct(self) -> Optional[float]:
+        """Spread as % of executable premium (mid else LTP). None when unknown."""
+        sp = self.spread_pts
+        px = self.price
+        if sp is None or px is None or px <= 0:
+            return None
+        try:
+            return round(sp / float(px) * 100.0, 2)
+        except Exception:
+            return None
+
+    def executable_buy(self, slip_pts: float = 0.0) -> Optional[float]:
+        """BUY fills at ask + slip (never at mid). None when no ask."""
+        try:
+            if self.ask is not None and float(self.ask) > 0:
+                return round(float(self.ask) + max(0.0, float(slip_pts or 0.0)), 2)
+            # LTP-only mark: no executable ask — caller must fail closed upstream.
+            return None
+        except Exception:
+            return None
+
+    def executable_sell(self, slip_pts: float = 0.0) -> Optional[float]:
+        """SELL fills at bid - slip (never at mid). None when no bid."""
+        try:
+            if self.bid is not None and float(self.bid) > 0:
+                return round(float(self.bid) - max(0.0, float(slip_pts or 0.0)), 2)
+            return None
+        except Exception:
+            return None
+
+    @property
+    def buy_at(self) -> Optional[float]:
+        """Executable buy (ask). Prefer executable_buy(slip) for slippage."""
+        return self.executable_buy(0.0)
+
+    @property
+    def sell_at(self) -> Optional[float]:
+        """Executable sell (bid). Prefer executable_sell(slip) for slippage."""
+        return self.executable_sell(0.0)
+
+    @property
+    def is_stale_iv(self) -> bool:
+        """Expiry-day model marks: IV is decaying too fast to trust."""
+        try:
+            if str(self.source or "").upper() != MODEL_BLACK76:
+                return False
+            note = str(self.note or "")
+            if "STALE_IV" in note:
+                return True
+            # Parse dte= from the provenance note when present.
+            import re
+            m = re.search(r"dte=([0-9.]+)", note)
+            if m and float(m.group(1)) <= STALE_IV_DTE_DAYS:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def usability_veto(self, desk: Optional[str] = None) -> Optional[str]:
+        """P1 gate: spread%<=2.5% + OI/volume floors. None = pass.
+
+        Unknown spread/OI (LTP-only marks) passes here — the desk-age gate in
+        get_usable() still applies. Strict callers should require bid/ask via
+        executable_buy/executable_sell returning non-None.
+        """
+        try:
+            sp = self.spread_pct
+            if sp is not None and sp > MAX_SPREAD_PCT:
+                return f"WIDE_SPREAD_{sp:.1f}pct"
+        except Exception:
+            pass
+        try:
+            if self.oi is not None and float(self.oi) < MIN_OI_CONTRACTS:
+                return f"LOW_OI_{float(self.oi):.0f}"
+            if self.volume is not None and float(self.volume) < 0:
+                return "BAD_VOLUME"
+        except Exception:
+            pass
+        if self.is_stale_iv:
+            return "STALE_IV"
         return None
 
     # ── provenance / freshness ──
@@ -168,15 +274,55 @@ class OptionMarkRegistry:
         broker_symbol: Optional[str],
         ttl_ms: Optional[int] = None,
         allow_model: bool = True,
+        desk: Optional[str] = None,
+        max_spread_pct: Optional[float] = MAX_SPREAD_PCT,
+        min_oi: Optional[float] = None,
+        min_volume: Optional[float] = None,
     ) -> Optional[OptionMark]:
-        """A mark fit to price with, else None (never a fabricated number)."""
+        """A mark fit to price with, else None (never a fabricated number).
+
+        P1 gates: spread%<=2.5% (when quotable), age<=15s scalp / 60s
+        intraday (when desk is known), OI/volume floors when enforced.
+        Model marks keep the short 5s TTL and are rejected on expiry-day
+        STALE_IV.
+        """
         mark = self.get(broker_symbol)
         if mark is None or not mark.is_usable:
             return None
         if not allow_model and mark.is_model:
             return None
-        ttl = ttl_ms if ttl_ms is not None else mark.ttl_ms()
-        if not mark.is_fresh(ttl_ms=ttl):
+        # Desk-aware age gate overrides the generic TTL when stricter.
+        effective_ttl = ttl_ms if ttl_ms is not None else mark.ttl_ms()
+        try:
+            d = str(desk or "").upper()
+            if d == "SCALP":
+                effective_ttl = min(effective_ttl, SCALP_MAX_AGE_MS if ttl_ms is None else ttl_ms)
+            elif d in ("INTRADAY", "SWING", "POSITIONAL"):
+                effective_ttl = min(effective_ttl, INTRADAY_MAX_AGE_MS if ttl_ms is None else ttl_ms)
+        except Exception:
+            pass
+        if not mark.is_fresh(ttl_ms=effective_ttl):
+            return None
+        # Spread gate (only when the mark is quotable).
+        try:
+            sp = mark.spread_pct
+            if max_spread_pct is not None and sp is not None and sp > float(max_spread_pct):
+                return None
+        except Exception:
+            pass
+        # OI / volume floors (only when the caller enforces them AND the
+        # mark carries the field — unknown liquidity is not a veto here).
+        try:
+            if min_oi is not None and mark.oi is not None and float(mark.oi) < float(min_oi):
+                return None
+            if min_volume is not None and mark.volume is not None and float(mark.volume) < float(min_volume):
+                return None
+        except Exception:
+            pass
+        if mark.is_stale_iv:
+            return None
+        veto = mark.usability_veto()
+        if veto is not None and veto.startswith(("WIDE_SPREAD", "STALE_IV")):
             return None
         return mark
 
@@ -248,9 +394,21 @@ class OptionMarkService:
                 ltp = getattr(q, "ltp", None)
                 if ltp is None or float(ltp) <= 0:
                     continue
+                try:
+                    _oi = getattr(q, "oi", getattr(q, "open_interest", None))
+                    _oi_f = float(_oi) if _oi is not None else None
+                except Exception:
+                    _oi_f = None
+                try:
+                    _vol = getattr(q, "volume", None)
+                    _vol_f = float(_vol) if _vol is not None else None
+                except Exception:
+                    _vol_f = None
                 mark = OptionMark(
                     broker_symbol=str(sym),
                     ltp=round(float(ltp), 2),
+                    oi=_oi_f,
+                    volume=_vol_f,
                     source=CHAIN_LTP,
                     as_of_utc=now_ms,
                     note=f"data/quotes ltp provider={getattr(q, 'provider', '?')}",
@@ -294,12 +452,28 @@ class OptionMarkService:
 
     # ── marks derived from the 60s chain refresh ──
     def register_chain_strike(self, info: Any) -> Optional[OptionMark]:
-        """Adapt a `LiveStrikeInfo` (chain cache row) into a labeled mark."""
+        """Adapt a `LiveStrikeInfo` (chain cache row) into a labeled mark and store in registry."""
         try:
             sym = str(getattr(info, "broker_symbol", "") or "").strip()
             if not sym:
                 return None
             has_book = bool(getattr(info, "bid", 0)) and bool(getattr(info, "ask", 0))
+            # OI / volume ride along when the chain row carries them.
+            _oi = getattr(info, "oi", getattr(info, "open_interest", None))
+            try:
+                _oi_f = float(_oi) if _oi is not None else None
+            except Exception:
+                _oi_f = None
+            try:
+                _vv = getattr(info, "volume", None)
+                _vol_f = float(_vv) if _vv is not None else None
+            except Exception:
+                _vol_f = None
+            try:
+                _ivv = getattr(info, "iv", None)
+                _iv_f = float(_ivv) if _ivv is not None else None
+            except Exception:
+                _iv_f = None
             mark = OptionMark(
                 broker_symbol=sym,
                 underlying=str(getattr(info, "underlying", "") or ""),
@@ -309,16 +483,21 @@ class OptionMarkService:
                 bid=float(getattr(info, "bid", 0) or 0) or None,
                 ask=float(getattr(info, "ask", 0) or 0) or None,
                 ltp=float(getattr(info, "ltp", 0) or 0) or None,
+                oi=_oi_f,
+                volume=_vol_f,
+                iv=_iv_f,
                 source=CHAIN_BIDASK if has_book else CHAIN_LTP,
                 as_of_utc=int(getattr(info, "fetched_at_ms", 0) or int(time.time() * 1000)),
                 note="options-chain-v3",
             )
             if mark.price is None:
                 return None
+            option_mark_registry.put(mark)
             return mark
         except Exception:
             return None
-# ── labeled model fallback ──
+
+    # ── labeled model fallback ──
     def model_mark(
         self,
         broker_symbol: str,
@@ -335,6 +514,9 @@ class OptionMarkService:
         """Build an explicitly-labeled Black-76 mark. Never silent."""
         from app.signals.fill_reconciler import option_fill_reconciler
 
+        # Short model TTL is enforced by DEFAULT_TTL_MS (5s); expiry-day
+        # models are additionally flagged STALE_IV so get_usable() rejects.
+        stale_flag = " STALE_IV" if float(dte_days or 0) <= STALE_IV_DTE_DAYS else ""
         mark = OptionMark(
             broker_symbol=broker_symbol,
             underlying=underlying,
@@ -342,7 +524,7 @@ class OptionMarkService:
             option_type=str(option_type or ""),
             expiry=expiry,
             source=MODEL_BLACK76,
-            note=f"black76 spot={spot} strike={strike} dte={dte_days} iv={iv} r={risk_free_rate}",
+            note=f"black76 spot={spot} strike={strike} dte={dte_days} iv={iv} r={risk_free_rate}{stale_flag}",
         )
         try:
             prem = option_fill_reconciler.estimate_option_premium(
@@ -385,17 +567,49 @@ class OptionMarkService:
     ) -> OptionMark:
         """Resolve the best available mark for an option audit record.
 
-        Chain first (fresh registry mark), then a labeled Black-76 model mark
-        built from the record's own contract terms, then UNAVAILABLE. There is
-        deliberately no fourth option that invents a number.
+        Chain first (fresh registry mark), then fallback to LiveContractCache,
+        then a labeled Black-76 model mark built from the record's own contract
+        terms, then UNAVAILABLE. There is deliberately no fourth option that invents a number.
         """
         sym = str(getattr(record, "option_symbol", "") or "").strip()
+        if not sym:
+            try:
+                from app.signals.live_contract_cache import live_contract_cache
+                from datetime import date
+                u = str(getattr(record, "underlying", "") or "").upper()
+                strike = int(float(getattr(record, "option_strike", 0) or 0))
+                otype = str(getattr(record, "option_type", "") or "").upper()
+                exp = getattr(record, "expiry", None)
+                if exp and strike > 0 and otype in ("CE", "PE"):
+                    exp_date = date.fromisoformat(str(exp)) if isinstance(exp, str) and len(str(exp)) == 10 else None
+                    if exp_date:
+                        info = live_contract_cache.lookup(u, exp_date, strike, otype)
+                        if info and info.broker_symbol:
+                            sym = info.broker_symbol
+                            try:
+                                record.option_symbol = sym
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
         if not sym:
             return self.unavailable("", "record has no option_symbol")
 
         chain = option_mark_registry.get_usable(sym, allow_model=False)
         if chain is not None:
             return chain
+
+        # Fallback to chain cache (LiveContractCache) if registry missed
+        try:
+            from app.signals.live_contract_cache import live_contract_cache
+            info = live_contract_cache.find_by_symbol(sym)
+            if info is not None:
+                mark = self.register_chain_strike(info)
+                if mark is not None and mark.is_usable:
+                    return mark
+        except Exception:
+            pass
 
         if not allow_model:
             return self.unavailable(sym, "no fresh chain mark (model disallowed)")

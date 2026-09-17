@@ -140,6 +140,8 @@ class TestQuantitativeContractSelector:
         # weekday-dependent (near expiry, theta drag breaches the 20%
         # ceiling, the score halves, and `> 50` fails).
         as_of = datetime(2026, 9, 16, 10, 0, tzinfo=IST)
+        # Fail-closed happy path: explicit chain quotes stand in for the broker.
+        chain = {24850.0: 210.0, 24900.0: 175.0, 24950.0: 140.0}
         result = selector.select_optimal_contract(
             underlying="NIFTY",
             spot_price=24915.0,
@@ -149,6 +151,7 @@ class TestQuantitativeContractSelector:
             target_horizon_hours=1.0,
             current_iv=0.15,
             as_of_datetime=as_of,
+            option_chain_quotes=chain,
         )
         assert result is not None
         assert result.underlying == "NIFTY"
@@ -159,6 +162,7 @@ class TestQuantitativeContractSelector:
 
     def test_strike_selection_banknifty_put(self):
         selector = QuantitativeContractSelector()
+        chain = {53300.0: 260.0, 53200.0: 210.0, 53100.0: 165.0}
         result = selector.select_optimal_contract(
             underlying="BANKNIFTY",
             spot_price=53240.0,
@@ -167,6 +171,7 @@ class TestQuantitativeContractSelector:
             stop_loss_points=80.0,
             target_horizon_hours=1.5,
             current_iv=0.17,
+            option_chain_quotes=chain,
         )
         assert result is not None
         assert result.direction == "LONG_PUT"

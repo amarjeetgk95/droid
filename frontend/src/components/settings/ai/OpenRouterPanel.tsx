@@ -37,10 +37,12 @@ export function OpenRouterPanel({ settings, onChange, errors = [] }: Props) {
         label="OpenRouter API Key"
         description="Stored securely in browser localStorage and synced to your encrypted profile."
         error={getError('openRouterApiKey')}
+        htmlFor="openrouter-api-key"
       >
         <div className="w-full max-w-sm space-y-1.5">
           <div className="relative">
             <input
+              id="openrouter-api-key"
               type={showKey ? 'text' : 'password'}
               placeholder="sk-or-v1-..."
               value={settings.openRouterApiKey}
@@ -50,6 +52,7 @@ export function OpenRouterPanel({ settings, onChange, errors = [] }: Props) {
             <button
               type="button"
               onClick={() => setShowKey(!showKey)}
+              aria-label={showKey ? 'Hide API key' : 'Show API key'}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
             >
               {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -58,13 +61,13 @@ export function OpenRouterPanel({ settings, onChange, errors = [] }: Props) {
 
           <div className="text-[11px] flex items-center gap-1.5">
             {settings.openRouterApiKey ? (
-              <span className="text-emerald-600 flex items-center gap-1">
+              <span className="text-up flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" />
                 <span>API key configured</span>
               </span>
             ) : (
               <span className="text-muted-foreground flex items-center gap-1">
-                <AlertCircle className="w-3 h-3 text-amber-500" />
+                <AlertCircle className="w-3 h-3 text-warn" />
                 <span>Enter key to unlock model catalog</span>
               </span>
             )}

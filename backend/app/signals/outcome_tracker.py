@@ -67,15 +67,71 @@ class SignalOutcomeTracker:
 
     def __init__(self):
         import asyncio
+        import time as _t
         self._signal_locks: dict[str, asyncio.Lock] = {}
+        # Idempotency: (signal_id, eval_action, tick_ts_bucket) -> monotonic expiry.
+        self._processed: dict[str, float] = {}
+        self._lock_ttl_s: float = 60.0
+        self._last_lock_sweep_monotonic: float = _t.monotonic()
 
     def _get_signal_lock(self, signal_id: str):
         import asyncio
+        import time as _t
+        # TTL sweep for lock map + idempotency map.
+        now_m = _t.monotonic()
+        if now_m - self._last_lock_sweep_monotonic > 30.0:
+            self._last_lock_sweep_monotonic = now_m
+            try:
+                expired = [k for k, exp in self._processed.items() if exp < now_m]
+                for k in expired:
+                    self._processed.pop(k, None)
+            except Exception:
+                pass
         if signal_id not in self._signal_locks:
             if len(self._signal_locks) > 500:
                 self._signal_locks.clear()
             self._signal_locks[signal_id] = asyncio.Lock()
         return self._signal_locks[signal_id]
+
+    def _tick_idempotent_key(self, signal_id: str, eval_action: str, tick_ts: int | None) -> str:
+        # Millisecond precision: identical ticks collapse; distinct same-second ticks do not.
+        bucket = int(tick_ts or 0)
+        return f"{signal_id}:{eval_action}:{bucket}"
+
+    def _check_and_mark_tick(self, signal_id: str, eval_action: str, tick_ts: int | None) -> bool:
+        """True when duplicate (already processed), else marks and returns False."""
+        import time as _t
+        k = self._tick_idempotent_key(signal_id, eval_action, tick_ts)
+        now_m = _t.monotonic()
+        exp = self._processed.get(k)
+        if exp is not None and exp > now_m:
+            return True
+        self._processed[k] = now_m + self._lock_ttl_s
+        return False
+
+    async def _resolve_exit_mark(self, sig: SignalInstance) -> Optional[float]:
+        """Real broker premium for this signal's contract, else None.
+
+        FAIL CLOSED: exits are priced from a FYERS quote for the exact contract.
+        There is deliberately no Black-76 fallback computed from the index spot —
+        a model number is not an exit, and booking one is how cross-domain P&L
+        got fabricated in the first place.
+        """
+        sym = str((sig.option_contract or {}).get("broker_symbol") or "").strip()
+        if not sym:
+            return None
+        from app.signals.option_marks import option_mark_registry, option_mark_service
+
+        mark = option_mark_registry.get_usable(sym, allow_model=False)
+        if mark is None or mark.price is None:
+            try:
+                await option_mark_service.refresh_and_register([sym])
+            except Exception as me:
+                logger.debug("exit_mark_fetch_failed", signal_id=sig.signal_id, error=str(me)[:150])
+            mark = option_mark_registry.get_usable(sym, allow_model=False)
+        if mark is None or mark.price is None:
+            return None
+        return float(mark.price)
 
     def update_with_price(
         self,
@@ -84,6 +140,19 @@ class SignalOutcomeTracker:
         now_ms: Optional[int] = None,
         allow_closed_market: bool = False,
     ) -> list[dict]:
+        """DEPRECATED bare-sync path — use process_price_update_async for CONFIRMED/T1.
+
+        Retained for legacy callers with a deprecation warning; CONFIRMED/T1
+        handling here is preview-equivalent and callers should migrate to the
+        async pipeline (single atomic TRIGGERED+CONFIRMED with paper receipt).
+        Idempotent via (signal_id, eval_action, tick_ts).
+        """
+        import warnings
+        warnings.warn(
+            "update_with_price is deprecated for CONFIRMED/T1; use process_price_update_async",
+            DeprecationWarning, stacklevel=2,
+        )
+        logger.warning("outcome_tracker_sync_deprecated", underlying=underlying)
         from app.services.calendar_service import calendar_service
         if not allow_closed_market and not calendar_service.can_trade_now().allowed:
             return []
@@ -101,8 +170,6 @@ class SignalOutcomeTracker:
         events = []
 
         for sig in active:
-            # Runners (TARGET_1_HIT / WIN_T1) must keep evaluating until a terminal
-            # state; only settled outcomes skip the tick.
             if sig.outcome_status is not None and sig.fsm_state != "TARGET_1_HIT":
                 continue
             st = sig.fsm_state
@@ -110,7 +177,7 @@ class SignalOutcomeTracker:
                 continue
             direction = sig.direction
 
-            # ── 1. TRIGGER & CONFIRMATION ──
+            # ── 1. TRIGGER & CONFIRMATION (legacy: two-step; async path is atomic) ──
             if st in ("VALIDATED", "ARMED"):
                 triggered = False
                 if direction == "LONG_CALL" and d_price >= sig.trigger:
@@ -119,12 +186,24 @@ class SignalOutcomeTracker:
                     triggered = True
 
                 if triggered:
-                    signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
-                    signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
-                    events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price)})
+                    _key = self._tick_idempotent_key(sig.signal_id, "TRIGGERED", ts_now)
+                    import time as _t
+                    if self._check_and_mark_tick(sig.signal_id, "TRIGGERED", ts_now):
+                        continue
+                    signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT",
+                                          guard_snapshot={"trigger_proof": True, "trigger_price": format(d_price, "f")})
+                    # Single atomic TRIGGERED+CONFIRMED intent: CONFIRMED requires
+                    # paper receipt in async path; sync legacy path records preview
+                    # CONFIRMED without receipt (deprecated).
+                    signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED",
+                                          guard_snapshot={"trigger_proof": True, "paper_receipt": "SYNC_LEGACY"})
+                    events.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price),
+                                   "deprecated_sync": True})
 
             # ── 2. ORDERED EVALUATION FOR CONFIRMED & TARGET_1_HIT (RUNNER) ──
             elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                if self._check_and_mark_tick(sig.signal_id, st, ts_now):
+                    continue
                 # Fully-booked runner: staged accounting booked the entire
                 # position at T1 (intended>0, remaining 0 — single-lot fills).
                 # Nothing is left to stop out — settle quietly instead of
@@ -146,6 +225,8 @@ class SignalOutcomeTracker:
                     signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
                     events.append({"signal_id": sig.signal_id, "event": "BREAKEVEN_RATCHET", "price": float(d_price)})
                 elif res:
+                    if self._check_and_mark_tick(sig.signal_id, res, ts_now):
+                        continue
                     signal_fsm.transition(sig.signal_id, res, market_price=d_price, reason=f"{res}_TRIGGERED")
                     events.append({
                         "signal_id": sig.signal_id,
@@ -155,6 +236,41 @@ class SignalOutcomeTracker:
                     })
 
         return events
+
+    def preview_with_price(
+        self,
+        underlying: str,
+        current_price: Decimal | float,
+        now_ms: Optional[int] = None,
+        allow_closed_market: bool = False,
+    ) -> list[dict]:
+        """Preview-only evaluation: no FSM mutation, returns would-be events."""
+        from app.services.calendar_service import calendar_service
+        if not allow_closed_market and not calendar_service.can_trade_now().allowed:
+            return []
+        try:
+            d_price = Decimal(str(current_price))
+        except Exception:
+            return []
+        if d_price <= Decimal("0"):
+            return []
+        ts_now = now_ms or int(__import__("time").time() * 1000)
+        active = signal_fsm.list_active(underlying=underlying)
+        previews = []
+        for sig in active:
+            st = sig.fsm_state
+            if st in ("TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED", "EXPIRED", "INVALIDATED"):
+                continue
+            if st in ("VALIDATED", "ARMED"):
+                trig = (sig.direction == "LONG_CALL" and d_price >= sig.trigger) or \
+                       (sig.direction == "LONG_PUT" and d_price <= sig.trigger)
+                if trig:
+                    previews.append({"signal_id": sig.signal_id, "event": "CONFIRMED", "price": float(d_price), "preview": True})
+            elif st in ("CONFIRMED", "TARGET_1_HIT"):
+                res = signal_fsm.evaluate_tick(sig, d_price, ts_now)
+                if res:
+                    previews.append({"signal_id": sig.signal_id, "event": res, "price": float(d_price), "preview": True})
+        return previews
 
     async def process_price_update_async(
         self,
@@ -234,8 +350,12 @@ class SignalOutcomeTracker:
                     triggered = True
 
                 if triggered:
-                    # First transition to TRIGGERED
-                    ok, trans_err = signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT")
+                    # Idempotent (signal_id, eval_action, tick_ts): collapse retries.
+                    if self._check_and_mark_tick(sig.signal_id, "TRIGGERED", ts_now):
+                        continue
+                    # First transition to TRIGGERED (atomic part 1/2)
+                    ok, trans_err = signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=d_price, reason="TRIGGER_LEVEL_HIT",
+                                                          guard_snapshot={"trigger_proof": True, "trigger_price": format(d_price, "f")})
                     if not ok:
                         logger.warning("fsm_transition_to_triggered_failed", signal_id=sig.signal_id, error=trans_err)
                         if trans_err == "FNO_DATA_DEGRADED_CANNOT_ARM":
@@ -254,9 +374,16 @@ class SignalOutcomeTracker:
                     except Exception as pe:
                         logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
 
-                    # Transition to CONFIRMED only on successful, non-rejected paper execution
+                    # Single atomic TRIGGERED+CONFIRMED with paper receipt:
+                    # CONFIRMED only on successful, non-rejected paper execution,
+                    # carrying trigger proof + receipt in guard_snapshot.
                     if paper_res and paper_res.success and paper_res.status != "REJECTED":
-                        signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED")
+                        if self._check_and_mark_tick(sig.signal_id, "CONFIRMED", ts_now):
+                            continue
+                        signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=d_price, reason="ENTRY_CONFIRMED",
+                                              guard_snapshot={"trigger_proof": True,
+                                                              "paper_receipt": getattr(paper_res, "order_id", ""),
+                                                              "fill_price": str(getattr(paper_res, "fill_price", ""))})
                         opt_rec = option_fill_reconciler.reconcile_entry(
                             sig=sig,
                             fill_price=paper_res.fill_price,
@@ -346,11 +473,12 @@ class SignalOutcomeTracker:
                     eval_action = signal_fsm.evaluate_tick(sig, d_price, ts_now)
                 if not eval_action:
                     continue
+                # Idempotent per (signal_id, eval_action, tick_ts).
+                if self._check_and_mark_tick(sig.signal_id, str(eval_action), ts_now):
+                    continue
 
-                opt = sig.option_contract or {}
-                strike = float(opt.get("strike", float(sig.trigger)))
-                opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
-                est_opt_price = option_fill_reconciler.estimate_option_premium(float(d_price), strike, opt_type)
+                # Real exit premium for this exact contract, or None (fail closed).
+                exit_mark: Optional[float] = await self._resolve_exit_mark(sig)
 
                 if eval_action == "BE_ACTIVATED":
                     ratcheted = signal_fsm.ratchet_breakeven(sig.signal_id, d_price)
@@ -366,14 +494,33 @@ class SignalOutcomeTracker:
                     # Transition FSM to TARGET_1_HIT (Runner Mode begins)
                     signal_fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=d_price, reason="TARGET_1_ACHIEVED")
 
+                    # FAIL CLOSED: a staged exit books real P&L, so it needs a real
+                    # premium. With no broker mark the runner simply stays open and
+                    # settles when a quote returns (or at EOD) — never at a
+                    # Black-76 price derived from the index spot.
+                    if exit_mark is None:
+                        logger.warning(
+                            "t1_exit_mark_unavailable_deferred",
+                            signal_id=sig.signal_id,
+                            broker_symbol=(sig.option_contract or {}).get("broker_symbol"),
+                        )
+                        processed_events.append({
+                            "signal_id": sig.signal_id,
+                            "event": "TARGET_1_HIT",
+                            "price": float(d_price),
+                            "t1_pnl": None,
+                            "settlement": "DEFERRED_NO_CHAIN_MARK",
+                        })
+                        continue
+
                     # Reconcile T1 Staged Exit (50% position booked)
-                    recon = option_fill_reconciler.reconcile_t1_exit(sig, est_opt_price, ts_now)
+                    recon = option_fill_reconciler.reconcile_t1_exit(sig, exit_mark, ts_now)
 
                     # Partial square-off in paper engine
                     try:
                         await signal_paper_engine.close_signal_position(
                             sig.signal_id,
-                            float(est_opt_price),
+                            float(exit_mark),
                             reason="TARGET_1_HIT",
                             quantity_to_close=recon.t1_qty,
                         )
@@ -424,14 +571,29 @@ class SignalOutcomeTracker:
                     # Final Exit
                     signal_fsm.transition(sig.signal_id, eval_action, market_price=d_price, reason=f"{eval_action}_TRIGGERED")
 
-                    # Reconcile final exit and close residual quantity
-                    recon = option_fill_reconciler.reconcile_final_exit(sig, est_opt_price, exit_reason=eval_action, exit_time_ms=ts_now)
+                    # Reconcile final exit and close residual quantity.
+                    # FAIL CLOSED: the risk action (close the position) always
+                    # happens; the P&L reconciliation only happens when a real
+                    # broker mark priced the exit. Without one the position is
+                    # settled flat rather than at an invented premium.
+                    if exit_mark is not None:
+                        recon = option_fill_reconciler.reconcile_final_exit(sig, exit_mark, exit_reason=eval_action, exit_time_ms=ts_now)
+                        close_at: Optional[float] = float(exit_mark)
+                    else:
+                        recon = None
+                        close_at = None
+                        logger.warning(
+                            "final_exit_mark_unavailable_settling_flat",
+                            signal_id=sig.signal_id,
+                            action=eval_action,
+                            broker_symbol=(sig.option_contract or {}).get("broker_symbol"),
+                        )
 
                     # Full square-off in paper engine
                     try:
                         await signal_paper_engine.close_signal_position(
                             sig.signal_id,
-                            float(est_opt_price),
+                            close_at,
                             reason=eval_action,
                         )
                     except Exception as pe:
@@ -455,15 +617,20 @@ class SignalOutcomeTracker:
                                 confidence=float(sig.confidence),
                                 option_contract=sig.option_contract,
                             )
-                        exit_price_to_record = float(est_opt_price) if sig.option_contract else float(d_price)
-                        sq_rec = signal_audit_ledger.record_square_off(
-                            signal_id=sig.signal_id,
-                            exit_price=exit_price_to_record,
-                            exit_reason=eval_action,
-                            exit_time_ms=ts_now,
-                        )
-                        if not sq_rec:
+                        # No real premium = no authority to book P&L. The paper
+                        # engine's own square-off already settled the record flat.
+                        if sig.option_contract and exit_mark is None:
                             sq_rec = signal_audit_ledger.get(sig.signal_id)
+                        else:
+                            exit_price_to_record = float(exit_mark) if sig.option_contract else float(d_price)
+                            sq_rec = signal_audit_ledger.record_square_off(
+                                signal_id=sig.signal_id,
+                                exit_price=exit_price_to_record,
+                                exit_reason=eval_action,
+                                exit_time_ms=ts_now,
+                            )
+                            if not sq_rec:
+                                sq_rec = signal_audit_ledger.get(sig.signal_id)
                         if sq_rec and recon:
                             # Guarded sync: the reconciler entry and the audit
                             # fill must share a domain (both option premiums
@@ -484,7 +651,8 @@ class SignalOutcomeTracker:
                             if _domain_ok:
                                 _recon_synthetic = bool(getattr(recon, "synthetic", False))
                                 _recon_booked_nothing = (
-                                    recon.net_realized_pnl_inr == 0 and recon.gross_realized_pnl == 0
+                                    recon.gross_realized_pnl == 0
+                                    or (recon.final_fill_price is None and recon.t1_fill_price is None)
                                 )
                                 _audit_has_economics = (sq_rec.actual_pnl_inr or 0.0) != 0.0
                                 if _recon_synthetic and _audit_has_economics:
@@ -498,16 +666,13 @@ class SignalOutcomeTracker:
                                         recon_pnl=recon.net_realized_pnl_inr,
                                     )
                                 elif _recon_booked_nothing and _audit_has_economics:
-                                    # Reconciler computed no economics on a trade
-                                    # the ledger priced — keep the ledger, flag it.
-                                    sq_rec.outcome_label = f"{sq_rec.exit_reason or eval_action} :: ZERO_RECON_REVIEW"
-                                    sq_rec.is_winner = None
-                                    logger.warning(
-                                        "audit_recon_zero_booking_flagged",
-                                        signal_id=sig.signal_id,
-                                        audit_pnl=sq_rec.actual_pnl_inr,
-                                        recon_exit=recon.final_fill_price,
-                                    )
+                                    # Reconciler computed no gross price move on a trade
+                                    # the ledger priced — deduct statutory costs if any, but keep audit profit.
+                                    if recon.total_statutory_costs > 0 and sq_rec.actual_pnl_inr is not None:
+                                        sq_rec.actual_pnl_inr = round(sq_rec.actual_pnl_inr - recon.total_statutory_costs, 2)
+                                        sq_rec.total_pnl_inr = sq_rec.actual_pnl_inr
+                                    sq_rec.is_winner = (sq_rec.actual_pnl_inr or 0.0) > 0
+                                    sq_rec.status = "WON" if sq_rec.is_winner else ("LOST" if (sq_rec.actual_pnl_inr or 0.0) < 0 else "CLOSED")
                                     signal_audit_ledger._schedule_persist(sq_rec)
                                 else:
                                     sq_rec.actual_pnl_inr = recon.net_realized_pnl_inr

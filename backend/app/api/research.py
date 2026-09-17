@@ -7,6 +7,8 @@ Architecturally separated from production signal generation.
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import asyncio
+import time
 import uuid
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -236,6 +238,67 @@ async def get_forecast(
         raise HTTPException(status_code=500, detail=f"Forecast failed: {e}")
 
 
+_tactical_bias_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_tactical_bias_locks: dict[str, asyncio.Lock] = {}
+_tactical_bias_tasks: dict[str, asyncio.Task] = {}
+TACTICAL_BIAS_FRESH_TTL = 10.0
+TACTICAL_BIAS_MAX_AGE = 60.0
+
+
+def _get_bias_lock(key: str) -> asyncio.Lock:
+    if key not in _tactical_bias_locks:
+        _tactical_bias_locks[key] = asyncio.Lock()
+    return _tactical_bias_locks[key]
+
+
+def _trigger_bias_refresh(
+    cache_key: str,
+    instrument: str,
+    horizon: str,
+    record: bool,
+    include_layers: bool,
+    include_explain: bool,
+) -> None:
+    task = _tactical_bias_tasks.get(cache_key)
+    if task and not task.done():
+        return
+
+    async def _refresh():
+        try:
+            from app.research.trend_forecast import tactical_horizon_engine
+            from app.core.database import get_async_session_factory
+            factory = get_async_session_factory()
+            if factory:
+                async with factory() as sess:
+                    res = await tactical_horizon_engine.forecast(
+                        instrument=instrument,
+                        horizon=horizon,
+                        record=record,
+                        session=sess,
+                        include_layers=include_layers,
+                        include_explain=include_explain,
+                    )
+            else:
+                res = await tactical_horizon_engine.forecast(
+                    instrument=instrument,
+                    horizon=horizon,
+                    record=record,
+                    session=None,
+                    include_layers=include_layers,
+                    include_explain=include_explain,
+                )
+            _tactical_bias_cache[cache_key] = (time.monotonic(), res)
+            logger.debug("tactical_bias_bg_refreshed", key=cache_key)
+        except Exception as e:
+            logger.warning("tactical_bias_bg_refresh_failed", key=cache_key, error=str(e)[:150])
+
+    try:
+        loop = asyncio.get_running_loop()
+        _tactical_bias_tasks[cache_key] = loop.create_task(_refresh())
+    except RuntimeError:
+        pass
+
+
 # -------------------------------------------------------------
 # 2c. Tactical Horizon Bias (60m primary; aliases /forecast/{horizon})
 # -------------------------------------------------------------
@@ -254,7 +317,7 @@ async def get_tactical_bias(
     ),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    """Generate a point-in-time tactical horizon bias for the requested horizon."""
+    """Generate a point-in-time tactical horizon bias for the requested horizon with SWR caching."""
     from app.research.trend_forecast import (
         SUPPORTED_HORIZONS,
         ForecastDeadlineExceeded,
@@ -267,24 +330,54 @@ async def get_tactical_bias(
             status_code=404,
             detail=f"Unknown horizon '{horizon}'. Supported: {sorted(SUPPORTED_HORIZONS)}",
         )
-    try:
-        return await tactical_horizon_engine.forecast(
-            instrument=instrument,
-            horizon=h,
-            record=record,
-            session=session,
-            include_layers=include_layers,
-            include_explain=include_explain,
-        )
-    except ForecastDeadlineExceeded as e:
-        logger.warning("tactical_bias_deadline_exceeded", horizon=h, instrument=instrument, error=str(e))
-        raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
-    except ValueError as e:
-        logger.warning("tactical_bias_insufficient_data", horizon=h, instrument=instrument, error=str(e))
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.error("tactical_bias_failed", horizon=h, instrument=instrument, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Tactical bias failed: {e}")
+
+    cache_key = f"{instrument.strip().upper()}:{h}:{bool(include_layers)}:{bool(include_explain)}"
+    now = time.monotonic()
+    cached = _tactical_bias_cache.get(cache_key)
+
+    if cached is not None:
+        cached_time, cached_data = cached
+        age = now - cached_time
+        if age < TACTICAL_BIAS_FRESH_TTL:
+            return cached_data
+        if age < TACTICAL_BIAS_MAX_AGE:
+            _trigger_bias_refresh(cache_key, instrument, h, record, include_layers, include_explain)
+            return cached_data
+
+    lock = _get_bias_lock(cache_key)
+    async with lock:
+        cached = _tactical_bias_cache.get(cache_key)
+        if cached is not None:
+            cached_time, cached_data = cached
+            if time.monotonic() - cached_time < TACTICAL_BIAS_FRESH_TTL:
+                return cached_data
+
+        try:
+            res = await tactical_horizon_engine.forecast(
+                instrument=instrument,
+                horizon=h,
+                record=record,
+                session=session,
+                include_layers=include_layers,
+                include_explain=include_explain,
+            )
+            _tactical_bias_cache[cache_key] = (time.monotonic(), res)
+            return res
+        except ForecastDeadlineExceeded as e:
+            if cached is not None:
+                logger.warning("tactical_bias_deadline_serving_stale", horizon=h, instrument=instrument)
+                return cached[1]
+            logger.warning("tactical_bias_deadline_exceeded", horizon=h, instrument=instrument, error=str(e))
+            raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
+        except ValueError as e:
+            logger.warning("tactical_bias_insufficient_data", horizon=h, instrument=instrument, error=str(e))
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            if cached is not None:
+                logger.warning("tactical_bias_error_serving_stale", horizon=h, instrument=instrument, error=str(e))
+                return cached[1]
+            logger.error("tactical_bias_failed", horizon=h, instrument=instrument, error=str(e))
+            raise HTTPException(status_code=500, detail=f"Tactical bias failed: {e}")
 
 
 

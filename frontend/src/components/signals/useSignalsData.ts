@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 /* Data layer for the signals desk: one hook owns every fetch (status probes,
    market session, active list, performance, audit, engines), the 15s poll,
@@ -6,7 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { useSignalsStream } from '@/hooks/useSignalsStream';
+import { useSignalStream } from '@/hooks/useSignalStream';
+import type { SignalsStreamEvent } from '@/hooks/useSignalsStream';
 import { useToast } from '@/components/ui/toast';
 import {
   type ActiveRow,
@@ -16,6 +17,8 @@ import {
   asStr,
   getObj,
   isHiddenTab,
+  matchesDeskFilter,
+  matchesInstrumentFilter,
   toActiveRow,
   toLedgerRow,
   toLedgerSummary,
@@ -23,21 +26,19 @@ import {
 
 export type DeskFilter = 'ALL' | 'SCALP' | 'INTRADAY';
 export type InstrumentFilter = 'ALL' | 'NIFTY' | 'BANKNIFTY' | 'SENSEX';
+export type StatusFilter = 'ACTIVE' | 'ALL';
 
 export const DESK_FILTERS: DeskFilter[] = ['ALL', 'SCALP', 'INTRADAY'];
 export const INSTRUMENT_FILTERS: InstrumentFilter[] = ['ALL', 'NIFTY', 'BANKNIFTY', 'SENSEX'];
+export const STATUS_FILTERS: StatusFilter[] = ['ACTIVE', 'ALL'];
 
-const FALLBACK_STRATEGIES = [
-  'BREAKOUT',
-  'MEAN_REVERSION',
-  'TREND_PULLBACK',
-  'VWAP_SCALP',
-  'MICRO_MOMENTUM',
-  'EMA_RIBBON',
-  'GAMMA_SQUEEZE',
-  'GAMMA_SPIKE',
-  'ORB',
-];
+/** Row window requested from the audit ledger. Truncation is detected by
+ *  comparing `auditRows.length` against this same constant (never a magic
+ *  50) and by the backend's global `total_signals_audited` aggregate. */
+export const AUDIT_FETCH_LIMIT = 100;
+
+/* No hardcoded strategy list: when the backend is unreachable the create
+   dialog shows an empty universe instead of inventing strategies. */
 
 const REFRESH_EVENTS = new Set([
   'signal_created',
@@ -49,16 +50,55 @@ const REFRESH_EVENTS = new Set([
 
 export type SignalsKpis = { active: number | null; confirmed: number | null; armed: number | null };
 
+export type FeedHealthTelemetry = {
+  status: 'LIVE' | 'SYNCING' | 'STALE' | 'CHAIN_UNAVAILABLE' | 'DOWN' | 'CLOSED' | 'AUTH_REQUIRED';
+  is_healthy_for_trading: boolean;
+  display_label: string;
+  display_tone: 'on' | 'warn' | 'down' | 'degraded' | 'idle';
+  message: string;
+  market_session?: {
+    is_open: boolean;
+    reason: string;
+    session: string;
+    timestamp_ist?: string | null;
+    market_open_ist?: string | null;
+    market_close_ist?: string | null;
+  };
+  broker?: {
+    provider: string;
+    configured: boolean;
+    token_status: string;
+    token_usable: boolean;
+  };
+  spot_feed?: {
+    is_running: boolean;
+    is_ticking: boolean;
+    last_tick_at?: string | null;
+    tick_age_seconds?: number | null;
+    symbols_cached: number;
+  };
+  option_chain?: {
+    chain_status: string;
+    strikes: number;
+    chain_age_ms: number;
+    option_marks: number;
+    chain_mark_status: string;
+  };
+  timestamp?: string;
+};
+
 const EMPTY_KPIS: SignalsKpis = { active: null, confirmed: null, armed: null };
 export function useSignalsData(opts?: {
   /** URL-driven initial filters (Phase 5 deep links). */
   initialDeskFilter?: DeskFilter;
   initialInstrumentFilter?: InstrumentFilter;
+  initialStatusFilter?: StatusFilter;
 }) {
   const toast = useToast();
   /* filters */
   const [deskFilter, setDeskFilter] = useState<DeskFilter>(opts?.initialDeskFilter ?? 'ALL');
   const [instrumentFilter, setInstrumentFilter] = useState<InstrumentFilter>(opts?.initialInstrumentFilter ?? 'ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(opts?.initialStatusFilter ?? 'ACTIVE');
   const [now, setNow] = useState(() => Date.now());
 
   /* status probe */
@@ -67,11 +107,13 @@ export function useSignalsData(opts?: {
 
   /* market session (best-effort; execute stays enabled unless known closed) */
   const [marketClosed, setMarketClosed] = useState(false);
+  const [feedHealth, setFeedHealth] = useState<FeedHealthTelemetry | null>(null);
 
   /* active signals */
   const [activeRows, setActiveRows] = useState<ActiveRow[]>([]);
   const [activeLoading, setActiveLoading] = useState(true);
   const [activeError, setActiveError] = useState<string | null>(null);
+  const [lastActiveAt, setLastActiveAt] = useState<number | null>(null);
 
   /* row action bookkeeping */
   const [executingId, setExecutingId] = useState<string | null>(null);
@@ -82,6 +124,7 @@ export function useSignalsData(opts?: {
   const [perf, setPerf] = useState<Record<string, unknown> | null>(null);
   const [perfLoading, setPerfLoading] = useState(true);
   const [perfError, setPerfError] = useState<string | null>(null);
+  const [lastPerfAt, setLastPerfAt] = useState<number | null>(null);
 
   /* audit ledger */
   const [auditRows, setAuditRows] = useState<LedgerRow[]>([]);
@@ -94,10 +137,28 @@ export function useSignalsData(opts?: {
   const lastAuditRefetchRef = useRef(0);
 
   /* engines (strategy universe for manual creation) */
-  const [strategies, setStrategies] = useState<string[]>(FALLBACK_STRATEGIES);
+  const [strategies, setStrategies] = useState<string[]>([]);
+  const [enginesData, setEnginesData] = useState<{
+    approved_universe: string[];
+    broker: string;
+    strategies: any[];
+  } | null>(null);
+  const [enginesLoading, setEnginesLoading] = useState(false);
+  const [enginesError, setEnginesError] = useState<string | null>(null);
 
-  const filtersRef = useRef({ deskFilter, instrumentFilter });
-  filtersRef.current = { deskFilter, instrumentFilter };  /* ----- loaders ----- */
+  /* scanner */
+  const [scannerData, setScannerData] = useState<{
+    scanned_underlyings: string[];
+    total_candidates: number;
+    new_signals: any[];
+    active_signals: any[];
+    timestamp_ms: number;
+  } | null>(null);
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+
+  const filtersRef = useRef({ deskFilter, instrumentFilter, statusFilter });
+  filtersRef.current = { deskFilter, instrumentFilter, statusFilter };  /* ----- loaders ----- */
 
   const loadStatus = useCallback(async () => {
     if (isHiddenTab()) return;
@@ -122,39 +183,39 @@ export function useSignalsData(opts?: {
       const isTradingDay = data?.is_trading_day;
       setMarketClosed(session === 'CLOSED' || isTradingDay === false);
     } catch {
-      setMarketClosed(false);
+      // Fail-closed: an unknown session must not enable execution.
+      setMarketClosed(true);
     }
   }, []);
 
   const loadActive = useCallback(async () => {
     if (isHiddenTab()) return;
-    const { deskFilter: df, instrumentFilter: inf } = filtersRef.current;
+    const { deskFilter: df, instrumentFilter: inf, statusFilter: sf } = filtersRef.current;
     setActiveLoading(true);
     setActiveError(null);
     try {
-      const params: { desk?: string; instrument?: string } = {};
+      const params: { desk?: string; instrument?: string; status?: string } = {};
       if (df !== 'ALL') params.desk = df;
       if (inf !== 'ALL') params.instrument = inf;
+      if (sf === 'ALL') params.status = 'ALL';
       const res = await api.getSignalsActive(params);
       const raw = (res as unknown as Record<string, unknown>)?.signals;
       const list = Array.isArray(raw) ? raw : [];
       let rows = list.map(toActiveRow).filter((r): r is ActiveRow => r !== null);
       // Client-side safety net in case the backend ignores query params.
+      // Exact instrument token (NIFTY must not match BANKNIFTY) and explicit
+      // desk matching (null-desk rows must not pass both desk views).
       if (inf !== 'ALL') {
-        rows = rows.filter((r) => r.symbol.toUpperCase().replace(/\s+/g, '').includes(inf));
+        rows = rows.filter((r) => matchesInstrumentFilter(r.symbol, inf));
       }
-      if (df === 'SCALP') {
-        rows = rows.filter(
-          (r) => r.isScalp === true || (r.desk ? r.desk.toUpperCase().includes('SCALP') : true),
-        );
-      } else if (df === 'INTRADAY') {
-        rows = rows.filter(
-          (r) => r.isScalp === false || (r.desk ? !r.desk.toUpperCase().includes('SCALP') : true),
-        );
+      if (df !== 'ALL') {
+        rows = rows.filter((r) => matchesDeskFilter(r.desk, r.isScalp, df));
       }
       setActiveRows(rows);
+      setLastActiveAt(Date.now());
     } catch (e) {
-      setActiveRows([]);
+      // Transient failure keeps last-good rows on screen and surfaces the
+      // failure as stale — only a successful fetch may replace the desk.
       setActiveError(e instanceof Error ? e.message : 'active signals unavailable');
     } finally {
       setActiveLoading(false);
@@ -168,8 +229,9 @@ export function useSignalsData(opts?: {
     try {
       const res = await api.getSignalsPerformance();
       setPerf((res as unknown as Record<string, unknown>) ?? null);
+      setLastPerfAt(Date.now());
     } catch (e) {
-      setPerf(null);
+      // Keep the last-good snapshot; the banner marks it stale.
       setPerfError(e instanceof Error ? e.message : 'performance unavailable');
     } finally {
       setPerfLoading(false);
@@ -181,16 +243,25 @@ export function useSignalsData(opts?: {
     setAuditLoading(true);
     setAuditError(null);
     try {
-      const res = await api.getSignalsAudit({ limit: 50 });
+      const res = await api.getSignalsAudit({ limit: AUDIT_FETCH_LIMIT });
       const body = res as unknown as Record<string, unknown>;
       const raw = body?.trades;
       const sum = getObj(body?.summary);
+      const rawFeed = getObj(body?.feed_health);
+      if (rawFeed) {
+        setFeedHealth(rawFeed as unknown as FeedHealthTelemetry);
+        const mkt = getObj(rawFeed.market_session);
+        if (typeof mkt?.is_open === 'boolean') {
+          setMarketClosed(!mkt.is_open);
+        }
+      }
       const list = Array.isArray(raw) ? raw : [];
       setAuditRows(list.map(toLedgerRow).filter((r): r is LedgerRow => r !== null));
       setAuditSummary(toLedgerSummary(sum));
       setLastPnlAt(Date.now());
     } catch (e) {
-      setAuditRows([]);
+      // Keep last-good ledger + summary so the book doesn't blink empty on a
+      // transient failure; the strip/tab banner marks it stale instead.
       setAuditError(e instanceof Error ? e.message : 'audit unavailable');
     } finally {
       setAuditLoading(false);
@@ -229,28 +300,63 @@ export function useSignalsData(opts?: {
 
   const loadEngines = useCallback(async () => {
     if (isHiddenTab()) return;
+    setEnginesLoading(true);
+    setEnginesError(null);
     try {
       const res = await api.getSignalEngines();
+      setEnginesData(res);
       const list = (res as unknown as Record<string, unknown>)?.strategies;
-      if (Array.isArray(list) && list.length) {
-        const names = list
-          .map((s) => {
-            if (typeof s === 'string') return s.trim();
-            const o = getObj(s);
-            return asStr(o?.name ?? o?.strategy ?? o?.id) ?? null;
-          })
-          .filter((s): s is string => !!s);
-        if (names.length) {
-          const merged = Array.from(new Set([...names.map((n) => n.toUpperCase()), ...FALLBACK_STRATEGIES]));
-          setStrategies(merged);
-          return;
-        }
-      }
-    } catch {
-      // keep fallbacks
+      const names = Array.isArray(list)
+        ? list
+            .map((s) => {
+              if (typeof s === 'string') return s.trim();
+              const o = getObj(s);
+              return asStr(o?.name ?? o?.strategy ?? o?.id) ?? null;
+            })
+            .filter((s): s is string => !!s)
+        : [];
+      // A successful fetch is authoritative: mirror the registry even when
+      // empty, so the create dialog can block instead of inventing a strategy.
+      setStrategies(Array.from(new Set(names.map((n) => n.toUpperCase()))));
+    } catch (e) {
+      // Keep the last-good strategy universe; the dialog warns that the
+      // registry is stale rather than silently showing a blank select.
+      setEnginesError(e instanceof Error ? e.message : 'engine registry unavailable');
+    } finally {
+      setEnginesLoading(false);
     }
-    setStrategies(FALLBACK_STRATEGIES);
   }, []);
+
+  const loadScanner = useCallback(async () => {
+    if (isHiddenTab()) return;
+    setScannerLoading(true);
+    setScannerError(null);
+    try {
+      const { deskFilter: df } = filtersRef.current;
+      const res = await api.getSignalsScanner(df !== 'ALL' ? df : undefined);
+      setScannerData(res);
+    } catch (e) {
+      setScannerError(e instanceof Error ? e.message : 'Scanner failed');
+    } finally {
+      setScannerLoading(false);
+    }
+  }, []);
+
+  const autoDetect = useCallback(async (underlying: string) => {
+    try {
+      const res = await api.autoDetectSignal({ underlying });
+      if (res.detected) {
+        toast.show(`Auto-detected candidate for ${underlying}`, 'success');
+        void loadActive();
+      } else {
+        toast.show(res.message || `No candidate setup for ${underlying}`, 'info');
+      }
+      return res;
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : 'Auto-detect failed', 'error');
+      return null;
+    }
+  }, [toast, loadActive]);
 
   const refreshAll = useCallback(() => {
     void loadStatus();
@@ -258,7 +364,9 @@ export function useSignalsData(opts?: {
     void loadActive();
     void loadPerf();
     void loadAudit();
-  }, [loadStatus, loadMarket, loadActive, loadPerf, loadAudit]);
+    void loadEngines();
+    void loadScanner();
+  }, [loadStatus, loadMarket, loadActive, loadPerf, loadAudit, loadEngines, loadScanner]);
 
   /* ----- effects ----- */
 
@@ -274,37 +382,60 @@ export function useSignalsData(opts?: {
 
   useEffect(() => {
     void loadActive();
-  }, [deskFilter, instrumentFilter, loadActive]);
+  }, [deskFilter, instrumentFilter, statusFilter, loadActive]);
 
-  // 15s poll for the active list + ledger fallback; 5s clock keeps TTL honest.
-  // When SSE is offline the ledger would go stale for 15s, so poll it faster.
+  // Coordinated polling (no triple-fetch):
+  // - 15s: active list + status probe (single-flight, always).
+  // - 5s: audit ledger ONLY when SSE is offline (otherwise SSE deltas +
+  //   throttled refetch own the ledger and a 15s audit poll would double it).
+  // - 1s clock keeps the ledger strip age ("LIVE · Ns AGO") and TTLs ticking.
   const connectedRef = useRef(false);
   useEffect(() => {
     const poll = setInterval(() => {
       if (isHiddenTab()) return;
       void loadActive();
-      void loadAudit();
+      void loadStatus();
     }, 15000);
     const fastLedgerPoll = setInterval(() => {
       if (isHiddenTab() || connectedRef.current) return;
       void loadAudit();
     }, 5000);
-    const clock = setInterval(() => setNow(Date.now()), 5000);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       clearInterval(poll);
       clearInterval(fastLedgerPoll);
       clearInterval(clock);
     };
-  }, [loadActive, loadAudit]);
+  }, [loadActive, loadStatus, loadAudit]);
 
+  // SSE-driven active refresh, debounced to 1s so a burst of P0 lifecycle
+  // events (confirm + staged exit + outcome) collapses to one fetch.
+  const sseRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sseRefresh = useCallback(() => {
     if (isHiddenTab()) return;
-    void loadActive();
-    void loadStatus();
+    if (sseRefreshTimer.current) return;
+    sseRefreshTimer.current = setTimeout(() => {
+      sseRefreshTimer.current = null;
+      if (isHiddenTab()) return;
+      void loadActive();
+      void loadStatus();
+    }, 1000);
   }, [loadActive, loadStatus]);
 
   const handleStreamEvent = useCallback(
     (evt: string, data: unknown) => {
+      // Feed health telemetry broadcast (~5s heartbeat or on state transition)
+      if (evt === 'FEED_STATUS') {
+        const feedObj = getObj(data);
+        if (feedObj) {
+          setFeedHealth(feedObj as unknown as FeedHealthTelemetry);
+          const mkt = getObj(feedObj.market_session);
+          if (typeof mkt?.is_open === 'boolean') {
+            setMarketClosed(!mkt.is_open);
+          }
+        }
+        return;
+      }
       // Realtime P&L path (~3s cadence): merge MTM deltas, no refetch.
       if (evt === 'audit_pnl_update') {
         if (!isHiddenTab()) applyPnlDelta(data);
@@ -328,7 +459,20 @@ export function useSignalsData(opts?: {
     [sseRefresh, applyPnlDelta, requestAuditRefetch],
   );
 
-  const { connected } = useSignalsStream({ onEvent: handleStreamEvent });
+  /* Phase 0 shared stream: the context owns the one SSE subscription for the
+     whole tab. Its event buffer is newest-first, so replay only unprocessed
+     events oldest-first (a WeakSet keeps identity bookkeeping cheap). */
+  const { connected, events: streamEvents } = useSignalStream();
+  const processedStreamEvents = useRef<WeakSet<SignalsStreamEvent>>(new WeakSet());
+  useEffect(() => {
+    const fresh = streamEvents.filter((e) => !processedStreamEvents.current.has(e));
+    if (fresh.length === 0) return;
+    for (const e of fresh) processedStreamEvents.current.add(e);
+    for (let i = fresh.length - 1; i >= 0; i -= 1) {
+      handleStreamEvent(fresh[i].type, fresh[i].data);
+    }
+  }, [streamEvents, handleStreamEvent]);
+
   useEffect(() => {
     connectedRef.current = connected;
   }, [connected]);
@@ -341,8 +485,16 @@ export function useSignalsData(opts?: {
     /* ----- row actions ----- */
 
   const executePaper = useCallback(
-    async (row: ActiveRow) => {
-      if (marketClosed || row.state.toUpperCase().includes('CONFIRMED')) return;
+    async (row: ActiveRow, opts?: { allowClosedMarket?: boolean }) => {
+      // CONFIRMED is an executable lifecycle state (filled/accepted) — only
+      // a closed market blocks execution. Terminal states are still guarded
+      // by the desk's disabled button; this is the fail-closed floor.
+      if (marketClosed && !opts?.allowClosedMarket) {
+        const msg = 'Market is closed — paper execution is disabled.';
+        setOrderNote((prev) => ({ ...prev, [row.id]: msg }));
+        toast.error(`Execution blocked — ${row.symbol} ${row.strategy}`, msg);
+        return;
+      }
       setExecutingId(row.id);
       setOrderNote((prev) => {
         const next = { ...prev };
@@ -350,7 +502,7 @@ export function useSignalsData(opts?: {
         return next;
       });
       try {
-        const res = await api.executeSignalPaper(row.id, 1);
+        const res = await api.executeSignalPaper(row.id, 1, undefined, opts);
         const r = res as unknown as Record<string, unknown>;
         const orderId = asStr(r?.order_id);
         const msg =
@@ -424,6 +576,8 @@ export function useSignalsData(opts?: {
     setDeskFilter,
     instrumentFilter,
     setInstrumentFilter,
+    statusFilter,
+    setStatusFilter,
     // hero KPIs
     kpis,
     statusError,
@@ -432,22 +586,36 @@ export function useSignalsData(opts?: {
     sortedActive,
     activeLoading,
     activeError,
+    lastActiveAt,
     now,
     connected,
+    feedHealth,
     // performance
     perf,
     perfLoading,
     perfError,
+    lastPerfAt,
     // ledger
     auditRows,
     auditSummary,
     auditLoading,
     auditError,
+    auditLimit: AUDIT_FETCH_LIMIT,
     lastPnlAt,
     sanitizeBusy,
     sanitizeNote,
     // engines
     strategies,
+    enginesData,
+    enginesLoading,
+    enginesError,
+    loadEngines,
+    // scanner
+    scannerData,
+    scannerLoading,
+    scannerError,
+    loadScanner,
+    autoDetect,
     // actions + row state
     refreshAll,
     executePaper,

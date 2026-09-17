@@ -9,16 +9,19 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-[#edf4fc] text-[#387ed1] border-[rgba(56,126,209,0.25)] [a&]:hover:bg-[#e0eefc]",
+        default:
+          "bg-accent-wash text-primary border-accent-line [a&]:hover:bg-primary/10",
         secondary:
-          "bg-[#f4f4f4] text-[#666666] border-border [a&]:hover:bg-[#ebebeb]",
+          "bg-muted text-muted-foreground border-border [a&]:hover:bg-muted-strong",
         destructive:
-          "bg-[#fdf0ef] text-[#c62828] border-[rgba(223,81,76,0.25)] [a&]:hover:bg-[#fbdad7]",
+          "bg-down-wash text-down border-down-line [a&]:hover:bg-down/10",
         success:
-          "bg-[#edf8ef] text-[#2e7d32] border-[rgba(76,175,80,0.25)] [a&]:hover:bg-[#d8f0dc]",
+          "bg-up-wash text-up border-up-line [a&]:hover:bg-up/10",
+        warning:
+          "bg-warn-wash text-warn border-warn-line [a&]:hover:bg-warn/10",
         outline:
-          "border-border text-foreground bg-card [a&]:hover:bg-[#f7f7f7]",
-        ghost: "[a&]:hover:bg-[#f7f7f7] hover:text-foreground",
+          "border-border text-foreground bg-card [a&]:hover:bg-muted",
+        ghost: "[a&]:hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
     },

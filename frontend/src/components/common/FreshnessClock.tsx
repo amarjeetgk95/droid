@@ -20,7 +20,6 @@ import {
   feedPillTone,
   feedStateDescription,
   type FeedState,
-  type FeedStateInput,
 } from '@/lib/feedState';
 
 const TICK_MS = 1000;
@@ -55,34 +54,45 @@ export function FreshnessClock({
   className,
 }: FreshnessClockProps) {
   const [now, setNow] = useState<number>(() => Date.now());
+  // Starts `false` on both server and client to keep hydration stable; the
+  // effect below syncs it to the real visibility state.
+  const [hidden, setHidden] = useState(false);
 
-  // Re-render once per second while visible so the age label stays truthful.
-  // When the tab is hidden we STOP ticking: the pill must not silently claim
-  // fresh ages that were computed before the user looked away.
+  // ONE tracked interval. It is created when the clock starts, cleared when
+  // the tab hides or the component unmounts, and re-created on return —
+  // visibilitychange must never stack a second interval on top of the first.
   useEffect(() => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    const id = setInterval(() => setNow(Date.now()), TICK_MS);
-    const onVisible = () => {
-      if (!document.hidden) {
-        setNow(Date.now());
-        const id = setInterval(() => setNow(Date.now()), TICK_MS);
-        return () => clearInterval(id);
-      }
+    let id: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (id !== null) return;
+      setNow(Date.now());
+      id = setInterval(() => setNow(Date.now()), TICK_MS);
     };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
+    const stop = () => {
+      if (id === null) return;
       clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisible);
+      id = null;
+    };
+    const onVisibilityChange = () => {
+      setHidden(document.hidden);
+      if (document.hidden) stop();
+      else start();
+    };
+
+    setHidden(document.hidden);
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
-
-  const hidden = typeof document !== 'undefined' ? document.hidden : false;
 
   const derived: FeedState = useMemo(() => {
     if (state) return state;
     return deriveFeedState({ lastAt, streamState, ticksFresh, fetching, marketClosed, dataQuality, now });
     // `now` is intentionally a dep: age transitions must re-derive each second.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, lastAt, streamState, ticksFresh, fetching, marketClosed, dataQuality, now]);
 
   const age = hidden ? null : ageLabel(lastAt, now);

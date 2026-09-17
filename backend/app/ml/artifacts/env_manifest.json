@@ -1,0 +1,15 @@
+{
+  "python_version": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+  "packages": {
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.5",
+    "pyarrow": "25.0.1",
+    "scipy": "1.18.1",
+    "joblib": "1.6.0"
+  },
+  "feature_schema_version": "f28-v3",
+  "target_spec_version": "v2-atr-em-session"
+}

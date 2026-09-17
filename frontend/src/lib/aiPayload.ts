@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import type { AISettings, DirectProviderId } from './settingsTypes';
 import { getStoredSettings } from './settingsStorage';
+import { deepEqual } from './deepEqual';
 
 export interface ResolvedAI {
   provider: string;
@@ -42,10 +43,27 @@ const DIRECT_MAP: Record<DirectProviderId, string> = {
   'Custom OpenAI-Compatible': 'custom_openai',
 };
 
+/**
+ * Identity-stable AI settings read.
+ *
+ * `getStoredSettings()` re-parses localStorage and rebuilds every section on
+ * each call. `useAISettings` refreshes on `focus` / `storage` / sync events, so
+ * returning a fresh object each time re-fires every consumer effect (and their
+ * downstream AI fetches) even when nothing changed. Cache the last value and
+ * hand back the same reference while it is structurally identical.
+ */
+let cachedAISettings: AISettings | null = null;
+
 export function getStoredAISettings(): AISettings | null {
   try {
-    return getStoredSettings().ai;
+    const next = getStoredSettings().ai ?? null;
+    if (next !== null && cachedAISettings !== null && deepEqual(cachedAISettings, next)) {
+      return cachedAISettings;
+    }
+    cachedAISettings = next;
+    return next;
   } catch {
+    cachedAISettings = null;
     return null;
   }
 }
@@ -53,7 +71,6 @@ export function getStoredAISettings(): AISettings | null {
 /** Reactive hook — re-reads AI settings on mount + cross-tab storage updates. */
 export function useAISettings(): AISettings | null {
   const [ai, setAi] = useState<AISettings | null>(null);
-  /* eslint-disable react-hooks/set-state-in-effect -- hydration from localStorage */
   useEffect(() => {
     setAi(getStoredAISettings());
     const refresh = () => setAi(getStoredAISettings());

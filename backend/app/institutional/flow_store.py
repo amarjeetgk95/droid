@@ -249,7 +249,7 @@ class InstitutionalFlowStore:
         return day
 
     def as_of(self, decision_time: Optional[datetime] = None) -> Optional[InstitutionalFlowSnapshot]:
-        """Latest flow row with available_time <= decision_time. None if none yet."""
+        """Latest flow row with available_time <= decision_time. None if none yet or stale."""
         self.seed_rows()
         t = decision_time or datetime.now(timezone.utc)
         if t.tzinfo is None:
@@ -258,6 +258,15 @@ class InstitutionalFlowStore:
         if not eligible:
             return None
         latest = eligible[-1]
+        # Fail-closed on staleness: a static seed from weeks ago must not steer
+        # live confluence/scanner decisions. Beyond 5 days the flow is history,
+        # not a signal — return None so callers degrade instead of inventing edge.
+        try:
+            age_days = (t - latest.available_time_utc).total_seconds() / 86400.0
+            if age_days > 5:
+                return None
+        except Exception:
+            pass
         # Leakage-gate proof for this read.
         obs_ms = int(t.timestamp() * 1000)
         pub_ms = int(latest.available_time_utc.timestamp() * 1000)

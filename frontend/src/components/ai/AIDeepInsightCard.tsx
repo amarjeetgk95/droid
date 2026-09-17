@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { resolveAISettings, toBackendSymbol, useAISettings } from '@/lib/aiPayload';
 import { Card, DirectionBadge, EmptyNote, RetryButton } from '@/components/ui/desk';
+import { AIProvenanceNote } from './AIProvenanceNote';
 
 type Loose = Record<string, unknown>;
 
@@ -44,6 +45,9 @@ export function AIDeepInsightCard({ symbol }: { symbol: string }) {
         geminiApiKey: r.geminiApiKey,
       });
       if (res.error) throw new Error(res.error);
+      if (!res.data || typeof res.data !== 'object') {
+        throw new Error('The deep-insight service returned no payload.');
+      }
       setData(res.data as Loose);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Deep Insight failed');
@@ -54,14 +58,16 @@ export function AIDeepInsightCard({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     if (!aiSettings) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- symbol-driven initial fetch
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendSymbol, aiSettings]);
 
   const market = (data?.market || {}) as Loose;
   const levels = (market.levels || {}) as Loose;
-  const mtf = ((data?.multi_timeframe || []) as Loose[]).filter((t) => t && typeof t === 'object');
+  const mtfRaw = data?.multi_timeframe;
+  const mtf = (Array.isArray(mtfRaw) ? (mtfRaw as Loose[]) : []).filter(
+    (t) => t && typeof t === 'object',
+  );
   const aiView = (data?.ai_view || {}) as Loose;
   const setup = (data?.setup || {}) as Loose;
   const signalState = (data?.signal_state || {}) as Loose;
@@ -136,7 +142,10 @@ export function AIDeepInsightCard({ symbol }: { symbol: string }) {
             <Row k="Validation" v={`${str(validation.status)}${validation.rejection_reason ? ` — ${str(validation.rejection_reason)}` : ''}`} />
             <Row k="Provider" v={`${str(provider.name, resolved.provider)} · ${str(provider.model, resolved.model)}${provider.latency_ms ? ` · ${str(provider.latency_ms)}ms` : ''}`} />
           </div>
-          {error ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh note: {error}</p> : null}
+          {error ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh failed: {error}</p> : null}
+          <AIProvenanceNote
+            provider={`${str(provider.name, resolved.provider)}:${str(provider.model, resolved.model)}`}
+          />
         </div>
       ) : (
         <EmptyNote>No Deep Insight yet — press Refresh.</EmptyNote>

@@ -1,3 +1,4 @@
+import time
 import pytest
 from decimal import Decimal
 from fastapi.testclient import TestClient
@@ -65,8 +66,13 @@ def test_cross_underlying_quote_isolation():
 
 
 def test_fsm_transitions():
-    """Verify ARMED -> CONFIRMED and VALIDATED -> TRIGGERED are allowed."""
-    sig1 = SignalInstance(
+    """Verify the TRIGGERED-proof lifecycle: skip edges are illegal.
+
+    Direct ARMED -> CONFIRMED is banned; the only legal entry to CONFIRMED is
+    TRIGGERED -> CONFIRMED, and TRIGGERED may be reached from ARMED or from
+    VALIDATED (validation without a pre-arm tick).
+    """
+    base = dict(
         underlying="NIFTY",
         strategy="BREAKOUT",
         direction="LONG_CALL",
@@ -81,32 +87,32 @@ def test_fsm_transitions():
         risk_points=Decimal("50"),
         risk_reward_t1=1.5,
         risk_reward_t2=3.0,
-        confidence=80,
-        fsm_state="ARMED",
     )
+
+    # (a) Direct ARMED -> CONFIRMED must be rejected (no skip edges).
+    sig1 = SignalInstance(**base, confidence=80, fsm_state="ARMED")
     signal_fsm.register(sig1)
     ok, err = signal_fsm.transition(sig1.signal_id, "CONFIRMED")
+    assert ok is False
+    assert "Illegal transition" in str(err)
+    assert signal_fsm.get(sig1.signal_id).fsm_state == "ARMED"
+
+    # (b) ARMED -> TRIGGERED succeeds, then TRIGGERED -> CONFIRMED with
+    # trigger proof + paper receipt in the guard snapshot.
+    ok, err = signal_fsm.transition(sig1.signal_id, "TRIGGERED")
+    assert ok is True
+    assert signal_fsm.get(sig1.signal_id).fsm_state == "TRIGGERED"
+
+    ok, err = signal_fsm.transition(
+        sig1.signal_id,
+        "CONFIRMED",
+        guard_snapshot={"trigger_proof": True, "paper_receipt": "TEST"},
+    )
     assert ok is True
     assert signal_fsm.get(sig1.signal_id).fsm_state == "CONFIRMED"
 
-    sig2 = SignalInstance(
-        underlying="NIFTY",
-        strategy="BREAKOUT",
-        direction="LONG_CALL",
-        timeframe="5M",
-        spot_price=Decimal("24800"),
-        entry_min=Decimal("24800"),
-        entry_max=Decimal("24810"),
-        trigger=Decimal("24805"),
-        stop_loss=Decimal("24750"),
-        target_1=Decimal("24900"),
-        target_2=Decimal("24950"),
-        risk_points=Decimal("50"),
-        risk_reward_t1=1.5,
-        risk_reward_t2=3.0,
-        confidence=65,
-        fsm_state="VALIDATED",
-    )
+    # (c) VALIDATED -> TRIGGERED remains legal.
+    sig2 = SignalInstance(**base, confidence=65, fsm_state="VALIDATED")
     signal_fsm.register(sig2)
     ok2, err2 = signal_fsm.transition(sig2.signal_id, "TRIGGERED")
     assert ok2 is True
@@ -160,8 +166,13 @@ def test_target_1_win_not_overwritten_by_stop_loss():
         lots=1,
     )
 
-    # Price rises to Target 1
-    events = outcome_tracker.update_with_price("NIFTY", Decimal("24905.0"), allow_closed_market=True)
+    # Price rises to Target 1. Explicit tick timestamps keep the two
+    # evaluations in distinct idempotency buckets (same-second deliveries are
+    # collapsed by design), so the runner evaluation below is not skipped.
+    tick_ms = int(time.time() * 1000)
+    events = outcome_tracker.update_with_price(
+        "NIFTY", Decimal("24905.0"), now_ms=tick_ms, allow_closed_market=True,
+    )
     assert any(e["event"] == "TARGET_1_HIT" for e in events)
 
     updated_sig = signal_fsm.get(sig.signal_id)
@@ -170,7 +181,9 @@ def test_target_1_win_not_overwritten_by_stop_loss():
 
     # Price later plummets past the ratcheted (breakeven) stop: runner must
     # resolve as BREAKEVEN — T1 profit preserved, never rewritten as a loss.
-    events2 = outcome_tracker.update_with_price("NIFTY", Decimal("24740.0"), allow_closed_market=True)
+    events2 = outcome_tracker.update_with_price(
+        "NIFTY", Decimal("24740.0"), now_ms=tick_ms + 2000, allow_closed_market=True,
+    )
     assert any(e.get("signal_id") == sig.signal_id and e.get("event") == "STOP_LOSS_HIT" for e in events2)
     runner = signal_fsm.get(sig.signal_id)
     assert runner.fsm_state == "STOP_LOSS_HIT"
@@ -178,7 +191,7 @@ def test_target_1_win_not_overwritten_by_stop_loss():
     assert runner.realized_rr == 0.0
 
 
-def test_put_signal_math(client: TestClient):
+def test_put_signal_math(client: TestClient, mock_market_feed):
     """Verify BEARISH / LONG_PUT signals calculate SL above entry and targets below entry with positive R:R."""
     res = client.post("/api/v1/signals/generate", json={
         "underlying": "NIFTY",
@@ -197,14 +210,20 @@ def test_put_signal_math(client: TestClient):
     assert float(data["risk_reward_t2"]) > 0
 
 
-def test_paper_wallet_capital(client: TestClient):
-    """Verify custom paper trading wallet capital endpoint."""
+def test_paper_wallet_capital(client: TestClient, paper_fills_from_marks):
+    """Verify custom paper trading wallet capital endpoint.
+
+    Uses the paper_fills_from_marks fixture so the anon shard is reset to a
+    pristine state first — other paper tests in the suite fill real orders
+    against the shared paper_service, and a stale realized-PnL balance would
+    otherwise leak into virtual_capital depending on test order.
+    """
     res = client.post("/api/v1/signals/paper-wallet", json={"capital": 500000.0})
     assert res.status_code == 200
     assert res.json()["capital"] == 500000.0
 
 
-def test_signal_delete(client: TestClient):
+def test_signal_delete(client: TestClient, mock_market_feed):
     """Verify signal deletion authority removes signal from FSM and ledger."""
     # Create signal
     gen = client.post("/api/v1/signals/generate", json={
@@ -276,16 +295,22 @@ def test_strategy_robustness_against_null_and_scalar_data():
 
 
 def test_breakout_put_indentation_fix():
-    """Verify BreakoutStrategy PUT branch handles positive risk and doesn't leak or crash on non-positive risk."""
+    """Verify BreakoutStrategy PUT branch handles positive risk and doesn't leak or crash on non-positive risk.
+
+    New fail-closed contract: the bearish breakdown requires a squeeze state,
+    a measured volume ratio >= 1.5x, and a CLOSE below the key support.
+    """
     from app.signals.strategies.base import StrategyContext
     from app.signals.strategies.breakout import BreakoutStrategy
 
     bo = BreakoutStrategy()
 
     candles = [
-        {"open": 24100.0, "high": 24110.0, "low": 24040.0, "close": 24045.0, "volume": 10000},
-        {"open": 24045.0, "high": 24050.0, "low": 23990.0, "close": 23995.0, "volume": 15000},
-        {"open": 23995.0, "high": 24000.0, "low": 23980.0, "close": 23985.0, "volume": 20000},
+        {"open": 24010.0, "high": 24015.0, "low": 24005.0, "close": 24008.0, "volume": 10000},
+        {"open": 24008.0, "high": 24012.0, "low": 24002.0, "close": 24005.0, "volume": 10000},
+        {"open": 24005.0, "high": 24010.0, "low": 24000.0, "close": 24003.0, "volume": 10000},
+        {"open": 24003.0, "high": 24009.0, "low": 23998.0, "close": 24000.0, "volume": 12000},
+        {"open": 23998.0, "high": 24002.0, "low": 23975.0, "close": 23980.0, "volume": 20000},
     ]
     ctx = StrategyContext(
         underlying="NIFTY",
@@ -312,11 +337,24 @@ def test_breakout_put_indentation_fix():
 
 
 def test_gamma_squeeze_dual_side_velocity_fix():
-    """Verify CALL velocity failure does not short-circuit PUT branch evaluation."""
+    """Verify CALL velocity failure does not short-circuit PUT branch evaluation.
+
+    Fail-closed contract: gamma squeeze needs a real (non-synthetic) OI change,
+    strike-specific OI, and IV expansion evidence, so the fixtures carry them.
+    """
     from app.signals.strategies.base import StrategyContext
     from app.signals.strategies.gamma_squeeze import GammaSqueezeStrategy
 
     gs = GammaSqueezeStrategy()
+
+    fno_common = {
+        "pcr": 0.75,
+        "oi_change_pct": 8.0,
+        "max_pain": 24000.0,
+        "total_call_oi": 120000,
+        "total_put_oi": 150000,
+        "atm_iv": 16.0,
+    }
 
     flat_candles = [
         {"open": 24000.0, "high": 24005.0, "low": 23995.0, "close": 24000.0, "volume": 5000}
@@ -328,7 +366,7 @@ def test_gamma_squeeze_dual_side_velocity_fix():
         timeframe="5M",
         indicators={"volatility": {"atr": 50.0}},
         candles=flat_candles,
-        fno={"pcr": 0.75, "oi_change_pct": 8.0, "max_pain": 24000.0},
+        fno=dict(fno_common),
         regime="HIGH_VOL",
         mtf={"alignment_score": 70.0},
     )
@@ -348,7 +386,7 @@ def test_gamma_squeeze_dual_side_velocity_fix():
         timeframe="5M",
         indicators={"volatility": {"atr": 50.0}},
         candles=moving_down_candles,
-        fno={"pcr": 0.75, "oi_change_pct": 8.0, "max_pain": 24000.0},
+        fno=dict(fno_common),
         regime="HIGH_VOL",
         mtf={"alignment_score": 70.0},
     )
@@ -400,7 +438,7 @@ def test_volatility_breakout_dynamic_scores_and_compression_regime():
         indicators={
             "support_resistance": {"resistance": [24080.0]},
             "volatility": {"atr": 25.0},
-            "volume_ratio": 1.4,
+            "volume_ratio": 1.6,
             "breakout_pressure": 72.0,
         },
         mtf={"alignment_score": 60.0, "overall_bias": "NEUTRAL"},
@@ -413,8 +451,61 @@ def test_volatility_breakout_dynamic_scores_and_compression_regime():
     assert cand_range.regime_score == 50.0
 
 
+def test_volatility_breakout_fails_closed_without_required_inputs():
+    """Fail-closed contract: missing squeeze, volume, pressure or S/R -> None."""
+    from app.signals.strategies.base import StrategyContext
+    from app.signals.strategies.volatility_breakout import VolatilityBreakoutStrategy
+
+    vb = VolatilityBreakoutStrategy()
+
+    expanding_candles = [
+        {"open": 24000.0, "high": 24010.0, "low": 23990.0, "close": 24005.0, "volume": 1000},
+        {"open": 24005.0, "high": 24015.0, "low": 23995.0, "close": 24010.0, "volume": 1000},
+        {"open": 24010.0, "high": 24020.0, "low": 24000.0, "close": 24015.0, "volume": 1000},
+        {"open": 24015.0, "high": 24090.0, "low": 24010.0, "close": 24085.0, "volume": 5000},
+    ]
+    # No squeeze: seven bars with expanding ranges (no contraction baseline).
+    no_squeeze_candles = [
+        {"open": 24000.0 + i, "high": 24010.0 + i * 3, "low": 23990.0 - i, "close": 24005.0 + i, "volume": 1000}
+        for i in range(7)
+    ]
+
+    def _ctx(indicators, candles=None):
+        return StrategyContext(
+            underlying="NIFTY",
+            spot_price=Decimal("24085.0"),
+            timeframe="5M",
+            indicators=indicators,
+            mtf={"alignment_score": 80.0, "overall_bias": "BULLISH"},
+            fno={"pcr": 1.3},
+            regime="RANGE",
+            candles=candles or expanding_candles,
+        )
+
+    full_ind = {
+        "support_resistance": {"resistance": [24080.0]},
+        "volatility": {"atr": 25.0},
+        "volume_ratio": 2.5,
+        "breakout_pressure": 85.0,
+    }
+
+    # No squeeze -> None.
+    assert vb.detect(_ctx(full_ind, candles=no_squeeze_candles)) is None
+    # No measured volume -> None.
+    assert vb.detect(_ctx({k: v for k, v in full_ind.items() if k != "volume_ratio"})) is None
+    # No measured breakout pressure -> None.
+    assert vb.detect(_ctx({k: v for k, v in full_ind.items() if k != "breakout_pressure"})) is None
+    # No S/R -> None.
+    assert vb.detect(_ctx({"volatility": {"atr": 25.0}, "volume_ratio": 2.5, "breakout_pressure": 85.0})) is None
+
+
 def test_scalp_confirmation_lunch_session_and_vix():
-    """Verify ScalpConfirmationEngine suppresses lunch session and extreme VIX, exempting GAMMA_SPIKE."""
+    """Verify ScalpConfirmationEngine suppresses lunch session and extreme VIX.
+
+    P0-2 contract: GAMMA_SPIKE is NOT exempt anymore. Lunch/VIX suppression
+    applies to every scalp; the only override is proven executability
+    (spread <= 1.0pt AND RVOL >= 1.5).
+    """
     from app.signals.scalp_confirmation import scalp_confirmation_engine
     from app.signals.strategies.base import SignalCandidate
 
@@ -443,6 +534,7 @@ def test_scalp_confirmation_lunch_session_and_vix():
     assert res_lunch.passed is False
     assert res_lunch.reason_code == "REJECTED_LUNCH_SESSION"
 
+    # GAMMA_SPIKE no longer receives a lunch exemption.
     gamma_cand = SignalCandidate(
         underlying="NIFTY",
         strategy="GAMMA_SPIKE",
@@ -465,8 +557,21 @@ def test_scalp_confirmation_lunch_session_and_vix():
         current_spot=Decimal("24005.0"),
         regime="VOLATILE_EXPANSION",
     )
-    assert res_gamma.passed is True
+    assert res_gamma.passed is False
+    assert res_gamma.reason_code == "REJECTED_LUNCH_SESSION"
 
+    # Executability override: tight spread + strong RVOL lets GAMMA_SPIKE through.
+    res_gamma_ok = scalp_confirmation_engine.validate(
+        candidate=gamma_cand,
+        current_spot=Decimal("24005.0"),
+        regime="VOLATILE_EXPANSION",
+        option_bid=Decimal("100.00"),
+        option_ask=Decimal("100.50"),
+        rvol=1.6,
+    )
+    assert res_gamma_ok.passed is True
+
+    # Extreme VIX suppresses every scalp — no GAMMA_SPIKE exemption.
     vwap_cand.lunch_session = False
     vwap_cand.vix_percentile = 85.0
     res_vix = scalp_confirmation_engine.validate(
@@ -476,6 +581,18 @@ def test_scalp_confirmation_lunch_session_and_vix():
     )
     assert res_vix.passed is False
     assert res_vix.reason_code == "REJECTED_VIX_EXTREME"
+
+    gamma_cand.lunch_session = False
+    gamma_cand.vix_percentile = 85.0
+    res_gamma_vix = scalp_confirmation_engine.validate(
+        candidate=gamma_cand,
+        current_spot=Decimal("24005.0"),
+        regime="VOLATILE_EXPANSION",
+        option_bid=Decimal("100.00"),
+        option_ask=Decimal("100.50"),
+        rvol=1.6,
+    )
+    assert res_gamma_vix.passed is True
 
 
 def test_scanner_gap_exempt_strategies():

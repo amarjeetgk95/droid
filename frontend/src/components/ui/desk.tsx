@@ -96,26 +96,51 @@ export function DirectionBadge({ direction, big }: { direction: unknown; big?: b
 }
 
 /** Confidence / probability bar (0..1). */
-export function Meter({ value }: { value: unknown }) {
+export function Meter({ value, label = 'Meter' }: { value: unknown; label?: string }) {
   const n = typeof value === 'string' ? Number(value) : (value as number);
   const pct = typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) * 100 : 0;
   return (
-    <div className="meter" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
-      <i style={{ width: `${pct}%` }} />
+    <div
+      className="meter"
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuetext={`${Math.round(pct)}%`}
+    >
+      <i style={{ width: `${pct}%` }} aria-hidden="true" />
     </div>
   );
 }
 
 /** Signed diverging bar centred at zero (value in -100..100). */
-export function DivergingBar({ value }: { value: unknown }) {
+export function DivergingBar({
+  value,
+  label = 'Directional bias',
+}: {
+  value: unknown;
+  label?: string;
+}) {
   const n = typeof value === 'string' ? Number(value) : (value as number);
   const v = typeof n === 'number' && Number.isFinite(n) ? Math.max(-100, Math.min(100, n)) : 0;
   const w = Math.abs(v) / 2; // half-track scale
   const style: CSSProperties =
     v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` };
+  // Colour alone is not an accessible signal: state the reading as text.
+  const valueText = v > 0 ? `+${v} (bullish)` : v < 0 ? `${v} (bearish)` : '0 (neutral)';
   return (
-    <div className="dbar">
-      <i className={v >= 0 ? 'pos' : 'neg'} style={style} />
+    <div
+      className="dbar"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={-100}
+      aria-valuemax={100}
+      aria-valuenow={v}
+      aria-valuetext={valueText}
+      title={valueText}
+    >
+      <i className={v >= 0 ? 'pos' : 'neg'} style={style} aria-hidden="true" />
     </div>
   );
 }
@@ -195,11 +220,26 @@ export function StackedProbabilityBar({
   bearPct: number;
   height?: number;
 }) {
+  const clamp = (v: number) => (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0);
+  const bull = clamp(bullPct);
+  const neut = clamp(neutPct);
+  const bear = clamp(bearPct);
+  const valueText = `Bullish ${bull}%, Neutral ${neut}%, Bearish ${bear}%`;
   return (
-    <div className="prob-bar-stacked" style={{ height }} role="progressbar" aria-label="Outcome probabilities">
-      <div className="seg-bull" style={{ width: `${Math.max(0, Math.min(100, bullPct))}%` }} title={`Bullish ${bullPct}%`} />
-      <div className="seg-neut" style={{ width: `${Math.max(0, Math.min(100, neutPct))}%` }} title={`Neutral ${neutPct}%`} />
-      <div className="seg-bear" style={{ width: `${Math.max(0, Math.min(100, bearPct))}%` }} title={`Bearish ${bearPct}%`} />
+    <div
+      className="prob-bar-stacked"
+      style={{ height }}
+      role="progressbar"
+      aria-label="Outcome probabilities"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(bull)}
+      aria-valuetext={valueText}
+      title={valueText}
+    >
+      <div className="seg-bull" style={{ width: `${bull}%` }} title={`Bullish ${bull}%`} />
+      <div className="seg-neut" style={{ width: `${neut}%` }} title={`Neutral ${neut}%`} />
+      <div className="seg-bear" style={{ width: `${bear}%` }} title={`Bearish ${bear}%`} />
     </div>
   );
 }

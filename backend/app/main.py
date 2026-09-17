@@ -20,6 +20,7 @@ from app.api import events as events_api
 from app.api import options_intelligence as options_intelligence_api
 from app.api import research as research_api
 from app.api import swing as swing_api
+from app.api import monitoring as monitoring_api
 from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
@@ -50,11 +51,42 @@ async def lifespan(app: FastAPI):
         auth_required=settings.auth_required,
     )
     
+    # Auth posture. The dev bypass hands out an anonymous admin identity, and
+    # `start-mobile-tunnel.ps1` publishes this API to the internet via a
+    # Cloudflare quick tunnel. Make the posture impossible to miss at startup.
+    if settings.auth_required:
+        logger.info("auth_posture", mode="enforced")
+    else:
+        logger.warning(
+            "auth_posture",
+            mode="dev_bypass_active",
+            detail=(
+                "AUTH_REQUIRED=false. Unauthenticated requests are served as a dev admin, but "
+                "ONLY when they arrive over a loopback Host. Requests arriving through the "
+                "Cloudflare quick tunnel (or any non-loopback Host) are rejected with 401. "
+                "Set AUTH_REQUIRED=true before exposing this API publicly."
+            ),
+            env=settings.app_env,
+            mode_flag=settings.app_mode,
+        )
+
     # Validate production configuration
-    if settings.app_mode == "production" and settings.auth_required:
+    if "production" in {settings.app_env, settings.app_mode}:
         if not settings.supabase_jwt_secret:
             logger.error("startup_config_error", detail="SUPABASE_JWT_SECRET required in production")
             raise RuntimeError("SUPABASE_JWT_SECRET must be configured in production mode")
+        if not settings.auth_required:
+            # Not fatal: with the dev bypass gated on loopback *and* on
+            # production, production already enforces auth. Refusing to boot
+            # would add downtime without adding any security.
+            logger.error(
+                "auth_required_false_in_production",
+                detail=(
+                    "AUTH_REQUIRED=false while running in production. The dev bypass is "
+                    "suppressed in production, so authentication is still enforced — but the "
+                    "flag is misleading. Set AUTH_REQUIRED=true to match reality."
+                ),
+            )
     
     # Cold-Start Snapshot Recovery
     snapshot = snapshot_service.load_snapshot()
@@ -228,6 +260,45 @@ async def lifespan(app: FastAPI):
     logger.info("app_shutdown")
 
 
+# ---------------------------------------------------------------------------
+# CORS
+#
+# Backend is loopback-only; the frontend is served from Firebase plus local dev
+# servers. These live at module level so the allowlist can be unit-tested
+# without booting the app — building them inside `create_app` meant every CORS
+# test had to start the signal workers via the lifespan.
+# ---------------------------------------------------------------------------
+CORS_ORIGINS = [
+    settings.frontend_url,
+    "https://fo-droid.web.app",
+    "https://fo-droid.firebaseapp.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+# Deliberately tight. The previous value was:
+#   ^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://fo-droid.*\.(web\.app|firebaseapp\.com)$
+# It had two holes:
+#   1. `(:\d+)?` allowed *any* port on loopback, so any locally-served page
+#      could read authenticated API responses.
+#   2. `fo-droid.*` is a prefix wildcard on a domain anyone can register —
+#      `fo-droid-evil.web.app` is a claimable Firebase project ID and it
+#      matched, so a hostile page could read this API *with credentials*
+#      (`allow_credentials=True` is set below).
+# Now only the known dev-server ports on loopback plus the exact Firebase
+# origins are accepted. `CORS_ORIGINS` above stays the authoritative list.
+CORS_ORIGIN_REGEX = (
+    r"^https?://(localhost|127\.0\.0\.1)(:(3000|3001|5173|8000))?$"
+    r"|^https://fo-droid\.(web\.app|firebaseapp\.com)$"
+)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
@@ -254,25 +325,13 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error", "error": "Internal server error", "meta": meta.model_dump(mode="json")},
         )
     
-    # CORS: backend is localhost-only, frontend stays on Firebase + local dev
-    origins = [
-        settings.frontend_url,
-        "https://fo-droid.web.app",
-        "https://fo-droid.firebaseapp.com",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ]
-
+    # CORS: backend is localhost-only, frontend stays on Firebase + local dev.
+    # See CORS_ORIGINS / CORS_ORIGIN_REGEX at module level for why the regex is
+    # this tight.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://fo-droid.*\.(web\.app|firebaseapp\.com)$",
+        allow_origins=CORS_ORIGINS,
+        allow_origin_regex=CORS_ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -323,11 +382,7 @@ def create_app() -> FastAPI:
     app.include_router(options_intelligence_api.router)
     app.include_router(research_api.router)
     app.include_router(swing_api.router)
-    try:
-        from app.api import monitoring as monitoring_api
-        app.include_router(monitoring_api.router)
-    except Exception:
-        pass
+    app.include_router(monitoring_api.router)
     
     return app
 

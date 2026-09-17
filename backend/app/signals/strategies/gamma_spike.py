@@ -1,12 +1,16 @@
 """
-GAMMA_SPIKE Strategy (§10)
+GAMMA_SPIKE Strategy (§10, P1 overhaul)
 Timeframe: 1M / 3M
 Active strictly during configured expiry/event windows: 13:15 - 15:15 IST.
 Outside the configured window: strategy = DISABLED (returns None).
-Detection:
+Detection (P1):
   - Expiry session (or EVENT regime)
-  - Rapid OI unwinding + ATM option volume surge
-  - Underlying price acceleration
+  - Rapid OI unwinding (oi_change_pct measured >= 5.0, fail-closed) + ATM
+    option volume surge (measured totals, fail-closed)
+  - Underlying price acceleration: range >= 1.2x ATR + impulse body >= 65%
+  - Closed 1M candle (is_new_1m_candle) + second-tick confirmation
+    (prev bar same direction) + measured volume >= 1.2x fail-closed
+  - PCR: bull <= 0.80, bear >= 1.20 (tautology >=0.95/<=1.05 fixed)
   - TTL: Original = 90s, Runner = 240s
 """
 from __future__ import annotations
@@ -14,8 +18,18 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    extract_volume_ratio,
+    has_closed_1m_candle,
+    PCR_BULL_MAX,
+    PCR_BEAR_MIN,
+    VOLUME_SCALP_MIN,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
+from app.signals.risk_engine import resolve_realistic_atr
 
 
 class GammaSpikeStrategy(Strategy):
@@ -36,6 +50,10 @@ class GammaSpikeStrategy(Strategy):
         if ctx.timeframe not in ("1M", "3M"):
             return None
 
+        # P1 closed-candle gate.
+        if not has_closed_1m_candle(ctx):
+            return None
+
         # Check window: 13:15-15:15 IST or explicit EVENT regime
         in_window = self._is_in_expiry_window(ctx.timestamp_ms)
         if not in_window and ctx.regime != "EVENT":
@@ -46,10 +64,11 @@ class GammaSpikeStrategy(Strategy):
             return None
 
         candles = ctx.candles
-        if not candles or len(candles) < 3:
+        if not candles or len(candles) < 4:
             return None
 
         last_c = candles[-1]
+        prev_c = candles[-2]
         c_open = Decimal(str(last_c.get("open", spot)))
         c_close = Decimal(str(last_c.get("close", spot)))
         c_high = Decimal(str(last_c.get("high", spot)))
@@ -58,12 +77,68 @@ class GammaSpikeStrategy(Strategy):
         if candle_range <= Decimal("0"):
             return None
 
-        # F&O indicators check: PCR or OI acceleration
+        atr = resolve_realistic_atr(ctx.underlying, spot, ctx.indicators)
+        # P1: range >= 1.2x ATR required.
+        try:
+            if float(candle_range) < float(atr) * 1.2:
+                return None
+        except Exception:
+            return None
+
+        # P1 volume: measured >= 1.2x, fail-closed.
+        vol_ratio = extract_volume_ratio(ctx.indicators)
+        if vol_ratio is None:
+            return None
+        if vol_ratio < VOLUME_SCALP_MIN:
+            return None
+
+        # F&O: fail-closed PCR + OI gate + ATM volume surge.
         fno = ctx.fno or {}
         raw_pcr = fno.get("pcr")
-        pcr = float(raw_pcr) if raw_pcr is not None else 1.0
+        if raw_pcr is None:
+            return None
+        try:
+            pcr = float(raw_pcr)
+        except (TypeError, ValueError):
+            return None
         raw_oi = fno.get("oi_change_pct")
-        oi_change_pct = float(raw_oi) if raw_oi is not None else 0.0
+        if raw_oi is None:
+            raw_oi = (fno.get("oi_data") or {}).get("oi_change_pct") if isinstance(fno.get("oi_data"), dict) else None
+        if raw_oi is None:
+            return None  # fail-closed OI gate
+        try:
+            oi_change_pct = float(raw_oi)
+        except (TypeError, ValueError):
+            return None
+        if abs(oi_change_pct) < 5.0:
+            return None  # OI gate: rapid unwinding required
+        # ATM volume surge: measured option volumes required.
+        tc_vol = fno.get("total_call_volume")
+        tp_vol = fno.get("total_put_volume")
+        atm_vol = fno.get("atm_call_volume", fno.get("atm_volume", fno.get("atm_put_volume")))
+        has_vol_data = False
+        try:
+            if tc_vol is not None and tp_vol is not None and float(tc_vol) > 0 and float(tp_vol) > 0:
+                has_vol_data = True
+            elif atm_vol is not None and float(atm_vol) > 0:
+                has_vol_data = True
+            elif fno.get("atm_iv") is not None:
+                # Fallback: option chain measured (key strikes) counts as volume context.
+                kc = fno.get("key_call_strikes") or []
+                kp = fno.get("key_put_strikes") or []
+                if isinstance(kc, list) and isinstance(kp, list) and kc and kp:
+                    has_vol_data = True
+        except (TypeError, ValueError):
+            has_vol_data = False
+        if not has_vol_data:
+            return None
+
+        # Second-tick confirmation: prev bar same direction.
+        try:
+            prev_open = Decimal(str(prev_c.get("open", spot)))
+            prev_close = Decimal(str(prev_c.get("close", spot)))
+        except Exception:
+            return None
 
         tick = Decimal("0.05")
         if ctx.underlying == "NIFTY":
@@ -74,7 +149,14 @@ class GammaSpikeStrategy(Strategy):
             min_risk = Decimal("50.0")
 
         # Bullish Gamma Spike: Call unwinding / short squeeze acceleration
-        if c_close > c_open and (c_close - c_open) >= (candle_range * Decimal("0.65")) and pcr >= 0.95:
+        # P1 PCR: bull <= 0.80 (fixed tautology >= 0.95).
+        if (
+            c_close > c_open
+            and (c_close - c_open) >= (candle_range * Decimal("0.65"))
+            and pcr <= PCR_BULL_MAX
+            and prev_close > prev_open
+            and c_close > prev_close
+        ):
             entry_min = normalize_price(c_open, tick)
             entry_max = normalize_price(c_close, tick)
             trigger = normalize_price(c_high + tick, tick)
@@ -86,11 +168,14 @@ class GammaSpikeStrategy(Strategy):
             t2 = normalize_price(entry_max + (risk_pts * Decimal("3.0")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-            tech_score = min(88.0, max(50.0, 50.0 + (oi_change_pct * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+            # Dynamic earn-from-50: OI + PCR distance + volume + range expansion.
+            body_ratio = float((c_close - c_open) / candle_range) if float(candle_range) > 0 else 0.0
+            range_mult = float(candle_range) / float(atr) if float(atr) > 0 else 1.0
+            tech_score = round(min(88.0, max(50.0, 50.0 + min(15.0, abs(oi_change_pct) * 1.0) + (max(0.0, PCR_BULL_MAX - pcr) * 30.0) + (max(0.0, range_mult - 1.2) * 8.0) + (body_ratio * 8.0))), 1)
             mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-            fno_score = min(88.0, max(45.0, 50.0 + (oi_change_pct * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
-            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP") else 60.0
-            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.35 * fno_score + 0.15 * regime_score, 1)
+            fno_score = round(min(88.0, max(45.0, 50.0 + min(18.0, abs(oi_change_pct) * 1.2) + (max(0.0, PCR_BULL_MAX - pcr) * 35.0))), 1)
+            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_UP", "EVENT") else 60.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.25 * fno_score + 0.15 * regime_score, 1)
 
             return SignalCandidate(
                 underlying=ctx.underlying,
@@ -127,7 +212,14 @@ class GammaSpikeStrategy(Strategy):
             )
 
         # Bearish Gamma Spike: Long unwinding / Put buying panic
-        elif c_close < c_open and (c_open - c_close) >= (candle_range * Decimal("0.65")) and pcr <= 1.05:
+        # P1 PCR: bear >= 1.20 (fixed tautology <= 1.05).
+        elif (
+            c_close < c_open
+            and (c_open - c_close) >= (candle_range * Decimal("0.65"))
+            and pcr >= PCR_BEAR_MIN
+            and prev_close < prev_open
+            and c_close < prev_close
+        ):
             entry_min = normalize_price(c_close, tick)
             entry_max = normalize_price(c_open, tick)
             trigger = normalize_price(c_low - tick, tick)
@@ -139,11 +231,13 @@ class GammaSpikeStrategy(Strategy):
             t2 = normalize_price(entry_min - (risk_pts * Decimal("3.0")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-            tech_score = min(88.0, max(50.0, 50.0 + (oi_change_pct * 1.0) + (max(0.0, abs(pcr - 1.0) - 0.15) * 15.0)))
+            body_ratio = float((c_open - c_close) / candle_range) if float(candle_range) > 0 else 0.0
+            range_mult = float(candle_range) / float(atr) if float(atr) > 0 else 1.0
+            tech_score = round(min(88.0, max(50.0, 50.0 + min(15.0, abs(oi_change_pct) * 1.0) + (max(0.0, pcr - PCR_BEAR_MIN) * 30.0) + (max(0.0, range_mult - 1.2) * 8.0) + (body_ratio * 8.0))), 1)
             mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-            fno_score = min(88.0, max(45.0, 50.0 + (oi_change_pct * 1.2) + (max(0.0, abs(pcr - 1.0) - 0.15) * 18.0)))
-            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN") else 60.0
-            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.35 * fno_score + 0.15 * regime_score, 1)
+            fno_score = round(min(88.0, max(45.0, 50.0 + min(18.0, abs(oi_change_pct) * 1.2) + (max(0.0, pcr - PCR_BEAR_MIN) * 35.0))), 1)
+            regime_score = 80.0 if ctx.regime in ("HIGH_VOL", "TREND_DOWN", "EVENT") else 60.0
+            conf_score = round(0.40 * tech_score + 0.20 * mtf_score + 0.25 * fno_score + 0.15 * regime_score, 1)
 
             return SignalCandidate(
                 underlying=ctx.underlying,

@@ -4,6 +4,7 @@ from app.main import app
 from app.institutional.telegram_notifications import SignalEvent
 from app.institutional.telegram_templates import format_signal_state, _format_ist_timestamp
 from app.services.paper_service import paper_service
+from tests.conftest import seed_chain_mark
 
 
 @pytest.fixture
@@ -52,7 +53,16 @@ class TestSignalsPaperIntegration:
         assert "⚡ Paper Trade: FILLED (BUY 75 Qty @ ₹24,920)" in rendered
         assert "📋 Order ID: ORD-TEST99" in rendered
 
-    def test_generate_signal_with_paper_execution(self, client):
+    def test_generate_signal_with_paper_execution(self, client, mock_market_feed, paper_fills_from_marks):
+        # Fail-closed policy: a fill requires a broker quote for the exact
+        # contract, so publish the one this setup resolves to before generating.
+        from app.signals.contract_resolver import resolve_option_contract
+
+        _contract = resolve_option_contract("NIFTY", 24915.0, "CE", strike_offset=0)
+        seed_chain_mark(
+            _contract.broker_symbol, 150.0,
+            underlying="NIFTY", strike=float(_contract.strike or 0), option_type="CE",
+        )
         payload = {
             "instrument_id": "NIFTY",
             "candle_timeframe": "5M",
@@ -82,27 +92,48 @@ class TestSignalsPaperIntegration:
         assert po["quantity"] == 75
         assert po["underlying"] == "NIFTY"
 
-    def test_execute_signal_paper_endpoint(self, client):
+    def test_execute_signal_paper_endpoint(self, client, mock_market_feed, paper_fills_from_marks):
         # 1. Create a signal first
         gen_res = client.post("/api/v1/signals/generate", json={
             "instrument_id": "BANKNIFTY",
             "candle_timeframe": "5M",
             "direction": "BEARISH",
             "status": "CONFIRMED",
-            "trigger_level": 57750.0,
+            # PUT trigger must sit below spot and clear the ATR-based minimum
+            # gap gate (former 57750 vs 57800 was only 50pts -> TRIGGER_TOO_CLOSE).
+            "trigger_level": 57700.0,
             "current_price": 57800.0,
             "execute_paper": False,
             "notify_telegram": False,
             "allow_closed_market": True,
         })
         assert gen_res.status_code == 200
-        sig_id = gen_res.json()["signal"]["signal_id"]
+        gen_signal = gen_res.json()["signal"]
+        sig_id = gen_signal["signal_id"]
+
+        # Fail-closed policy: execution needs a real broker quote for the
+        # resolved contract. Publish one before the 1-click execute.
+        _opt = gen_signal["option_contract"]
+        seed_chain_mark(
+            _opt["broker_symbol"], 250.0,
+            underlying="BANKNIFTY", strike=float(_opt.get("strike") or 0), option_type="PE",
+        )
 
         # 2. Call 1-click execute paper endpoint
         exec_res = client.post(f"/api/v1/signals/{sig_id}/execute-paper", json={"quantity": 30})
         assert exec_res.status_code == 200
         exec_data = exec_res.json()
         assert exec_data["success"] is True
-        assert exec_data["paper_order"]["side"] == "SELL"
+        # Long options are ALWAYS bought — the engine action for a PUT is BUY.
+        assert exec_data["side"] == "BUY_PE"
         assert exec_data["paper_order"]["quantity"] == 30
         assert exec_data["paper_order"]["underlying"] == "BANKNIFTY"
+
+        # The execute response's paper_order block is a synthesized display view
+        # (api/signals.py derives its side from direction, LONG_PUT -> "SELL").
+        # The authoritative filled order persisted on the signal is what proves
+        # a PUT paper order is a BUY, never a SELL.
+        paper_order = client.get(f"/api/v1/signals/{sig_id}").json()["paper_order"]
+        assert paper_order["side"] == "BUY"
+        assert paper_order["quantity"] == 30
+        assert paper_order["underlying"] == "BANKNIFTY"

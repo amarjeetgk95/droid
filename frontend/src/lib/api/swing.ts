@@ -184,6 +184,29 @@ export type Envelope<T> = {
 };
 
 export function createSwingApi(core: ApiCore) {
+  const triggerSwingScan = (payload?: {
+    portfolio_equity?: number;
+    force_refresh?: boolean;
+    limit_symbols?: string[];
+    horizon?: string;
+  }) =>
+    core.request<
+      Envelope<{
+        scan_timestamp_utc: number;
+        duration_seconds: number;
+        indices_scanned: number;
+        regime: any;
+        sectors: any[];
+        setups: SwingSetupDTO[];
+        open_positions: SwingPositionDTO[];
+        closed_positions_count: number;
+        portfolio_risk: PortfolioRiskDTO;
+      }>
+    >('/api/v1/swing/scan', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+
   return {
     async getSwingUniverse() {
       return core.request<
@@ -257,29 +280,9 @@ export function createSwingApi(core: ApiCore) {
       >(`/api/v1/swing/setups${queryStr}`);
     },
 
-    async triggerSwingScan(payload?: {
-      portfolio_equity?: number;
-      force_refresh?: boolean;
-      limit_symbols?: string[];
-      horizon?: string;
-    }) {
-      return core.request<
-        Envelope<{
-          scan_timestamp_utc: number;
-          duration_seconds: number;
-          indices_scanned: number;
-          regime: any;
-          sectors: any[];
-          setups: SwingSetupDTO[];
-          open_positions: SwingPositionDTO[];
-          closed_positions_count: number;
-          portfolio_risk: PortfolioRiskDTO;
-        }>
-      >('/api/v1/swing/scan', {
-        method: 'POST',
-        body: JSON.stringify(payload || {}),
-      });
-    },
+    triggerSwingScan,
+
+    scanSwingSetups: triggerSwingScan,
 
     async getSwingPositions() {
       return core.request<

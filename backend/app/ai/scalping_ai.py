@@ -27,6 +27,7 @@ from app.ai.output_validator import ai_output_validator
 from app.ai.signal_scorer import signal_scorer
 from app.ai.context_builder import market_context_builder
 from app.ai.provider_manager import provider_manager
+from app.ai.prompt_registry import prompt_registry
 
 logger = structlog.get_logger()
 
@@ -36,31 +37,7 @@ SCALPING_MIN_TTL = 15
 SCALPING_MAX_TTL = 120
 SCALPING_HARD_MAX_TTL = 180
 
-SCALPING_PROMPT = """You are DROID Scalping AI, a high-frequency momentum analysis engine.
-
-Analyze the current market context and respond with ONLY valid JSON:
-{
-  "decision": "LONG|SHORT|NO_TRADE",
-  "setup_type": "BREAKOUT|MOMENTUM|PULLBACK|MEAN_REVERSION|CONTINUATION|REVERSAL|NO_SETUP",
-  "confidence": 0-100,
-  "entry": price,
-  "stop_loss": price,
-  "target": price,
-  "ttl_seconds": 15-120,
-  "regime": "TREND|RANGE|BREAKOUT|REVERSAL|HIGH_VOLATILITY|LOW_VOLATILITY",
-  "reasons": ["tag1", "tag2"],
-  "invalidation": ["condition1"]
-}
-
-Rules:
-- Decision must be LONG or SHORT or NO_TRADE only
-- For LONG/SHORT: entry/stop_loss/target must be > 0, stop loss must be on correct side of entry, target must be on correct side of entry
-- For NO_TRADE: use setup_type NO_SETUP and entry/stop_loss/target 0 (no prices — never invent a price when there is no setup)
-- ttl_seconds must be 15-120
-- Reasons must be short tags, not prose
-- If no clear setup, return NO_TRADE
-- Never fabricate prices; use only provided context
-"""
+SCALPING_SYSTEM_PROMPT = prompt_registry.get("scalping").system_prompt
 
 
 class InFlightRequest:
@@ -153,7 +130,7 @@ class ScalpingAI:
             start = time.perf_counter()
             try:
                 raw_response = await asyncio.wait_for(
-                    provider.generate_analysis(symbol, SCALPING_PROMPT, prompt),
+                    provider.generate_analysis(symbol, SCALPING_SYSTEM_PROMPT, prompt),
                     timeout=timeout_ms / 1000.0,
                 )
                 provider_latency_ms = int((time.perf_counter() - start) * 1000)

@@ -2,22 +2,20 @@
 
 import { useState } from 'react';
 import {
-  TrendingUp,
-  TrendingDown,
   Shield,
-  Target,
   Clock,
   Sparkles,
   CheckCircle2,
   AlertTriangle,
   Play,
   Bot,
-  Info,
-  Layers,
   Activity,
 } from 'lucide-react';
 import type { SwingSetupDTO } from '@/lib/api/swing';
 import { SwingAIThesisModal } from './SwingAIThesisModal';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { useToast } from '@/components/ui/toast';
+import { fmtINR, fmtNum } from '@/components/ui/desk';
 
 export type SwingSetupCardProps = {
   setup: SwingSetupDTO;
@@ -25,40 +23,63 @@ export type SwingSetupCardProps = {
 };
 
 export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
+  const toast = useToast();
   const [showThesis, setShowThesis] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [entering, setEntering] = useState(false);
   const [entered, setEntered] = useState(setup.signal_state === 'ENTERED');
+  const [enterError, setEnterError] = useState<string | null>(null);
 
-  const handleEnter = async () => {
-    if (!onEnterTrade || entered) return;
+  const entryPremium = Number.isFinite(setup.entry_premium) ? setup.entry_premium : null;
+
+  const handleConfirmEntry = async () => {
+    if (!onEnterTrade || entryPremium === null) return;
     setEntering(true);
+    setEnterError(null);
     try {
-      await onEnterTrade(setup.setup_id, setup.entry_premium);
+      await onEnterTrade(setup.setup_id, entryPremium);
       setEntered(true);
-    } catch {
-      // Error handled by parent hook
+      toast.success(
+        `Position entered — ${setup.underlying} ${setup.strike} ${setup.option_type}`,
+        `${fmtINR(entryPremium)} · ${setup.strategy.replace(/_/g, ' ')}`,
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Entry failed — no position was created.';
+      setEnterError(message);
+      // Re-throw so the confirmation dialog surfaces the failure and stays open.
+      throw err instanceof Error ? err : new Error(message);
     } finally {
       setEntering(false);
     }
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 75) return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/30';
-    if (score >= 60) return 'text-sky-500 bg-sky-500/10 border-sky-500/30';
-    if (score >= 45) return 'text-amber-500 bg-amber-500/10 border-amber-500/30';
+    if (score >= 75) return 'text-up bg-up/10 border-up/30';
+    if (score >= 60) return 'text-accent bg-accent/10 border-accent/30';
+    if (score >= 45) return 'text-warn bg-warn/10 border-warn/30';
     return 'text-muted-foreground bg-muted/40 border-border';
   };
+
+  const scoreTotal = Number.isFinite(setup.score?.total) ? setup.score.total : null;
+  const scoreLabel = scoreTotal === null ? '—' : String(Math.round(scoreTotal));
+  const scoreClass =
+    scoreTotal === null ? 'text-muted-foreground bg-muted/40 border-border' : getScoreColor(scoreTotal);
 
   const getStateBadge = (state: string) => {
     switch (state) {
       case 'TRIGGERED':
-        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 animate-pulse">TRIGGERED</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-up/20 text-up border border-up/30">TRIGGERED</span>;
       case 'READY':
-        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30">READY</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-accent/20 text-accent border border-accent/30">READY</span>;
       case 'ENTERED':
-        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">ACTIVE</span>;
+        // Informational, like READY: an open position is neither bullish news
+        // nor a block.
+        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-accent/20 text-accent border border-accent/30">ACTIVE</span>;
       case 'BLOCKED':
-        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30">BLOCKED</span>;
+        return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-down/20 text-down border border-down/30">BLOCKED</span>;
       default:
         return <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-muted text-muted-foreground border border-border">RADAR</span>;
     }
@@ -68,32 +89,31 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
   const delta = setup.greeks?.delta ?? 0;
   const thetaDay = setup.greeks?.theta_day ?? 0;
   const vega = setup.greeks?.vega ?? 0;
-  const ivPct = (setup.iv * 100).toFixed(1);
+  const ivPct = Number.isFinite(setup.iv) ? fmtNum(setup.iv * 100, 1) : null;
+  const ivRank = Number.isFinite(setup.iv_percentile) ? fmtNum(setup.iv_percentile, 0) : null;
+  const thetaDrag = Number.isFinite(setup.theta_drag_ratio) ? fmtNum(setup.theta_drag_ratio, 1) : '—';
   const validity = setup.trade_validity;
+  const entryAllowed = setup.signal_state !== 'BLOCKED' && setup.trade_validity?.overall_valid !== false;
 
   return (
     <>
-      <div className="flex flex-col rounded-xl border border-border bg-card text-card-foreground shadow-xs hover:border-border/80 transition-all overflow-hidden">
+      <div className="flex flex-col rounded-md border border-border bg-card text-card-foreground overflow-hidden">
         {/* Card Header */}
-        <div className="p-4 border-b border-border/60 bg-muted/20">
+        <div className="p-3 border-b border-border/60 bg-muted/20">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-base font-bold tracking-tight text-foreground">{setup.underlying}</span>
+                <span className="text-[15px] font-semibold tracking-normal text-foreground num">{setup.underlying}</span>
                 {setup.horizon === 'INTRADAY' ? (
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-amber-500/15 text-amber-500 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
-                    <span>⚡</span> INTRADAY ({setup.timeframe || '15M'})
+                  <span className="chip chip--warn">
+                    Intraday · {setup.timeframe || '15m'}
                   </span>
                 ) : (
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-sky-500/10 text-sky-500 dark:text-sky-400 border border-sky-500/30 flex items-center gap-1">
-                    <span>📅</span> POSITIONAL (1D)
+                  <span className="chip chip--info">
+                    Positional · 1D
                   </span>
                 )}
-                <span className={`px-2 py-0.5 text-[11px] font-bold rounded-md border ${
-                  isCall
-                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
-                    : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
-                }`}>
+                <span className={`chip ${isCall ? 'chip--up' : 'chip--down'} num`}>
                   {setup.strike} {setup.option_type}
                 </span>
                 <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
@@ -105,10 +125,10 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
                 <span>{setup.strategy.replace(/_/g, ' ')}</span>
                 <span>•</span>
                 <span className="font-mono">Lot: {setup.lot_size}</span>
-                {setup.vwap && (
+                {Number.isFinite(setup.vwap) && (
                   <>
                     <span>•</span>
-                    <span className="font-mono text-primary/80">VWAP: ₹{setup.vwap.toFixed(1)}</span>
+                    <span className="font-mono text-primary/80">VWAP: {fmtINR(setup.vwap)}</span>
                   </>
                 )}
               </div>
@@ -116,8 +136,8 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
 
             {/* Quality Score */}
             <div className="flex flex-col items-end shrink-0">
-              <div className={`px-2.5 py-0.5 rounded-lg border font-mono font-bold text-sm ${getScoreColor(setup.score.total)}`}>
-                {Math.round(setup.score.total)}
+              <div className={`px-2.5 py-0.5 rounded-lg border font-mono font-bold text-sm ${scoreClass}`}>
+                {scoreLabel}
                 <span className="text-[10px] font-normal opacity-70">/100</span>
               </div>
               <span className="text-[9px] text-muted-foreground mt-0.5">Setup Quality</span>
@@ -129,20 +149,20 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
             <div className="mt-2.5 pt-2 border-t border-border/40 flex items-center justify-between text-[10px]">
               <span className="text-muted-foreground font-medium">4-Layer Gate:</span>
               <div className="flex items-center gap-2">
-                <span className={`flex items-center gap-1 font-mono ${validity.underlying_valid ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${validity.underlying_valid ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <span className={`flex items-center gap-1 font-mono ${validity.underlying_valid ? 'text-up' : 'text-down'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${validity.underlying_valid ? 'bg-up' : 'bg-down'}`} />
                   Underlying
                 </span>
-                <span className={`flex items-center gap-1 font-mono ${validity.option_valid ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${validity.option_valid ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <span className={`flex items-center gap-1 font-mono ${validity.option_valid ? 'text-up' : 'text-down'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${validity.option_valid ? 'bg-up' : 'bg-down'}`} />
                   Option
                 </span>
-                <span className={`flex items-center gap-1 font-mono ${validity.portfolio_valid ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${validity.portfolio_valid ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <span className={`flex items-center gap-1 font-mono ${validity.portfolio_valid ? 'text-up' : 'text-down'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${validity.portfolio_valid ? 'bg-up' : 'bg-down'}`} />
                   Portfolio
                 </span>
-                <span className={`flex items-center gap-1 font-mono ${validity.execution_valid ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${validity.execution_valid ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <span className={`flex items-center gap-1 font-mono ${validity.execution_valid ? 'text-up' : 'text-down'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${validity.execution_valid ? 'bg-up' : 'bg-down'}`} />
                   Execution
                 </span>
               </div>
@@ -155,20 +175,20 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
           <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
             <div>
               <div className="text-muted-foreground text-[10px] uppercase font-semibold">Entry Premium</div>
-              <div className="font-semibold text-foreground text-sm font-mono">₹{setup.entry_premium.toFixed(2)}</div>
-              <div className="text-[10px] text-muted-foreground">Spot: ₹{setup.spot_price.toFixed(1)}</div>
+              <div className="font-semibold text-foreground text-sm font-mono">{fmtINR(setup.entry_premium)}</div>
+              <div className="text-[10px] text-muted-foreground">Spot: {fmtINR(setup.spot_price)}</div>
             </div>
 
             <div>
               <div className="text-muted-foreground text-[10px] uppercase font-semibold">Option Stop</div>
-              <div className="font-semibold text-destructive text-sm font-mono">₹{setup.stop_premium.toFixed(2)}</div>
-              <div className="text-[10px] text-destructive/80 font-mono">Spot Inv: ₹{setup.spot_stop.toFixed(1)}</div>
+              <div className="font-semibold text-destructive text-sm font-mono">{fmtINR(setup.stop_premium)}</div>
+              <div className="text-[10px] text-destructive/80 font-mono">Spot Inv: {fmtINR(setup.spot_stop)}</div>
             </div>
 
             <div>
               <div className="text-muted-foreground text-[10px] uppercase font-semibold">Targets (1.5R / 3R)</div>
-              <div className="font-semibold text-emerald-500 text-sm font-mono">₹{setup.target_premium_1.toFixed(2)}</div>
-              <div className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 font-mono">T2: ₹{setup.target_premium_2.toFixed(2)}</div>
+              <div className="font-semibold text-up text-sm font-mono">{fmtINR(setup.target_premium_1)}</div>
+              <div className="text-[10px] text-up/80 font-mono">T2: {fmtINR(setup.target_premium_2)}</div>
             </div>
           </div>
 
@@ -176,19 +196,21 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
           <div className="grid grid-cols-4 gap-1 p-2 rounded-lg bg-background border border-border/60 text-[11px] text-center font-mono">
             <div>
               <span className="text-muted-foreground text-[9px] block uppercase font-sans">Delta (Δ)</span>
-              <span className="font-semibold text-foreground">{delta.toFixed(2)}</span>
+              <span className="font-semibold text-foreground">{fmtNum(delta)}</span>
             </div>
             <div>
               <span className="text-muted-foreground text-[9px] block uppercase font-sans">Theta (Θ/d)</span>
-              <span className="font-semibold text-rose-500">-₹{Math.abs(thetaDay).toFixed(1)}</span>
+              <span className="font-semibold text-down">-{fmtINR(Math.abs(thetaDay))}</span>
             </div>
             <div>
               <span className="text-muted-foreground text-[9px] block uppercase font-sans">Vega (ν)</span>
-              <span className="font-semibold text-foreground">₹{vega.toFixed(1)}</span>
+              <span className="font-semibold text-foreground">{fmtINR(vega)}</span>
             </div>
             <div>
               <span className="text-muted-foreground text-[9px] block uppercase font-sans">IV (Rank)</span>
-              <span className="font-semibold text-sky-500">{ivPct}% ({setup.iv_percentile.toFixed(0)}%)</span>
+              <span className="font-semibold text-accent">
+                {ivPct === null ? '—' : `${ivPct}%`} ({ivRank === null ? '—' : `${ivRank}%`})
+              </span>
             </div>
           </div>
 
@@ -196,15 +218,15 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
           <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
             <div className="flex items-center gap-1">
               <Shield className="w-3.5 h-3.5 text-primary" />
-              <span>Risk/Lot: <strong className="text-foreground font-mono">₹{Math.round(setup.premium_risk_per_lot)}</strong></span>
+              <span>Risk/Lot: <strong className="text-foreground font-mono">{fmtINR(setup.premium_risk_per_lot)}</strong></span>
             </div>
             <div className="flex items-center gap-1">
               <Clock className="w-3.5 h-3.5 text-muted-foreground" />
               <span>Hold: <strong className="text-foreground">{setup.horizon === 'INTRADAY' ? 'Intraday (15:15)' : `${setup.expected_holding_days}d`}</strong></span>
             </div>
             <div className="flex items-center gap-1">
-              <Activity className="w-3.5 h-3.5 text-amber-500" />
-              <span>Theta Drag: <strong className="text-foreground font-mono">{setup.theta_drag_ratio.toFixed(1)}%</strong></span>
+              <Activity className="w-3.5 h-3.5 text-warn" />
+              <span>Theta Drag: <strong className="text-foreground font-mono">{thetaDrag}%</strong></span>
             </div>
           </div>
 
@@ -214,15 +236,15 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
               Thesis & Volatility Check
             </div>
             <div className="space-y-1 text-[11px] text-foreground/90">
-              {setup.technical_reasons.slice(0, 1).map((r, idx) => (
+              {(setup.technical_reasons ?? []).slice(0, 1).map((r, idx) => (
                 <div key={idx} className="flex items-start gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-up shrink-0 mt-0.5" />
                   <span className="line-clamp-1">{r}</span>
                 </div>
               ))}
-              {setup.options_reasons.slice(0, 1).map((r, idx) => (
+              {(setup.options_reasons ?? []).slice(0, 1).map((r, idx) => (
                 <div key={idx} className="flex items-start gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
+                  <Sparkles className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
                   <span className="line-clamp-1">{r}</span>
                 </div>
               ))}
@@ -230,33 +252,90 @@ export function SwingSetupCard({ setup, onEnterTrade }: SwingSetupCardProps) {
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-2 border-t border-border/50 flex items-center gap-2">
-            <button
-              onClick={() => setShowThesis(true)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg border border-border bg-background hover:bg-muted text-foreground text-xs font-medium transition-colors"
-            >
-              <Bot className="w-3.5 h-3.5 text-primary" />
-              <span>AI Thesis</span>
-            </button>
-
-            {setup.signal_state !== 'BLOCKED' && setup.trade_validity?.overall_valid !== false ? (
+          <div className="pt-2 border-t border-border/50 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
               <button
-                onClick={handleEnter}
-                disabled={entering || entered}
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-medium transition-colors disabled:opacity-50"
+                onClick={() => setShowThesis(true)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg border border-border bg-background hover:bg-muted text-foreground text-xs font-medium transition-colors"
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>{entered ? 'In Portfolio' : entering ? 'Entering...' : 'Enter Position'}</span>
+                <Bot className="w-3.5 h-3.5 text-primary" />
+                <span>AI Thesis</span>
               </button>
-            ) : (
-              <div className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-rose-500/10 text-rose-500 text-[11px] font-medium border border-rose-500/20">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>Blocked by Risk Gate</span>
-              </div>
+
+              {entryAllowed ? (
+                <button
+                  onClick={() => setConfirmOpen(true)}
+                  disabled={entering || entered || entryPremium === null}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>
+                    {entered
+                      ? 'In Portfolio'
+                      : entering
+                        ? 'Entering...'
+                        : entryPremium === null
+                          ? 'Premium Unavailable'
+                          : 'Enter Position'}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-down/10 text-down text-[11px] font-medium border border-down/20">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Blocked by Risk Gate</span>
+                </div>
+              )}
+            </div>
+
+            {enterError && (
+              <p role="alert" className="text-[11px] text-down font-mono">
+                Entry failed: {enterError}
+              </p>
             )}
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirmEntry}
+        title={`Enter ${setup.underlying} ${setup.strike} ${setup.option_type}`}
+        confirmLabel="Enter Position"
+        destructive={false}
+        message={
+          <div className="space-y-2">
+            <p>
+              Submit this long options swing position? The server revalidates the 4-layer gate
+              and the portfolio risk ceiling on submission.
+            </p>
+            <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 font-mono text-[11px]">
+              <div className="flex justify-between gap-3 py-0.5">
+                <span className="text-muted-foreground">Contract</span>
+                <span className="text-foreground">{setup.contract_symbol}</span>
+              </div>
+              <div className="flex justify-between gap-3 py-0.5">
+                <span className="text-muted-foreground">Entry premium</span>
+                <span className="text-foreground">{fmtINR(entryPremium)}</span>
+              </div>
+              <div className="flex justify-between gap-3 py-0.5">
+                <span className="text-muted-foreground">Option stop</span>
+                <span className="text-foreground">{fmtINR(setup.stop_premium)}</span>
+              </div>
+              <div className="flex justify-between gap-3 py-0.5">
+                <span className="text-muted-foreground">Targets</span>
+                <span className="text-foreground">
+                  {fmtINR(setup.target_premium_1)} / {fmtINR(setup.target_premium_2)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3 py-0.5">
+                <span className="text-muted-foreground">Risk per lot</span>
+                <span className="text-foreground">{fmtINR(setup.premium_risk_per_lot)}</span>
+              </div>
+            </div>
+          </div>
+        }
+      />
 
       <SwingAIThesisModal
         setup={setup}

@@ -1,20 +1,96 @@
 """
 Strategy I2 — VOLATILITY_BREAKOUT (§11, §12).
 Captures genuine volatility expansion following compression.
-Requires:
-  1. Compression state (ATR contraction or Bollinger squeeze)
-  2. Range/candle-body expansion
-  3. Structural break of key resistance / support
-  4. Volume/participation expansion
+Requires (P1 overhaul):
+  1. Compression/squeeze state (BB bandwidth percentile or 3-bar ATR
+     contraction, or COMPRESSION_SQUEEZE regime) — fail-closed if absent.
+  2. Range/candle-body expansion.
+  3. Structural CLOSE beyond key resistance/support (not intrabar spot touch).
+  4. Measured volume expansion vol_ratio >= 1.5x — fail-closed if missing.
+  5. Breakout pressure measured — fail-closed if missing.
 Desk: INTRADAY (5M / 15M / 1H)
+Single logic for BREAKOUT alias (see strategies/__init__.py).
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    extract_volume_ratio,
+    extract_breakout_pressure,
+    VOLUME_BREAKOUT_MIN,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
+
+
+def _has_squeeze(ctx: StrategyContext, ind: dict, candles: list[dict], atr: Decimal) -> bool:
+    """P1 squeeze gate: BB bandwidth percentile or 3-bar ATR contraction."""
+    if ctx.regime == "COMPRESSION_SQUEEZE":
+        return True
+    # Explicit squeeze flags / bandwidth percentile when provided.
+    for key in ("squeeze", "compression", "bb_squeeze"):
+        if ind.get(key) is True:
+            return True
+    vol = ind.get("volatility", {}) if isinstance(ind.get("volatility"), dict) else {}
+    bb = ind.get("bollinger_bands") or {}
+    bw_pct = (
+        ind.get("bollinger_bandwidth_percentile")
+        or ind.get("bb_bandwidth_percentile")
+        or (vol.get("bandwidth_percentile") if isinstance(vol, dict) else None)
+        or (bb.get("bandwidth_percentile") if isinstance(bb, dict) else None)
+    )
+    if bw_pct is not None:
+        try:
+            if float(bw_pct) < 40.0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    bw = (
+        ind.get("bollinger_bandwidth")
+        or ind.get("bb_bandwidth")
+        or (vol.get("bandwidth") if isinstance(vol, dict) else None)
+        or (bb.get("bandwidth") if isinstance(bb, dict) else None)
+    )
+    if bw is not None:
+        try:
+            # Bandwidth < 2% of spot counts as squeeze.
+            spot_f = float(ctx.spot_price)
+            if spot_f > 0 and float(bw) < 0.02 * spot_f:
+                return True
+        except (TypeError, ValueError):
+            pass
+    # 3-bar ATR contraction fallback: prior 3 ranges compressed vs older baseline.
+    try:
+        atr_f = float(atr)
+    except Exception:
+        atr_f = 0.0
+    if len(candles) >= 7:
+        try:
+            prior3 = [float(c.get("high", 0)) - float(c.get("low", 0)) for c in candles[-4:-1]]
+            older3 = [float(c.get("high", 0)) - float(c.get("low", 0)) for c in candles[-7:-4]]
+            if prior3 and older3:
+                avg_prior = sum(prior3) / len(prior3)
+                avg_older = sum(older3) / len(older3)
+                if avg_older > 0 and avg_prior < avg_older * 0.90:
+                    return True
+                if atr_f > 0 and avg_prior < atr_f * 1.0:
+                    return True
+        except Exception:
+            pass
+    elif len(candles) >= 4:
+        try:
+            recent = [float(c.get("high", 0)) - float(c.get("low", 0)) for c in candles[-4:-1]]
+            if recent:
+                avg_r = sum(recent) / len(recent)
+                if atr_f > 0 and avg_r < atr_f * 1.0:
+                    return True
+        except Exception:
+            pass
+    return False
 
 
 class VolatilityBreakoutStrategy(Strategy):
@@ -35,8 +111,13 @@ class VolatilityBreakoutStrategy(Strategy):
 
         tick = Decimal("0.05")
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
-        vol_ratio = float(ind.get("volume_ratio") or ind.get("volume", {}).get("relative_volume") or 1.2)
-        breakout_pressure = float(ind.get("breakout_pressure") or ind.get("scores", {}).get("breakout_pressure") or 65.0)
+        # P1 fail-closed: no synthetic vol/pressure defaults.
+        vol_ratio = extract_volume_ratio(ind)
+        if vol_ratio is None:
+            return None
+        breakout_pressure = extract_breakout_pressure(ind)
+        if breakout_pressure is None:
+            return None
         mtf_bias = str(ctx.mtf.get("overall_bias", "NEUTRAL")).upper()
 
         sr = ind.get("support_resistance", {})
@@ -60,7 +141,15 @@ class VolatilityBreakoutStrategy(Strategy):
             except Exception:
                 pass
 
-        # Check compression: bandwidth < 0.02 or recent narrow candles
+        # Fail-closed if S/R missing.
+        if not resistances and not supports:
+            return None
+
+        # P1 squeeze gate (required).
+        if not _has_squeeze(ctx, ind, candles, atr):
+            return None
+
+        # Check compression baseline for expansion measurement.
         recent_ranges = [float(c.get("high", 0)) - float(c.get("low", 0)) for c in candles[-4:-1]]
         avg_recent_range = sum(recent_ranges) / max(1, len(recent_ranges))
         last_c = candles[-1]
@@ -70,17 +159,21 @@ class VolatilityBreakoutStrategy(Strategy):
         c_close = Decimal(str(last_c.get("close", spot)))
         curr_range = float(c_high - c_low)
 
-        # Expansion condition: current candle range >= 1.1x average prior range, or volume ratio >= 1.25
-        is_expanding = curr_range >= (avg_recent_range * 1.10) or vol_ratio >= 1.25
+        # Expansion condition: current candle range >= 1.1x average prior range.
+        is_expanding = curr_range >= (avg_recent_range * 1.10)
+        # P1: measured volume >= 1.5x required (no pressure-only bypass).
+        if vol_ratio < VOLUME_BREAKOUT_MIN:
+            return None
         if not is_expanding and breakout_pressure < 68:
             return None
 
         min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
 
-        # ── BULLISH VOLATILITY BREAKOUT ──
+        # ── BULLISH VOLATILITY BREAKOUT (requires CLOSE beyond level) ──
         if resistances:
             key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
-            if (spot >= key_res or breakout_pressure >= 68) and mtf_bias != "BEARISH" and c_close >= c_open:
+            # P1: close-beyond gate — intrabar spot touch is not enough.
+            if c_close >= key_res and mtf_bias != "BEARISH" and c_close >= c_open:
                 if spot < key_res:
                     trigger = normalize_price(key_res + min_gap, tick)
                     if trigger <= spot or abs(trigger - spot) < min_gap:
@@ -149,10 +242,10 @@ class VolatilityBreakoutStrategy(Strategy):
                         option_contract=contract,
                     )
 
-        # ── BEARISH VOLATILITY BREAKDOWN ──
+        # ── BEARISH VOLATILITY BREAKDOWN (requires CLOSE beyond level) ──
         if supports:
             key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if (spot <= key_sup or breakout_pressure >= 68) and mtf_bias != "BULLISH" and c_close <= c_open:
+            if c_close <= key_sup and mtf_bias != "BULLISH" and c_close <= c_open:
                 if spot > key_sup:
                     trigger = normalize_price(key_sup - min_gap, tick)
                     if trigger >= spot or abs(spot - trigger) < min_gap:

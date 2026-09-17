@@ -14,13 +14,20 @@ def test_flow_as_of_is_pit_safe():
     fresh = InstitutionalFlowStore()
     assert fresh.as_of(early) is None
     # After window -> latest row only, pit_ok, futures UNAVAILABLE.
+    # Fail-closed on staleness: history (2026-09-11) is fresh for 2026-09-13;
+    # a seed-only store (2026-08-29) is >5 days stale and must return None.
     late = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
     snap = fresh.as_of(late)
-    assert snap is not None and snap.pit_ok is True
-    # With history file: 2026-09-11; seed-only fallback: 2026-08-29.
-    assert snap.event_date in ("2026-09-11", "2026-08-29")
-    assert snap.futures_status == "UNAVAILABLE"
-    assert snap.live_available is False
+    from pathlib import Path as _P
+    _hist = _P(__file__).resolve().parents[1] / "data" / "fii_dii_history.json"
+    if _hist.exists():
+        assert snap is not None and snap.pit_ok is True
+        # With history file: 2026-09-11; seed-only fallback: 2026-08-29.
+        assert snap.event_date in ("2026-09-11", "2026-08-29")
+        assert snap.futures_status == "UNAVAILABLE"
+        assert snap.live_available is False
+    else:
+        assert snap is None
 
 
 def test_flow_history_loaded_when_present():

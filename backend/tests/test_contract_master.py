@@ -1,6 +1,8 @@
 from datetime import date
+
 from app.services.contract_master import ContractMasterService
 from app.models.contracts import ContractType, OptionType, ExpiryType
+from app.signals.contract_resolver import INDEX_CONTRACT_CONFIGS
 
 
 class TestContractMasterService:
@@ -28,7 +30,10 @@ class TestContractMasterService:
         spot = self.cms.get_by_token("NIFTY_INDEX")
         assert spot is not None
         assert spot.symbol == "NIFTY 50"
-        assert spot.lot_size == 25
+        # Asserted against the execution layer's config rather than a literal:
+        # contract_master and the signal stack must agree on lot size or real
+        # positions get mis-sized. A hard-coded number here just drifts.
+        assert spot.lot_size == INDEX_CONTRACT_CONFIGS["NIFTY"]["lot_size"]
 
     def test_option_strikes_and_types(self):
         # Bootstrap has no fake strikes; sync live FYERS strikes then verify.
@@ -51,4 +56,4 @@ class TestContractMasterService:
     def test_banknifty_lot_size(self):
         spot = self.cms.get_by_token("BANKNIFTY_INDEX")
         assert spot is not None
-        assert spot.lot_size == 15
+        assert spot.lot_size == INDEX_CONTRACT_CONFIGS["BANKNIFTY"]["lot_size"]

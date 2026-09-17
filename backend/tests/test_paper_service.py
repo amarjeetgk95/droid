@@ -11,7 +11,10 @@ def _open_market(mock_market_open):
 
 class TestPaperTradingService:
     @pytest.mark.asyncio
-    async def test_place_single_order_and_position(self):
+    async def test_place_single_order_and_position(self, paper_fills_from_marks):
+        from tests.conftest import seed_chain_mark
+
+        seed_chain_mark("NIFTY24800CE", 150.0, underlying="NIFTY", strike=24800, option_type="CE")
         service = PaperTradingService()
         order_payload = OrderPayload(
             symbol="NIFTY24800CE",
@@ -25,12 +28,10 @@ class TestPaperTradingService:
         order = await service.place_order(order_payload)
 
         assert order.status == "FILLED"
-        # Industrial fill: MARKET prefers the live quote (LIVE + friction)
-        # and only honors the caller price as flagged CLIENT_FALLBACK when
-        # live is unavailable. Either way the fill must be positive and the
-        # position must track the actual fill — never a silent client price.
+        # Fail-closed fill: MARKET requires a live chain quote (LIVE + friction).
+        # No live = REJECTED, never a silent client-price fill.
         assert order.fill_price is not None and order.fill_price > 0
-        assert order.fill_source in ("LIVE", "CLIENT_FALLBACK", "LIMIT", "CLOSE_FALLBACK", None)
+        assert order.fill_source in ("LIVE", "LIMIT", "CLOSE_FALLBACK", None)
 
         positions = await service.get_positions()
         assert len(positions) == 1
@@ -43,7 +44,11 @@ class TestPaperTradingService:
         assert summary.used_margin > 0
 
     @pytest.mark.asyncio
-    async def test_basket_order_and_square_off(self):
+    async def test_basket_order_and_square_off(self, paper_fills_from_marks):
+        from tests.conftest import seed_chain_mark
+
+        seed_chain_mark("NIFTY24800CE", 150.0, underlying="NIFTY", strike=24800, option_type="CE")
+        seed_chain_mark("NIFTY25000CE", 60.0, underlying="NIFTY", strike=25000, option_type="CE")
         service = PaperTradingService()
         basket = BasketOrderPayload(
             name="Bull Call Spread",
@@ -68,7 +73,10 @@ class TestPaperTradingService:
         assert summary.open_positions_count == 0
 
     @pytest.mark.asyncio
-    async def test_reset_portfolio(self):
+    async def test_reset_portfolio(self, paper_fills_from_marks):
+        from tests.conftest import seed_chain_mark
+
+        seed_chain_mark("NIFTY24800CE", 100.0, underlying="NIFTY", strike=24800, option_type="CE")
         service = PaperTradingService()
         await service.place_order(OrderPayload(symbol="NIFTY24800CE", underlying="NIFTY", side="BUY", quantity=75, price=100.0))
         summary = service.reset_portfolio()

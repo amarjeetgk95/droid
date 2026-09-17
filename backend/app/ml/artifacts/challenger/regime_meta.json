@@ -1,0 +1,19 @@
+{
+  "model_version": "regime_v1_challenger",
+  "feature_schema": "f28-v3",
+  "label_schema": "regime_6class_v1",
+  "dataset_version": "candidates_v3",
+  "n_train": 1335,
+  "n_val": 334,
+  "validation_accuracy": 1.0,
+  "validation_log_loss": 4.749,
+  "trained_at_utc": "2026-09-17T11:45:13.781051+00:00",
+  "classes": [
+    "TREND_UP",
+    "TREND_DOWN",
+    "RANGE",
+    "HIGH_VOL",
+    "LOW_VOL",
+    "VOL_EXPANSION"
+  ]
+}

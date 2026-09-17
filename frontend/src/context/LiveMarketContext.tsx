@@ -58,6 +58,20 @@ function applyClosedStatus(list: IndexCard[], isMarketClosed: boolean): IndexCar
   return changed ? next : list;
 }
 
+function findMatchingTick(cardSymbol: string, ticks: Record<string, TimestampedTick>): TimestampedTick | undefined {
+  if (!ticks || !cardSymbol) return undefined;
+  if (ticks[cardSymbol]) return ticks[cardSymbol];
+  const cleanCard = cardSymbol.replace(/^(NSE|BSE):/i, '').replace(/(-INDEX|_INDEX)$/i, '').replace(/\s*50$/, '').trim().toUpperCase();
+  for (const [sym, tick] of Object.entries(ticks)) {
+    if (!tick) continue;
+    const cleanSym = sym.replace(/^(NSE|BSE):/i, '').replace(/(-INDEX|_INDEX)$/i, '').replace(/\s*50$/, '').trim().toUpperCase();
+    if (cleanCard === cleanSym || cleanCard.replace(/\s+/g, '') === cleanSym.replace(/\s+/g, '')) {
+      return tick;
+    }
+  }
+  return undefined;
+}
+
 function mergeTickIntoCard(card: IndexCard, tick: TimestampedTick | undefined, targetStatus: DataStatus): IndexCard {
   if (!tick) return card.status !== targetStatus ? { ...card, status: targetStatus } : card;
   const newLtp = Number(tick.ltp);
@@ -91,17 +105,22 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
   const market = useOptionalMarketDataContext();
   const { ticks: rawTicks, lastTickAt } = useMarketTicks();
   const baseCards = market?.cards ?? EMPTY_CARDS;
-  const loading = market?.loading ?? true;
+  // No upstream provider (unsupported nesting) means nothing is loading —
+  // defaulting to `true` would strand consumers on a permanent skeleton.
+  const loading = market?.loading ?? false;
   const streamState: StreamConnectionState = market?.streamState ?? 'CONNECTING';
   const ticksFresh = market?.ticksFresh ?? false;
   const isMarketClosed = market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false;
   const marketRefetch = market?.refetch;
   const refetchCards = useCallback(() => {
     if (marketRefetch) return marketRefetch();
+    // No MarketDataProvider above: there is no upstream fetch to trigger.
+    // Resolve (the public contract) without pretending a refresh happened.
     return Promise.resolve();
   }, [marketRefetch]);
   const [batchedTicks, setBatchedTicks] = useState<Record<string, TimestampedTick>>({});
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number | null>(null);
   const pendingTicksRef = useRef<Record<string, TimestampedTick>>({});
 
   // Throttle high-frequency WS ticks into ≤10 renders/sec.
@@ -114,9 +133,12 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
       pendingTicksRef.current = {};
       if (Object.keys(pending).length === 0) return;
       // requestAnimationFrame-aligned commit when available.
-      const commit = () => setBatchedTicks((prev) => ({ ...prev, ...pending }));
+      const commit = () => {
+        rafRef.current = null;
+        setBatchedTicks((prev) => ({ ...prev, ...pending }));
+      };
       if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(commit);
+        rafRef.current = requestAnimationFrame(commit);
       } else {
         commit();
       }
@@ -125,16 +147,23 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return () => {
-      if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
+      if (batchTimerRef.current) {
+        clearTimeout(batchTimerRef.current);
+        batchTimerRef.current = null;
+      }
+      // Cancel the pending frame too — otherwise a scheduled commit can fire
+      // after unmount and set state on a dead provider.
+      if (rafRef.current !== null && typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(rafRef.current);
+      }
+      rafRef.current = null;
     };
   }, []);
 
   // External sync: WS health → local batch. Clearing stale ticks when the feed
-  // drops is intentional (not derived render state), so the set-state-in-effect
-  // warning does not apply here.
+  // drops is intentional (not derived render state).
   useEffect(() => {
     if (!ticksFresh) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBatchedTicks((prev) => (Object.keys(prev).length === 0 ? prev : {}));
     }
   }, [ticksFresh]);
@@ -148,7 +177,7 @@ export function LiveMarketProvider({ children }: { children: ReactNode }) {
     return baseCards.map((card) => {
       const crypto = isCryptoCard(card);
       const targetStatus: DataStatus = crypto ? 'LIVE' : card.status === 'CLOSED' || isMarketClosed ? 'CLOSED' : 'LIVE';
-      return mergeTickIntoCard(card, batchedTicks[card.symbol], targetStatus);
+      return mergeTickIntoCard(card, findMatchingTick(card.symbol, batchedTicks), targetStatus);
     });
   }, [baseCards, batchedTicks, streamState, ticksFresh, isMarketClosed]);
 

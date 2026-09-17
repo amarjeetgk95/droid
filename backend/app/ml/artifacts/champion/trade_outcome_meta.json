@@ -1,0 +1,17 @@
+{
+  "model_version": "trade_outcome_v1_challenger",
+  "feature_schema": "f28-v3+augmented",
+  "label_schema": "triple_barrier_3class",
+  "dataset_version": "candidates_v3",
+  "n_train": 1335,
+  "n_val": 334,
+  "validation_accuracy": 1.0,
+  "calibration_brier_score": 0.1062,
+  "calibration_ece": 0.3115,
+  "classes": [
+    "STOP_FIRST",
+    "TIMEOUT",
+    "TARGET_FIRST"
+  ],
+  "trained_at_utc": "2026-09-17T13:53:37.855100+00:00"
+}

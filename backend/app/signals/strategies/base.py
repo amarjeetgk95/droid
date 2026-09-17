@@ -1,5 +1,16 @@
 """
-Base Protocol and Domain Models for the 5 Institutional Quant Strategies.
+Base Protocol and Domain Models for the 13-key Strategy Portfolio (P1 overhaul).
+
+Active scan portfolio: 11 strategies (6 intraday + 5 scalp) + 1 alias
+(BREAKOUT -> VOLATILITY_BREAKOUT, same instance) = 12 keys in
+STRATEGY_REGISTRY.  EMA_RIBBON is demoted: importable for back-compat but
+disabled by default and NOT auto-scanned.
+
+Shared P1 thresholds (single source of truth):
+  - ADX trend cutoff: 22.0 (all strategies)
+  - Volume: 1.5x micro/momentum & breakout, 1.3x ORB, 1.2x other 1M scalps
+  - PCR: bull <= 0.80, bear >= 1.20
+All detectors are fail-closed: missing inputs return None, never synthetic defaults.
 """
 from __future__ import annotations
 
@@ -27,6 +38,90 @@ StrategyName = Literal[
 TradeDirection = Literal["LONG_CALL", "LONG_PUT"]
 Timeframe = Literal["1M", "3M", "5M", "15M", "1H", "1D"]
 SignalType = Literal["SCALP", "INTRADAY", "SWING"]
+
+# ── P1 shared thresholds (single source of truth) ──
+ADX_TREND_CUTOFF: float = 22.0
+VOLUME_MICRO_MIN: float = 1.5
+VOLUME_BREAKOUT_MIN: float = 1.5
+VOLUME_ORB_MIN: float = 1.3
+VOLUME_SCALP_MIN: float = 1.2
+PCR_BULL_MAX: float = 0.80
+PCR_BEAR_MIN: float = 1.20
+
+
+def extract_volume_ratio(indicators: dict[str, Any]) -> Optional[float]:
+    """Fail-closed volume-ratio extractor. Returns None when not measured.
+
+    No synthetic default: callers must return None (fail closed) when this
+    returns None.
+    """
+    if not isinstance(indicators, dict):
+        return None
+    raw = indicators.get("volume_ratio")
+    if raw is None:
+        vol = indicators.get("volume")
+        if isinstance(vol, dict):
+            raw = vol.get("relative_volume", vol.get("ratio"))
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+def extract_breakout_pressure(indicators: dict[str, Any]) -> Optional[float]:
+    """Fail-closed breakout-pressure extractor. None when not computed."""
+    if not isinstance(indicators, dict):
+        return None
+    raw = indicators.get("breakout_pressure")
+    if raw is None:
+        scores = indicators.get("scores")
+        if isinstance(scores, dict):
+            raw = scores.get("breakout_pressure")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_adx(indicators: dict[str, Any]) -> Optional[float]:
+    """Fail-closed ADX extractor. None when ADX not computed."""
+    if not isinstance(indicators, dict):
+        return None
+    raw = indicators.get("adx")
+    if raw is None:
+        trend = indicators.get("trend")
+        if isinstance(trend, dict):
+            raw = trend.get("adx")
+    if raw is None:
+        mom = indicators.get("momentum")
+        if isinstance(mom, dict):
+            raw = mom.get("adx")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def has_closed_1m_candle(ctx: Any) -> bool:
+    """True only when the 1M candle is closed with second-tick confirmation.
+
+    In production the pipeline sets is_new_1m_candle=True on the 1M scan
+    cadence (prior candle closed, new tick seen). Detectors must fail closed
+    when this is False — no intrabar spot-touch scalps.
+    """
+    try:
+        return bool(getattr(ctx, "is_new_1m_candle", False))
+    except Exception:
+        return False
 
 
 class StrategyContext(BaseModel):

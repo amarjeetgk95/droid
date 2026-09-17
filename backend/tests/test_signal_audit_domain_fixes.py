@@ -78,8 +78,10 @@ def test_slippage_measured_in_premium_domain():
     ledger.record_paper_executed(signal_id="T-SLIP-1", paper_order_id="ORD-3",
                                  fill_price=150.0, quantity=75, lots=1, side="BUY")
     rec = ledger.get("T-SLIP-1")
-    assert rec is not None and rec.slippage_points is not None
-    assert abs(rec.slippage_points) < 100.0
+    assert rec is not None
+    # FAIL CLOSED: no broker reference price for this contract, so option
+    # slippage is unset rather than measured against the index trigger.
+    assert rec.slippage_points is None
 
 
 def test_square_off_without_fill_stays_in_domain():
@@ -120,10 +122,15 @@ def _register_global_frozen_signal(signal_id: str):
         option_contract={"broker_symbol": "NSE:NIFTY26SEP25100CE",
                          "option_type": "CE", "strike": 25100.0,
                          "lot_size": 75}, lots=1, status="CONFIRMED")
+    # A realized P&L needs a real entry fill; without one the ledger now settles
+    # fail-closed (no economics) instead of estimating a premium.
+    signal_audit_ledger.record_paper_executed(
+        signal_id=signal_id, paper_order_id="ORD-FROZEN", fill_price=150.0,
+        quantity=75, lots=1, side="BUY")
     return signal_id
 
 
-def test_t1_partial_does_not_full_close():
+def test_t1_partial_does_not_full_close(paper_fills_from_marks):
     """Issue 5: TARGET_1_HIT partial must leave audit record open for the runner."""
     from app.signals.paper_engine import signal_paper_engine
     from app.signals.audit_ledger import signal_audit_ledger
@@ -131,6 +138,10 @@ def test_t1_partial_does_not_full_close():
     from app.models.paper import OrderPayload
     sid = _register_global_frozen_signal("T-PARTIAL-1")
     symbol = "NSE:NIFTY26SEP25100CE"
+    # Fail-closed pricing: the entry MARKET order fills only against a real
+    # broker mark for the exact contract (no model substitute exists anymore).
+    from tests.conftest import seed_chain_mark
+    seed_chain_mark(symbol, 150.0, underlying="NIFTY", strike=25100.0, option_type="CE")
     try:
         asyncio.run(paper_service.place_order(OrderPayload(
             symbol=symbol, underlying="NIFTY", side="BUY",
@@ -226,7 +237,14 @@ def test_banknifty_52k_survives_sanitize():
     try:
         sanitize_persisted_signals()
         assert signal_audit_ledger.get("T-BNF-52K") is not None
-        assert signal_audit_ledger.get("T-BNF-GHOST") is None
+        # Ghost rows are QUARANTINED (kept as evidence, excluded from every
+        # aggregate) — never hard-deleted from the ledger.
+        ghost = signal_audit_ledger.get("T-BNF-GHOST")
+        assert ghost is not None
+        assert ghost.status == "VOID"
+        assert ghost.outcome_label == "VOID_GHOST_QUARANTINE"
+        summary = signal_audit_ledger.get_summary_metrics()
+        assert summary["total_signals_audited"] == 1  # only the legit 52K row
     finally:
         signal_audit_ledger.delete_trade("T-BNF-52K")
         signal_audit_ledger.delete_trade("T-BNF-GHOST")
@@ -278,6 +296,13 @@ def test_friction_uses_exit_premium_not_spot_tick():
         lots=1, option_contract=dict(NIFTY_PUT_23800),
     )
     fsm.register(sig)
+    # Fail-closed friction: the exit leg is priced from a REAL chain mark for
+    # the exact contract (spot ticks and Black-76 estimates are both rejected).
+    # 122.50 is a live 23800PE mark 3.75 above the 118.75 entry — a plausible
+    # T1 win whose friction stays well inside the 1.5R gross.
+    from tests.conftest import seed_chain_mark
+    seed_chain_mark(str(NIFTY_PUT_23800["broker_symbol"]), 122.50,
+                    underlying="NIFTY", strike=23800.0, option_type="PE")
     fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("23773.50"),
                    reason="TARGET_1_ACHIEVED")
     assert sig.realized_rr_gross == 1.5

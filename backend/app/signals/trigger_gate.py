@@ -14,15 +14,20 @@ from typing import Any, Optional
 
 
 TICK = Decimal("0.05")
-# Minimum trigger distance from spot: the larger of 0.03% of spot or 0.10R.
-MIN_GAP_PCT = Decimal("0.0003")
-MIN_GAP_RISK_FRACTION = Decimal("0.10")
+# P0-2 FAIL-CLOSE: minimum trigger distance — the larger of 0.05% of spot or
+# 0.15R. A trigger buried inside this band is born-triggered noise.
+MIN_GAP_PCT = Decimal("0.0005")
+MIN_GAP_RISK_FRACTION = Decimal("0.15")
+# ATR-normalized gap: the trigger must also clear 0.25*ATR of microstructure
+# noise, plus the expected spread+slippage cost of the round trip.
+ATR_GAP_FRACTION = Decimal("0.25")
 # Minimum risk size: 0.03% of spot (filters dust stops that make R:R meaningless).
 MIN_RISK_PCT = Decimal("0.0003")
-# Minimum reward bar for a fresh signal — 1.2 for balanced edge and signal generation.
-MIN_RR_T2 = 1.2
-# Entry zone wider than 2R means the "setup" is just chop.
-MAX_ENTRY_WIDTH_R = Decimal("2.0")
+# Minimum reward bar — 1.5R intraday, 1.3R scalp (tighter costs, faster exit).
+MIN_RR_T2 = 1.5
+MIN_RR_T2_SCALP = 1.3
+# Entry zone wider than 1R means the "setup" is just chop.
+MAX_ENTRY_WIDTH_R = Decimal("1.0")
 
 
 @dataclass
@@ -43,15 +48,44 @@ def _dec(v: Any) -> Optional[Decimal]:
     return d
 
 
-def min_trigger_gap_pts(spot: Decimal, risk_points: Decimal, is_scalp: bool = False) -> Decimal:
-    """Minimum trigger distance from spot for a signal to carry edge."""
+def min_trigger_gap_pts(
+    spot: Decimal,
+    risk_points: Decimal,
+    is_scalp: bool = False,
+    atr_points: Any = None,
+    spread_pts: Any = None,
+    slip_pts: Any = None,
+) -> Decimal:
+    """Minimum trigger distance from spot for a signal to carry edge.
+
+    P0-2: max(base, 0.25*ATR) + spread + slip. The ATR term prices real
+    volatility; spread+slip prices the round-trip friction the trigger must
+    overcome before it is edge rather than cost.
+    """
     if is_scalp:
         pct_floor = abs(spot) * Decimal("0.0001")
         risk_floor = abs(risk_points) * Decimal("0.05")
-        return max(pct_floor, risk_floor, TICK * 2)
-    pct_floor = abs(spot) * MIN_GAP_PCT
-    risk_floor = abs(risk_points) * MIN_GAP_RISK_FRACTION
-    return max(pct_floor, risk_floor, TICK * 2)
+        base = max(pct_floor, risk_floor, TICK * 2)
+    else:
+        pct_floor = abs(spot) * MIN_GAP_PCT
+        risk_floor = abs(risk_points) * MIN_GAP_RISK_FRACTION
+        base = max(pct_floor, risk_floor, TICK * 2)
+    try:
+        atr_d = _dec(atr_points)
+        if atr_d is not None and atr_d > 0:
+            base = max(base, abs(atr_d) * ATR_GAP_FRACTION)
+    except Exception:
+        pass
+    try:
+        extra = Decimal("0")
+        for _v in (spread_pts, slip_pts):
+            _d = _dec(_v)
+            if _d is not None and _d > 0:
+                extra += abs(_d)
+        base = base + extra
+    except Exception:
+        pass
+    return base
 
 
 def check_trigger_integrity(
@@ -71,6 +105,9 @@ def check_trigger_integrity(
     risk_reward_t2: Any = 3.0,
     is_scalp: bool = False,
     timeframe: str = "5M",
+    atr_points: Any = None,
+    spread_pts: Any = None,
+    slip_pts: Any = None,
 ) -> TriggerCheckResult:
     """Pure validator shared by the scanner pipeline and manual /generate."""
     spot = _dec(spot_price)
@@ -110,8 +147,13 @@ def check_trigger_integrity(
     is_scalp_effective = is_scalp or str(timeframe).upper() in ("1M", "3M", "SCALP")
 
     # 2. Minimum gap from spot (the no-edge killer).
+    # P0-2: max(base, 0.25*ATR) + spread + slip — the trigger must clear
+    # volatility AND friction before it is edge.
     gap = abs(trig - spot)
-    min_gap = min_trigger_gap_pts(spot, risk, is_scalp=is_scalp_effective)
+    min_gap = min_trigger_gap_pts(
+        spot, risk, is_scalp=is_scalp_effective,
+        atr_points=atr_points, spread_pts=spread_pts, slip_pts=slip_pts,
+    )
     if gap < min_gap:
         return TriggerCheckResult(
             False, "TRIGGER_TOO_CLOSE",
@@ -178,6 +220,7 @@ def check_trigger_integrity(
                 )
 
     # 4. Reward bar (independently verified from actual target levels if present).
+    # P0-2: 1.5R intraday, 1.3R scalp — sub-bar setups are cost, not edge.
     if t2 is not None and risk > 0:
         rr2 = float(abs(t2 - trig) / risk)
     else:
@@ -185,14 +228,15 @@ def check_trigger_integrity(
             rr2 = float(risk_reward_t2)
         except Exception:
             rr2 = 0.0
-    if not (rr2 >= MIN_RR_T2):
+    _rr_min = MIN_RR_T2_SCALP if is_scalp_effective else MIN_RR_T2
+    if not (rr2 >= _rr_min):
         return TriggerCheckResult(
             False, "RR_TOO_LOW",
-            f"Risk:reward 1:{rr2:.1f} below minimum 1:{MIN_RR_T2}.",
-            {"rr_t2": rr2},
+            f"Risk:reward 1:{rr2:.1f} below minimum 1:{_rr_min}.",
+            {"rr_t2": rr2, "rr_min": _rr_min},
         )
 
-    # 5. Entry zone sanity (zone wider than 2R = chop, not a setup).
+    # 5. Entry zone sanity (P0-2: zone wider than 1R = chop, not a setup).
     emn, emx = _dec(entry_min), _dec(entry_max)
     if emn is not None and emx is not None and risk > 0:
         width = abs(emx - emn)

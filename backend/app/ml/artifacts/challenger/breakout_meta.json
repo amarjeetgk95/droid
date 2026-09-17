@@ -1,0 +1,12 @@
+{
+  "model_version": "breakout_v1_challenger",
+  "feature_schema": "f28-v3",
+  "label_schema": "binary_breakout_mfe1R",
+  "dataset_version": "candidates_v3",
+  "n_train": 1335,
+  "n_val": 334,
+  "validation_accuracy": 0.994,
+  "validation_auc": 0.9995,
+  "decision_threshold": 0.55,
+  "trained_at_utc": "2026-09-17T13:53:24.593258+00:00"
+}

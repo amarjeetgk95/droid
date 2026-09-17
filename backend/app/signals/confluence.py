@@ -38,12 +38,20 @@ def _load_confluence_config() -> dict:
             if p.exists():
                 with open(p, "r", encoding="utf-8") as f:
                     return json.load(f)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("confluence_config_load_failed", error=str(e)[:150])
     return {}
 
 
 _CONFIG = _load_confluence_config()
+# P0-2 FAIL-CLOSE: scoring config is load-bearing. A missing file or a
+# missing thresholds block means we cannot prove the ARMED bar — refuse to
+# start rather than arming on a silent 70.0 fallback.
+if not _CONFIG or "thresholds" not in _CONFIG or "armed" not in _CONFIG.get("thresholds", {}):
+    raise RuntimeError(
+        "scoring_weights.json missing thresholds.armed — fail-closed startup: "
+        "refusing to run confluence without an explicit ARMED bar"
+    )
 _WF = _CONFIG.get("weights_fraction", {})
 _THRESH = _CONFIG.get("thresholds", {})
 _PEN = _CONFIG.get("penalties", {})
@@ -55,11 +63,15 @@ DEFAULT_WEIGHTS = {
     "regime": float(_WF.get("regime", 0.10)),
     "ai": float(_WF.get("ai", 0.10)),
 }
-ARMED_THRESHOLD = float(_THRESH.get("armed", 70.0))
+# P0-2: ARMED bar is 78.0, hardcoded. The config file must exist (checked
+# above) but the bar itself is not negotiable via config drift.
+ARMED_THRESHOLD = 78.0
 AI_UNAVAILABLE_HAIRCUT = float(_PEN.get("ai_unavailable_haircut", 8.0))
 FNODEGRADED_HAIRCUT = float(_PEN.get("fno_degraded_haircut", 10.0))
 VWAPDEGRADED_HAIRCUT = float(_PEN.get("vwap_degraded_haircut", 10.0))
-MAX_TOTAL_HAIRCUT = float(_PEN.get("max_total_haircut", 12.0))
+# P0-2: degraded feeds must hurt. Cap raised 12 -> 24 so stacked
+# AI-missing + FNO-degraded + VWAP-degraded cannot hide behind the cap.
+MAX_TOTAL_HAIRCUT = 24.0
 
 
 class AIAdviceResult(BaseModel):
@@ -182,6 +194,18 @@ class ConfluenceEngine:
             else:
                 # Disagreement or NO_TRADE
                 score = max(20.0, 100.0 - base_confidence) if signal.decision != Decision.NO_TRADE else 50.0
+                # P0-2: an AI that actively OPPOSES the candidate is a hard
+                # contrarian flag — never let it score above 44 (penalty zone).
+                try:
+                    from app.ai.schemas import Decision as _Dec
+                    _opposes = (
+                        (is_call and signal.decision == _Dec.SHORT)
+                        or ((not is_call) and signal.decision == _Dec.LONG)
+                    )
+                    if _opposes:
+                        score = min(float(score), 44.0)
+                except Exception as e:
+                    logger.debug("ai_opposition_cap_skipped", error=str(e)[:150])
 
             return AIAdviceResult(
                 status="AVAILABLE",
@@ -242,23 +266,29 @@ class ConfluenceEngine:
             is_call = "CALL" in candidate.direction
             scores["ml"] = float(ml_prediction.get("bullish_pct", 50.0) if is_call else ml_prediction.get("bearish_pct", 50.0))
 
-        # Quality-aware weighting: only domains scoring > 55 contribute their full weight.
-        # Domains scoring < 45 become active penalties. 2+ penalties → −10 fused penalty.
+        # Quality-aware weighting (P0-2): only domains scoring > 55 earn full
+        # weight. 45-55 neutral contributes HALF weight (weak agreement is not
+        # confluence). < 45 is an active penalty. 2+ penalties → −10 fused.
         total_w = 0.0
         fused = 0.0
         penalty_count = 0
+        contributing_domains = 0
         for domain, w in active_weights.items():
             s = scores.get(domain, 50.0)
+            try:
+                s = float(s)
+            except Exception:
+                s = 50.0
             if s >= 55.0:
-                contribution = s * w
-                fused += contribution
+                fused += s * w
                 total_w += w
+                contributing_domains += 1
             elif s < 45.0:
                 penalty_count += 1
             else:
-                # 45-55: neutral, contribute baseline weight and contribution (§12 [FIX])
-                fused += s * w
-                total_w += w
+                # 45-55 neutral: half weight — counts as weak, not full.
+                fused += s * (w * 0.5)
+                total_w += w * 0.5
 
         if total_w > 0:
             fused = fused / total_w
@@ -285,8 +315,16 @@ class ConfluenceEngine:
                 _d = float(institutional.get("delta", 0.0) or 0.0)
                 _d = max(-5.0, min(5.0, _d))
                 fused += _d
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("institutional_overlay_adjust_skipped", error=str(e)[:150])
+        # P0-2 ARMED bar: >=3 contributing domains AND zero penalties.
+        # Thin or contested confluence can never print an ARMED-grade score —
+        # cap it below the bar so the FSM stays VALIDATED (WATCH).
+        try:
+            if contributing_domains < 3 or penalty_count > 0:
+                fused = min(float(fused), ARMED_THRESHOLD - 0.1)
+        except Exception as e:
+            logger.debug("armed_threshold_cap_skipped", error=str(e)[:150])
         return round(float(max(15.0, min(98.0, fused))), 1)
 
 

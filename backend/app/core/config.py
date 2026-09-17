@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     
     # Auth
     auth_required: bool = False
+    # Supabase project URL — required for asymmetric (ES256/RS256) token
+    # verification via the project's JWKS endpoint. Newer Supabase projects
+    # sign with an EC P-256 key and never use a shared secret, so
+    # `supabase_jwt_secret` alone cannot validate their tokens.
+    supabase_url: str = ""
     supabase_jwt_secret: str = ""
     
     # Database
@@ -132,17 +137,27 @@ class Settings(BaseSettings):
     scanner_quote_age_seconds: float = 10.0      # Stricter quote age threshold for signal scanner
     stale_data_age_seconds: float = 5.0          # Threshold to mark a quote as STALE
 
+    # Inbound tick sanity (Truth of Wall: a corrupted feed degrades, never trades)
+    tick_sanity_jump_pct: float = 2.0            # Max |ΔLTP| % per 1s poll before a tick is rejected as implausible
+
     # Signal Engine Architecture Flags
     use_event_bus: bool = True                   # Decouples FSM transitions to lightweight event bus
 
     @model_validator(mode="after")
     def _normalize_market_data_provider(self) -> "Settings":
+        """Fyers-only policy (Truth of Wall).
+
+        Legacy demo values (mock/demo/paper/…) map silently to fyers with an
+        info log. Anything ELSE fails loud at startup: a silently-normalized
+        unsupported provider is exactly how a misconfiguration hides until it
+        matters. The platform has one market-data source by design.
+        """
         import structlog
         indian_providers = ("fyers",)
         legacy_values = ("", "mock", "mock_ai", "demo", "paper", "none")
         requested = (self.market_data_provider or "").strip().lower()
 
-        if self.market_data_provider not in indian_providers:
+        if requested not in indian_providers:
             if requested in legacy_values:
                 structlog.get_logger().info(
                     "config_provider_default",
@@ -150,14 +165,13 @@ class Settings(BaseSettings):
                     legacy_value=self.market_data_provider,
                     using="fyers",
                 )
+                self.market_data_provider = "fyers"
             else:
-                structlog.get_logger().warning(
-                    "config_provider_fallback",
-                    api_type=self.api_type,
-                    requested=self.market_data_provider,
-                    using="fyers",
+                raise ValueError(
+                    f"MARKET_DATA_PROVIDER='{self.market_data_provider}' is not supported — "
+                    "this platform is FYERS-only (Truth of Wall). Supported values: 'fyers'. "
+                    f"Legacy demo values {legacy_values} are accepted and mapped to 'fyers'."
                 )
-            self.market_data_provider = "fyers"
         return self
 
     model_config = {

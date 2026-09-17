@@ -10,7 +10,10 @@ Executes registered strategies against StrategyContext and enforces:
 from __future__ import annotations
 
 from typing import Any
+from zoneinfo import ZoneInfo
 import structlog
+
+from app.services.calendar_service import calendar_service
 
 from app.signals.orthogonal_confluence import orthogonal_confluence_engine
 from app.signals.participation.oi_volume_engine import participation_engine
@@ -21,7 +24,10 @@ from app.signals.strategies.base import SignalCandidate, Strategy, StrategyConte
 
 logger = structlog.get_logger()
 
-# Strategies exempt from the opening pre-market gap filter (valuable on gap days)
+IST_TZ = ZoneInfo("Asia/Kolkata")
+
+# Strategies exempt from the opening pre-market gap filter (valuable on gap days).
+# Single source of truth — scanner.py imports this symbol, do not duplicate it there.
 GAP_EXEMPT_STRATEGIES = {"GAMMA_SPIKE", "GAMMA_SQUEEZE", "ORB"}
 
 
@@ -49,16 +55,22 @@ def run_strategies(
             candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
             candidate.lunch_session = getattr(ctx, "lunch_session", False)
 
-            # Pre-market gap filter: suppress if gap > 0.5% within first 15m of session (except gap-exempt strategies)
+            # Pre-market gap filter: suppress if gap > 0.5% within first 15m of session (except gap-exempt strategies).
+            # Gap window is resolved from the exchange calendar (IST session open), not manual minute math,
+            # so special sessions (e.g. Muhurat) anchor correctly.
             gap_pct_val = float(getattr(ctx, "pre_market_gap_pct", 0.0) or 0.0)
             is_opening_window = False
             if ctx.timestamp_ms:
                 try:
-                    utc_min = (ctx.timestamp_ms // 60000) % 1440
-                    ist_min = (utc_min + 330) % 1440
-                    is_opening_window = (555 <= ist_min <= 570)
+                    from datetime import datetime
+
+                    decision_ist = datetime.fromtimestamp(float(ctx.timestamp_ms) / 1000.0, tz=IST_TZ)
+                    session_info = calendar_service.get_session_info(decision_ist.date())
+                    if session_info.market_open is not None:
+                        elapsed_s = (decision_ist - session_info.market_open).total_seconds()
+                        is_opening_window = 0 <= elapsed_s <= 15 * 60
                 except Exception:
-                    pass
+                    is_opening_window = False
             if gap_pct_val > 0.5 and is_opening_window and strat_name not in GAP_EXEMPT_STRATEGIES:
                 rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
                 logger.info("candidate_rejected_gap", strategy=strat_name, underlying=getattr(ctx, "underlying", "UNKNOWN"), gap_pct=gap_pct_val)
@@ -84,14 +96,19 @@ def run_strategies(
                     continue
                 scalp_confirmation_engine.record_confirmed(candidate, candle_timestamp_ms=ctx.timestamp_ms)
 
-            # Participation Engine (§18, §19)
+            # Participation Engine (§18, §19) — fail closed without a feature snapshot.
+            # Never default rvol=1.0 / vol_accel=0 / roc=0: invented neutrality is fabrication.
+            if ctx.feature_snapshot is None:
+                rejected_gates.append(f"{strat_name}:MISSING_FEATURE_SNAPSHOT")
+                logger.info("candidate_rejected_no_features", strategy=strat_name, underlying=ctx.underlying)
+                continue
             desk_type = "SCALP" if (candidate.is_scalp or strat_name in SCALP_STRATEGIES) else "INTRADAY"
             part_ctx = participation_engine.evaluate(
                 direction=candidate.direction,
                 desk=desk_type,
-                rvol=ctx.feature_snapshot.rvol if ctx.feature_snapshot else 1.0,
-                volume_acceleration=ctx.feature_snapshot.volume_acceleration if ctx.feature_snapshot else 0.0,
-                price_change_pct=ctx.feature_snapshot.roc_1 if ctx.feature_snapshot else 0.0,
+                rvol=ctx.feature_snapshot.rvol,
+                volume_acceleration=ctx.feature_snapshot.volume_acceleration,
+                price_change_pct=ctx.feature_snapshot.roc_1,
                 fno_data=ctx.fno,
                 candles=ctx.candles,
             )
@@ -114,14 +131,21 @@ def run_strategies(
                 continue
 
             candidate.vwap_coverage_pct = ctx.vwap_coverage_pct
+            # Full PIT context snapshot: downstream enrichment/validation must see the
+            # exact candles, quote timestamp, and data quality behind this decision.
+            # vwap propagates None when unavailable — never fallback to spot (fabrication).
             candidate.context_snapshot = {
                 "regime": ctx.regime,
                 "fno": ctx.fno,
                 "mtf": ctx.mtf,
                 "indicators": ctx.indicators,
-                "vwap": float(ctx.vwap) if ctx.vwap else float(ctx.spot_price),
+                "vwap": float(ctx.vwap) if ctx.vwap is not None else None,
                 "volume_ma_20": ctx.volume_ma_20,
                 "spot_price": float(ctx.spot_price),
+                "timestamp_ms": ctx.timestamp_ms,
+                "candles": ctx.candles,
+                "quote_timestamp_ms": getattr(ctx, "quote_timestamp_ms", None),
+                "data_quality": getattr(ctx, "data_quality", None),
             }
             candidates.append(candidate)
         except Exception as e:

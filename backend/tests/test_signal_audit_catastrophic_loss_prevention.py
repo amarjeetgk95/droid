@@ -15,13 +15,16 @@ OPT_BNF_CE = {
 }
 
 
-def test_square_off_with_spot_fill_price_reconciles_and_bounds_loss():
+def test_square_off_with_spot_fill_price_books_no_pnl():
     """
     Simulates the exact production bug:
     Spot level (56816.69) was logged as actual_fill_price for a BANKNIFTY 56800 CE option,
     and square-off occurred at 283.38.
     Previously produced: -16,95,999.30 INR.
-    Must now produce: sensible PnL bounded by realistic entry premium.
+
+    Fail-closed contract: the ledger must NOT substitute a Black-76 premium to
+    "reconcile" a corrupt fill. It settles the record without booking any P&L
+    and flags it, so the phantom loss is structurally impossible.
     """
     ledger = SignalAuditLedger()
     ledger.record_signal_created(
@@ -57,12 +60,14 @@ def test_square_off_with_spot_fill_price_reconciles_and_bounds_loss():
     )
 
     assert rec is not None
-    # Entry price must have been reconciled from 56816.69 to option premium (< 1000)
-    assert rec.actual_fill_price < 2000.0
-    # Loss must never be anywhere near -16 lakhs!
-    assert abs(rec.actual_pnl_inr) < 20000.0
-    # Loss for option buyer is bounded by entry_price * qty
-    assert rec.actual_pnl_inr >= -1.0 * rec.actual_fill_price * 30
+    # No fabricated premium was written over the corrupt fill.
+    assert rec.actual_fill_price == 56816.69
+    # And therefore no P&L was booked at all.
+    assert rec.actual_pnl_inr is None
+    assert rec.actual_pnl_points is None
+    assert rec.economics_unavailable is True
+    assert rec.status == "CLOSED"
+    assert "ECONOMICS_UNAVAILABLE" in (rec.outcome_label or "")
 
 
 def test_option_buying_loss_never_exceeds_100_percent():
@@ -173,11 +178,23 @@ def test_sanitize_persisted_signals_repairs_corrupted_row():
     rec.actual_pnl_points = -56533.31
     rec.status = "LOST"
 
+    before = signal_audit_ledger.get_summary_metrics()
     try:
         sanitize_persisted_signals()
         repaired = signal_audit_ledger.get(corrupt_id)
+        # Quarantine KEEPS the record as evidence, drops the corrupt economics
+        # (never re-estimates them), and excludes it from every aggregate.
         assert repaired is not None
-        assert repaired.actual_fill_price < 2000.0
-        assert repaired.actual_pnl_inr > -20000.0
+        assert repaired.actual_fill_price is None
+        assert repaired.actual_pnl_inr is None
+        assert repaired.economics_unavailable is True
+        assert repaired.status == "VOID"
+        assert "VOID" in (repaired.outcome_label or "")
+        after = signal_audit_ledger.get_summary_metrics()
+        assert after["total_signals_audited"] == before["total_signals_audited"] - 1
+        assert after["closed_trades"] == before["closed_trades"] - 1
+        assert after["net_realized_pnl_inr"] == pytest.approx(
+            before["net_realized_pnl_inr"] + 1695999.30
+        )
     finally:
         signal_audit_ledger.delete_trade(corrupt_id)

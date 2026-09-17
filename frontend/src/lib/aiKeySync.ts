@@ -18,6 +18,7 @@
 import { api } from './api';
 import { SECRET_FIELDS } from './settingsConstants';
 import { getStoredSettings, saveStoredSettings } from './settingsStorage';
+import type { AISettings } from './settingsTypes';
 
 export const AI_SYNC_EVENT = 'droid:ai-keys-synced';
 
@@ -40,7 +41,10 @@ export function syncAISecretsFromBackend(force = false): Promise<boolean> {
         : undefined;
       if (!remoteAi || typeof remoteAi !== 'object') return false;
       const local = getStoredSettings();
-      const localAi = local.ai as unknown as Record<string, unknown>;
+      // Clone before mutating: getStoredSettings() can hand back shared default
+      // objects (and AI settings identity is cached by aiPayload), so writing
+      // into `local.ai` in place would corrupt module-level defaults.
+      const localAi = { ...(local.ai as unknown as Record<string, unknown>) };
       let changed = false;
       for (const key of SECRET_FIELDS.ai) {
         const rv = remoteAi[key];
@@ -50,7 +54,7 @@ export function syncAISecretsFromBackend(force = false): Promise<boolean> {
         }
       }
       if (changed) {
-        saveStoredSettings(local);
+        saveStoredSettings({ ...local, ai: localAi as unknown as AISettings });
         window.dispatchEvent(new CustomEvent(AI_SYNC_EVENT));
       }
       return changed;

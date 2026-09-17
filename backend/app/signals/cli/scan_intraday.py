@@ -35,8 +35,7 @@ def run_intraday_scan(underlying: str = "NIFTY", spot_override: float | None = N
 
     # 2. 15M Regime & Structure Hypothesis (§6)
     # Long Setup: EMA20 > EMA50 > EMA200, ADX >= 22, VWAP alignment
-    ema20 = spot * Decimal("0.998")  # 24950
-    ema50 = spot * Decimal("0.994")  # 24850
+    ema20 = spot * Decimal("0.998")  # 24950        ema50 = spot * Decimal("0.994")  # example: ~1% below spot
     ema200 = spot * Decimal("0.985") # 24625
     adx_val = 26.5
     vwap_val = spot * Decimal("0.997") # 24925

@@ -381,7 +381,7 @@ export default function WhyPanel({
                   : healthTone === 'bear'
                     ? 'var(--ds-bear-strong)'
                     : healthTone === 'warn'
-                      ? '#92580a'
+                      ? 'var(--ds-warn-ink)'
                       : 'var(--ds-neut)',
               background:
                 healthTone === 'bull'
@@ -389,7 +389,7 @@ export default function WhyPanel({
                   : healthTone === 'bear'
                     ? 'var(--ds-bear-wash)'
                     : healthTone === 'warn'
-                      ? '#fef3c7'
+                      ? 'var(--ds-warn-wash)'
                       : 'var(--ds-neut-wash)',
               border: '1px solid var(--ds-border)',
             }}

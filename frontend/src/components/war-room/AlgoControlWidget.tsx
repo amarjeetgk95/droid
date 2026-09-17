@@ -3,6 +3,7 @@
 import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { fmtINR } from '@/components/ui/desk';
+import { playScalpAudio } from '@/components/scalp/scalpAudio';
 import { ShieldAlert, Bot, Power } from 'lucide-react';
 
 type AlgoMode = 'OFF' | 'PAPER' | 'LIVE';
@@ -44,6 +45,54 @@ function getErrorMessage(err: unknown): string {
   if (typeof err === 'string' && err.length > 0) return err;
   if (isRecord(err) && typeof err.message === 'string' && err.message.length > 0) return err.message;
   return 'Unknown error';
+}
+
+/**
+ * Executes emergency kill switch with multi-attempt retry, backoff, and signal escalation fallback.
+ */
+export async function executeEmergencyKill(
+  maxRetries = 3,
+  onAttempt?: (attempt: number) => void
+): Promise<{ success: boolean; error?: string }> {
+  if (typeof api.request !== 'function') {
+    return { success: false, error: 'api.request is not configured' };
+  }
+
+  let lastError = 'Unknown error';
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    onAttempt?.(attempt);
+    try {
+      await api.request<unknown>('/api/v1/algo/kill-switch', {
+        method: 'POST',
+        body: JSON.stringify({ kill_level: 'HARD_STOP', reason: 'User War Room Kill Switch' }),
+      });
+      return { success: true };
+    } catch (err) {
+      lastError = getErrorMessage(err);
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+      }
+    }
+  }
+
+  // Escalation: attempt secondary emergency signal kill switch endpoint
+  try {
+    await api.request<unknown>('/api/v1/signals/kill-switch', {
+      method: 'POST',
+      body: JSON.stringify({ active: true, reason: 'Escalated emergency kill switch from War Room' }),
+    });
+    return { success: true };
+  } catch (escErr) {
+    lastError = `Primary kill failed (${lastError}) & Escalation failed (${getErrorMessage(escErr)})`;
+  }
+
+  try {
+    playScalpAudio('panic');
+  } catch {
+    // Audio context may not be ready or muted
+  }
+
+  return { success: false, error: lastError };
 }
 
 /** Backend may return the object directly or wrapped in `{ data: ... }`. */
@@ -127,6 +176,8 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
   const [isFetching, setIsFetching] = useState(false);
   const [acting, setActing] = useState<ActingKind>(null);
   const [confirmKill, setConfirmKill] = useState(false);
+  const [confirmLive, setConfirmLive] = useState(false);
+  const [killAttempt, setKillAttempt] = useState(0);
   const fetchInFlight = useRef(false);
 
   const isActing = acting !== null;
@@ -218,6 +269,16 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
     }
   };
 
+  const onSelectMode = (m: AlgoMode) => {
+    if (m === account.mode) return;
+    if (m === 'LIVE') {
+      setConfirmLive(true);
+      return;
+    }
+    setConfirmLive(false);
+    void handleSetMode(m);
+  };
+
   const handleEmergencyKill = async () => {
     if (typeof api.request !== 'function') {
       setError('Kill switch FAILED - backend still live: api.request is not configured.');
@@ -226,26 +287,29 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
     if (isActing) return;
     setActing('kill');
     setError(null);
+    setKillAttempt(1);
     try {
-      await api.request<unknown>('/api/v1/algo/kill-switch', {
-        method: 'POST',
-        body: JSON.stringify({ kill_level: 'HARD_STOP', reason: 'User War Room Kill Switch' }),
-      });
-      // Only display KILLED after the backend confirms.
-      setAccount((prev) => ({
-        ...prev,
-        mode: 'OFF',
-        kill_switch: { is_killed: true, kill_level: 'HARD_STOP' },
-      }));
-      setConfirmKill(false);
+      const res = await executeEmergencyKill(3, (attempt) => setKillAttempt(attempt));
+      if (res.success) {
+        // Only display KILLED after confirmed.
+        setAccount((prev) => ({
+          ...prev,
+          mode: 'OFF',
+          kill_switch: { is_killed: true, kill_level: 'HARD_STOP' },
+        }));
+        setConfirmKill(false);
+      } else {
+        // Critical: keep prior state, keep confirm open so user can retry
+        setError(`Kill switch FAILED after 3 attempts - backend still live: ${res.error || 'Unknown error'}`);
+      }
     } catch (err) {
-      // Critical: keep prior state, keep the confirm dialog open so the
-      // user can retry — the backend may still be LIVE.
       setError(`Kill switch FAILED - backend still live: ${getErrorMessage(err)}`);
     } finally {
       setActing(null);
+      setKillAttempt(0);
     }
   };
+
 
   const totalPnL = positions.reduce((acc, p) => acc + (p.pnl ?? 0), 0);
   const isKilled = Boolean(account.kill_switch?.is_killed);
@@ -274,23 +338,23 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
       {error ? (
         <div
           role="alert"
-          className="p-2.5 rounded-md border border-rose-300 bg-rose-50 flex items-start gap-2"
+          className="p-2.5 rounded-md border border-down-line bg-down-wash flex items-start gap-2"
         >
-          <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-px" />
+          <ShieldAlert className="w-4 h-4 text-down shrink-0 mt-px" />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-bold text-rose-900 break-words">{error}</p>
+            <p className="text-[11px] font-bold text-down-strong break-words">{error}</p>
             <div className="flex gap-2 mt-1.5">
               <button
                 type="button"
                 onClick={() => void fetchAlgoState()}
-                className="px-2 py-1 rounded border border-rose-300 text-[11px] font-semibold text-rose-800 bg-white hover:bg-rose-100 cursor-pointer"
+                className="px-2 py-1 rounded border border-down-line text-[11px] font-semibold text-down-strong bg-card hover:bg-down-wash cursor-pointer"
               >
                 Retry
               </button>
               <button
                 type="button"
                 onClick={() => setError(null)}
-                className="px-2 py-1 rounded text-[11px] font-semibold text-rose-700 hover:text-rose-900 cursor-pointer"
+                className="px-2 py-1 rounded text-[11px] font-semibold text-down-strong hover:text-down-strong cursor-pointer"
               >
                 Dismiss
               </button>
@@ -307,12 +371,13 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
             type="button"
             disabled={isActing}
             data-active={account.mode === m}
+            data-danger={m === 'LIVE' ? 'true' : undefined}
             aria-pressed={account.mode === m}
-            onClick={() => void handleSetMode(m)}
+            onClick={() => onSelectMode(m)}
             className="seg-btn"
-            style={{ justifyContent: 'center' }}
+            style={{ justifyContent: 'center', fontWeight: account.mode === m && m === 'LIVE' ? 700 : undefined }}
           >
-            {acting === 'mode' ? '…' : m}
+            {acting === 'mode' && account.mode !== m ? '…' : m}
           </button>
         ))}
       </div>
@@ -320,6 +385,48 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
         <p className="mono faint" style={{ fontSize: 10 }} aria-live="polite">
           Switching mode — awaiting backend confirmation…
         </p>
+      ) : null}
+
+      {/* Confirmation prompt for switching to LIVE */}
+      {confirmLive ? (
+        <div
+          role="region"
+          aria-label="Confirm LIVE mode"
+          className="p-3 rounded border flex flex-col gap-2"
+          style={{ borderColor: 'var(--ds-warn-line)', background: 'var(--ds-warn-wash)' }}
+        >
+          <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--ds-warn-ink)' }}>
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>Switch to LIVE Trading?</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            LIVE mode will deploy real capital and execute real orders directly on your broker terminal.
+            {account.capital?.investment_limit ? ` Max capital: ${account.capital.investment_limit}.` : ''}
+          </p>
+          <div className="flex gap-2 mt-1">
+            <button
+              type="button"
+              disabled={isActing}
+              onClick={() => {
+                setConfirmLive(false);
+                void handleSetMode('LIVE');
+              }}
+              className="btn btn-buy flex-1 font-bold"
+              style={{ fontSize: 11, padding: '5px 10px', background: 'var(--ds-bull)' }}
+            >
+              {acting === 'mode' ? 'SWITCHING…' : 'CONFIRM LIVE'}
+            </button>
+            <button
+              type="button"
+              disabled={isActing}
+              onClick={() => setConfirmLive(false)}
+              className="btn"
+              style={{ fontSize: 11, padding: '5px 10px' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {/* Position & Risk Metrics */}
@@ -363,7 +470,7 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
             <span>Confirm kill switch?</span>
           </div>
           <p className="text-[11px] muted">
-            Halts all automation and cancels pending orders.
+            Halts all automation, cancels pending orders, and triggers fail-safe.
           </p>
           <div className="flex gap-2 mt-1">
             <button
@@ -372,7 +479,7 @@ export const AlgoControlWidget = memo(function AlgoControlWidget() {
               onClick={() => void handleEmergencyKill()}
               className="btn btn-sell flex-1"
             >
-              {acting === 'kill' ? 'KILLING…' : 'YES, KILL ALL'}
+              {killAttempt > 0 ? `KILLING (${killAttempt}/3)…` : acting === 'kill' ? 'KILLING…' : 'YES, KILL ALL'}
             </button>
             <button
               type="button"

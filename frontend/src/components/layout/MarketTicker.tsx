@@ -121,66 +121,13 @@ function isCryptoCard(card: Pick<IndexCard, 'symbol' | 'provider'>): boolean {
   return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
 }
 
-/** Mini SVG Sparkline for intraday trajectory */
-function MicroSparkline({
-  points,
-  isPositive,
-}: {
-  points: number[];
-  isPositive: boolean;
-}) {
-  if (!points || points.length < 2) return null;
-
-  const valid = points.filter((p) => typeof p === 'number' && Number.isFinite(p));
-  if (valid.length < 2) return null;
-
-  const min = Math.min(...valid);
-  const max = Math.max(...valid);
-  const range = max - min || 1;
-
-  const width = 34;
-  const height = 13;
-  const padding = 1;
-
-  const pathCoords = valid.map((val, idx) => {
-    const x = (idx / (valid.length - 1)) * (width - 2 * padding) + padding;
-    const y = height - padding - ((val - min) / range) * (height - 2 * padding);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-
-  const pathD = `M ${pathCoords.join(' L ')}`;
-  const strokeColor = isPositive ? 'var(--ds-bull, #12934f)' : 'var(--ds-bear, #d92d20)';
-
-  return (
-    <svg
-      width={width}
-      height={height}
-      className="shrink-0 opacity-80 group-hover/item:opacity-100 transition-opacity"
-      aria-hidden="true"
-    >
-      <path
-        d={pathD}
-        fill="none"
-        stroke={strokeColor}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-
-
 /** Single Interactive Index Card Item */
 function IndexCardItem({
   card,
   onSelect,
-  isPriority,
 }: {
   card: IndexCard;
   onSelect?: (symbol: string) => void;
-  isPriority?: boolean;
 }) {
   const ltp = safeNum(card.ltp, 0);
   const prevClose = safeNum(card.previous_close, 0);
@@ -220,16 +167,9 @@ function IndexCardItem({
   const isVix = displayName.toUpperCase().includes('VIX');
 
   const handleClick = useCallback(() => {
-    const symbolFocus = resolveCardSymbol(displayName);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('droid:select-instrument', {
-          detail: { symbol: symbolFocus, rawSymbol: card.symbol, displayName },
-        })
-      );
-    }
-    onSelect?.(symbolFocus);
-  }, [card.symbol, displayName, onSelect]);
+    // The shell maps the resolved symbol onto the shared InstrumentContext.
+    onSelect?.(resolveCardSymbol(displayName));
+  }, [displayName, onSelect]);
 
   const formattedLtp = formatIndianPrice(ltp);
   const formattedChange = formatPointsChange(change);
@@ -248,17 +188,17 @@ function IndexCardItem({
     <button
       type="button"
       onClick={handleClick}
-      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-0.5 rounded-[3px] border border-transparent hover:border-border/60 hover:bg-secondary/60 dark:hover:bg-secondary/40 transition-all cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
+      className={`group/item flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-0.5 rounded-[3px] border border-transparent hover:border-border/60 hover:bg-secondary/60  transition-all cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ${
         closed ? 'opacity-80' : ''
       }`}
-      title={`${displayName} • LTP: ${currency}${formattedLtp} (${formattedChange}) • Session: ${sessionLabel} • Vol: ${safeVol} • OI: ${safeOi} • Click to focus tactical bias`}
+      title={`${displayName} • LTP: ${currency}${formattedLtp} (${formattedChange}) • Session: ${sessionLabel} • Vol: ${safeVol} • OI: ${safeOi} • Click to select this instrument`}
       aria-label={`${displayName} index at ${formattedLtp}, ${isPos ? 'up' : isNeg ? 'down' : 'unchanged'} by ${formattedPct}`}
     >
       {/* Symbol Name */}
       <span
         className={`font-semibold tracking-tight text-[11.5px] sm:text-[12px] whitespace-nowrap transition-colors ${
           isVix
-            ? 'text-purple-700 dark:text-purple-400 group-hover/item:text-purple-600 font-bold'
+            ? 'text-warn-strong group-hover/item:text-warn font-bold'
             : 'text-foreground group-hover/item:text-primary'
         }`}
       >
@@ -269,9 +209,9 @@ function IndexCardItem({
       <span
         className={`tabular-nums font-mono font-bold text-[12px] sm:text-[12.5px] px-1 py-0.5 rounded-[2px] transition-colors duration-200 ${
           flash === 'up'
-            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+            ? 'bg-up/15 text-up-strong '
             : flash === 'down'
-              ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400'
+              ? 'bg-down/15 text-down-strong '
               : 'text-foreground'
         }`}
       >
@@ -284,21 +224,21 @@ function IndexCardItem({
           isNeutral
             ? 'text-muted-foreground bg-secondary/80 border-border'
             : isPos
-              ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-              : 'text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/20'
+              ? 'text-up-strong  bg-up/10 border-up/20'
+              : 'text-down-strong  bg-down/10 border-down/20'
         }`}
       >
         {isNeutral ? (
           <span className="text-[9px] opacity-70">0.00 (0.00%)</span>
         ) : isPos ? (
           <>
-            <TrendingUp className="w-2.5 h-2.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+            <TrendingUp className="w-2.5 h-2.5 shrink-0 text-up " aria-hidden="true" />
             <span>{formattedChange}</span>
             <span className="opacity-80">({formattedPct})</span>
           </>
         ) : (
           <>
-            <TrendingDown className="w-2.5 h-2.5 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+            <TrendingDown className="w-2.5 h-2.5 shrink-0 text-down " aria-hidden="true" />
             <span>{formattedChange}</span>
             <span className="opacity-80">({formattedPct})</span>
           </>
@@ -355,7 +295,7 @@ function MarketTickerFallback({
       <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
         {/* Offline Status Badge */}
         <span className="flex items-center gap-1.5 px-1.5 sm:px-2 py-0.5 rounded-md bg-secondary border border-border text-muted-foreground font-semibold text-[10px] sm:text-[10.5px] uppercase tracking-wider shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse" />
           Offline
         </span>
 
@@ -397,30 +337,18 @@ function MarketTickerInner({
   loading: loadingProp,
   onSelectSymbol,
 }: MarketTickerProps) {
-  // Live market ticks + status from LiveMarketContext
-  let contextCards: IndexCard[] | undefined;
-  let contextLoading: boolean | undefined;
-  let contextRefetch: (() => Promise<void>) | undefined;
-  let streamState: string | undefined;
-  let ticksFresh: boolean | undefined;
-
-  try {
-    const live = useOptionalLiveMarketContext();
-    contextCards = live?.cards;
-    contextLoading = live?.loading;
-    contextRefetch = live?.refetchCards;
-    streamState = live?.streamState;
-    ticksFresh = live?.ticksFresh;
-  } catch {
-    // Isolated usage / stories
-  }
+  // Live market ticks + status from context. The "optional" hooks return null
+  // (they never throw) when the provider is absent, e.g. isolated stories.
+  const live = useOptionalLiveMarketContext();
+  const contextCards = live?.cards;
+  const contextLoading = live?.loading;
+  const contextRefetch = live?.refetchCards;
+  const streamState = live?.streamState;
+  const ticksFresh = live?.ticksFresh;
 
   // Market session overview
-  let marketSession: string | undefined;
-  try {
-    const market = useOptionalMarketDataContext();
-    marketSession = market?.marketStatus?.session;
-  } catch {}
+  const market = useOptionalMarketDataContext();
+  const marketSession = market?.marketStatus?.session;
 
   const baseCards = useMemo(() => cardsProp ?? contextCards ?? [], [cardsProp, contextCards]);
   const baseLoading = loadingProp ?? contextLoading ?? false;
@@ -489,21 +417,21 @@ function MarketTickerInner({
       >
         {isClosed ? (
           <>
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+            <span className="w-1.5 h-1.5 rounded-full bg-ink-4" />
             <span className="font-mono">Closed</span>
           </>
         ) : isLive ? (
           <>
             <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-up opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-up" />
             </span>
-            <span className="text-emerald-700 dark:text-emerald-400 font-mono">Live</span>
+            <span className="text-up-strong font-mono">Live</span>
           </>
         ) : (
           <>
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-            <span className="text-amber-700 dark:text-amber-400 font-mono">Sync</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse" />
+            <span className="text-warn-strong font-mono">Sync</span>
           </>
         )}
       </div>
@@ -523,7 +451,6 @@ function MarketTickerInner({
               <IndexCardItem
                 card={card}
                 onSelect={onSelectSymbol}
-                isPriority={idx < 4}
               />
               {idx < orderedCards.length - 1 && (
                 <div

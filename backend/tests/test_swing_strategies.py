@@ -32,12 +32,38 @@ def _generate_synthetic_candles(
     return candles
 
 
+def _chain_for_spot(
+    spot: float,
+    step: float = 50.0,
+    ltps: tuple[float, float, float] = (250.0, 180.0, 110.0),
+) -> object:
+    """Minimal chain snapshot with live LTPs around ATM (fail-closed happy path).
+
+    Unit tests have no broker, so without explicit quotes the selector must
+    return None. These LTPs stand in for the broker chain — never a model.
+    """
+    from types import SimpleNamespace
+
+    atm = round(spot / step) * step
+    strikes = []
+    for k, ltp in ((atm - step, ltps[0]), (atm, ltps[1]), (atm + step, ltps[2])):
+        strikes.append(
+            SimpleNamespace(
+                strike=k,
+                call=SimpleNamespace(ltp=ltp),
+                put=SimpleNamespace(ltp=ltp),
+            )
+        )
+    return SimpleNamespace(strikes=strikes)
+
+
 def test_breakout_options_strategy():
     candles = _generate_synthetic_candles(count=50, base_price=24000.0, trend_step=30.0, contract_last_n=6)
     features = extract_swing_features(candles)
     regime = MarketRegime(regime="BULL", confidence=85.0)
 
     strat = BreakoutOptionsStrategy()
+    spot = float(features.close)
     setup = strat.evaluate(
         underlying="NIFTY",
         features=features,
@@ -46,6 +72,8 @@ def test_breakout_options_strategy():
         portfolio_equity=1_000_000.0,
         current_iv=0.14,
         iv_percentile=30.0,
+        spot_price=spot,
+        options_chain=_chain_for_spot(spot, ltps=(100.0, 70.0, 45.0)),
     )
 
     assert setup is not None
@@ -67,6 +95,7 @@ def test_pullback_options_strategy():
     regime = MarketRegime(regime="BULL", confidence=80.0)
 
     strat = PullbackOptionsStrategy()
+    spot = float(features.close)
     setup = strat.evaluate(
         underlying="NIFTY",
         features=features,
@@ -75,6 +104,8 @@ def test_pullback_options_strategy():
         portfolio_equity=1_000_000.0,
         current_iv=0.15,
         iv_percentile=40.0,
+        spot_price=spot,
+        options_chain=_chain_for_spot(spot),
     )
 
     # Strategy may return setup or abstain depending on strict EMA pullback condition
@@ -90,6 +121,7 @@ def test_stage2_options_strategy():
     regime = MarketRegime(regime="BULL", confidence=85.0)
 
     strat = Stage2OptionsStrategy()
+    spot = float(features.close)
     setup = strat.evaluate(
         underlying="BANKNIFTY",
         features=features,
@@ -98,6 +130,8 @@ def test_stage2_options_strategy():
         portfolio_equity=1_000_000.0,
         current_iv=0.16,
         iv_percentile=45.0,
+        spot_price=spot,
+        options_chain=_chain_for_spot(spot, step=100.0),
     )
 
     assert setup is not None
@@ -114,6 +148,7 @@ def test_iv_directional_strategy():
 
     strat = IVDirectionalStrategy()
     # Favorable low IV condition (IV percentile <= 40%)
+    spot = float(features.close)
     setup = strat.evaluate(
         underlying="NIFTY",
         features=features,
@@ -122,11 +157,17 @@ def test_iv_directional_strategy():
         portfolio_equity=1_000_000.0,
         current_iv=0.12,
         iv_percentile=20.0,
+        spot_price=spot,
+        options_chain=_chain_for_spot(spot, ltps=(100.0, 70.0, 45.0)),
     )
 
     assert setup is not None
     assert setup.strategy == "IV_DIRECTIONAL"
     assert setup.iv_percentile == 20.0
+    assert setup.entry_premium > 0
+    assert setup.stop_premium < setup.entry_premium
+    assert setup.target_premium_1 > setup.entry_premium
+    assert setup.target_premium_2 > setup.target_premium_1
     assert setup.trade_validity.underlying_valid is True
 
 
@@ -137,6 +178,7 @@ def test_bear_regime_setup_blocked_on_radar():
     bear_regime = MarketRegime(regime="BEAR", confidence=80.0)
 
     strat = BreakoutOptionsStrategy()
+    spot = float(features.close)
     setup = strat.evaluate(
         underlying="NIFTY",
         features=features,
@@ -145,11 +187,13 @@ def test_bear_regime_setup_blocked_on_radar():
         portfolio_equity=1_000_000.0,
         current_iv=0.14,
         iv_percentile=30.0,
+        spot_price=spot,
+        options_chain=_chain_for_spot(spot, ltps=(100.0, 70.0, 45.0)),
     )
 
     assert setup is not None
     # Bullish breakout in BEAR regime must be BLOCKED
-    if setup.direction == "LONG_CALL":
-        assert setup.signal_state == "BLOCKED"
-        assert any("BEAR" in r for r in setup.risk_reasons)
+    assert setup.direction == "LONG_CALL"
+    assert setup.signal_state == "BLOCKED"
+    assert any("BEAR" in r for r in setup.risk_reasons)
 

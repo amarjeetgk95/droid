@@ -1,19 +1,40 @@
 """
-Trend Pullback & EMA Ribbon Retest Strategy
+Trend Pullback & EMA Ribbon Retest Strategy (P1 overhaul)
 Mathematical rules:
-  - LONG_CALL: EMA20 > EMA50 > EMA200, ADX >= 25, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bullish
-  - LONG_PUT: EMA20 < EMA50 < EMA200, ADX >= 25, Spot pulls back to EMA20 within 0.3% tolerance, 15M/1H MTF Bearish
+  - LONG_CALL: EMA20 > EMA50 (> EMA200 when available), ADX >= 22, Spot pulls
+    back to EMA20 within 0.6% tolerance, 15M/1H MTF Bullish, VWAP aligned
+  - LONG_PUT: EMA20 < EMA50 (< EMA200 when available), ADX >= 22, Spot pulls
+    back to EMA20 within 0.6% tolerance, 15M/1H MTF Bearish, VWAP aligned
   - SL = Below EMA50 / swing low, T1 = 1.5R (previous high test), T2 = 3.0R (trend extension)
-  - Quality target: 80% win rate — neutral baseline scoring.
+  - P1: fail-closed on missing EMA20/EMA50/ADX (no spot* synthetic fallbacks).
+  - Demoted EMA_RIBBON scalp entry is folded here conceptually (pullback-to-
+    ribbon with rejection + recovery); the standalone EMA_RIBBON scanner entry
+    is disabled by default.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    ADX_TREND_CUTOFF,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.options_intelligence.selector import quantitative_contract_selector
 from app.signals.risk_engine import resolve_realistic_atr
+
+
+def _dynamic_fno_score(fno: dict, direction: str) -> float:
+    try:
+        raw = fno.get("pcr")
+        pcr = float(raw) if raw is not None else 1.0
+    except (TypeError, ValueError):
+        pcr = 1.0
+    if direction == "LONG_CALL":
+        return round(min(88.0, max(45.0, 50.0 + ((pcr - 1.0) * 40.0))), 1)
+    return round(min(88.0, max(45.0, 50.0 + ((1.0 - pcr) * 40.0))), 1)
 
 
 class TrendPullbackStrategy(Strategy):
@@ -25,28 +46,59 @@ class TrendPullbackStrategy(Strategy):
         tick = Decimal("0.05")
 
         trend_data = ind.get("trend", {})
-        ema20 = Decimal(str(trend_data.get("ema20") or spot * Decimal("0.998")))
-        ema50 = Decimal(str(trend_data.get("ema50") or spot * Decimal("0.995")))
+        if not isinstance(trend_data, dict):
+            trend_data = {}
+        # P1 fail-closed: no spot* synthetic EMA fallbacks.
+        raw_ema20 = trend_data.get("ema20")
+        raw_ema50 = trend_data.get("ema50")
+        if raw_ema20 is None or raw_ema50 is None:
+            return None
+        try:
+            ema20 = Decimal(str(raw_ema20))
+            ema50 = Decimal(str(raw_ema50))
+        except Exception:
+            return None
+        if ema20 <= Decimal("0") or ema50 <= Decimal("0"):
+            return None
         ema200 = trend_data.get("ema200")
-        adx = float(ind.get("adx") or trend_data.get("adx", 25.0))
+        # P1 fail-closed ADX: single cutoff 22 shared.
+        raw_adx = ind.get("adx")
+        if raw_adx is None:
+            raw_adx = trend_data.get("adx")
+        if raw_adx is None:
+            return None
+        try:
+            adx = float(raw_adx)
+        except (TypeError, ValueError):
+            return None
         atr = resolve_realistic_atr(ctx.underlying, spot, ind)
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
 
         # EMA200 gate: if EMA200 available, require full ribbon alignment
         ema200_ok = True
         if ema200 is not None:
-            ema200_dec = Decimal(str(ema200))
-            ema200_ok = (ema20 > ema50 > ema200_dec) or (ema20 < ema50 < ema200_dec)
+            try:
+                ema200_dec = Decimal(str(ema200))
+                ema200_ok = (ema20 > ema50 > ema200_dec) or (ema20 < ema50 < ema200_dec)
+            except Exception:
+                return None
 
         # ── BULLISH TREND PULLBACK (LONG_CALL) ──
-        # v3.1 §6: ADX >= 22.0, EMA ribbon aligned, VWAP alignment
+        # v3.1 §6: ADX >= 22.0, EMA ribbon aligned, VWAP alignment.
         vwap_bull_ok = (ctx.vwap is None) or (spot >= ctx.vwap * Decimal("0.999"))
-        is_bull_trend = (ema20 >= ema50 or trend_data.get("trend") == "BULLISH" or ctx.regime == "TREND_UP")
+        trend_label = str(trend_data.get("trend") or "").upper()
+        is_bull_trend = (
+            (ema20 > ema50)
+            and trend_label != "BEARISH"
+            and ctx.regime != "TREND_DOWN"
+        )
+        mtf_bull_ok = (mtf_bias == "BULLISH") or (mtf_bias == "NEUTRAL" and ctx.regime == "TREND_UP")
 
-        if spot > Decimal("0") and is_bull_trend and ema200_ok and vwap_bull_ok and mtf_bias in ("BULLISH", "NEUTRAL") and adx >= 22.0:
-            # Check if spot is near EMA20 (within 0.6%) or VWAP retest
+        if spot > Decimal("0") and is_bull_trend and ema200_ok and vwap_bull_ok and mtf_bull_ok and adx >= ADX_TREND_CUTOFF:
+            # Spot must be pulled back TO EMA20 (proximity only — a price
+            # extended above the ribbon is chasing, not a pullback).
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
-            if dist_pct <= Decimal("0.6") or spot >= ema20:
+            if dist_pct <= Decimal("0.6"):
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 raw_trigger = spot + min_gap
                 trigger = normalize_price(raw_trigger, tick)
@@ -54,8 +106,8 @@ class TrendPullbackStrategy(Strategy):
                     trigger = normalize_price(trigger + tick, tick)
 
                 entry_min = normalize_price(spot, tick)
-                entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
-                stop_loss = normalize_price(trigger - (atr * Decimal("0.8")), tick)
+                entry_max = normalize_price(trigger + (atr * Decimal("0.05")), tick)
+                stop_loss = normalize_price(trigger - (atr * Decimal("0.9")), tick)
                 risk_pts = trigger - stop_loss
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
@@ -90,9 +142,11 @@ class TrendPullbackStrategy(Strategy):
                         path_sim = None
                         contract_rationale = ["Fallback: Selected 1-strike ITM Call (Delta ~0.60)"]
 
-                    tech_score = min(90.0, max(50.0, 50.0 + (max(0.0, adx - 22.0) * 0.8) + 8.0))
+                    # Dynamic scoring earn-from-50 (P1): ADX strength + tightness of pullback.
+                    tightness_bonus = max(0.0, (0.6 - float(dist_pct)) * 10.0)
+                    tech_score = round(min(90.0, max(50.0, 50.0 + (max(0.0, adx - ADX_TREND_CUTOFF) * 0.8) + 8.0 + tightness_bonus)), 1)
                     mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 75.0)) - 10.0)
-                    fno_score = 70.0
+                    fno_score = _dynamic_fno_score(ctx.fno or {}, "LONG_CALL")
                     regime_score = 80.0 if ctx.regime == "TREND_UP" else 60.0
 
                     base_rationale = [
@@ -133,22 +187,26 @@ class TrendPullbackStrategy(Strategy):
                     )
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
-        # v3.1 §6: ADX >= 22.0, EMA ribbon aligned, VWAP alignment
         vwap_bear_ok = (ctx.vwap is None) or (spot <= ctx.vwap * Decimal("1.001"))
-        is_bear_trend = (ema20 <= ema50 or trend_data.get("trend") == "BEARISH" or ctx.regime == "TREND_DOWN")
+        is_bear_trend = (
+            (ema20 < ema50)
+            and trend_label != "BULLISH"
+            and ctx.regime != "TREND_UP"
+        )
+        mtf_bear_ok = (mtf_bias == "BEARISH") or (mtf_bias == "NEUTRAL" and ctx.regime == "TREND_DOWN")
 
-        if spot > Decimal("0") and is_bear_trend and ema200_ok and vwap_bear_ok and mtf_bias in ("BEARISH", "NEUTRAL") and adx >= 22.0:
+        if spot > Decimal("0") and is_bear_trend and ema200_ok and vwap_bear_ok and mtf_bear_ok and adx >= ADX_TREND_CUTOFF:
             dist_pct = abs(spot - ema20) / spot * Decimal("100")
-            if dist_pct <= Decimal("0.6") or spot <= ema20:
+            if dist_pct <= Decimal("0.6"):
                 min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
                 raw_trigger = spot - min_gap
                 trigger = normalize_price(raw_trigger, tick)
                 if abs(spot - trigger) < min_gap:
                     trigger = normalize_price(trigger - tick, tick)
 
-                entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
+                entry_min = normalize_price(trigger - (atr * Decimal("0.05")), tick)
                 entry_max = normalize_price(spot, tick)
-                stop_loss = normalize_price(trigger + (atr * Decimal("0.8")), tick)
+                stop_loss = normalize_price(trigger + (atr * Decimal("0.9")), tick)
                 risk_pts = stop_loss - trigger
                 if risk_pts > Decimal("0"):
                     t1 = normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)
@@ -183,9 +241,10 @@ class TrendPullbackStrategy(Strategy):
                         path_sim = None
                         contract_rationale = ["Fallback: Selected 1-strike ITM Put (Delta ~-0.60)"]
 
-                    tech_score = min(90.0, max(50.0, 50.0 + (max(0.0, adx - 22.0) * 0.8) + 8.0))
+                    tightness_bonus = max(0.0, (0.6 - float(dist_pct)) * 10.0)
+                    tech_score = round(min(90.0, max(50.0, 50.0 + (max(0.0, adx - ADX_TREND_CUTOFF) * 0.8) + 8.0 + tightness_bonus)), 1)
                     mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 75.0)) - 10.0)
-                    fno_score = 70.0
+                    fno_score = _dynamic_fno_score(ctx.fno or {}, "LONG_PUT")
                     regime_score = 80.0 if ctx.regime == "TREND_DOWN" else 60.0
 
                     base_rationale = [

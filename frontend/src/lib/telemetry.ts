@@ -61,11 +61,13 @@ export function reportWebVital(metric: { name: string; value: number; rating?: s
 
 /** Last-N error reports, newest first — for diagnostics UI / support copy-paste. */
 export function getRecentErrors(limit = 20): ErrorReport[] {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
   return errorBuffer.slice(-limit).reverse();
 }
 
 /** Last-N web vital samples, newest first. */
 export function getRecentVitals(limit = 20): VitalReport[] {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
   return vitalBuffer.slice(-limit).reverse();
 }
 

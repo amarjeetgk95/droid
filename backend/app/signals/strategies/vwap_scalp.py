@@ -1,9 +1,11 @@
 """
-VWAP_SCALP Strategy (§7)
+VWAP_SCALP Strategy (§7, P1 overhaul)
 Timeframe: 1M / 3M
 Detection:
   - abs(price - VWAP) / VWAP >= 0.3%
   - Rejection wick + rejection close back toward VWAP
+  - P1: closed 1M candle (is_new_1m_candle) + second-tick confirmation
+    (prev close same side of VWAP) + measured volume >= 1.2x fail-closed
   - Initial Risk: NIFTY 6-8 pts, BANKNIFTY 22-28 pts (HIGH_VOL: 9-12 / 30-38)
   - Targets: T1 = 1.5R, T2 = 2.5R
   - TTL: Original = 240s, Runner = 480s
@@ -12,7 +14,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    extract_volume_ratio,
+    has_closed_1m_candle,
+    VOLUME_SCALP_MIN,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 
 
@@ -22,6 +31,10 @@ class VWAPScalpStrategy(Strategy):
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
         # VWAP Scalp runs on 1M/3M candles
         if ctx.timeframe not in ("1M", "3M"):
+            return None
+
+        # P1: closed-candle + second-tick gate (no intrabar scalps).
+        if not has_closed_1m_candle(ctx):
             return None
 
         # In trending regime, VWAP mean-reversion is suppressed (§15)
@@ -34,6 +47,25 @@ class VWAPScalpStrategy(Strategy):
 
         ind = ctx.indicators
         tick = Decimal("0.05")
+
+        # P1: measured volume >= 1.2x, fail-closed if missing.
+        vol_ratio = extract_volume_ratio(ind)
+        if vol_ratio is None:
+            # Fall back to candle volume vs MA when indicator ratio absent?
+            # No — fail closed per P1. Candle-derived ratio is allowed only when
+            # both current and MA volumes are measured.
+            cur_v = None
+            try:
+                cur_v = float(ctx.candles[-1].get("volume", 0)) if ctx.candles else None
+            except Exception:
+                cur_v = None
+            ma_v = ctx.volume_ma_20
+            if cur_v and ma_v and ma_v > 0:
+                vol_ratio = cur_v / ma_v
+            else:
+                return None
+        if vol_ratio < VOLUME_SCALP_MIN:
+            return None
 
         # Resolve VWAP
         vwap_val = ctx.vwap
@@ -53,16 +85,22 @@ class VWAPScalpStrategy(Strategy):
             return None
 
         candles = ctx.candles
-        if not candles or len(candles) < 2:
+        if not candles or len(candles) < 3:
             return None
 
         last_c = candles[-1]
+        prev_c = candles[-2]
         c_open = Decimal(str(last_c.get("open", spot)))
         c_high = Decimal(str(last_c.get("high", spot)))
         c_low = Decimal(str(last_c.get("low", spot)))
         c_close = Decimal(str(last_c.get("close", spot)))
         candle_range = c_high - c_low
         if candle_range <= Decimal("0"):
+            return None
+
+        try:
+            prev_close = Decimal(str(prev_c.get("close", spot)))
+        except Exception:
             return None
 
         # Risk parameters by instrument (§7)
@@ -76,6 +114,9 @@ class VWAPScalpStrategy(Strategy):
 
         # ── BULLISH REVERSAL TOWARD VWAP (Price below VWAP, bouncing up) ──
         if spot < vwap_val:
+            # P1 second-tick confirmation: prev close also below VWAP (persistence).
+            if prev_close >= vwap_val:
+                return None
             lower_wick = min(c_open, c_close) - c_low
             if (lower_wick / candle_range) >= Decimal("0.30") and c_close >= c_open:
                 entry_min = normalize_price(spot, tick)
@@ -136,6 +177,8 @@ class VWAPScalpStrategy(Strategy):
 
         # ── BEARISH REJECTION FROM VWAP (Price above VWAP, falling down) ──
         elif spot > vwap_val:
+            if prev_close <= vwap_val:
+                return None
             upper_wick = c_high - max(c_open, c_close)
             if (upper_wick / candle_range) >= Decimal("0.30") and c_close <= c_open:
                 entry_min = normalize_price(spot - (candle_range * Decimal("0.2")), tick)

@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from app.services.market_service import MarketService
 from datetime import datetime, timezone
 
@@ -14,15 +15,47 @@ async def health_live():
 
 @router.get("/health/ready")
 async def health_ready():
-    """Readiness check — dependencies are usable."""
-    # Phase 1: no external dependencies required
-    return {
-        "status": "ok",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "checks": {
-            "provider": "ok",
-        }
-    }
+    """Readiness check — dependencies are usable.
+
+    Truth-of-Wall: this is an honest aggregate, never a hardcoded "ok".
+    Reuses the same real probes /health/subsystems computes; ready is its
+    summarizing gate. The central market-data feed is the hard gate: if it is
+    not running, the platform is blind and readiness must say so with a 503
+    (so orchestrators, uptime monitors and watchdogs actually see it).
+
+    Broker token status is reported informationally rather than gating: a dev
+    environment legitimately runs with no token, and the data layer already
+    fails closed to OFFLINE — faking readiness here would defeat both.
+    """
+    from app.services.central_feed import central_feed
+    from app.core.broker_runtime import get_config
+
+    checks: dict[str, object] = {}
+
+    try:
+        checks["central_feed"] = "ok" if bool(getattr(central_feed, "_running", False)) else "down"
+    except Exception:
+        checks["central_feed"] = "unknown"
+
+    try:
+        cfg = get_config()
+        raw_token = (cfg.credentials.get("access_token") or "")
+        try:
+            from app.core.broker_runtime import is_usable_access_token
+            usable = is_usable_access_token(raw_token)
+        except Exception:
+            usable = bool(raw_token)
+        checks["broker_token"] = "present" if usable else ("placeholder" if raw_token else "missing")
+    except Exception:
+        checks["broker_token"] = "unknown"
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    if checks["central_feed"] == "ok":
+        return {"status": "ok", "timestamp": timestamp, "checks": checks}
+    return JSONResponse(
+        status_code=503,
+        content={"status": "unavailable", "timestamp": timestamp, "checks": checks},
+    )
 
 
 @router.get("/health/subsystems")
@@ -76,6 +109,12 @@ async def health_subsystems():
     try:
         cfg = get_config()
         elements["broker_configured"] = bool(cfg.credentials.get("app_id"))
+        # Fyers-only policy posture: "ok:fyers" | "rejected:<value>" | "unset".
+        try:
+            from app.providers.registry import get_broker_provider_status
+            elements["broker_provider_status"] = get_broker_provider_status()
+        except Exception:
+            elements["broker_provider_status"] = "unknown"
         raw_token = (cfg.credentials.get("access_token") or "")
         try:
             from app.core.broker_runtime import is_usable_access_token
@@ -87,6 +126,46 @@ async def health_subsystems():
         # stored placeholder (e.g. test fixture) that can never authenticate.
         elements["token_status"] = (
             "present" if usable else ("placeholder" if raw_token else "missing")
+        )
+    except Exception:
+        pass
+
+    # Inbound tick-sanity rejections (Truth of Wall): sustained rejections
+    # mean the feed is producing implausible quotes — downstream is seeing
+    # gaps, not data. A nonzero value here is a loud, honest signal.
+    try:
+        from app.providers.registry import get_provider
+        elements["tick_sanity_rejections"] = int(get_provider().sanity_rejection_count() or 0)
+    except Exception:
+        pass
+
+    # ── Chain freshness & mark provenance ──
+    # An expired FYERS token makes every signal scan return [] — which is
+    # indistinguishable from "no setups today". These fields let a caller tell
+    # CHAIN_UNAVAILABLE (we could not price anything) from NO_SETUPS.
+    try:
+        from app.signals.live_contract_cache import live_contract_cache
+        from app.signals.option_marks import option_mark_registry
+
+        stats = live_contract_cache.stats()
+        strikes = int(stats.get("strikes", 0) or 0)
+        age_ms = int(stats.get("age_ms", -1))
+        elements["chain_strikes"] = strikes
+        elements["chain_age_ms"] = age_ms
+        elements["chain_status"] = (
+            "FRESH" if strikes and 0 <= age_ms <= 180_000
+            else ("STALE" if strikes else "UNAVAILABLE")
+        )
+
+        mark_stats = option_mark_registry.stats()
+        by_source = dict(mark_stats.get("by_source", {}) or {})
+        elements["option_marks"] = int(mark_stats.get("marks", 0) or 0)
+        elements["option_mark_sources"] = by_source
+        # MODEL_ONLY is a loud state: marks exist but none is a broker print, so
+        # execution will (correctly) reject every signal until the chain returns.
+        elements["chain_mark_status"] = (
+            "LIVE" if (by_source.get("CHAIN_BIDASK", 0) + by_source.get("CHAIN_LTP", 0)) > 0
+            else ("MODEL_ONLY" if by_source.get("MODEL_BLACK76", 0) > 0 else "NONE")
         )
     except Exception:
         pass

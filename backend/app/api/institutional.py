@@ -25,9 +25,22 @@ from app.institutional.portfolio_risk import institutional_portfolio_engine, Por
 from app.institutional.audit import audit_trail
 from app.institutional.pipeline import institutional_pipeline
 from app.institutional.telegram import telegram_link_manager, telegram_outbound_queue, verify_telegram_secret, handle_telegram_update, is_duplicate_update
+from app.algo.clock import clock_authority
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/v1/institutional", tags=["institutional"])
+
+
+def _mock_injection_blocked() -> bool:
+    """Truth-of-Wall gate for mock AI injection (§77 NO_MOCK).
+
+    `mock_ai_response` is a test-only door: it lets a caller feed a canned AI
+    verdict through the pipeline without any live provider. That is acceptable
+    in dev/test and must be impossible in a live deployment. Blocked when
+    §77 institutional_live_mode is on, or either env field says production
+    (same dual-field rule as app.core.security).
+    """
+    return settings.institutional_live_mode or "production" in {settings.app_env, settings.app_mode}
 
 
 # ── Instruments ──────────────────────────────────────────────────────
@@ -303,6 +316,8 @@ async def ai_confirm(req: AIConfirmRequest):
         proposed_setup=req.short_horizon,
     )
     if req.mock_ai_response is not None:
+        if _mock_injection_blocked():
+            raise HTTPException(status_code=403, detail="mock AI injection disabled in live mode (§77 NO_MOCK)")
         # Call with mock provider that returns mock_ai_response
         async def mock_provider(prompt_ctx):
             return req.mock_ai_response
@@ -347,6 +362,24 @@ def audit_get(signal_id: str):
     return rec
 
 # ── Data Health (§68, §72) ───────────────────────────────────────────
+# Clock-sync thresholds mirror app.algo.clock.ClockAuthority (DEGRADED 500ms,
+# STALE 2000ms). None means no exchange/server pair has ever been ingested —
+# reported as UNKNOWN, never collapsed into a healthy value.
+_CLOCK_DEGRADED_MS = 500.0
+_CLOCK_STALE_MS = 2000.0
+
+
+def _clock_sync_status() -> str:
+    drift = clock_authority.metrics().server_drift_ms
+    if drift is None:
+        return "UNKNOWN"
+    if drift >= _CLOCK_STALE_MS:
+        return "STALE"
+    if drift >= _CLOCK_DEGRADED_MS:
+        return "DEGRADED"
+    return "VALID"
+
+
 @router.get("/health/data")
 def data_health():
     now_ms = int(time.time()*1000)
@@ -379,7 +412,10 @@ def data_health():
             "last_event_canonical_ms": age_info.get("canonical_timestamp_utc"),
             "session": get_session_clock(iid).session_info(now_ms=now_ms),
             "sequence_last": get_sequence_validator(iid).last_seq,
-            "clock_sync": "VALID",  # placeholder — would check drift
+            # Truth-of-Wall: clock_sync comes from measured drift only.
+            # No ingest yet → UNKNOWN (never a fabricated "VALID").
+            "clock_sync": _clock_sync_status(),
+            "clock_drift_ms": clock_authority.metrics().server_drift_ms,
             "snapshot_valid": status == "LIVE",
             "contract_valid": asset_registry.get(iid).contract_spec is not None,
         }
@@ -413,8 +449,12 @@ async def pipeline_ingest(
 
     mock_parsed: dict | str | None = None
     if _body_mock is not None:
+        if _mock_injection_blocked():
+            raise HTTPException(status_code=403, detail="mock AI injection disabled in live mode (§77 NO_MOCK)")
         mock_parsed = _body_mock
     elif mock_ai_response is not None:
+        if _mock_injection_blocked():
+            raise HTTPException(status_code=403, detail="mock AI injection disabled in live mode (§77 NO_MOCK)")
         try:
             import json as _json
 

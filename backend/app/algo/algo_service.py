@@ -128,21 +128,25 @@ class AlgoAccountService:
         """Fetch account state, capital limits, kill-switch status, and consent."""
         acct = await self.get_or_create_account(session, user_id)
         if session is None:
+            # Fail-closed: no DB = no capital numbers. Never invent a
+            # ₹3000 "Dev Account" — the UI must show unavailable, not funds.
             return {
                 "account_id": str(acct.id),
                 "mode": acct.mode,
-                "is_active": acct.is_active,
-                "display_name": acct.display_name or "Dev Account",
+                "is_active": False,
+                "display_name": acct.display_name or "Unavailable (no DB)",
+                "unavailable": True,
+                "reason": "NO_DB_SESSION",
                 "capital": {
-                    "investment_limit": "3000.00",
-                    "available": "3000.00",
+                    "investment_limit": "0.00",
+                    "available": "0.00",
                     "reserved": "0.00",
                     "deployed": "0.00",
                     "daily_loss": "0.00",
-                    "daily_loss_limit": "500.00",
+                    "daily_loss_limit": "0.00",
                     "is_breached": False,
                 },
-                "kill_switch": {"is_killed": False, "kill_level": "NONE"},
+                "kill_switch": {"is_killed": True, "kill_level": "FULL"},
                 "consent": {"acknowledged": False, "disclosure_version": DISCLOSURE_VERSION},
             }
 

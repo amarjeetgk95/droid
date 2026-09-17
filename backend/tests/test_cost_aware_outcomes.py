@@ -46,6 +46,9 @@ def test_fsm_cost_aware_transitions():
         risk_reward_t2=3.2,
         confidence=0.85,
         lots=1,
+        actual_fill_price=Decimal("130"),
+        option_contract={"broker_symbol": "NSE:NIFTY26SEP24800CE", "strike": 24800.0,
+                         "option_type": "CE", "lot_size": 75},
     )
     fsm.register(sig)
     fsm.transition(sig.signal_id, "VALIDATED")
@@ -54,6 +57,10 @@ def test_fsm_cost_aware_transitions():
     fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal("24815"))
     
     # Hit T1
+    # Fail-closed friction: the exit leg prices from a REAL chain mark for the
+    # exact contract (premium domain), never the spot tick or a model estimate.
+    from tests.conftest import seed_chain_mark
+    seed_chain_mark("NSE:NIFTY26SEP24800CE", 180.0, underlying="NIFTY", strike=24800.0, option_type="CE")
     fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("24850"))
     assert sig.terminal_outcome == "PARTIAL_WIN"
     assert sig.realized_rr_gross == 1.6
@@ -63,6 +70,7 @@ def test_fsm_cost_aware_transitions():
     assert sig.breakeven_activated is True
 
     # Hit Runner Time Stop
+    seed_chain_mark("NSE:NIFTY26SEP24800CE", 165.0, underlying="NIFTY", strike=24800.0, option_type="CE")
     fsm.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", market_price=Decimal("24840"))
     assert sig.terminal_outcome == "PARTIAL_WIN"
     assert sig.outcome_status == "RUNNER_TIME_STOP"

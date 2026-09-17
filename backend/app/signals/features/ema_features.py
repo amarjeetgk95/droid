@@ -10,6 +10,15 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 
+class InsufficientData(RuntimeError):
+    """P0-2 FAIL-CLOSE: not enough PIT-safe bars — caller must skip, not fake neutral-50."""
+
+
+# P0-2 MIN_BARS: EMA50 needs 60 closed bars, EMA200 trend needs 210.
+MIN_BARS_EMA50 = 60
+MIN_BARS_EMA200 = 210
+
+
 class EMAFeatures(BaseModel):
     ema_fast: Optional[float] = None       # e.g., EMA 8 / 9
     ema_medium: Optional[float] = None     # e.g., EMA 20 / 21
@@ -53,10 +62,22 @@ def extract_ema_features(
     medium_period: int = 21,
     slow_period: int = 50,
     trend_period: int = 200,
+    strict: bool = False,
 ) -> EMAFeatures:
-    """Extracts standardized EMA features from a series of closing prices."""
+    """Extracts standardized EMA features from a series of closing prices.
+
+    P0-2: pass strict=True (as features/engine.py does) to raise
+    InsufficientData when <MIN_BARS_EMA50 bars exist instead of returning a
+    neutral placeholder. Default strict=False preserves legacy direct callers
+    (strategies/tests with small fixtures) — engine-level enforcement is the
+    fail-closed boundary.
+    """
     if not closes:
+        if strict:
+            raise InsufficientData(f"EMA needs >= {MIN_BARS_EMA50} closes, got 0")
         return EMAFeatures()
+    if strict and len(closes) < MIN_BARS_EMA50:
+        raise InsufficientData(f"EMA{slow_period} needs >= {MIN_BARS_EMA50} closes, got {len(closes)}")
         
     p = current_price if current_price is not None else closes[-1]
     

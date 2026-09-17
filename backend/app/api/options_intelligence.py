@@ -38,6 +38,9 @@ from app.signals.portfolio_greeks import (
 )
 from app.ai.financial_research.context_store import ai_context_store
 from app.ai.financial_research.engine import financial_research_engine
+import structlog
+
+logger = structlog.get_logger()
 from app.ai.financial_research.schemas import FinancialResearchReport
 
 router = APIRouter(prefix="/api/v1/options-intelligence", tags=["options-intelligence"])
@@ -149,10 +152,29 @@ def simulate_option_path(req: PathSimulateRequest, user: AuthUser = Depends(get_
 
 
 @router.post("/select-contract")
-def select_optimal_option_contract(req: SelectContractRequest, user: AuthUser = Depends(get_current_user)):
-    """Rank ITM, ATM, OTM candidates and select the best risk-adjusted contract."""
+async def select_optimal_option_contract(req: SelectContractRequest, user: AuthUser = Depends(get_current_user)):
+    """Rank ITM, ATM, OTM candidates and select the best risk-adjusted contract.
+
+    Selection is fail-closed: candidates are priced from the broker's live chain
+    quotes only (a theoretical price would fabricate a selectable contract), so
+    this endpoint fetches the chain for the requested underlying itself.
+    """
     if req.spot_price <= 0:
         raise HTTPException(status_code=400, detail="Broker market data unavailable: positive spot price required.")
+
+    chain_quotes: dict[float, float] = {}
+    try:
+        from app.services.market_service import MarketService
+
+        chain = await MarketService().get_option_chain(req.underlying)
+        for q in chain or []:
+            if q.option_type == ("CE" if req.direction == "LONG_CALL" else "PE") and q.ltp > 0:
+                chain_quotes[float(q.strike)] = float(q.ltp)
+    except Exception as e:
+        # Chain unavailable -> empty quotes -> the selector fail-closes with a
+        # clear 400 rather than evaluating candidates off a model price.
+        logger.warning("select_contract_chain_fetch_failed", underlying=req.underlying, error=str(e)[:150])
+
     res = quantitative_contract_selector.select_optimal_contract(
         underlying=req.underlying,
         spot_price=req.spot_price,
@@ -161,9 +183,13 @@ def select_optimal_option_contract(req: SelectContractRequest, user: AuthUser = 
         stop_loss_points=req.stop_loss_points,
         target_horizon_hours=req.target_horizon_hours,
         current_iv=req.current_iv,
+        option_chain_quotes=chain_quotes or None,
     )
     if not res:
-        raise HTTPException(status_code=400, detail="Unable to evaluate contracts for given underlying")
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to evaluate contracts: no live chain quotes available for the requested underlying.",
+        )
     return res.model_dump(mode="json")
 
 

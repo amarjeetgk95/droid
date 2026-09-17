@@ -3,6 +3,7 @@ Time Model & Clock Integrity
 EventClock, MarketSessionClock, MonotonicOrderingClock
 Canonical UTC for event time. Sequence IDs for deterministic ordering.
 Never use local machine time as substitute for exchange timestamps.
+Monotonic_ns for age/ordering; CLOSING window 15:25-15:30; future-dated ticks rejected.
 """
 from __future__ import annotations
 
@@ -15,6 +16,9 @@ from typing import Literal
 IST = ZoneInfo("Asia/Kolkata")
 
 SessionState = Literal["PRE_OPEN", "OPEN", "CLOSING", "CLOSED"]
+
+# Max allowable future skew before a tick is rejected as future-dated.
+MAX_FUTURE_SKEW_MS: int = 2_000
 
 
 @dataclass
@@ -30,12 +34,15 @@ class EventClock:
     Per-instrument/per-source authoritative clock.
     Preserves event_time, receive_time, processing_time separately.
     Never overwrites event time with server receive time.
+    Rejects future-dated ticks beyond MAX_FUTURE_SKEW_MS.
     """
+
     def __init__(self, instrument_id: str, source_id: str = "broker_feed"):
         self.instrument_id = instrument_id
         self.source_id = source_id
         self._metrics = ClockMetrics()
         self._last_canonical_ms: int | None = None
+        self._last_monotonic_ns: int | None = None
 
     def ingest(
         self,
@@ -44,6 +51,14 @@ class EventClock:
         received_timestamp_utc: int | None = None,
     ) -> dict:
         now_ms = int(time.time() * 1000)
+        now_ns = time.monotonic_ns()
+        # Reject future-dated ticks: exchange time cannot be ahead of receipt.
+        ref = received_timestamp_utc if received_timestamp_utc is not None else now_ms
+        if canonical_timestamp_utc is not None and canonical_timestamp_utc - ref > MAX_FUTURE_SKEW_MS:
+            raise ValueError(
+                f"future-dated tick rejected: canonical={canonical_timestamp_utc} > received={ref} "
+                f"(skew {canonical_timestamp_utc - ref}ms > {MAX_FUTURE_SKEW_MS}ms)"
+            )
         received = received_timestamp_utc if received_timestamp_utc is not None else now_ms
         exchange = exchange_timestamp if exchange_timestamp is not None else canonical_timestamp_utc
         drift = received - canonical_timestamp_utc if canonical_timestamp_utc else None
@@ -54,11 +69,13 @@ class EventClock:
             drift_ms=float(drift) if drift is not None else None,
         )
         self._last_canonical_ms = canonical_timestamp_utc
+        self._last_monotonic_ns = now_ns
         return {
             "canonical_timestamp_utc": canonical_timestamp_utc,
             "exchange_timestamp": exchange,
             "received_timestamp_utc": received,
             "processing_timestamp_utc": now_ms,
+            "processing_monotonic_ns": now_ns,
             "drift_ms": drift,
         }
 
@@ -67,9 +84,12 @@ class EventClock:
         return self._metrics
 
     def age_ms(self, canonical_ms: int | None = None) -> int | None:
+        """Monotonic age: elapsed ns since ingest, not wall-clock diff."""
         target = canonical_ms if canonical_ms is not None else self._last_canonical_ms
         if target is None:
             return None
+        if canonical_ms is None and self._last_monotonic_ns is not None:
+            return int((time.monotonic_ns() - self._last_monotonic_ns) // 1_000_000)
         return int(time.time() * 1000) - target
 
 
@@ -77,11 +97,13 @@ class MarketSessionClock:
     """
     Session-aware clock per instrument.
     Indian equity: PRE_OPEN → OPEN → CLOSING → CLOSED via exchange-calendar config.
+    CLOSING window is 15:25–15:30 IST (last 5 min: no new entries, exits only).
     BTCUSD: continuous 24/7 (always OPEN).
     """
+
     _PRE_OPEN_START = dt_time(9, 0)
     _OPEN_START = dt_time(9, 15)
-    _CLOSING_START = dt_time(15, 30)
+    _CLOSING_START = dt_time(15, 25)
     _CLOSE = dt_time(15, 30)
 
     def __init__(self, instrument_id: str, pipeline: str):
@@ -97,6 +119,7 @@ class MarketSessionClock:
 
     def current_state(self, now_ms: int | None = None, override_date: date | None = None) -> SessionState:
         if self.pipeline == "CRYPTO":
+            self._track("OPEN", now_ms)
             return "OPEN"
         now_ist = self._now_ist(now_ms)
         if override_date is not None:
@@ -104,20 +127,34 @@ class MarketSessionClock:
         try:
             from app.services.calendar_service import calendar_service
             if not calendar_service.is_trading_day(now_ist.date()):
+                self._track("CLOSED", now_ms)
                 return "CLOSED"
         except Exception:
             if now_ist.weekday() >= 5:
+                self._track("CLOSED", now_ms)
                 return "CLOSED"
         t = now_ist.time()
         if t < self._PRE_OPEN_START:
-            return "CLOSED"
-        if t < self._OPEN_START:
-            return "PRE_OPEN"
-        if t < self._CLOSING_START:
-            return "OPEN"
-        if t == self._CLOSE:
-            return "CLOSING"
-        return "CLOSED"
+            st: SessionState = "CLOSED"
+        elif t < self._OPEN_START:
+            st = "PRE_OPEN"
+        elif t < self._CLOSING_START:
+            st = "OPEN"
+        elif t < self._CLOSE:
+            st = "CLOSING"
+        else:
+            st = "CLOSED"
+        self._track(st, now_ms)
+        return st
+
+    def _track(self, st: SessionState, now_ms: int | None) -> None:
+        if st != self._state:
+            self._state = st
+            self._last_transition_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+
+    @property
+    def state(self) -> SessionState:
+        return self._state
 
     def is_open(self, now_ms: int | None = None) -> bool:
         return self.current_state(now_ms) == "OPEN"
@@ -131,7 +168,8 @@ class MarketSessionClock:
         cur = self.current_state(now_ms)
         if self.pipeline == "CRYPTO":
             return False
-        return cur == "CLOSED" and (prev_state in ("OPEN", "CLOSING") if prev_state else False)
+        prev = prev_state if prev_state is not None else self._state
+        return cur == "CLOSED" and (prev in ("OPEN", "CLOSING") if prev else False)
 
     def session_info(self, now_ms: int | None = None) -> dict:
         state = self.current_state(now_ms)
@@ -149,21 +187,28 @@ class MarketSessionClock:
 
 class MonotonicOrderingClock:
     """
-    Deterministic processing order via sequence IDs.
+    Deterministic processing order via sequence IDs (monotonic_ns backed).
     """
+
     def __init__(self):
         self._seq_by_source: dict[str, int] = {}
         self._global_seq: int = 0
+        self._global_ns: int = time.monotonic_ns()
 
     def next_sequence(self, source_key: str) -> int:
         cur = self._seq_by_source.get(source_key, 0) + 1
         self._seq_by_source[source_key] = cur
         self._global_seq += 1
+        self._global_ns = time.monotonic_ns()
         return cur
 
     def global_sequence(self) -> int:
         self._global_seq += 1
+        self._global_ns = time.monotonic_ns()
         return self._global_seq
+
+    def now_ns(self) -> int:
+        return time.monotonic_ns()
 
     def observed(self, source_key: str, seq: int) -> None:
         prev = self._seq_by_source.get(source_key, 0)

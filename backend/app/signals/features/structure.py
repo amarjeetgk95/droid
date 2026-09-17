@@ -16,6 +16,14 @@ class SwingPoint(BaseModel):
     timestamp: Optional[Any] = None
 
 
+class InsufficientData(RuntimeError):
+    """P0-2 FAIL-CLOSE: fewer than MIN_BARS_STRUCTURE bars — caller must skip."""
+
+
+# P0-2 MIN_BARS: swing geometry needs 20 closed bars minimum.
+MIN_BARS_STRUCTURE = 20
+
+
 class MarketStructureFeatures(BaseModel):
     structure_type: str = "RANGE"  # "HH_HL" | "LH_LL" | "RANGE" | "EXPANDING"
     trend_bias: str = "NEUTRAL"    # "BULLISH" | "BEARISH" | "NEUTRAL"
@@ -78,13 +86,23 @@ def extract_market_structure(
     prior_day_high: Optional[float] = None,
     prior_day_low: Optional[float] = None,
     window: int = 3,
+    strict: bool = False,
 ) -> MarketStructureFeatures:
-    """Computes comprehensive market structure features from historical candles."""
+    """Computes comprehensive market structure features from historical candles.
+
+    P0-2: pass strict=True (as features/engine.py does) to raise
+    InsufficientData when <MIN_BARS_STRUCTURE bars exist. Default
+    strict=False preserves legacy direct callers.
+    """
     if not candles:
+        if strict:
+            raise InsufficientData(f"Structure needs >= {MIN_BARS_STRUCTURE} candles, got 0")
         return MarketStructureFeatures(
             prior_day_high=prior_day_high,
             prior_day_low=prior_day_low,
         )
+    if strict and len(candles) < MIN_BARS_STRUCTURE:
+        raise InsufficientData(f"Structure needs >= {MIN_BARS_STRUCTURE} candles, got {len(candles)}")
 
     p = current_price if current_price is not None else float(candles[-1].get("close", 0))
     session_h = max(float(c.get("high", 0)) for c in candles)

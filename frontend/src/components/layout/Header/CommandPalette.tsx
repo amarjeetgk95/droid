@@ -124,7 +124,7 @@ export function CommandPalette({
           badge: `${isPos ? '+' : ''}${changeVal.toFixed(2)}%`,
           badgeTone: isNeutral ? 'muted' : isPos ? 'emerald' : 'rose',
           href: `/markets?symbol=${encodeURIComponent(c.symbol)}`,
-          icon: <TrendingUp className="w-3.5 h-3.5 text-blue-500" />,
+          icon: <TrendingUp className="w-3.5 h-3.5 text-accent" />,
         });
       }
     }
@@ -138,7 +138,7 @@ export function CommandPalette({
         label: 'Ingestion Diagnostics',
         sub: 'Inspect broker latency, reconnect counts & feed stream telemetry',
         action: onOpenDiagnostics,
-        icon: <Activity className="w-3.5 h-3.5 text-amber-500" />,
+        icon: <Activity className="w-3.5 h-3.5 text-warn" />,
       },
       ...(onToggleTicker
         ? [
@@ -151,7 +151,7 @@ export function CommandPalette({
               action: onToggleTicker,
               badge: tickerVisible ? 'Visible' : 'Hidden',
               badgeTone: 'muted' as const,
-              icon: <BarChart2 className="w-3.5 h-3.5 text-emerald-500" />,
+              icon: <BarChart2 className="w-3.5 h-3.5 text-up" />,
             },
           ]
         : []),
@@ -162,7 +162,7 @@ export function CommandPalette({
         label: 'Terminal & Broker Settings',
         sub: 'Configure broker API credentials, risk limits & models',
         href: '/settings',
-        icon: <Settings className="w-3.5 h-3.5 text-slate-500" />,
+        icon: <Settings className="w-3.5 h-3.5 text-ink-3" />,
       },
     ];
 
@@ -233,7 +233,7 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] sm:pt-[12vh] bg-slate-950/40 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] sm:pt-[12vh] bg-foreground/40 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-150"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -347,10 +347,10 @@ export function CommandPalette({
                             <span
                               className={cn(
                                 'text-[10px] font-semibold px-1.5 py-0.2 rounded border shrink-0',
-                                item.badgeTone === 'emerald' && 'bg-emerald-50 text-emerald-700 border-emerald-200',
-                                item.badgeTone === 'rose' && 'bg-rose-50 text-rose-700 border-rose-200',
-                                item.badgeTone === 'amber' && 'bg-amber-50 text-amber-800 border-amber-200',
-                                item.badgeTone === 'blue' && 'bg-blue-50 text-blue-700 border-blue-200',
+                                item.badgeTone === 'emerald' && 'bg-up-wash text-up-strong border-up-line',
+                                item.badgeTone === 'rose' && 'bg-down-wash text-down-strong border-down-line',
+                                item.badgeTone === 'amber' && 'bg-warn-wash text-warn-strong border-warn-line',
+                                item.badgeTone === 'blue' && 'bg-accent-wash text-accent-strong border-accent-line',
                                 (!item.badgeTone || item.badgeTone === 'muted') &&
                                   'bg-secondary text-muted-foreground border-border',
                               )}

@@ -1,183 +1,30 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '@/lib/api';
-import { MarketRegimeOverview, MarketBreadthData, FIIDIIOverviewResponse } from '@/lib/types';
-import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
-import { FreshnessClock } from '@/components/common/FreshnessClock';
-import { RegimeBanner } from '@/components/markets/RegimeBanner';
+import type { ApiMeta, MarketRegimeOverview } from '@/lib/types';
+import { usePolling } from '@/hooks/usePolling';
+import { useMarketSession } from '@/hooks/useMarketSession';
+import {
+  RegimeBanner,
+  type RegimeBannerStatus,
+} from '@/components/markets/RegimeBanner';
 import { KeyLevelsTable } from '@/components/markets/KeyLevelsTable';
 import { IndicatorsGrid } from '@/components/markets/IndicatorsGrid';
 import { VixRegimeCard } from '@/components/markets/VixRegimeCard';
-import { AIAnalysisCard, AIDeepInsightCard } from '@/components/ai';
-import { ErrorCard } from '@/components/ui/ErrorCard';
-import { Card, EmptyNote, Stat, fmtINR, fmtNum } from '@/components/ui/desk';
+import { MarketSessionBanner } from '@/components/markets/MarketSessionBanner';
+import { isStale, isUsableRegimeOverview, provenanceLabel, symbolsMatch } from '@/components/markets/truthful';
 
-const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
+const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
+type SymbolId = (typeof SYMBOLS)[number];
 
-const FALLBACK_POLL_MS = 15 * 60 * 1000;
-
-/**
- * Compact "Breadth & Flows" strip — stat-grid only.
- * Reuses the SAME data hooks as the dashboard cards (no component imports):
- * - MarketBreadth path: useOptionalMarketDataContext().breadth ?? api.getMarketBreadth()
- * - FIIPositioningCard path: useOptionalMarketDataContext().fiiDii ?? api.getFIIDIIOverview()
- */
-function BreadthFlowsStrip() {
-  const ctx = useOptionalMarketDataContext();
-  const ctxBreadth = ctx?.breadth ?? null;
-  const ctxFii = (ctx?.fiiDii as FIIDIIOverviewResponse | null) ?? null;
-  const hasCtxBreadth = ctxBreadth ? 'ctx' : 'noctx';
-  const hasCtxFii = ctxFii ? 'ctx' : 'noctx';
-  const [fbBreadth, setFbBreadth] = useState<MarketBreadthData | null>(null);
-  const [fbFii, setFbFii] = useState<FIIDIIOverviewResponse | null>(null);
-  const [flow, setFlow] = useState<{ composite: { score: number | null; sentiment: string; status: string } | null; drift: { degraded: boolean } | null; flow: { event_date: string | null } | null } | null>(null);
-
-  const breadth: MarketBreadthData | null = ctxBreadth ?? fbBreadth;
-  const fii: FIIDIIOverviewResponse | null = ctxFii ?? fbFii;
-
-  useEffect(() => {
-    if (ctxBreadth && ctxFii) return;
-    let isMounted = true;
-    const load = async () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      try {
-        if (!ctxBreadth) {
-          const b = await api.getMarketBreadth();
-          if (isMounted && b.data) setFbBreadth(b.data);
-        }
-        if (!ctxFii) {
-          const f = await api.getFIIDIIOverview();
-          if (isMounted && f.data) setFbFii(f.data);
-        }
-        try {
-          const fl = await api.getFlowSnapshot();
-          if (isMounted && fl.data) setFlow(fl.data);
-        } catch {
-          // Flow context is additive — never breaks the strip.
-        }
-      } catch {
-        // Keep strip silent — shows placeholder text below.
-      }
-    };
-    void load();
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      timeout = setTimeout(() => {
-        if (!document.hidden) void load();
-        schedule();
-      }, FALLBACK_POLL_MS * (0.8 + Math.random() * 0.4));
-    };
-    schedule();
-    const onVis = () => { if (!document.hidden) void load(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      isMounted = false;
-      if (timeout) clearTimeout(timeout);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasCtxBreadth, hasCtxFii]);
-
-  if (!breadth && !fii) {
-    return (
-      <Card title="Breadth & Flows" meta="loading…">
-        <EmptyNote>Loading breadth &amp; flows…</EmptyNote>
-      </Card>
-    );
-  }
-
-  const sentiment = breadth?.sentiment ? String(breadth.sentiment).replace(/_/g, ' ') : '—';
-  const fiiLS =
-    fii && Number.isFinite(Number(fii.fii_long_short_ratio))
-      ? `${fmtNum(fii.fii_long_short_ratio, 2)}x`
-      : '—';
-  // Truth-of-wall: FII feed has no live source — label the snapshot as such.
-  const fiiLive = fii?.live_available === true;
-  const fiiSub = !fii ? '—' : fiiLive ? 'live' : `snapshot ${fii.as_of ?? ''} · offline`.trim();
-
-  return (
-    <Card title="Breadth & Flows" meta={sentiment !== '—' ? sentiment : undefined}>
-      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-        <Stat label="Advances" value={breadth ? fmtNum(breadth.advancing, 0) : '—'} />
-        <Stat label="Declines" value={breadth ? fmtNum(breadth.declining, 0) : '—'} />
-        <Stat label="A/D ratio" value={breadth ? fmtNum(breadth.advance_decline_ratio, 2) : '—'} />
-        <Stat label="Sentiment" value={sentiment} />
-        <Stat label="FII long/short" value={fiiLS} sub={fiiSub} tone={fiiLive ? undefined : 'neut'} />
-        <Stat
-          label="Institutional composite"
-          value={flow?.composite?.score != null ? `${Math.round(flow.composite.score)}` : '—'}
-          sub={flow?.composite ? `${flow.composite.sentiment} · ${flow.composite.status}${flow?.drift?.degraded ? ' · drift' : ''}${flow?.flow?.event_date ? ` · ${flow.flow.event_date}` : ''} · daily, not live` : 'daily file · not live'}
-          tone={flow?.drift?.degraded ? 'neut' : undefined}
-        />
-      </div>
-    </Card>
-  );
-}
+const POLL_MS = 15_000;
 
 export default function MarketsPage() {
-  const market = useOptionalMarketDataContext();
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('NIFTY');
-  const [overview, setOverview] = useState<MarketRegimeOverview | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  // Truth-of-data: when did this desk last successfully observe the feed?
-  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
-  const [fetching, setFetching] = useState<boolean>(true);
-
-  const fetchRegime = async () => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    setFetching(true);
-    try {
-      const res = await api.getRegimeOverview(selectedSymbol);
-      setOverview(res.data);
-      setError(null);
-      setLastSuccessAt(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch market regime data');
-    } finally {
-      setLoading(false);
-      setFetching(false);
-    }
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-
-    setLoading(true);
-    void fetchRegime();
-
-    const schedule = () => {
-      const jittered = 30000 * (0.8 + Math.random() * 0.4);
-      timeout = setTimeout(async () => {
-        if (!isMounted) return;
-        await fetchRegime();
-        schedule();
-      }, jittered);
-    };
-    schedule();
-    const onVis = () => { if (!document.hidden) void fetchRegime(); };
-    document.addEventListener('visibilitychange', onVis);
-
-    return () => {
-      isMounted = false;
-      if (timeout) clearTimeout(timeout);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [selectedSymbol]);
-
-  const spotPrice = overview?.spot_price || 0;
-  const regimeLine = overview?.regime_state
-    ? overview.regime_state.replace(/_/g, ' ')
-    : 'Computing regime';
-
-  // Keep the fresh pill honest when the user switches symbols: per-symbol
-  // staleness is expected to read STALE/SYNCING, never a false DOWN flash.
+  const [selectedSymbol, setSelectedSymbol] = useState<SymbolId>('NIFTY');
 
   return (
     <div className="ds-page">
-      {/* header */}
       <header className="page-hero">
         <div className="toolbar">
           <div>
@@ -185,18 +32,12 @@ export default function MarketsPage() {
               <h1>Market Context</h1>
               <span className="badge b-info" style={{ fontSize: 11 }}>{selectedSymbol}</span>
             </div>
-            <p className="muted num">
-              {overview ? `Spot ${fmtINR(spotPrice)} · ${regimeLine}` : loading ? 'Loading regime…' : ''}
+            <p className="num">
+              Regime diagnosis · pivot ladder · technical indicators · India VIX
             </p>
           </div>
           <span className="spacer" />
-          <FreshnessClock
-            lastAt={lastSuccessAt}
-            fetching={fetching}
-            marketClosed={market?.marketStatus?.session === 'CLOSED' || market?.marketStatus?.is_trading_day === false}
-            sourceLabel="REST · 30s"
-          />
-          <div className="seg" role="group" aria-label="Symbol">
+          <div className="seg" role="group" aria-label="Underlying">
             {SYMBOLS.map((sym) => (
               <button
                 key={sym}
@@ -210,68 +51,133 @@ export default function MarketsPage() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="btn btn-primary"
-            aria-label="Refresh market regime data"
-            onClick={() => {
-              setLoading(true);
-              void fetchRegime();
-            }}
-            disabled={loading}
-          >
-            {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
         </div>
       </header>
 
-      <RegimeBanner
-        overview={overview}
-        selectedSymbol={selectedSymbol}
-        onSelectSymbol={(sym) => setSelectedSymbol(sym)}
+      <MarketsPane key={selectedSymbol} symbol={selectedSymbol} />
+    </div>
+  );
+}
+
+export function MarketsPane({ symbol }: { symbol: SymbolId }) {
+  const [overview, setOverview] = useState<MarketRegimeOverview | null>(null);
+  const [meta, setMeta] = useState<ApiMeta | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const { phase, isOpen, sessionTimeIST, nextSessionChange } = useMarketSession();
+
+  const fetchRegime = useCallback(async () => {
+    setFetching(true);
+    setNow(Date.now());
+    try {
+      const res = await api.getRegimeOverview(symbol);
+      setMeta(res.meta ?? null);
+      if (!res.data) {
+        setError(res.error || `No market regime data returned for ${symbol}.`);
+        return;
+      }
+      if (!symbolsMatch(res.data.symbol, symbol)) {
+        setOverview(null);
+        setError(
+          `Regime feed returned ${res.data.symbol || 'an unknown symbol'} while ${symbol} is selected — response discarded.`,
+        );
+        return;
+      }
+      setOverview(res.data);
+      setError(res.error ?? null);
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to fetch market regime data for ${symbol}.`);
+    } finally {
+      setFetching(false);
+      setLoading(false);
+    }
+  }, [symbol]);
+
+  usePolling(fetchRegime, POLL_MS);
+
+  const usable = isUsableRegimeOverview(overview, symbol);
+  const status: RegimeBannerStatus = usable
+    ? 'ready'
+    : error
+      ? 'error'
+      : loading
+        ? 'loading'
+        : isOpen
+          ? 'empty'
+          : 'closed';
+
+  const stale = isOpen && isStale(lastUpdated, now);
+  const provider = typeof meta?.provider === 'string' && meta.provider.trim() !== '' ? meta.provider : null;
+  const provenance =
+    provenanceLabel(meta?.provider, meta?.timestamp) ??
+    (lastUpdated !== null
+      ? `last fetched ${lastUpdated.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })}`
+      : null);
+
+  return (
+    <>
+      <MarketSessionBanner
+        phase={phase}
+        sessionTimeIST={sessionTimeIST}
+        nextSessionChange={nextSessionChange}
+        lastAt={lastUpdated}
+        fetching={fetching}
+        marketClosed={!isOpen}
+        provider={provider}
       />
 
-      {error ? (
-        <ErrorCard
-          title="Error loading market regime intelligence"
-          message={error}
-          mode="full-page"
-          onRetry={() => {
-            setLoading(true);
-            void fetchRegime();
-          }}
-          isRetrying={loading}
-        />
-      ) : loading && !overview ? (
-        <Card title="Market Context" meta="loading…">
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div className="skel" style={{ height: 30, width: '40%' }}>.</div>
-            <div className="skel" style={{ height: 14, width: '75%' }}>.</div>
-            <div className="skel" style={{ height: 14, width: '60%' }}>.</div>
-          </div>
-        </Card>
+      <RegimeBanner
+        overview={overview}
+        selectedSymbol={symbol}
+        status={status}
+        errorMessage={error}
+        sessionNote={nextSessionChange}
+      />
+
+      {error && overview ? (
+        <div role="note" className="notice notice--warn" style={{ fontSize: 12 }}>
+          <span>
+            Showing last known data for {symbol} — {error}
+          </span>
+        </div>
+      ) : null}
+
+      {loading && !overview ? (
+        <div className="card card-pad" style={{ display: 'grid', gap: 8 }}>
+          <div className="skel" style={{ height: 14, width: '55%' }}>.</div>
+          <div className="skel" style={{ height: 140, width: '100%' }}>.</div>
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Diagnosing market regime and computing support / resistance pivots…
+          </p>
+        </div>
       ) : (
         <>
-          <section aria-label="Technical indicators">
-            <IndicatorsGrid indicators={overview?.indicators || null} spotPrice={spotPrice} />
-          </section>
-          <section aria-label="Support and resistance">
-            <KeyLevelsTable keyLevels={overview?.key_levels || null} spotPrice={spotPrice} />
-          </section>
-          <section aria-label="Volatility regime">
-            <VixRegimeCard vixInfo={overview?.vix_regime || null} />
-          </section>
-          <section aria-label="AI analysis">
-            <AIAnalysisCard symbol={selectedSymbol} contextPage="markets" />
-          </section>
-          <section aria-label="AI deep insight">
-            <AIDeepInsightCard symbol={selectedSymbol} />
-          </section>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <KeyLevelsTable
+              keyLevels={overview?.key_levels ?? null}
+              spotPrice={overview?.spot_price ?? 0}
+              provenance={provenance}
+              stale={stale}
+            />
+            <IndicatorsGrid
+              indicators={overview?.indicators ?? null}
+              spotPrice={overview?.spot_price ?? 0}
+              provenance={provenance}
+              stale={stale}
+            />
+          </div>
+          <VixRegimeCard vixInfo={overview?.vix_regime ?? null} provenance={provenance} stale={stale} />
         </>
       )}
-      <section aria-label="Breadth and flows">
-        <BreadthFlowsStrip />
-      </section>
-    </div>
+    </>
   );
 }

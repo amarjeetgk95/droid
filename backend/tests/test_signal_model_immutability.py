@@ -46,6 +46,9 @@ def _create_test_signal() -> SignalInstance:
             "institutional_delta": 2.5,
             "institutional_applied": True,
         },
+        option_contract={"broker_symbol": "NSE:NIFTY26SEP24000CE", "strike": 24000.0,
+                         "option_type": "CE", "lot_size": 75},
+        actual_fill_price=Decimal("120.0"),
     )
 
 
@@ -102,6 +105,10 @@ def test_outcome_typed_projection():
     fsm = SignalFSMManager()
     sig = _create_test_signal()
     fsm._signals[sig.signal_id] = sig
+    # Fail-closed friction: the exit leg prices from a REAL chain mark for the
+    # exact contract; without one the FSM records no net-R (cost_breakdown_r=None).
+    from tests.conftest import seed_chain_mark
+    seed_chain_mark("NSE:NIFTY26SEP24000CE", 150.0, underlying="NIFTY", strike=24000.0, option_type="CE")
     fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("24105.0"))
 
     out = sig.outcome_typed

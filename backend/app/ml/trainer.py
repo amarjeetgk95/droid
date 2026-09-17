@@ -246,7 +246,12 @@ async def train_ensemble(
     # Save per-horizon artifacts
     xgb_path, lgb_path, meta_path = artifact_paths(horizon_minutes)
     xgb_model.save_model(str(xgb_path))
-    lgb_model.booster_.save_model(str(lgb_path))
+    import joblib
+    joblib.dump(lgb_model, str(lgb_path.with_suffix(".joblib")))
+    try:
+        lgb_model.booster_.save_model(str(lgb_path))
+    except Exception:
+        pass
     meta = {
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "n_samples": len(features),
@@ -280,15 +285,20 @@ def load_ensemble(horizon_minutes: int = DEFAULT_HORIZON_MINUTES):
     if horizon_minutes != DEFAULT_HORIZON_MINUTES:
         candidates.append(artifact_paths(DEFAULT_HORIZON_MINUTES))
     for xgb_path, lgb_path, meta_path in candidates:
-        if not xgb_path.exists() or not lgb_path.exists():
+        lgb_joblib = lgb_path.with_suffix(".joblib")
+        if not xgb_path.exists() or (not lgb_path.exists() and not lgb_joblib.exists()):
             continue
         try:
             import xgboost as xgb
             import lightgbm as lgb
+            import joblib
 
             xgb_model = xgb.XGBClassifier()
             xgb_model.load_model(str(xgb_path))
-            lgb_model = lgb.Booster(model_file=str(lgb_path))
+            if lgb_joblib.exists():
+                lgb_model = joblib.load(str(lgb_joblib))
+            else:
+                lgb_model = lgb.Booster(model_file=str(lgb_path))
             meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
             return xgb_model, lgb_model, meta
         except Exception as e:
@@ -375,8 +385,11 @@ def _average_ensemble_proba(xgb_model, lgb_model, feature_vec: list[float]):
         X = np.array([feature_vec], dtype=float)
         # XGBoost proba shape (1,3) order 0=BEARISH,1=NEUTRAL,2=BULLISH
         xgb_proba = xgb_model.predict_proba(X)[0]
-        # LightGBM booster predict returns proba
-        lgb_proba = lgb_model.predict(X)[0]
+        # LightGBM predict: predict_proba for LGBMClassifier, predict for Booster
+        if hasattr(lgb_model, "predict_proba"):
+            lgb_proba = lgb_model.predict_proba(X)[0]
+        else:
+            lgb_proba = lgb_model.predict(X)[0]
         # Average ensemble
         ens = (xgb_proba + lgb_proba) / 2.0
         # Map: 0 BEARISH, 1 NEUTRAL, 2 BULLISH

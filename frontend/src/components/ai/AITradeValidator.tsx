@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { AITradeValidationResponse } from '@/lib/types';
 import { resolveAISettings, toBackendSymbol, useAISettings } from '@/lib/aiPayload';
-import { Card, EmptyNote } from '@/components/ui/desk';
+import { Card, EmptyNote, RetryButton, fmtNum } from '@/components/ui/desk';
+import { AIProvenanceNote } from './AIProvenanceNote';
+import { errorMessage, isTradeValidation } from './schema';
 
 const DECISION_CLS: Record<string, string> = {
   CONFIRM: 'b-bull',
@@ -27,15 +29,20 @@ export function AITradeValidator({ symbol, spotPrice }: { symbol: string; spotPr
   const backendSymbol = toBackendSymbol(symbol);
   const resolved = resolveAISettings(aiSettings);
 
+  // Seed entry from the live spot exactly once per mount — never overwrite
+  // user input on subsequent ticks.
+  const seededRef = useRef(false);
   useEffect(() => {
-    if (spotPrice && Number.isFinite(spotPrice) && spotPrice > 0 && !entry) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time spot default
-      setEntry(String(Math.round(spotPrice)));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (seededRef.current || !spotPrice || !Number.isFinite(spotPrice) || spotPrice <= 0) return;
+    seededRef.current = true;
+    setEntry(String(Math.round(spotPrice)));
   }, [spotPrice]);
 
   const run = async () => {
+    if (!(Number(entry) > 0 && Number(sl) > 0 && Number(target) > 0)) {
+      setError('Enter entry, stop loss and target before validating.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -52,15 +59,22 @@ export function AITradeValidator({ symbol, spotPrice }: { symbol: string; spotPr
         openrouter_api_key: resolved.openRouterApiKey || null,
         gemini_api_key: resolved.geminiApiKey || null,
       });
+      if (res.error) throw new Error(res.error);
+      if (!res.data) throw new Error('The validator returned no result.');
+      if (!isTradeValidation(res.data)) {
+        throw new Error('The validation response was malformed (missing decision or verdict).');
+      }
       setResult(res.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Trade validation failed');
+      setError(errorMessage(err, 'Trade validation failed'));
     } finally {
       setLoading(false);
     }
   };
 
   const valid = Number(entry) > 0 && Number(sl) > 0 && Number(target) > 0;
+  const invalidation = result && Array.isArray(result.invalidation_conditions) ? result.invalidation_conditions : [];
+  const traps = result && Array.isArray(result.warning_traps) ? result.warning_traps : [];
 
   return (
     <Card
@@ -97,12 +111,15 @@ export function AITradeValidator({ symbol, spotPrice }: { symbol: string; spotPr
         style={{ width: '100%', background: 'var(--ds-inset)', border: '1px solid var(--ds-border)', borderRadius: 10, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}
       />
       {error && !result ? (
-        <EmptyNote>Audit unavailable — {error}</EmptyNote>
+        <div>
+          <EmptyNote>Audit unavailable — {error}</EmptyNote>
+          <div style={{ marginTop: 10 }}><RetryButton onRetry={() => void run()} /></div>
+        </div>
       ) : result ? (
         <div style={{ display: 'grid', gap: 10 }}>
           <div className="toolbar">
             <span className={`badge ${DECISION_CLS[result.decision] || 'b-neut'}`}>{result.decision}</span>
-            <span className="card-meta num">score {result.score} · RR {Number(result.risk_reward_calculated).toFixed(2)}</span>
+            <span className="card-meta num">score {fmtNum(result.score, 0)} · RR {fmtNum(result.risk_reward_calculated)}</span>
           </div>
           <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>{result.executive_verdict}</p>
           <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
@@ -110,13 +127,14 @@ export function AITradeValidator({ symbol, spotPrice }: { symbol: string; spotPr
             <div className="stat"><div className="stat-l">Derivatives</div><div style={{ fontSize: 12.5 }}>{result.derivatives_alignment}</div></div>
             <div className="stat"><div className="stat-l">Volatility check</div><div style={{ fontSize: 12.5 }}>{result.volatility_regime_check}</div></div>
           </div>
-          {result.invalidation_conditions?.length ? (
-            <div style={{ fontSize: 12.5 }}><strong>Invalidate if:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{result.invalidation_conditions.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+          {invalidation.length ? (
+            <div style={{ fontSize: 12.5 }}><strong>Invalidate if:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{invalidation.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
           ) : null}
-          {result.warning_traps?.length ? (
-            <div style={{ fontSize: 12.5 }} className="muted"><strong>Traps:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{result.warning_traps.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+          {traps.length ? (
+            <div style={{ fontSize: 12.5 }} className="muted"><strong>Traps:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{traps.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
           ) : null}
-          {error ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh note: {error}</p> : null}
+          {error ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh failed: {error}</p> : null}
+          <AIProvenanceNote provider={result.provider_used || resolved.provider} />
         </div>
       ) : (
         <EmptyNote>{loading ? 'Auditing against live walls…' : valid ? 'Ready — press Validate setup.' : 'Enter entry / stop / target to audit.'}</EmptyNote>

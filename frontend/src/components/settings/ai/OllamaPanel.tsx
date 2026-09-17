@@ -52,45 +52,56 @@ export function OllamaPanel({ settings, onChange, errors = [] }: Props) {
     >
       <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className="text-xs font-semibold block mb-1">Ollama URL</label>
-          <input type="text" value={settings.ollamaBaseUrl} onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })} placeholder="http://localhost:11434" className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs font-mono" />
+          <label htmlFor="ollama-base-url" className="text-xs font-semibold block mb-1">Ollama URL</label>
+          <input id="ollama-base-url" type="text" value={settings.ollamaBaseUrl} onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })} placeholder="http://localhost:11434" className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs font-mono" />
           <p className="text-[11px] text-muted-foreground mt-1">Default local server. No cloud API key required. Model is replaceable without engine changes.</p>
           {getError('ollamaBaseUrl') && <span className="text-[11px] text-destructive block">{getError('ollamaBaseUrl')}</span>}
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-semibold">Installed Models</label>
+            <span className="text-xs font-semibold">Installed Models</span>
             <button type="button" onClick={checkOllama} className="text-[11px] px-2 py-1 bg-secondary border border-border rounded-lg hover:bg-secondary/80 cursor-pointer">
               {ollamaStatus === 'checking' ? 'Checking…' : 'Refresh Models'}
             </button>
           </div>
-          <div className="min-h-[42px] bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs">
+          <div className="min-h-[42px] bg-secondary/30 border border-border rounded-lg px-3 py-2 text-xs" aria-live="polite">
             {ollamaStatus === 'idle' && <span className="text-muted-foreground">Click Refresh to discover local models.</span>}
             {ollamaStatus === 'checking' && <span className="text-muted-foreground">Checking {settings.ollamaBaseUrl}/api/tags …</span>}
             {ollamaStatus === 'ok' && (
               <div className="space-y-1">
-                <div className="flex items-center gap-1 text-emerald-600"><CheckCircle2 className="w-3 h-3" /> Found {ollamaModels.length} models</div>
+                <div className="flex items-center gap-1 text-up"><CheckCircle2 className="w-3 h-3" /> Found {ollamaModels.length} models</div>
                 <div className="font-mono text-[11px] break-all">{ollamaModels.slice(0, 5).join(', ') || 'none'}</div>
               </div>
             )}
             {ollamaStatus === 'fail' && <span className="text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {ollamaError}</span>}
           </div>
-          <div className="text-[11px] text-muted-foreground">Health: {ollamaStatus === 'ok' ? <span className="text-emerald-600">Installed & reachable</span> : ollamaStatus === 'fail' ? <span className="text-destructive">Unavailable — install from https://ollama.com</span> : 'Unknown'}</div>
+          <div className="text-[11px] text-muted-foreground">Health: {ollamaStatus === 'ok' ? <span className="text-up">Installed & reachable</span> : ollamaStatus === 'fail' ? <span className="text-destructive">Unavailable — install from https://ollama.com</span> : 'Unknown'}</div>
         </div>
       </div>
       <div className="p-5 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <div className="flex items-center justify-between mb-1">
-            <label className="text-xs font-medium">Local Model</label>
+            <label htmlFor="ollama-model" className="text-xs font-medium">Local Model</label>
             <button type="button" onClick={() => setShowCustom(!showCustom)} className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer">{showCustom ? 'Select from list' : 'Custom tag'}</button>
           </div>
           {!showCustom ? (
-            <select value={settings.ollamaModel || 'deepseek-r1:8b'} onChange={(e) => onChange({ ollamaModel: e.target.value })} className="w-full bg-secondary/40 border border-border/70 rounded-md px-3 py-2 text-xs font-mono cursor-pointer">
+            <select
+              id="ollama-model"
+              value={settings.ollamaModel === '__custom__' ? 'deepseek-r1:8b' : settings.ollamaModel || 'deepseek-r1:8b'}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setShowCustom(true);
+                  return;
+                }
+                onChange({ ollamaModel: e.target.value });
+              }}
+              className="w-full bg-secondary/40 border border-border/70 rounded-md px-3 py-2 text-xs font-mono cursor-pointer"
+            >
               {SUPPORTED_OLLAMA_MODELS.map((m) => (<option key={m.id} value={m.id}>{m.name} — [{m.tag}]</option>))}
               <option value="__custom__">Other / Custom local tag…</option>
             </select>
           ) : (
-            <input type="text" placeholder="e.g. qwen2.5:7b" value={settings.ollamaModel} onChange={(e) => onChange({ ollamaModel: e.target.value })} className="w-full bg-secondary/40 border border-border/70 rounded-md px-3 py-2 text-xs font-mono" />
+            <input id="ollama-model" type="text" placeholder="e.g. qwen2.5:7b" value={settings.ollamaModel} onChange={(e) => onChange({ ollamaModel: e.target.value })} className="w-full bg-secondary/40 border border-border/70 rounded-md px-3 py-2 text-xs font-mono" />
           )}
           {getError('ollamaModel') && <span className="text-[11px] text-destructive block">{getError('ollamaModel')}</span>}
           <p className="text-[11px] text-muted-foreground mt-1">For RTX 4050/16GB start with 8B-class. Later 14B/32B/70B+ without code changes.</p>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface UseExecutionGuardOptions {
   /** Freshness cutoff in seconds for price-sensitive quotes. Default: 15 seconds. */
@@ -12,9 +12,19 @@ export interface QuoteFreshnessCheck {
   ageSec: number | null;
 }
 
+/** Why the most recent `execute()` call resolved null. */
+export type ExecutionRejectionReason = 'busy' | 'error';
+
 export interface UseExecutionGuardResult {
   isPending: boolean;
   lastError: string | null;
+  /**
+   * Distinguishes why the most recent `execute()` resolved `null`:
+   * - `'busy'`: a previous execution was still in flight (nothing ran)
+   * - `'error'`: the action threw (`lastError` carries the message)
+   * - `null`: no rejection since the last successful start / clearError()
+   */
+  lastRejectionReason: ExecutionRejectionReason | null;
   clearError: () => void;
   /**
    * Safely wraps an order/action execution promise.
@@ -31,33 +41,52 @@ export function useExecutionGuard(options: UseExecutionGuardOptions = {}): UseEx
   const { defaultStaleThresholdSec = 15 } = options;
   const [isPending, setIsPending] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [lastRejectionReason, setLastRejectionReason] = useState<ExecutionRejectionReason | null>(null);
 
   const lockRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const execute = useCallback(async <T,>(action: () => Promise<T>): Promise<T | null> => {
     if (lockRef.current) {
+      // Re-entrant call while a previous execution is unresolved. `null` here
+      // means "busy" — distinguishable from an action failure below.
+      if (mountedRef.current) setLastRejectionReason('busy');
       return null;
     }
 
-    try {
-      lockRef.current = true;
+    lockRef.current = true;
+    if (mountedRef.current) {
       setIsPending(true);
       setLastError(null);
+      setLastRejectionReason(null);
+    }
 
+    try {
       const result = await action();
       return result;
     } catch (err: unknown) {
       const msg = (err as Error)?.message || 'Execution error';
-      setLastError(msg);
+      if (mountedRef.current) {
+        setLastError(msg);
+        setLastRejectionReason('error');
+      }
       return null;
     } finally {
       lockRef.current = false;
-      setIsPending(false);
+      if (mountedRef.current) setIsPending(false);
     }
   }, []);
 
   const clearError = useCallback(() => {
     setLastError(null);
+    setLastRejectionReason(null);
   }, []);
 
   const checkQuoteFreshness = useCallback(
@@ -77,6 +106,7 @@ export function useExecutionGuard(options: UseExecutionGuardOptions = {}): UseEx
   return {
     isPending,
     lastError,
+    lastRejectionReason,
     clearError,
     execute,
     checkQuoteFreshness,

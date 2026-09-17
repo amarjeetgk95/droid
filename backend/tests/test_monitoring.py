@@ -191,7 +191,6 @@ def test_healthy_window_not_degraded():
 # ---------------------------------------------------------------------------
 
 def test_bundle_roundtrip():
-    before = dict(os.environ)
     bundle = mon.resolve_release_bundle()
     assert bundle["feature_schema"] == "f12-v1"
     assert bundle["target_spec"] == "v2-atr-em-session"
@@ -203,6 +202,7 @@ def test_bundle_roundtrip():
         "code", "model", "calibrator", "feature_schema", "target_spec",
     }
 
+    before = dict(os.environ)
     plan = mon.rollback_to(bundle)
     assert plan["action"] == "rollback-plan-only-no-mutation"
     assert plan["promotion_locked"] is True

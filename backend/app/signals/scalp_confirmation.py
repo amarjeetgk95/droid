@@ -46,11 +46,12 @@ class ScalpConfirmationEngine:
     def __init__(
         self,
         skew_tolerance_ms: int = 250,
-        max_candle_age_ms: int = 120_000,
+        max_candle_age_ms: int = 45_000,
         default_cooldown_seconds: int = 60,
-        max_spread_pts: Decimal = Decimal("2.50"),
-        max_spread_pct: Decimal = Decimal("0.025"),
-        min_option_volume: int = 250,
+        max_spread_pts: Decimal = Decimal("2.00"),
+        max_spread_pct: Decimal = Decimal("0.020"),
+        min_option_volume: int = 1000,
+        min_option_oi: int = 5000,
     ):
         self.skew_tolerance_ms = skew_tolerance_ms
         self.max_candle_age_ms = max_candle_age_ms
@@ -58,10 +59,15 @@ class ScalpConfirmationEngine:
         self.max_spread_pts = max_spread_pts
         self.max_spread_pct = max_spread_pct
         self.min_option_volume = min_option_volume
+        self.min_option_oi = min_option_oi
 
-        # Deduplication cache: fingerprint -> confirmed_timestamp_ms
+        # Deduplication cache: fingerprint -> confirmed_timestamp_ms.
+        # P0-2 NOTE: in-memory TTL only (10-min purge in record_confirmed).
+        # TODO(Redis): persist fingerprints + cooldowns to Redis with TTL so
+        # multi-worker / restarted scanners cannot double-arm the same print.
         self._confirmed_fingerprints: dict[str, int] = {}
         # Cooldown tracker: f"{underlying}|{strategy}" -> last_confirmed_timestamp_ms
+        # TODO(Redis): same — move to Redis SETEX per desk key.
         self._last_signal_time: dict[str, int] = {}
 
     def compute_fingerprint(
@@ -139,6 +145,14 @@ class ScalpConfirmationEngine:
         # Intraday or unhandled strategies pass through
         return True, None
 
+    def _max_age_for_timeframe(self, timeframe: str) -> int:
+        # P0-2: scalp candles decay fast. 1M prints are only actionable for
+        # 45s; 3M+ for 90s. The old 120s blanket let dead prints arm.
+        tf = str(timeframe or "").upper()
+        if tf == "1M":
+            return 45_000
+        return 90_000
+
     def validate(
         self,
         candidate: SignalCandidate,
@@ -149,14 +163,16 @@ class ScalpConfirmationEngine:
         option_bid: Optional[Decimal] = None,
         option_ask: Optional[Decimal] = None,
         option_volume: Optional[int] = None,
+        option_oi: Optional[int] = None,
+        rvol: Optional[float] = None,
     ) -> ScalpConfirmationResult:
         """
-        Executes all 6 validation gates on a candidate.
+        Executes all 8 validation gates on a candidate.
         """
         ts_now = now_ms or int(time.time() * 1000)
         c_ts = candle_timestamp_ms or candidate.created_at_utc
 
-        # 1. Clock Skew & Stale Candle Guard
+        # 1. Clock Skew & Stale Candle Guard (P0-2: 45s 1M / 90s 3M+).
         age_ms = ts_now - c_ts
         if age_ms < -self.skew_tolerance_ms:
             return ScalpConfirmationResult(
@@ -166,13 +182,14 @@ class ScalpConfirmationEngine:
                 rejection_message=f"Candle timestamp is {abs(age_ms)}ms in the future (skew limit: {self.skew_tolerance_ms}ms)",
                 metrics={"age_ms": age_ms, "skew_limit": self.skew_tolerance_ms},
             )
-        if age_ms > self.max_candle_age_ms:
+        _max_age = self._max_age_for_timeframe(getattr(candidate, "timeframe", "1M"))
+        if age_ms > _max_age:
             return ScalpConfirmationResult(
                 passed=False,
                 candidate=candidate,
                 reason_code="REJECTED_STALE_DATA",
-                rejection_message=f"Candle close is stale ({age_ms}ms > {self.max_candle_age_ms}ms)",
-                metrics={"age_ms": age_ms, "max_age_ms": self.max_candle_age_ms},
+                rejection_message=f"Candle close is stale ({age_ms}ms > {_max_age}ms for {getattr(candidate, 'timeframe', '?')})",
+                metrics={"age_ms": age_ms, "max_age_ms": _max_age, "timeframe": getattr(candidate, "timeframe", None)},
             )
 
         # 2. Fingerprint Deduplication
@@ -256,36 +273,64 @@ class ScalpConfirmationEngine:
                 metrics={"regime": regime, "strategy": candidate.strategy},
             )
 
-        # 6. India VIX Percentile Filter — suppress scalp in extreme volatility regimes
+        # 6. India VIX Percentile Filter — P0-2: NO GAMMA_SPIKE exemption.
+        # Extreme-VIX chop kills every scalp desk. The only override is proven
+        # executability: spread <= 1.0pt AND RVOL >= 1.5 on this print.
         vix_pct = getattr(candidate, "vix_percentile", None)
         if vix_pct is not None and vix_pct >= 80.0:
-            if candidate.strategy != "GAMMA_SPIKE":
+            _rvol_now = float(rvol) if rvol is not None else None
+            _spread_now: float | None = None
+            try:
+                if option_bid is not None and option_ask is not None:
+                    _spread_now = float(option_ask - option_bid)
+            except Exception:
+                _spread_now = None
+            _override = (
+                _spread_now is not None and _spread_now <= 1.0
+                and _rvol_now is not None and _rvol_now >= 1.5
+            )
+            if not _override:
                 return ScalpConfirmationResult(
                     passed=False,
                     candidate=candidate,
                     reason_code="REJECTED_VIX_EXTREME",
-                    rejection_message=f"India VIX at {vix_pct:.0f}th percentile — scalp suppressed (GAMMA_SPIKE exempt)",
-                    metrics={"vix_percentile": vix_pct},
+                    rejection_message=f"India VIX at {vix_pct:.0f}th percentile — scalp suppressed (no exemption; override needs spread<=1.0+RVOL>=1.5)",
+                    metrics={"vix_percentile": vix_pct, "spread": _spread_now, "rvol": _rvol_now},
                 )
 
-        # 7. Lunch-Session Liquidity Vacuum Filter — suppress scalp 12:00-13:30 IST (thin liquidity)
+        # 7. Lunch-Session Liquidity Vacuum Filter — P0-2: NO GAMMA_SPIKE
+        # exemption (same spread+RVOL override as VIX).
         lunch_session = getattr(candidate, "lunch_session", False)
-        if lunch_session and candidate.strategy not in ("GAMMA_SPIKE",):
-            return ScalpConfirmationResult(
-                passed=False,
-                candidate=candidate,
-                reason_code="REJECTED_LUNCH_SESSION",
-                rejection_message="Lunch session (12:00-13:30 IST) — liquidity vacuum suppresses scalp entries",
-                metrics={"lunch_session": True},
+        if lunch_session:
+            _rvol_now2 = float(rvol) if rvol is not None else None
+            _spread_now2: float | None = None
+            try:
+                if option_bid is not None and option_ask is not None:
+                    _spread_now2 = float(option_ask - option_bid)
+            except Exception:
+                _spread_now2 = None
+            _override2 = (
+                _spread_now2 is not None and _spread_now2 <= 1.0
+                and _rvol_now2 is not None and _rvol_now2 >= 1.5
             )
+            if not _override2:
+                return ScalpConfirmationResult(
+                    passed=False,
+                    candidate=candidate,
+                    reason_code="REJECTED_LUNCH_SESSION",
+                    rejection_message="Lunch session (12:00-13:30 IST) — liquidity vacuum suppresses scalp entries (no exemption; override needs spread<=1.0+RVOL>=1.5)",
+                    metrics={"lunch_session": True, "spread": _spread_now2, "rvol": _rvol_now2},
+                )
 
-        # 8. Liquidity & Spread Validation
+        # 8. Liquidity & Spread Validation (P0-2: 2.00pts / 2.0%, OR logic).
+        # Old code required BOTH pts AND pct to breach (AND) — a 5pt spread
+        # on a 100pt premium (5%) sailed through on pts alone. Either breach
+        # now rejects.
         if option_bid is not None and option_ask is not None:
-            spread = option_ask - option_bid
-            if spread > self.max_spread_pts:
-                # Also check pct
+            try:
+                spread = option_ask - option_bid
                 spread_pct = (spread / option_ask) if option_ask > 0 else Decimal("1.0")
-                if spread_pct > self.max_spread_pct:
+                if spread > self.max_spread_pts or spread_pct > self.max_spread_pct:
                     return ScalpConfirmationResult(
                         passed=False,
                         candidate=candidate,
@@ -293,6 +338,26 @@ class ScalpConfirmationEngine:
                         rejection_message=f"Option spread too wide: {spread} pts ({spread_pct * 100:.2f}%)",
                         metrics={"spread": float(spread), "spread_pct": float(spread_pct)},
                     )
+            except Exception:
+                pass
+            # P0-2: quotes must be executable — bid>0, ask>0, ask>bid.
+            try:
+                if not (float(option_bid) > 0 and float(option_ask) > 0 and float(option_ask) > float(option_bid)):
+                    return ScalpConfirmationResult(
+                        passed=False,
+                        candidate=candidate,
+                        reason_code="REJECTED_QUOTE_UNEXECUTABLE",
+                        rejection_message=f"Option quote not executable (bid={option_bid}, ask={option_ask})",
+                        metrics={"bid": float(option_bid or 0), "ask": float(option_ask or 0)},
+                    )
+            except Exception:
+                return ScalpConfirmationResult(
+                    passed=False,
+                    candidate=candidate,
+                    reason_code="REJECTED_QUOTE_UNEXECUTABLE",
+                    rejection_message="Option bid/ask unreadable — fail-closed",
+                    metrics={},
+                )
 
         if option_volume is not None and option_volume < self.min_option_volume:
             return ScalpConfirmationResult(
@@ -301,6 +366,17 @@ class ScalpConfirmationEngine:
                 reason_code="REJECTED_LIQUIDITY",
                 rejection_message=f"Option volume too low ({option_volume} < {self.min_option_volume})",
                 metrics={"volume": option_volume, "min_volume": self.min_option_volume},
+            )
+
+        # P0-2: OI floor — 1000 contracts of volume with no open interest is
+        # a one-print wonder, not a market.
+        if option_oi is not None and option_oi < self.min_option_oi:
+            return ScalpConfirmationResult(
+                passed=False,
+                candidate=candidate,
+                reason_code="REJECTED_OI_TOO_LOW",
+                rejection_message=f"Option OI too low ({option_oi} < {self.min_option_oi})",
+                metrics={"oi": option_oi, "min_oi": self.min_option_oi},
             )
 
         # All 8 Gates Passed!

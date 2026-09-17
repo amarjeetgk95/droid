@@ -23,13 +23,35 @@ class MarketService:
     """
 
     def __init__(self, provider: MarketDataProvider | None = None):
-        self._provider = provider or get_provider()
+        # NOTE: the provider singleton is resolved LAZILY (see _provider
+        # property). Capturing get_provider() here froze long-lived owners
+        # (e.g. the module-level tactical_horizon_engine) onto a stale
+        # FyersProvider after restart_provider_stream() rotated the singleton
+        # on OAuth re-auth — quotes kept working via fresh per-request
+        # services while every forecast fan-out silently hit the old token
+        # and returned [] ("Insufficient ... candle data"). An explicit
+        # provider (tests, callers) still wins and is never re-resolved.
+        self._explicit_provider = provider
+        try:
+            _name = provider.provider_name if provider is not None else "fyers"
+        except Exception:
+            _name = "fyers"
         self._circuit_breaker = CircuitBreaker(
-            name=self._provider.provider_name,
+            name=_name,
             failure_threshold=settings.circuit_breaker_failure_threshold,
             recovery_timeout_seconds=settings.circuit_breaker_recovery_timeout_seconds,
             half_open_success_threshold=settings.circuit_breaker_half_open_success_threshold,
         )
+
+    @property
+    def _provider(self) -> MarketDataProvider:
+        if self._explicit_provider is not None:
+            return self._explicit_provider
+        return get_provider()
+
+    @_provider.setter
+    def _provider(self, value: MarketDataProvider | None) -> None:
+        self._explicit_provider = value
 
     @property
     def circuit_breaker(self) -> CircuitBreaker:

@@ -1,3 +1,5 @@
+import type { ForecastV2Probabilities, ForecastV2Status } from '@/components/research/forecastStatus';
+
 export type DataStatus = 'LIVE' | 'DEGRADED' | 'STALE' | 'OFFLINE' | 'DISCONNECTED' | 'ERROR' | 'CLOSED' | 'INVALID';
 export type MarketSession = 'PRE_OPEN' | 'OPEN' | 'CLOSED' | 'POST_CLOSE';
 export type Sentiment = 'VERY_BEARISH' | 'BEARISH' | 'NEUTRAL' | 'BULLISH' | 'VERY_BULLISH';
@@ -568,7 +570,7 @@ export interface VirtualOrder {
   rejection_reason?: string | null;
   client_order_id?: string | null;
   fill_source?: string | null;
-  estimated_costs?: Record<string, number> | null;
+  estimated_costs?: number | null;
   filled_at?: string | null;
 }
 
@@ -760,4 +762,92 @@ export interface TelegramAuditRecord {
   delivery_status: string;
   attempt_count: number;
   error: string | null;
+}
+
+
+// ============================================================================
+// 1H tactical forecast (research module v2.3 contract)
+// ============================================================================
+
+export type HourForecastDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+/**
+ * 1H forecast contract shared by the research API and the war-room surfaces.
+ * v1 keys plus optional v2.3 honesty fields (status, probabilities,
+ * settleable, versions, limitations, ...) — all v2 keys are optional so v1
+ * responses without them still render.
+ */
+export type HourForecast = {
+  instrument: string;
+  timeframe: string;
+  forecast_horizon?: string;
+  current_price?: number | null;
+  direction: HourForecastDirection;
+  score: number;
+  confidence: number;
+  target_price?: number | null;
+  invalidation_price?: number | null;
+  layer_scores?: {
+    mtf_alignment?: number;
+    indicators?: number;
+    ml?: number;
+    options?: number;
+    structure?: number;
+  };
+  ml_forecast?: unknown;
+  indicator_outputs?: unknown;
+  prediction_id?: string;
+  explain?: unknown;
+  component_values?: Record<string, unknown> | null;
+  // — 1H forecast v2.3 (P0) honesty fields: ALL optional so v1
+  // responses without new keys still render (status defaults to RESEARCH).
+  forecast_version?: string | null;
+  status?: ForecastV2Status | null;
+  probabilities?: ForecastV2Probabilities | null;
+  raw_confidence?: number | null;
+  regime?: string | null;
+  session?: string | null;
+  settleable?: boolean | null;
+  settle_reason?: string | null;
+  data_quality?: string | null;
+  model_version?: string | null;
+  calibrator_version?: string | null;
+  snapshot_id?: string | null;
+  limitations?: string[] | null;
+  // — 1H forecast v2.3 (P3-4) prob UI: ALL optional so v1 renders as before.
+  calibrated?: boolean | null;
+  calibration?: unknown;
+  expected_range?: { lower?: number | null; mid?: number | null; upper?: number | null } | null;
+  target_basis?: string | null;
+  latency_ms?: number | null;
+  // Durable-storage truth from the backend (true only when the immutable
+  // snapshot+prediction were actually written to the database). Absent on
+  // pre-P0 responses, so treat undefined as unknown rather than false-y.
+  persisted?: boolean | null;
+};
+
+
+// ============================================================================
+// Portfolio Greeks ledger (options intelligence §36/§51)
+// ============================================================================
+
+/**
+ * Consolidated portfolio Greeks from `GET /api/v1/options-intelligence/portfolio-greeks/summary`
+ * (backend `app.signals.portfolio_greeks.PortfolioGreeksSummary`). Gross fields
+ * sum |leg| exposure so a hedged net can never hide portfolio leverage.
+ */
+export interface PortfolioGreeksSummary {
+  total_delta: number;
+  total_gamma: number;
+  total_theta_day: number;
+  total_vega: number;
+  gross_delta: number;
+  gross_gamma: number;
+  gross_theta_day: number;
+  gross_vega: number;
+  net_exposure_by_underlying: Record<string, number>;
+  gross_exposure_by_underlying: Record<string, number>;
+  positions_by_horizon: Record<string, number>;
+  expiry_concentrations: Record<string, number>;
+  total_open_positions: number;
 }

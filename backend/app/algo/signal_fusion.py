@@ -16,7 +16,7 @@ logger = structlog.get_logger()
 
 # §26 default weights — single source of truth: backend/config/scoring_weights.json (v2).
 # Kept inline as fallback if config file is missing (tests, minimal installs).
-def _load_scoring_weights_percent() -> dict:
+def _load_scoring_config() -> dict:
     try:
         import json
         from pathlib import Path
@@ -27,12 +27,22 @@ def _load_scoring_weights_percent() -> dict:
         ):
             if p.exists():
                 with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                w = data.get("weights_percent", {})
-                if w:
-                    return {k: Decimal(str(v)) for k, v in w.items() if k != "ml_max"}
+                    return json.load(f)
     except Exception:
         pass
+    return {}
+
+
+_SCORING_CONFIG = _load_scoring_config()
+
+
+def _load_scoring_weights_percent() -> dict:
+    w = (_SCORING_CONFIG.get("weights_percent", {}) or {})
+    if w:
+        try:
+            return {k: Decimal(str(v)) for k, v in w.items() if k != "ml_max"}
+        except Exception:
+            pass
     return {
         "technical": Decimal("40"),
         "mtf": Decimal("20"),
@@ -45,9 +55,25 @@ def _load_scoring_weights_percent() -> dict:
 
 DEFAULT_WEIGHTS = _load_scoring_weights_percent()
 
-# Unified thresholds (scoring_weights.json: fusion_long 62 / fusion_short 38 / armed 70)
-FUSION_LONG_THRESHOLD = Decimal("62")
-FUSION_SHORT_THRESHOLD = Decimal("38")
+# weights_version: single source = scoring_weights.json `version` (int). Exposed on
+# every fused output so downstream (explain, audit, AI) can prove which bundle scored.
+WEIGHTS_VERSION: int | str = _SCORING_CONFIG.get("version", 2)
+
+# Unified thresholds (scoring_weights.json: fusion_long 62 / fusion_short 38 / armed 78).
+# Armed threshold lives ONLY in scoring_weights.json thresholds.armed (78.0).
+_TH = _SCORING_CONFIG.get("thresholds", {}) or {}
+try:
+    FUSION_LONG_THRESHOLD = Decimal(str(_TH.get("fusion_long", 62)))
+except Exception:
+    FUSION_LONG_THRESHOLD = Decimal("62")
+try:
+    FUSION_SHORT_THRESHOLD = Decimal(str(_TH.get("fusion_short", 38)))
+except Exception:
+    FUSION_SHORT_THRESHOLD = Decimal("38")
+try:
+    ARMED_THRESHOLD = Decimal(str(_TH.get("armed", 78.0)))
+except Exception:
+    ARMED_THRESHOLD = Decimal("78.0")
 
 
 @dataclass
@@ -79,6 +105,10 @@ class Signal:
     score: Decimal
     confidence: Decimal
     invalidation_conditions: dict
+    # P0-5: decorrelation + version provenance. Defaults keep old call sites working.
+    weights_version: int | str = 2
+    correlation_penalty: Decimal = Decimal("0")
+    subscores: dict = field(default_factory=dict)
 
     def is_actionable(self) -> bool:
         return self.direction in ("LONG", "SHORT")
@@ -125,14 +155,75 @@ class SignalFusion:
         if inputs.event_risk.get("event_pending"):
             event_score = D(30)
 
+        # ── P0-5 de-correlation: tech/mtf/regime triple-count the same trend. ──
+        # trend_cluster = mean(tech_trend01, mtf_bias01, regime01) on 0-1 scale,
+        # tech_eff = 0.5*tech + 0.5*trend_cluster replaces raw tech in the fuse so a
+        # single trend impulse cannot dominate via three correlated sleeves.
+        def _trend01_tech() -> float:
+            t = str(inputs.technical.get("trend", "") or "").upper()
+            if "BULL" in t:
+                return 1.0
+            if "BEAR" in t:
+                return 0.0
+            try:
+                ts = float(tech_score)
+                if ts >= 60:
+                    return 1.0
+                if ts <= 40:
+                    return 0.0
+            except Exception:
+                pass
+            return 0.5
+
+        def _trend01_mtf() -> float:
+            b = str(inputs.mtf.get("overall_bias", "") or "").upper()
+            if "BULL" in b:
+                return 1.0
+            if "BEAR" in b:
+                return 0.0
+            return 0.5
+
+        def _trend01_regime() -> float:
+            r = str(inputs.regime.get("regime", "") or "").upper()
+            if r in ("STRONG_BULL", "BULL", "BULLISH", "UPTREND"):
+                return 1.0
+            if r in ("STRONG_BEAR", "BEAR", "BEARISH", "DOWNTREND"):
+                return 0.0
+            try:
+                rs = float(regime_score)
+                if rs >= 60:
+                    return 1.0
+                if rs <= 40:
+                    return 0.0
+            except Exception:
+                pass
+            return 0.5
+
+        _t01 = _trend01_tech()
+        _m01 = _trend01_mtf()
+        _r01 = _trend01_regime()
+        trend_cluster = D((_t01 + _m01 + _r01) / 3.0 * 100.0)
+        tech_eff = (tech_score * D("0.5") + trend_cluster * D("0.5"))
+
+        # Correlation penalty: when all three trend sleeves agree (all bull or all
+        # bear) they are almost certainly the same impulse — haircut the fuse.
+        try:
+            _all_bull = _t01 >= 0.75 and _m01 >= 0.75 and _r01 >= 0.75
+            _all_bear = _t01 <= 0.25 and _m01 <= 0.25 and _r01 <= 0.25
+            correlation_penalty = D("5.0") if (_all_bull or _all_bear) else D("0")
+        except Exception:
+            correlation_penalty = D("0")
+
         fused = (
-            tech_score * w("technical") +
+            tech_eff * w("technical") +
             mtf_score * w("mtf") +
             fno_score * w("fno") +
             regime_score * w("regime") +
             ai_score * w("ai") +
             event_score * w("event_risk")
         ) / D(100)
+        fused = fused - correlation_penalty
+        fused = max(D("0"), min(D("100"), fused))
 
         # Direction from fused score + AI/technical alignment
         # Also consider AI risk_flags — if critical risk_flag, force NO_TRADE
@@ -161,6 +252,16 @@ class SignalFusion:
             confidence -= D("0.08")
         confidence = max(D("0.1"), min(D("0.90"), confidence))
 
+        subscores = {
+            "technical": float(tech_score),
+            "technical_eff": float(tech_eff),
+            "trend_cluster": float(trend_cluster),
+            "mtf": float(mtf_score),
+            "fno": float(fno_score),
+            "regime": float(regime_score),
+            "ai": float(ai_score),
+            "event_risk": float(event_score),
+        }
         return Signal(
             signal_id=uuid4(),
             strategy_id=strategy_id,
@@ -177,6 +278,9 @@ class SignalFusion:
             score=fused.quantize(D("0.01")),
             confidence=confidence.quantize(D("0.0001")),
             invalidation_conditions=inputs.ai.get("suggested_invalidation", {}) if isinstance(inputs.ai.get("suggested_invalidation"), dict) else {"raw": inputs.ai.get("suggested_invalidation")},
+            weights_version=WEIGHTS_VERSION,
+            correlation_penalty=correlation_penalty.quantize(D("0.01")),
+            subscores=subscores,
         )
 
 
@@ -196,6 +300,28 @@ class ConflictingSignal:
 class ConflictResolver:
     DEFAULT_POLICY: ConflictPolicy = "REJECT_BOTH_AND_ALERT"
 
+    def _bucket(self, cs: ConflictingSignal, fn=None) -> str:
+        """P0-5: instrument/underlying bucket. LONG NIFTY + SHORT BANKNIFTY are
+        different buckets and must NOT conflict."""
+        try:
+            if fn is not None:
+                sig = cs.signal
+                sym = getattr(sig, "symbol", "") or ""
+                iid = getattr(sig, "instrument_id", "") or ""
+                return str(fn(sym or iid or "UNKNOWN")).upper()
+        except Exception:
+            pass
+        try:
+            sig = cs.signal
+            for attr in ("instrument_id", "symbol"):
+                v = getattr(sig, attr, None)
+                if v:
+                    return str(v).upper().strip()
+            # Fallback: strategy-level underlying if signal lacks instrument
+            return "UNKNOWN"
+        except Exception:
+            return "UNKNOWN"
+
     def resolve(
         self,
         signals: list[ConflictingSignal],
@@ -205,55 +331,86 @@ class ConflictResolver:
         """
         Returns (approved_signals, reason).
         - For opposing signals on equivalent instruments, do not silently submit opposing orders.
-        - NET: net exposure, submit residual after risk validation.
+        - P0-5: conflict is per-underlying bucket. LONG NIFTY + SHORT BANKNIFTY
+          (different buckets) => NO_CONFLICT.
+        - NET: net exposure, submit residual after risk validation (per bucket).
         """
         policy = policy or self.DEFAULT_POLICY
         if len(signals) <= 1:
             return [s.signal for s in signals], "NO_CONFLICT"
 
-        # Group by equivalent instrument
-        # Simplified: if same underlying, treat as equivalent
-        # Real: instrument_equivalence_fn maps symbol->underlying bucket
-        directions = set(s.direction for s in signals)
-        if len(directions) == 1:
+        # Group by equivalent instrument bucket first.
+        from collections import defaultdict
+        by_bucket: dict[str, list[ConflictingSignal]] = defaultdict(list)
+        for s in signals:
+            by_bucket[self._bucket(s, instrument_equivalence_fn)].append(s)
+
+        # No bucket contains opposing directions => no conflict across instruments.
+        has_opposing_bucket = any(
+            len({x.direction for x in grp}) > 1 for grp in by_bucket.values()
+        )
+        if not has_opposing_bucket:
             return [s.signal for s in signals], "SAME_DIRECTION_NO_CONFLICT"
 
-        # Conflict: LONG vs SHORT present
-        if policy == "REJECT_BOTH_AND_ALERT":
-            logger.warning("strategy_conflict_reject_both", count=len(signals))
-            return [], "REJECT_BOTH_DUE_TO_CONFLICT"
+        # At least one bucket has LONG vs SHORT. Resolve per-bucket, then merge.
+        approved: list[Signal] = []
+        reasons: list[str] = []
+        for bucket, grp in sorted(by_bucket.items()):
+            dirs = {x.direction for x in grp}
+            if len(dirs) == 1:
+                approved.extend(x.signal for x in grp)
+                continue
+            # Opposing directions in the SAME bucket => policy applies.
+            if policy == "REJECT_BOTH_AND_ALERT":
+                logger.warning("strategy_conflict_reject_both", bucket=bucket, count=len(grp))
+                reasons.append(f"{bucket}:REJECT_BOTH_DUE_TO_CONFLICT")
+                continue
+            if policy == "PRIORITIZE_BY_RANK":
+                grp_sorted = sorted(grp, key=lambda s: s.rank)
+                winner = grp_sorted[0]
+                logger.info("strategy_conflict_prioritized", bucket=bucket, winner=winner.strategy_id)
+                approved.append(winner.signal)
+                reasons.append(f"{bucket}:PRIORITIZED_{winner.strategy_id}")
+                continue
+            if policy == "NET":
+                long_ct = sum(1 for s in grp if s.direction == "LONG")
+                short_ct = sum(1 for s in grp if s.direction == "SHORT")
+                net = long_ct - short_ct
+                if net == 0:
+                    reasons.append(f"{bucket}:NET_ZERO_NO_ORDER")
+                    continue
+                wanted_dir = "LONG" if net > 0 else "SHORT"
+                candidates = [s for s in grp if s.direction == wanted_dir]
+                candidates.sort(key=lambda s: s.signal.confidence, reverse=True)
+                approved.append(candidates[0].signal)
+                reasons.append(f"{bucket}:NET_{wanted_dir}_RESIDUAL_{abs(net)}")
+                continue
+            reasons.append(f"{bucket}:UNKNOWN_POLICY")
 
-        if policy == "PRIORITIZE_BY_RANK":
-            # Lowest rank number wins
-            signals.sort(key=lambda s: s.rank)
-            winner = signals[0]
-            logger.info("strategy_conflict_prioritized", winner=winner.strategy_id)
-            return [winner.signal], f"PRIORITIZED_{winner.strategy_id}"
-
-        if policy == "NET":
-            long_ct = sum(1 for s in signals if s.direction == "LONG")
-            short_ct = sum(1 for s in signals if s.direction == "SHORT")
-            net = long_ct - short_ct
-            if net == 0:
-                return [], "NET_ZERO_NO_ORDER"
-            wanted_dir = "LONG" if net > 0 else "SHORT"
-            # Pick highest confidence of wanted direction
-            candidates = [s for s in signals if s.direction == wanted_dir]
-            candidates.sort(key=lambda s: s.signal.confidence, reverse=True)
-            return [candidates[0].signal], f"NET_{wanted_dir}_RESIDUAL_{abs(net)}"
-
-        return [], "UNKNOWN_POLICY"
+        if not approved and reasons:
+            # All conflicting buckets rejected (e.g. REJECT_BOTH on every bucket).
+            if all("REJECT_BOTH" in r or "NET_ZERO" in r for r in reasons):
+                return [], "REJECT_BOTH_DUE_TO_CONFLICT"
+            return [], reasons[0] if len(reasons) == 1 else ";".join(reasons)
+        if reasons:
+            return approved, ";".join(reasons)
+        return approved, "NO_CONFLICT"
 
     def resolve_candidate_conflicts(
         self,
         candidates: list[Any],
         tie_epsilon: float = 5.0,
+        max_same_direction: int = 1,
     ) -> tuple[list[Any], list[str]]:
         """
         Arbitrate between competing SignalCandidates on the same underlying instrument (§28).
         If opposing directions (CALL vs PUT) fire simultaneously:
           - If |confidence_A - confidence_B| < tie_epsilon: Reject both (NO_TRADE on tie).
           - Else: Pick higher confidence candidate, drop opposing candidate.
+        P0-5 same-direction cap: at most `max_same_direction` (default top-1) approvals
+        per underlying per direction. Survivors beyond top-1 are dropped with
+        DROPPED_CORRELATED; when max_same_direction>=2 the 2nd kept candidate takes a
+        0.5x confidence haircut (correlated duplicate, not independent edge).
         """
         if len(candidates) <= 1:
             return candidates, []
@@ -261,35 +418,102 @@ class ConflictResolver:
         from collections import defaultdict
         by_underlying = defaultdict(list)
         for c in candidates:
-            by_underlying[c.underlying].append(c)
+            try:
+                key = str(getattr(c, "underlying", "UNKNOWN") or "UNKNOWN").upper()
+            except Exception:
+                key = "UNKNOWN"
+            by_underlying[key].append(c)
 
-        approved = []
-        dropped_reasons = []
+        def _conf(x: Any) -> float:
+            try:
+                v = getattr(x, "overall_confidence", 50.0)
+                return float(v if v is not None else 50.0)
+            except Exception:
+                return 50.0
+
+        def _cap_same_direction(items: list[Any], underlying: str, out: list[Any], dropped: list[str]) -> None:
+            # items: already direction-filtered survivors for one underlying+side.
+            if len(items) <= max_same_direction:
+                out.extend(items)
+                return
+            ranked = sorted(items, key=_conf, reverse=True)
+            keep = ranked[:max_same_direction]
+            # 0.5x haircut on the 2nd kept candidate when top-2 allowed.
+            if max_same_direction >= 2 and len(keep) == 2:
+                try:
+                    second = keep[1]
+                    orig = _conf(second)
+                    haircut = round(orig * 0.5, 1)
+                    try:
+                        second.overall_confidence = haircut
+                    except Exception:
+                        pass
+                    dropped.append(
+                        f"{underlying}:{getattr(second, 'strategy', '?')}_CORRELATED_HAIRCUT_0.5x "
+                        f"({orig}->{haircut})"
+                    )
+                except Exception:
+                    pass
+            out.extend(keep)
+            for extra in ranked[max_same_direction:]:
+                dropped.append(
+                    f"{underlying}:{getattr(extra, 'strategy', '?')}_DROPPED_CORRELATED "
+                    f"(conf={_conf(extra)}, kept={getattr(keep[0], 'strategy', '?')})"
+                )
+                logger.info(
+                    "candidate_dropped_correlated",
+                    underlying=underlying,
+                    dropped_strategy=getattr(extra, "strategy", "?"),
+                    kept_strategy=getattr(keep[0], "strategy", "?"),
+                )
+
+        approved: list[Any] = []
+        dropped_reasons: list[str] = []
 
         for underlying, c_list in by_underlying.items():
-            calls = [c for c in c_list if "CALL" in c.direction]
-            puts = [c for c in c_list if "PUT" in c.direction]
+            calls = [c for c in c_list if "CALL" in str(getattr(c, "direction", ""))]
+            puts = [c for c in c_list if "PUT" in str(getattr(c, "direction", ""))]
+            other = [c for c in c_list if c not in calls and c not in puts]
 
+            survivors: list[Any] = []
             if calls and puts:
-                best_call = max(calls, key=lambda c: getattr(c, "overall_confidence", 50.0) or 50.0)
-                best_put = max(puts, key=lambda c: getattr(c, "overall_confidence", 50.0) or 50.0)
-                diff = abs(float(best_call.overall_confidence or 50.0) - float(best_put.overall_confidence or 50.0))
+                best_call = max(calls, key=_conf)
+                best_put = max(puts, key=_conf)
+                diff = abs(_conf(best_call) - _conf(best_put))
 
                 if diff < tie_epsilon:
                     dropped_reasons.append(
-                        f"{underlying}:CONFLICT_TIE_REJECT_BOTH (call={best_call.overall_confidence}, put={best_put.overall_confidence})"
+                        f"{underlying}:CONFLICT_TIE_REJECT_BOTH (call={_conf(best_call)}, put={_conf(best_put)})"
                     )
                     logger.warning("candidate_conflict_tie_reject_both", underlying=underlying, diff=diff)
+                    # Even on tie, leftovers beyond best pair are correlated drops.
+                    for extra in [c for c in calls if c is not best_call] + [c for c in puts if c is not best_put]:
+                        dropped_reasons.append(
+                            f"{underlying}:{getattr(extra, 'strategy', '?')}_DROPPED_CORRELATED (tie-reject)"
+                        )
                     continue
 
-                if (best_call.overall_confidence or 50.0) > (best_put.overall_confidence or 50.0):
-                    approved.append(best_call)
+                if _conf(best_call) > _conf(best_put):
+                    survivors.append(best_call)
                     dropped_reasons.append(f"{underlying}:{best_put.strategy}_DROPPED_IN_FAVOR_OF_{best_call.strategy}_CALL")
+                    # Same-direction correlated leftovers on the winning side.
+                    _cap_same_direction([c for c in calls if c is not best_call], underlying, [], dropped_reasons)
+                    for extra in [c for c in puts if c is not best_put]:
+                        dropped_reasons.append(
+                            f"{underlying}:{getattr(extra, 'strategy', '?')}_DROPPED_CORRELATED (opposing-side loser)"
+                        )
                 else:
-                    approved.append(best_put)
+                    survivors.append(best_put)
                     dropped_reasons.append(f"{underlying}:{best_call.strategy}_DROPPED_IN_FAVOR_OF_{best_put.strategy}_PUT")
+                    _cap_same_direction([c for c in puts if c is not best_put], underlying, [], dropped_reasons)
+                    for extra in [c for c in calls if c is not best_call]:
+                        dropped_reasons.append(
+                            f"{underlying}:{getattr(extra, 'strategy', '?')}_DROPPED_CORRELATED (opposing-side loser)"
+                        )
+                approved.extend(survivors)
             else:
-                approved.extend(c_list)
+                # No opposing conflict: still cap same-direction duplicates per underlying.
+                _cap_same_direction(calls or puts or other, underlying, approved, dropped_reasons)
 
         return approved, dropped_reasons
 

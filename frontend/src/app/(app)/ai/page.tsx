@@ -1,40 +1,53 @@
 'use client';
 
-import { useState } from 'react';
-import { AIAnalysisCard, AIDeepInsightCard, AICopilotChat, AIStrategyPanel, AITradeValidator } from '@/components/ai';
-
-const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
+import { useEffect } from 'react';
+import { useInstrument } from '@/context/InstrumentContext';
+import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { syncAISecretsFromBackend } from '@/lib/aiKeySync';
+import {
+  AICopilotChat,
+  AIAnalysisCard,
+  AIDeepInsightCard,
+  AITradeValidator,
+  AIStrategyPanel,
+} from '@/components/ai';
 
 export default function AICopilotPage() {
-  const [symbol, setSymbol] = useState('NIFTY');
+  const { instrument } = useInstrument();
+  const live = useOptionalLiveMarketContext();
+  const market = useOptionalMarketDataContext();
+
+  // Pull provider keys saved on another device before the AI cards resolve
+  // settings. Throttled inside the module; `useAISettings` refreshes on the
+  // emitted sync event.
+  useEffect(() => {
+    void syncAISecretsFromBackend();
+  }, []);
+
+  const cards = live?.cards && live.cards.length > 0 ? live.cards : market?.cards ?? [];
+  const currentCard = cards.find((c) => {
+    const sym = (c.symbol ?? '').replace(/^(NSE|BSE):/i, '').trim().toUpperCase();
+    if (instrument === 'BANKNIFTY') return sym.includes('BANKNIFTY');
+    if (instrument === 'SENSEX') return sym.includes('SENSEX');
+    return (sym === 'NIFTY 50' || sym === 'NIFTY') && !sym.includes('BANKNIFTY');
+  });
+  const spotPrice = currentCard?.ltp ?? null;
 
   return (
-    <div className="ds-page">
-      <header className="page-hero">
-        <div className="toolbar">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1>AI Copilot</h1>
-              <span className="badge b-info" style={{ fontSize: 11 }}>{symbol}</span>
-            </div>
-            <p className="muted num">Streaming chat · analysis · deep signal · strategy · audit — all on your Settings → AI Engine keys</p>
-          </div>
-          <span className="spacer" />
-          <div className="seg" role="group" aria-label="Symbol">
-            {SYMBOLS.map((s) => (
-              <button key={s} type="button" className="seg-btn" data-active={symbol === s} aria-pressed={symbol === s} onClick={() => setSymbol(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
+    <div className="space-y-5">
+      {/* Primary surface: tool-calling copilot tied to the selected index */}
+      <AICopilotChat symbol={instrument} contextPage="ai-copilot" />
 
-      <AICopilotChat symbol={symbol} contextPage="ai-copilot" />
-      <AIAnalysisCard symbol={symbol} contextPage="ai-copilot" />
-      <AIDeepInsightCard symbol={symbol} />
-      <AIStrategyPanel symbol={symbol} />
-      <AITradeValidator symbol={symbol} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <AIAnalysisCard symbol={instrument} contextPage="ai-copilot" />
+        <AIDeepInsightCard symbol={instrument} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <AIStrategyPanel symbol={instrument} />
+        <AITradeValidator symbol={instrument} spotPrice={spotPrice} />
+      </div>
     </div>
   );
 }

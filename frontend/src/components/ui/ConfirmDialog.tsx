@@ -56,7 +56,10 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="max-w-md gap-3">
+      {/* Radix provides role=dialog, focus trap, initial focus and focus
+          restore (ui/dialog.tsx adds aria-modal); while `busy` the
+          onOpenChange guard blocks Escape/backdrop/X dismissal. */}
+      <DialogContent className="max-w-md gap-3" aria-busy={busy || undefined}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}

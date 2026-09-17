@@ -102,6 +102,86 @@ async def get_ml_prediction(
     return envelope(prediction, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
 
+@router.get("/current-regime")
+async def get_current_regime(symbol: str = "NIFTY"):
+    """Evaluates and returns the current market regime distribution via the Regime Challenger model."""
+    from app.ml.models.regime_model import regime_model
+    from app.ml.features.schema import NEUTRAL_IMPUTE_V3, FEATURE_NAMES_V3
+    vec = [NEUTRAL_IMPUTE_V3[k] for k in FEATURE_NAMES_V3]
+    res = regime_model.predict_regime(vec)
+    return envelope(res, provider="lightgbm_regime_challenger", status=DataStatus.LIVE)
+
+
+@router.get("/challenger-info")
+async def get_challenger_info():
+    """Retrieve metadata and manifests for active challenger models."""
+    from pathlib import Path
+    import json
+    challenger_dir = Path(__file__).parent.parent / "ml" / "artifacts" / "challenger"
+    manifests = {}
+    if challenger_dir.exists():
+        for f in challenger_dir.glob("*_meta.json"):
+            try:
+                manifests[f.stem] = json.loads(f.read_text())
+            except Exception:
+                pass
+    return envelope({"challenger_models": manifests}, provider="challenger_registry", status=DataStatus.OFFLINE)
+
+
+@router.get("/champion-info")
+async def get_champion_info():
+    """Retrieve metadata and manifests for active production champion models."""
+    from pathlib import Path
+    import json
+    champion_dir = Path(__file__).parent.parent / "ml" / "artifacts" / "champion"
+    manifests = {}
+    if champion_dir.exists():
+        for f in champion_dir.glob("*_meta.json"):
+            try:
+                manifests[f.stem] = json.loads(f.read_text())
+            except Exception:
+                pass
+    return envelope({"champion_models": manifests}, provider="champion_registry", status=DataStatus.LIVE)
+
+
+@router.get("/shadow-gate-eval")
+async def evaluate_shadow_gate(
+    strategy: str = "VWAP_MOMENTUM_BREAKOUT",
+    direction: str = "CALL",
+    direction_prob: float = 0.55,
+):
+    """Evaluates candidate through Stage B Breakout Validation & Trade Outcome Meta-Labeling."""
+    from app.ml.features.schema import NEUTRAL_IMPUTE_V3, FEATURE_NAMES_V3
+    from app.ml.models.breakout_model import breakout_model
+    from app.ml.models.trade_outcome_model import trade_outcome_model
+
+    vec = [NEUTRAL_IMPUTE_V3[k] for k in FEATURE_NAMES_V3]
+    bo_res = breakout_model.predict_breakout_quality(vec, direction=direction, strategy_name=strategy)
+    to_res = trade_outcome_model.predict_trade_outcome(
+        vec,
+        direction_prob=direction_prob,
+        breakout_prob=float(bo_res.get("p_valid_breakout", 0.50)),
+    )
+    p_t1 = float(to_res.get("p_target_before_stop", 0.50))
+    return envelope(
+        {
+            "strategy": strategy,
+            "direction": direction,
+            "breakout": bo_res,
+            "trade_outcome": to_res,
+            "shadow_decision": {
+                "recommendation": "PASS" if p_t1 >= 0.55 else "VETO",
+                "threshold": 0.55,
+                "p_t1": p_t1,
+                "stage": "STAGE_B_SHADOW_GATING",
+                "authority": "OBSERVATIONAL_ONLY",
+            },
+        },
+        provider="ml_shadow_gating",
+        status=DataStatus.LIVE,
+    )
+
+
 @router.get("/targets")
 async def get_target_specs():
     """Versioned label definitions per horizon (auditability for training)."""

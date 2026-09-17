@@ -6,6 +6,7 @@ Tests for:
 4. Throttled signals metrics exposure in outcome_tracker and ScanDiagnostics
 5. State-Aware F&O Degraded Lifecycle
 """
+import time
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -20,6 +21,62 @@ from app.signals.scalp_confirmation import ScalpConfirmationEngine
 from app.signals.outcome_tracker import outcome_tracker
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def _chain_ce():
+    """A contract carrying a live broker quote.
+
+    Admission is fail-closed, so a candidate must hold a chain-verified
+    contract before the scanner will register it — without one the candidate
+    is rejected by ChainMarkGate before any downstream logic runs. Built via
+    the real resolver so every InstrumentMaster field stays valid.
+    """
+    from app.signals.contract_resolver import resolve_option_contract
+
+    contract = resolve_option_contract("NIFTY", Decimal("24850"), "CE", strike_offset=0)
+    contract.contract_source = "fyers_chain"
+    contract.live_premium = 150.0
+    return contract
+
+
+def _pit_context_snapshot(spot: float = 24800.0) -> dict:
+    """Complete PIT-valid decision context.
+
+    The scanner's enrichment is fail-closed: a candidate must carry closed
+    candle timestamps, a quote timestamp, real indicators and a regime or it is
+    dropped as lookahead/unevaluated. These fixtures therefore supply the full
+    snapshot the live pipeline threads through.
+    """
+    now_ms = int(time.time() * 1000)
+    return {
+        "fno": {
+            "pcr": 1.35,
+            "ce_oi": 100000,
+            "pe_oi": 135000,
+            "atm_iv": 15.0,
+            "oi_change_pct": 6.0,
+            "max_pain": 24800.0,
+        },
+        "mtf": {"overall_bias": "BULLISH", "alignment_score": 85.0},
+        "indicators": {
+            "rsi": 62.0,
+            "adx": 28.5,
+            "atr": 22.0,
+            "volume_ratio": 1.8,
+            "volatility": {"atr": 22.0},
+            "support_resistance": {"support": [24700.0], "resistance": [25000.0]},
+        },
+        "vwap": 24780.0,
+        "spot_price": spot,
+        "regime": "TREND_UP",
+        "timestamp_ms": now_ms,
+        "quote_timestamp_ms": now_ms - 1000,
+        "candles": [
+            {"open": spot - 5, "high": spot + 5, "low": spot - 8, "close": spot - 2, "volume": 1000, "timestamp": now_ms - 120_000},
+            {"open": spot - 2, "high": spot + 6, "low": spot - 4, "close": spot + 3, "volume": 1200, "timestamp": now_ms - 60_000},
+            {"open": spot + 3, "high": spot + 8, "low": spot + 1, "close": spot + 5, "volume": 1500, "timestamp": now_ms - 30_000},
+        ],
+    }
 
 
 def _mock_open_permission(exchange: str = "NSE"):
@@ -50,7 +107,7 @@ async def test_ai_snapshot_rich_context_passing(monkeypatch):
 
     scanner = SignalScanner()
 
-    # Candidate with rich context_snapshot
+    # Candidate with rich PIT context_snapshot
     cand = SignalCandidate(
         underlying="NIFTY",
         strategy="BREAKOUT",
@@ -67,14 +124,9 @@ async def test_ai_snapshot_rich_context_passing(monkeypatch):
         risk_reward_t1=1.6,
         risk_reward_t2=3.2,
         confidence=85.0,
-        context_snapshot={
-            "fno": {"pcr": 1.35, "ce_oi": 100000, "pe_oi": 135000},
-            "mtf": {"overall_bias": "BULLISH", "alignment_score": 85.0},
-            "indicators": {"adx": 28.5, "atr": 22.0, "volume_ratio": 1.8},
-            "vwap": 24780.0,
-            "spot_price": 24800.0,
-            "regime": "TREND_UP",
-        }
+        option_contract=_chain_ce(),
+        path_simulation={"is_economically_viable": True, "viability_rationale": []},
+        context_snapshot=_pit_context_snapshot(spot=24800.0),
     )
 
     captured_snapshot = {}
@@ -150,6 +202,9 @@ async def test_desk_concurrency_decoupled_scalp_and_intraday(monkeypatch):
         risk_reward_t1=1.6,
         risk_reward_t2=3.2,
         confidence=85.0,
+        option_contract=_chain_ce(),
+        path_simulation={"is_economically_viable": True, "viability_rationale": []},
+        context_snapshot=_pit_context_snapshot(spot=24800.0),
     )
 
     registered, rejected = await scanner._process_candidates([intraday_cand])
@@ -174,6 +229,9 @@ async def test_desk_concurrency_decoupled_scalp_and_intraday(monkeypatch):
         risk_reward_t1=2.2,
         risk_reward_t2=4.0,
         confidence=80.0,
+        option_contract=_chain_ce(),
+        path_simulation={"is_economically_viable": True, "viability_rationale": []},
+        context_snapshot=_pit_context_snapshot(spot=24800.0),
     )
 
     registered_2, rejected_2 = await scanner._process_candidates([second_scalp])
@@ -259,7 +317,12 @@ async def test_performance_metrics_and_diagnostics_throttled_total(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fno_degraded_state_aware_lifecycle(monkeypatch):
-    """Verify degraded F&O setups register as VALIDATED but fail-close on any ARMED or active transition."""
+    """Degraded F&O setups fail closed at admission: no VALIDATED/ARMED lifecycle.
+
+    P0-2 contract: the FNOIntegrityGate rejects the candidate outright
+    (ARMED_BLOCKED_FNO_DEGRADED), so it never enters the FSM and can never be
+    transitioned into an active state by a later operator action.
+    """
     monkeypatch.setattr(calendar_service, "can_trade_now", _mock_open_permission)
 
     scanner = SignalScanner()
@@ -279,26 +342,14 @@ async def test_fno_degraded_state_aware_lifecycle(monkeypatch):
         risk_reward_t1=1.6,
         risk_reward_t2=3.2,
         confidence=85.0,
+        option_contract=_chain_ce(),
         fno_degraded=True,
     )
 
     registered, rejected = await scanner._process_candidates([cand])
-    assert len(registered) == 1
-    sig = registered[0]
-    assert sig.fsm_state == "VALIDATED"
-    assert sig.confluence_breakdown.get("fno_degraded") is True
+    assert registered == []
     assert any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
 
-    # Attempt transitions to ARMED, TRIGGERED, CONFIRMED
-    ok, err = signal_fsm.transition(sig.signal_id, "ARMED")
-    assert not ok
-    assert err == "FNO_DATA_DEGRADED_CANNOT_ARM"
-
-    ok, err = signal_fsm.transition(sig.signal_id, "TRIGGERED")
-    assert not ok
-    assert err == "FNO_DATA_DEGRADED_CANNOT_ARM"
-
-    ok, err = signal_fsm.transition(sig.signal_id, "CONFIRMED")
-    assert not ok
-    assert err == "FNO_DATA_DEGRADED_CANNOT_ARM"
+    # No FSM instance exists to arm, trigger or confirm.
+    assert not [s for s in signal_fsm.list_active() if s.underlying == "NIFTY"]
 

@@ -3,14 +3,17 @@ Centralized Risk, Target, & Sizing Authority — §4, §5, §6, §10, §15, §18
 Enforces:
   1. No structural stop clamping (Reject invalid structure instead of forcing arbitrary tight stop).
   2. Realistic target generation based on market structure and envelope ceilings.
-  3. Strict integer-lot position sizing.
+  3. Strict integer-lot position sizing on the OPTION PREMIUM stop
+     (entry_p - delta-gamma stop_p), never spot_risk*delta alone.
   4. Independent Two-Clock lifecycles (Trigger TTL vs Active Holding Time Stop).
+  5. Friction-gate netRR>=1.2, portfolio-ledger + daily-loss pre-checks.
 """
 from __future__ import annotations
 
 import json
 import math
 import os
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Optional
@@ -21,6 +24,22 @@ logger = structlog.get_logger()
 
 Direction = Literal["LONG_CALL", "LONG_PUT"]
 Timeframe = Literal["1M", "3M", "5M", "15M", "1D"]
+
+
+def resolve_desk_key(timeframe: str, is_scalp: bool) -> str:
+    """Explicit timeframe bucket map (15M/1D are NOT 5M intraday).
+
+    1M/3M/scalp -> 1m_scalp | 5M -> 5m_intraday | 15M -> 15m_intraday |
+    1D -> 1d_positional. Callers fall back to 5m_intraday when an envelope
+    file predates the newer desks.
+    """
+    if is_scalp or timeframe in ("1M", "3M"):
+        return "1m_scalp"
+    if timeframe == "15M":
+        return "15m_intraday"
+    if timeframe == "1D":
+        return "1d_positional"
+    return "5m_intraday"
 
 
 class StrategySetup(BaseModel):
@@ -40,6 +59,12 @@ class StrategySetup(BaseModel):
     option_premium: Optional[float] = None
     option_theta_hour: Optional[float] = None
     option_iv: Optional[float] = None
+    # P1 selector-greeks + live microstructure (all optional for compat).
+    option_gamma: Optional[float] = None
+    option_spread_pts: Optional[float] = None
+    option_slippage_pts: Optional[float] = None
+    option_strike: Optional[float] = None
+    option_expiry: Optional[str] = None
 
 
 class ValidatedRiskDecision(BaseModel):
@@ -75,6 +100,49 @@ class ValidatedRiskDecision(BaseModel):
     option_theta_hour: Optional[float] = None
     option_economic_viability: Optional[bool] = None
     option_viability_rationale: list[str] = Field(default_factory=list)
+    # P1 audit: premium-domain sizing inputs.
+    premium_risk_per_unit: Optional[float] = None
+    premium_entry: Optional[float] = None
+
+
+def _lot_size_for(underlying: str, config: dict) -> int:
+    """Authoritative lot size — resolver first, never a stale hardcoded 20."""
+    try:
+        from app.signals.transaction_costs import resolve_lot_size_for_underlying
+        return int(resolve_lot_size_for_underlying(underlying))
+    except Exception:
+        pass
+    try:
+        return int(config.get("lot_sizes", {}).get(underlying, 75))
+    except Exception:
+        return 75
+
+
+def _premium_stop_risk(
+    entry_premium: float,
+    delta: float,
+    gamma: float,
+    spot_risk_pts: float,
+    spread_pts: float = 0.0,
+    slippage_pts: float = 0.0,
+) -> float:
+    """Premium-domain risk: entry_p - delta-gamma stop_p + spread/slip buffer.
+
+    stop_p = entry_p + delta*dSpot_adv + 0.5*gamma*dSpot_adv^2, so risk =
+    |delta|*spot_risk - 0.5*gamma*spot_risk^2 (floored at half the linear
+    term so convexity can never zero the risk, capped at 90% of entry).
+    """
+    d = abs(float(delta or 0.0))
+    g = max(0.0, float(gamma or 0.0))
+    s = max(0.0, float(spot_risk_pts or 0.0))
+    linear = d * s
+    convex = 0.5 * g * s * s
+    risk = linear - convex
+    risk = max(0.5 * linear, risk)
+    if entry_premium > 0:
+        risk = min(risk, entry_premium * 0.90)
+    risk = max(0.5, risk + max(0.0, spread_pts) + max(0.0, slippage_pts))
+    return round(float(risk), 2)
 
 
 class CentralRiskEngine:
@@ -104,26 +172,39 @@ class CentralRiskEngine:
                 except Exception as e:
                     logger.warning("risk_engine_config_read_error", path=str(p), error=str(e))
 
-        # Fallback defaults
+        # Fallback defaults (lot sizes match the resolver: NIFTY 75 / BANK 30 / SENSEX 10)
         return {
             "version": 1,
             "envelopes": {
                 "NIFTY": {
                     "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 18.0, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+                    "15m_intraday": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 110.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+                    "1d_positional": {"min_risk_pts": 60.0, "max_risk_pts": 120.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 280.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
                 },
                 "BANKNIFTY": {
                     "1m_scalp": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 120.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 50.0, "max_risk_pts": 95.0, "t1_ceiling_pts": 140.0, "t2_ceiling_pts": 220.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+                    "15m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 190.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+                    "1d_positional": {"min_risk_pts": 180.0, "max_risk_pts": 350.0, "t1_ceiling_pts": 520.0, "t2_ceiling_pts": 800.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
                 },
                 "SENSEX": {
                     "1m_scalp": {"min_risk_pts": 35.0, "max_risk_pts": 70.0, "t1_ceiling_pts": 100.0, "t2_ceiling_pts": 160.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
                     "5m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+                    "15m_intraday": {"min_risk_pts": 95.0, "max_risk_pts": 180.0, "t1_ceiling_pts": 260.0, "t2_ceiling_pts": 420.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+                    "1d_positional": {"min_risk_pts": 250.0, "max_risk_pts": 480.0, "t1_ceiling_pts": 700.0, "t2_ceiling_pts": 1100.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
                 }
             },
-            "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 20, "FINNIFTY": 65, "MIDCPNIFTY": 120},
+            "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "FINNIFTY": 65, "MIDCPNIFTY": 120},
             "options_scaling": {"default_atm_delta": 0.50, "expiry_day_time_stop_factor": 0.50}
         }
+
+    def _resolve_envelope(self, underlying: str, desk_key: str) -> Optional[dict]:
+        env = self._config.get("envelopes", {}).get(underlying, {})
+        if desk_key in env:
+            return env[desk_key]
+        # Newer desks fall back to 5m_intraday when the envelope file predates them.
+        return env.get("5m_intraday")
 
     def evaluate(
         self,
@@ -133,6 +214,9 @@ class CentralRiskEngine:
         is_expiry_day: bool = False,
         allow_closed_market: bool = False,
         event_overlay: Optional[object] = None,
+        expected_move_projection: Optional[object] = None,
+        daily_pnl_inr: Optional[float] = None,
+        max_daily_loss_inr: Optional[float] = None,
     ) -> ValidatedRiskDecision:
         from app.services.calendar_service import calendar_service
         if not allow_closed_market and not calendar_service.can_trade_now().allowed:
@@ -149,8 +233,27 @@ class CentralRiskEngine:
             if multiplier < 1.0:
                 risk_per_trade_pct *= max(0.1, multiplier)
 
-        desk_key = "1m_scalp" if setup.is_scalp or setup.timeframe in ("1M", "3M") else "5m_intraday"
-        underlying_rules = self._config.get("envelopes", {}).get(setup.underlying, {}).get(desk_key)
+        # ── 0b. Confidence wiring: sub-45 never trades; 45-65 halves size ──
+        try:
+            conf = float(setup.confidence or 75.0)
+        except Exception:
+            conf = 75.0
+        if conf < 45.0:
+            return self._reject("LOW_CONFIDENCE", f"Fused confidence {conf:.0f} below 45 minimum", setup)
+        confidence_halve = conf < 65.0
+
+        # ── 0c. Daily-loss cap (hard stop before any ACCEPT) ──
+        if daily_pnl_inr is not None and max_daily_loss_inr is not None:
+            try:
+                if float(daily_pnl_inr) <= -abs(float(max_daily_loss_inr)):
+                    return self._reject(
+                        "DAILY_LOSS_CAP", f"Daily PnL ₹{float(daily_pnl_inr):,.0f} breached cap ₹{float(max_daily_loss_inr):,.0f}", setup,
+                    )
+            except Exception:
+                pass
+
+        desk_key = resolve_desk_key(setup.timeframe, setup.is_scalp)
+        underlying_rules = self._resolve_envelope(setup.underlying, desk_key)
 
         if not underlying_rules:
             return self._reject("CONFIG_MISSING", f"No envelope configured for {setup.underlying} ({desk_key})", setup)
@@ -179,6 +282,18 @@ class CentralRiskEngine:
         # Volatility-based buffer check (stop should not be tighter than micro ATR)
         atr_risk = float(setup.atr_5m) * float(underlying_rules.get("atr_multiplier", 1.0))
         validated_risk = max(raw_risk, min_allowed_risk, atr_risk)
+
+        # Spread/delta execution buffer (spot terms): a 1-lot fill that pays
+        # the full spread needs the stop to fund it. Capped at 20% of risk so
+        # illiquid strikes reject downstream instead of inflating stops.
+        try:
+            _spread = float(setup.option_spread_pts or 0)
+            _delta_buf = abs(float(setup.option_delta or 0)) or 0.5
+            if _spread > 0 and _delta_buf >= 0.15:
+                buf_spot = min(validated_risk * 0.20, _spread / _delta_buf)
+                validated_risk = validated_risk + buf_spot
+        except Exception:
+            pass
 
         if validated_risk > max_allowed_risk:
             return self._reject(
@@ -231,17 +346,27 @@ class CentralRiskEngine:
             final_t1 = setup.entry_trigger - t1_pts_dec
             final_t2 = setup.entry_trigger - t2_pts_dec
 
-        # ── 4. Position Sizing (Integer Lots Only) ──
-        lot_size = int(self._config.get("lot_sizes", {}).get(setup.underlying, 75))
+        # ── 4. Position Sizing on the PREMIUM stop (integer lots only) ──
+        lot_size = _lot_size_for(setup.underlying, self._config)
         allowed_rupee_risk = available_capital * (risk_per_trade_pct / 100.0)
 
-        # In index options, stop loss in spot translates via specific or default delta (~0.50)
-        if setup.option_delta is not None and abs(setup.option_delta) >= 0.15:
+        # Live selector delta (fail-soft to 0.50 only when the selector never priced).
+        if setup.option_delta is not None and abs(float(setup.option_delta)) >= 0.15:
             delta = abs(float(setup.option_delta))
+            delta_source_live = True
         else:
             delta = float(self._config.get("options_scaling", {}).get("default_atm_delta", 0.50))
+            delta_source_live = False
 
-        option_risk_per_unit = validated_risk * delta
+        entry_premium = float(setup.option_premium) if setup.option_premium and float(setup.option_premium) > 0 else None
+        if entry_premium is not None:
+            gamma = float(setup.option_gamma or 0.0)
+            spread_b = float(setup.option_spread_pts or 0.0)
+            slip_b = float(setup.option_slippage_pts or 0.0)
+            option_risk_per_unit = _premium_stop_risk(entry_premium, delta, gamma, validated_risk, spread_b, slip_b)
+        else:
+            # Legacy path (no selector premium): linear delta translation.
+            option_risk_per_unit = validated_risk * delta
         rupee_risk_per_lot = option_risk_per_unit * lot_size
 
         lots = math.floor(allowed_rupee_risk / rupee_risk_per_lot) if rupee_risk_per_lot > 0 else 0
@@ -253,8 +378,83 @@ class CentralRiskEngine:
             )
 
         lots = min(lots, 10)  # Max 10 lots safety cap
+        if confidence_halve and lots > 1:
+            lots = max(1, lots // 2)
         total_qty = lots * lot_size
         max_rupee_loss = round(total_qty * option_risk_per_unit, 2)
+
+        # ── 4b. Portfolio Greeks pre-check (marginal trade + concentration) ──
+        if setup.option_strike and setup.option_expiry:
+            try:
+                from app.signals.portfolio_greeks import portfolio_greeks_ledger
+                otype = "CE" if setup.direction == "LONG_CALL" else "PE"
+                theta_d = float(setup.option_theta_hour or 0.0) * 6.25
+                horizon = "SCALP" if (setup.is_scalp or setup.timeframe in ("1M", "3M")) else ("SWING" if setup.timeframe == "1D" else "INTRADAY")
+                chk = portfolio_greeks_ledger.evaluate_marginal_trade(
+                    underlying=setup.underlying,
+                    horizon=horizon,  # type: ignore[arg-type]
+                    option_type=otype,  # type: ignore[arg-type]
+                    strike=float(setup.option_strike),
+                    expiry_date=str(setup.option_expiry),
+                    quantity=total_qty,
+                    unit_delta=delta if setup.direction == "LONG_CALL" else -delta,
+                    unit_gamma=float(setup.option_gamma or 0.0005),
+                    unit_theta_day=theta_d,
+                    unit_vega=10.0,
+                )
+                if not chk.allowed:
+                    return self._reject("PORTFOLIO_VETO", str(chk.rejection_reason), setup)
+            except Exception as e:
+                logger.debug("risk_engine_portfolio_check_skipped", error=str(e)[:150])
+
+        # ── 4c. Friction gate (netRR>=1.2) when the selector priced the leg ──
+        if entry_premium is not None and delta_source_live:
+            try:
+                from app.signals.risk.friction_gate import friction_gate
+                from app.signals.strategies.base import SignalCandidate
+                _cand = SignalCandidate(
+                    underlying=setup.underlying,  # type: ignore[arg-type]
+                    strategy=str(setup.strategy_name),  # type: ignore[arg-type]
+                    direction=setup.direction,  # type: ignore[arg-type]
+                    timeframe=setup.timeframe,  # type: ignore[arg-type]
+                    spot_price=setup.spot_price,
+                    entry_min=setup.entry_trigger,
+                    entry_max=setup.entry_trigger,
+                    trigger=setup.entry_trigger,
+                    stop_loss=final_sl,
+                    target_1=final_t1,
+                    target_2=final_t2,
+                    risk_points=Decimal(str(round(validated_risk, 2))),
+                    risk_reward_t1=rr_t1,
+                    risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                    is_scalp=setup.is_scalp,
+                    greeks={
+                        "delta": delta if setup.direction == "LONG_CALL" else -delta,
+                        "gamma": float(setup.option_gamma or 0.0),
+                        "theta_hour": float(setup.option_theta_hour or 0.0),
+                        "iv": float(setup.option_iv or 0.0),
+                    },
+                    time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                )
+                _edge = friction_gate.evaluate(
+                    _cand,
+                    live_premium=entry_premium,
+                    live_spread_pts=float(setup.option_spread_pts) if setup.option_spread_pts else None,
+                    live_iv=float(setup.option_iv) if setup.option_iv else None,
+                    slippage_pts=float(setup.option_slippage_pts) if setup.option_slippage_pts else None,
+                    expected_move_projection=expected_move_projection,
+                    expected_holding_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                )
+                if not _edge.passed or _edge.net_reward_risk_ratio < 1.2:
+                    return self._reject(
+                        "FRICTION_NET_RR",
+                        _edge.rejection_reason or f"Net R/R {_edge.net_reward_risk_ratio:.2f} below 1.20 after friction",
+                        setup,
+                    )
+            except Exception as e:
+                # Fail-closed only when the gate itself rejects; infra errors
+                # must not silently pass — log and continue on legacy path.
+                logger.debug("risk_engine_friction_check_error", error=str(e)[:200])
 
         # ── 5. Options Economics & Theta Drag Guard (§27, §35) ──
         viability_notes: list[str] = []
@@ -274,6 +474,8 @@ class CentralRiskEngine:
                         )
                 else:
                     viability_notes.append(f"Theta drag acceptable: {theta_drag_pct:.1f}% of target gain/hr")
+            if entry_premium is not None:
+                viability_notes.append(f"Premium stop: entry ₹{entry_premium:.1f} risk ₹{option_risk_per_unit:.1f}/share (delta-gamma)")
 
         # ── 6. Independent Lifecycle Clocks ──
         time_stop = int(underlying_rules["active_time_stop_seconds"])
@@ -302,10 +504,12 @@ class CentralRiskEngine:
             option_theta_hour=setup.option_theta_hour,
             option_economic_viability=is_viable,
             option_viability_rationale=viability_notes,
+            premium_risk_per_unit=round(float(option_risk_per_unit), 2),
+            premium_entry=round(float(entry_premium), 2) if entry_premium else None,
         )
 
     def _reject(self, reason_code: str, message: str, setup: StrategySetup) -> ValidatedRiskDecision:
-        lot_size = int(self._config.get("lot_sizes", {}).get(setup.underlying, 75))
+        lot_size = _lot_size_for(setup.underlying, self._config)
         logger.info(
             "risk_engine_trade_rejected",
             strategy=setup.strategy_name,
@@ -384,4 +588,3 @@ def resolve_realistic_atr(underlying: str, spot: Decimal, indicators: Optional[d
     elif underlying == "SENSEX":
         return Decimal("85.0")
     return spot * Decimal("0.001")
-

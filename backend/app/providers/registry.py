@@ -12,6 +12,20 @@ _provider_instance: MarketDataProvider | None = None
 _previous_provider: MarketDataProvider | None = None
 _stream_start_task: asyncio.Task | None = None
 _suppress_autostart: bool = False
+_provider_rejected: str | None = None  # last rejected provider selection, for health surfacing
+
+
+def get_broker_provider_status() -> str:
+    """Return the provider posture for /health/subsystems.
+
+    "ok:fyers" when the singleton is active; "rejected:<value>" when a
+    non-fyers selection was refused; "unset" when no provider exists yet.
+    """
+    if _provider_rejected:
+        return f"rejected:{_provider_rejected}"
+    if _provider_instance is not None:
+        return f"ok:{getattr(_provider_instance, 'provider_name', 'unknown')}"
+    return "unset"
 
 
 def _schedule_start_stream(provider: MarketDataProvider) -> None:
@@ -111,14 +125,30 @@ def get_active_provider_name() -> str:
 def _create_provider() -> MarketDataProvider:
     """Create the market data provider based on the runtime broker config.
 
-    The runtime config (provider + api_type + credentials) is sourced from
-    app.core.broker_runtime, populated from the persisted user settings and
-    falling back to env-driven configuration. Invalid provider selections are
-    normalized to a safe default (fyers) so the
-    backend never crashes on startup.
+    Fyers-only policy (Truth of Wall): the saved user settings / env may only
+    select ``fyers``. Any other selection is rejected LOUDLY — it never falls
+    back silently to fyers while pretending the configured choice is active.
+    The rejection is surfaced via /health/subsystems (broker_provider_status)
+    and leaves the provider singleton unset so every data path fails closed
+    to OFFLINE instead of serving data under a wrong provider identity.
     """
+    global _provider_rejected
     cfg = get_config()
     creds = cfg.credentials or {}
+    requested = (cfg.provider or "").strip().lower()
+    if requested != "fyers":
+        _provider_rejected = requested
+        logger.error(
+            "provider_config_rejected",
+            requested=requested,
+            policy="fyers-only (Truth of Wall)",
+            detail="No provider instance created — market data paths will fail closed to OFFLINE.",
+        )
+        raise RuntimeError(
+            f"Broker provider '{requested}' is not supported — this platform is FYERS-only. "
+            "Fix the saved broker settings (Settings UI) or MARKET_DATA_PROVIDER env.",
+        )
+    _provider_rejected = None
     logger.info("provider_init", api_type="indian", provider="fyers", live=bool(creds))
     return FyersProvider(
         app_id=creds.get("app_id"),

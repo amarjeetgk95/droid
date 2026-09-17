@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, RefreshCw, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ShieldCheck, RefreshCw, Wallet, AlertCircle } from 'lucide-react';
 import { PaperTradingSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
 import { PortfolioSummary } from '@/lib/types';
@@ -12,6 +12,7 @@ import {
   SettingSelect,
   SettingSwitch,
   StatTile,
+  FeedbackBanner,
 } from './ui/SettingPrimitives';
 
 interface Props {
@@ -20,38 +21,57 @@ interface Props {
   errors?: { path: string; message: string }[];
 }
 
+function formatRupees(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `₹${value.toLocaleString('en-IN')}`;
+}
+
 export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `paper.${field}`)?.message;
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const fetchPortfolio = async () => {
+  // Raw input drafts so an invalid entry stays visible (and blocks save via
+  // NaN) instead of being silently snapped to a fallback number.
+  const [tradeCapDraft, setTradeCapDraft] = useState(() => String(settings.maxCapitalPerTradePct));
+  const [drawdownDraft, setDrawdownDraft] = useState(() => String(settings.maxDailyDrawdownHaltPct));
+  const [squareOffDraft, setSquareOffDraft] = useState(() => settings.autoSquareOffTime);
+
+  useEffect(() => {
+    if (Number.isFinite(settings.maxCapitalPerTradePct)) {
+      setTradeCapDraft(String(settings.maxCapitalPerTradePct));
+    }
+  }, [settings.maxCapitalPerTradePct]);
+  useEffect(() => {
+    if (Number.isFinite(settings.maxDailyDrawdownHaltPct)) {
+      setDrawdownDraft(String(settings.maxDailyDrawdownHaltPct));
+    }
+  }, [settings.maxDailyDrawdownHaltPct]);
+  useEffect(() => {
+    setSquareOffDraft(settings.autoSquareOffTime);
+  }, [settings.autoSquareOffTime]);
+
+  const fetchPortfolio = useCallback(async () => {
     setLoading(true);
+    setPortfolioError(null);
     try {
       const res = await api.getPaperPortfolio();
-      setPortfolio(res.data);
-    } catch {
-      setPortfolio({
-        virtual_capital: settings.initialCapital,
-        available_margin: settings.initialCapital,
-        used_margin: 0,
-        margin_utilization_pct: 0,
-        total_realized_pnl: 0,
-        total_unrealized_pnl: 0,
-        total_portfolio_pnl: 0,
-        open_positions_count: 0,
-      });
+      setPortfolio(res.data ?? null);
+      if (!res.data) setPortfolioError('Portfolio endpoint returned no data.');
+    } catch (err: unknown) {
+      setPortfolio(null);
+      setPortfolioError(err instanceof Error ? err.message : 'Failed to load paper portfolio');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchPortfolio();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void fetchPortfolio();
+  }, [fetchPortfolio]);
 
   const handleResetAccount = async () => {
     if (
@@ -66,7 +86,12 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
     setMsg(null);
     try {
       const res = await api.resetPaperAccount();
-      setPortfolio(res.data);
+      if (res.data) {
+        setPortfolio(res.data);
+        setPortfolioError(null);
+      } else {
+        setPortfolioError('Reset completed but the backend returned no portfolio summary.');
+      }
       setMsg({
         type: 'success',
         text: 'Paper trading account successfully reset to default initial capital.',
@@ -81,36 +106,29 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
     }
   };
 
-  const virtualCapital = portfolio?.virtual_capital ?? settings.initialCapital;
-  const availableMargin = portfolio?.available_margin ?? settings.initialCapital;
-  const usedMargin = portfolio?.used_margin ?? 0;
-  const realizedPnl = portfolio?.total_realized_pnl ?? 0;
+  const handleTradeCapChange = (raw: string) => {
+    setTradeCapDraft(raw);
+    const parsed = raw.trim() === '' ? NaN : Number(raw);
+    onChange({ maxCapitalPerTradePct: parsed });
+  };
+
+  const handleDrawdownChange = (raw: string) => {
+    setDrawdownDraft(raw);
+    const parsed = raw.trim() === '' ? NaN : Number(raw);
+    onChange({ maxDailyDrawdownHaltPct: parsed });
+  };
+
+  const handleSquareOffChange = (raw: string) => {
+    setSquareOffDraft(raw);
+    onChange({ autoSquareOffTime: raw });
+  };
+
+  const marginUtilization =
+    portfolio?.margin_utilization_pct != null ? `${portfolio.margin_utilization_pct}%` : undefined;
 
   return (
     <div className="space-y-4">
-      {msg && (
-        <div
-          className={`card card-pad flex items-center gap-2.5 text-xs ${
-            msg.type === 'success'
-              ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
-              : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
-          }`}
-        >
-          {msg.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 shrink-0" />
-          )}
-          <span className="font-medium">{msg.text}</span>
-          <button
-            type="button"
-            onClick={() => setMsg(null)}
-            className="ml-auto text-xs opacity-70 hover:opacity-100 cursor-pointer"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      <FeedbackBanner message={msg} onDismiss={() => setMsg(null)} />
 
       {/* 1. Account Summary & Status */}
       <SettingSection
@@ -122,30 +140,43 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
             type="button"
             onClick={handleResetAccount}
             disabled={resetting}
-            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)]"
+            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)] disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${resetting ? 'animate-spin' : ''}`} />
-            <span>Reset Account</span>
+            <span>{resetting ? 'Resetting…' : 'Reset Account'}</span>
           </button>
         }
       >
-        <div className="card-pad">
+        <div className="card-pad space-y-3">
+          {portfolioError && (
+            <div className="flex items-center gap-2 text-xs text-[var(--ds-bear-strong)] bg-[var(--ds-bear-wash)] border border-[var(--ds-bear-line)] rounded p-2.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>Portfolio telemetry unavailable — {portfolioError}</span>
+            </div>
+          )}
           <div className="stat-grid grid-cols-2 sm:grid-cols-4">
-            <StatTile label="Virtual capital" value={`₹${virtualCapital.toLocaleString('en-IN')}`} />
+            <StatTile
+              label="Virtual capital"
+              value={loading ? '…' : formatRupees(portfolio?.virtual_capital)}
+            />
             <StatTile
               label="Available margin"
-              value={`₹${availableMargin.toLocaleString('en-IN')}`}
+              value={loading ? '…' : formatRupees(portfolio?.available_margin)}
               tone="positive"
             />
             <StatTile
               label="Margin utilized"
-              value={`₹${usedMargin.toLocaleString('en-IN')}`}
-              sub={`${portfolio?.margin_utilization_pct ?? 0}%`}
+              value={loading ? '…' : formatRupees(portfolio?.used_margin)}
+              sub={loading ? undefined : marginUtilization}
             />
             <StatTile
               label="Realized P&L"
-              value={`${realizedPnl >= 0 ? '+' : ''}₹${realizedPnl.toLocaleString('en-IN')}`}
-              tone={realizedPnl >= 0 ? 'positive' : 'negative'}
+              value={loading ? '…' : formatRupees(portfolio?.total_realized_pnl)}
+              tone={
+                portfolio?.total_realized_pnl != null && portfolio.total_realized_pnl >= 0
+                  ? 'positive'
+                  : 'negative'
+              }
             />
           </div>
         </div>
@@ -161,8 +192,10 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
           label="Default Starting Capital"
           description="Baseline balance restored when provisioning or resetting paper accounts."
           error={getError('initialCapital')}
+          htmlFor="paper-initial-capital"
         >
           <SettingSelect
+            id="paper-initial-capital"
             value={settings.initialCapital}
             onChange={(e) => onChange({ initialCapital: Number(e.target.value) })}
           >
@@ -178,13 +211,15 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
           label="Intraday Auto Square-Off Time"
           description="Mandatory cutoff time (IST) to close open intraday MIS option & futures positions."
           error={getError('autoSquareOffTime')}
+          htmlFor="paper-square-off"
         >
           <div className="flex items-center gap-2">
             <SettingInput
+              id="paper-square-off"
               type="text"
               mono
-              value={settings.autoSquareOffTime}
-              onChange={(e) => onChange({ autoSquareOffTime: e.target.value })}
+              value={squareOffDraft}
+              onChange={(e) => handleSquareOffChange(e.target.value)}
               className="w-28"
             />
             <span className="text-xs text-muted-foreground font-mono">IST</span>
@@ -195,15 +230,17 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
           label="Single-Trade Allocation Cap"
           description="Maximum portfolio percentage allowed on any single executed option structure."
           error={getError('maxCapitalPerTradePct')}
+          htmlFor="paper-trade-cap"
         >
           <div className="flex items-center gap-2">
             <SettingInput
+              id="paper-trade-cap"
               type="number"
-              min="5"
+              min="1"
               max="100"
               mono
-              value={settings.maxCapitalPerTradePct}
-              onChange={(e) => onChange({ maxCapitalPerTradePct: Number(e.target.value) || 20 })}
+              value={tradeCapDraft}
+              onChange={(e) => handleTradeCapChange(e.target.value)}
               className="w-28"
             />
             <span className="text-xs text-muted-foreground font-mono">%</span>
@@ -214,15 +251,17 @@ export function PaperTradingRiskTab({ settings, onChange, errors = [] }: Props) 
           label="Daily Drawdown Circuit Breaker"
           description="Automatically halt all execution algorithms if daily losses exceed this threshold."
           error={getError('maxDailyDrawdownHaltPct')}
+          htmlFor="paper-drawdown"
         >
           <div className="flex items-center gap-2">
             <SettingInput
+              id="paper-drawdown"
               type="number"
               min="1"
               max="100"
               mono
-              value={settings.maxDailyDrawdownHaltPct}
-              onChange={(e) => onChange({ maxDailyDrawdownHaltPct: Number(e.target.value) || 10 })}
+              value={drawdownDraft}
+              onChange={(e) => handleDrawdownChange(e.target.value)}
               className="w-28"
             />
             <span className="text-xs text-muted-foreground font-mono">%</span>

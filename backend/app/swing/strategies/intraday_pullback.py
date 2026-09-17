@@ -82,13 +82,19 @@ class IntradayPullbackStrategy(BaseSwingStrategy):
         if stop_dist <= 0:
             return None
 
-        # Extract live chain quotes if available
+        # Extract live chain quotes if available. Accepts OptionChainResponse
+        # (strikes[] with call/put legs) or a legacy rows[] chain (ce/pe legs).
+        # Without quotes the fail-closed selector returns no selection, so this
+        # extraction is what keeps the strategy able to trade at all.
         chain_quotes: dict[float, float] = {}
-        if options_chain and hasattr(options_chain, "rows"):
-            for row in options_chain.rows:
-                side = row.pe if direction == "LONG_PUT" else row.ce
-                if side and getattr(side, "ltp", 0.0) > 0:
-                    chain_quotes[row.strike] = side.ltp
+        chain_rows = getattr(options_chain, "rows", None) or getattr(options_chain, "strikes", None) or []
+        for row in chain_rows:
+            if direction == "LONG_PUT":
+                side = getattr(row, "pe", None) or getattr(row, "put", None)
+            else:
+                side = getattr(row, "ce", None) or getattr(row, "call", None)
+            if side and getattr(side, "ltp", 0.0) > 0:
+                chain_quotes[float(row.strike)] = float(side.ltp)
 
         target_horizon_hours = 2.0  # 2 hours intraday holding horizon
 
@@ -111,7 +117,11 @@ class IntradayPullbackStrategy(BaseSwingStrategy):
         greeks = selection.selected_greeks
         contract = selection.selected_contract
         live_prem = float(contract.live_premium) if getattr(contract, "live_premium", None) is not None else None
-        entry_premium = max(1.0, round(live_prem or greeks.theoretical_price, 2))
+        # Fail-closed: no live chain premium = no setup. Never size or level
+        # a trade off a Black-76 theoretical — that fabricates entry economics.
+        if live_prem is None or live_prem <= 0:
+            return None
+        entry_premium = max(1.0, round(live_prem, 2))
 
         delta_mag = max(0.40, min(0.75, abs(greeks.delta)))
         premium_risk = max(5.0, round(stop_dist * delta_mag, 2))

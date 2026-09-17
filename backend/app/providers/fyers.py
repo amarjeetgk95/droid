@@ -1,7 +1,7 @@
 import asyncio
 import math
 import httpx
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from app.providers.base import MarketDataProvider
 from app.models.market import (
     NormalizedQuote, NormalizedCandle, NormalizedOptionQuote,
@@ -19,6 +19,58 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _nearest_fyers_expiry(expiry_data: object) -> "date | None":
+    """Nearest upcoming expiry date from FYERS options-chain-v3 `expiryData`.
+
+    Entries look like ``{"date": "22-09-2026", "expiry": "1790071800"}``.
+    The broker calendar (Tuesday NIFTY weeklies, ...) is truth; our local
+    calendar bootstrap drifts (Thursday rule), so quotes must be labelled
+    with this date — never with the requested date or today. Returns None
+    when nothing parses; callers fall back to requested/now labelling.
+    """
+    from datetime import date as _date
+
+    try:
+        items = list(expiry_data or [])  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    if not items:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        _ist = ZoneInfo("Asia/Kolkata")
+    except Exception:
+        _ist = timezone.utc  # type: ignore[assignment]
+    today = datetime.now(_ist).date()
+    parsed: list[_date] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        d: _date | None = None
+        raw_date = it.get("date")
+        if isinstance(raw_date, str) and raw_date.strip():
+            for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    d = datetime.strptime(raw_date.strip(), fmt).date()
+                    break
+                except (ValueError, TypeError):
+                    continue
+        if d is None:
+            try:
+                ts = int(str(it.get("expiry") or "").strip())
+                if ts > 0:
+                    d = datetime.fromtimestamp(ts, tz=_ist).date()
+            except (ValueError, TypeError, OverflowError, OSError):
+                d = None
+        if d is not None:
+            parsed.append(d)
+    if not parsed:
+        return None
+    upcoming = [d for d in parsed if d >= today]
+    return min(upcoming) if upcoming else min(parsed)
+
+
 class FyersProvider(MarketDataProvider):
     """FYERS API v3 Market Data Provider Adapter (REST poller, not websocket).
 
@@ -29,6 +81,23 @@ class FyersProvider(MarketDataProvider):
     """
 
     PROVIDER_ID = "fyers"
+
+    # ── Inbound tick sanity (Truth of Wall) ─────────────────────────────
+    # Single-feed architecture means a corrupted broker response would flow
+    # straight into sizing and triggers. The poller therefore validates each
+    # quote BEFORE it reaches central_feed:
+    #   jump limit : |ΔLTP| vs the last accepted tick > tick_sanity_jump_pct
+    #                (default 2% per 1s poll) → rejected as implausible
+    #   OHLC coherence: low <= {open, ltp} <= high (price-scaled tolerance).
+    #   previous_close is yesterday's settlement — validated separately for
+    #   plausibility (positive, within 20% of LTP), never confined to today's
+    #   range (gap days would freeze the symbol all session).
+    # A rejected tick is a GAP, never a repair: no corrected/interpolated
+    # value is ever emitted. Sustained rejection raises the counter that
+    # /health/subsystems exposes (tick_sanity_rejections).
+    _OHLC_COHERENCE_EPS_FACTOR = 0.05  # tolerance, in units of the quote's tick size 0.05
+    _SANITY_REJECT_WINDOW_S = 60.0
+    _SANITY_REJECT_ALERT_THRESHOLD = 5  # rejections per symbol within window → warn once
 
     def __init__(
         self,
@@ -49,7 +118,12 @@ class FyersProvider(MarketDataProvider):
         self.app_id = (app_id or settings.fyers_app_id or "").strip().strip("\"'") or None
         self.secret_key = (secret_key or settings.fyers_secret_key or "").strip().strip("\"'") or None
         _rt_token = _rt_creds.get("access_token") or ""
-        
+
+        # Inbound tick-sanity state (see class docstring block above)
+        self._last_accepted_ltp: dict[str, float] = {}
+        self._sanity_reject_events: list[tuple[float, str]] = []  # (monotonic_ts, symbol)
+        self._sanity_alerted: set[str] = set()
+
         self.token_manager = TokenManager(
             provider="fyers",
             initial_backoff=settings.ws_reconnect_initial_seconds,
@@ -263,6 +337,15 @@ class FyersProvider(MarketDataProvider):
                 f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
             )
             resp = await client.get(url, headers={"Authorization": auth_header})
+            if resp.status_code in (401, 403):
+                # Same honesty as the quotes path: a rejected history call
+                # means the daily token is dead — park it so health/subsystems
+                # and the poller say so instead of serving silent [] forever.
+                # (A singleton holding a stale token after OAuth rotation used
+                # to fail here on every timeframe while quotes stayed LIVE.)
+                logger.warning("fyers_history_unauthorized", symbol=symbol, status_code=resp.status_code)
+                self.token_manager.mark_expired(f"FYERS history unauthorized (HTTP {resp.status_code})")
+                return []
             if resp.status_code == 200:
                     data = resp.json()
                     if data.get("s") == "ok" and "candles" in data and isinstance(data["candles"], list):
@@ -282,6 +365,16 @@ class FyersProvider(MarketDataProvider):
                                     )
                                 )
                         return candles
+                    # FYERS answers some auth failures as HTTP 200 + s=error
+                    # (mirrors the quotes path) — park the token so the outage
+                    # is loud instead of an endless silent [].
+                    if data.get("s") == "error" and (
+                        "token" in str(data).lower()
+                        or "auth" in str(data).lower()
+                        or data.get("code") in (-100, 401, 403)
+                    ):
+                        logger.warning("fyers_history_auth_error", symbol=symbol, response=str(data)[:150])
+                        self.token_manager.mark_expired("FYERS history token expired or invalid")
         except Exception as e:
             logger.debug("fyers_history_failed", symbol=symbol, error=str(e)[:150])
         return []
@@ -580,64 +673,108 @@ class FyersProvider(MarketDataProvider):
 
         if is_usable_access_token(token):
             auth_header = f"{app_id}:{token}" if app_id and ":" not in token else token
+            # FYERS validates `timestamp` against its own expiry calendar
+            # (see options-chain-v3 `expiryData`). Our local calendar bootstrap
+            # (Thursday rule) can drift from the broker truth (e.g. Tuesday
+            # NIFTY weeklies), in which case FYERS answers
+            # `s=error "Please provide valid expiry"` and the chain would come
+            # back empty. Fall back to the broker's nearest expiry instead of
+            # serving an empty chain — all data stays live FYERS truth.
+            param_sets: list[dict[str, str | int]] = []
+            if expiry:
+                param_sets.append({"symbol": fyers_sym, "strikecount": 40, "timestamp": str(int(expiry.timestamp()))})
+            param_sets.append({"symbol": fyers_sym, "strikecount": 40})
             try:
                 client = self._get_http_client(timeout=5.0)
-                params: dict[str, str | int] = {"symbol": fyers_sym, "strikecount": 40}
-                if expiry:
-                    params["timestamp"] = str(int(expiry.timestamp()))
+                for attempt, params in enumerate(param_sets):
+                    try:
+                        resp = await client.get(
+                            "https://api-t1.fyers.in/data/options-chain-v3",
+                            params=params,
+                            headers={"Authorization": auth_header},
+                        )
+                    except Exception as e:
+                        logger.debug("fyers_option_chain_api_failed", error=str(e))
+                        continue
+                    if resp.status_code != 200:
+                        continue
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        continue
+                    if data.get("s") != "ok" or "data" not in data:
+                        if attempt == 0 and len(param_sets) > 1:
+                            logger.debug(
+                                "fyers_option_chain_expiry_rejected_fallback_latest",
+                                underlying=underlying,
+                                detail=str(data.get("message"))[:120],
+                            )
+                        continue
+                    chain_items = data["data"].get("optionsChain", [])
+                    if not chain_items:
+                        continue
+                    quotes: list[NormalizedOptionQuote] = []
+                    now = datetime.now(timezone.utc)
+                    # True expiry labelling: the broker honours an explicit
+                    # timestamp with that expiry; the nearest-expiry fallback
+                    # carries the broker calendar date from `expiryData`
+                    # (never the stale requested date, never today).
+                    broker_expiry = _nearest_fyers_expiry(data["data"].get("expiryData"))
+                    if attempt == 0 and expiry is not None:
+                        exp_dt = expiry
+                    elif broker_expiry is not None:
+                        exp_dt = datetime.combine(broker_expiry, datetime.min.time(), tzinfo=timezone.utc)
+                    else:
+                        exp_dt = now
+                    for item in chain_items:
+                        strike = float(item.get("strike_price", 0.0))
+                        opt_type = str(item.get("option_type", "")).upper()
+                        if not strike or opt_type not in ("CE", "PE"):
+                            continue
+                        ltp = float(item.get("ltp") or 0.0)
+                        oi = int(item.get("oi") or 0)
+                        vol = int(item.get("volume") or 0)
+                        raw_bid = item.get("bid")
+                        raw_ask = item.get("ask")
+                        bid = float(raw_bid) if raw_bid not in (None, "") else (round(ltp - 0.25, 2) if ltp > 0 else 0.0)
+                        ask = float(raw_ask) if raw_ask not in (None, "") else (round(ltp + 0.25, 2) if ltp > 0 else 0.0)
+                        bid = max(0.0, bid)
+                        ask = max(0.0, ask)
+                        oi_chg = int(item.get("oich") or item.get("oi_change") or 0)
+                        prev_p = float(item.get("prev_close_price") or ltp)
+                        chg = float(item.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
+                        chg_pct = float(item.get("chp") or 0.0)
+                        contract_id = item.get("symbol") or f"{underlying}_{int(strike)}_{opt_type}"
 
-                resp = await client.get(
-                    "https://api-t1.fyers.in/data/options-chain-v3",
-                    params=params,
-                    headers={"Authorization": auth_header},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("s") == "ok" and "data" in data:
-                        chain_items = data["data"].get("optionsChain", [])
-                        if chain_items:
-                            quotes: list[NormalizedOptionQuote] = []
-                            now = datetime.now(timezone.utc)
-                            exp_dt = expiry or now
-                            for item in chain_items:
-                                strike = float(item.get("strike_price", 0.0))
-                                opt_type = str(item.get("option_type", "")).upper()
-                                if not strike or opt_type not in ("CE", "PE"):
-                                    continue
-                                ltp = float(item.get("ltp") or 0.0)
-                                oi = int(item.get("oi") or 0)
-                                vol = int(item.get("volume") or 0)
-                                bid = float(item.get("bid") or (round(ltp - 0.25, 2) if ltp > 0 else 0.0))
-                                ask = float(item.get("ask") or (round(ltp + 0.25, 2) if ltp > 0 else 0.0))
-                                oi_chg = int(item.get("oich") or item.get("oi_change") or 0)
-                                prev_p = float(item.get("prev_close_price") or ltp)
-                                chg = float(item.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
-                                chg_pct = float(item.get("chp") or 0.0)
-                                contract_id = item.get("symbol") or f"{underlying}_{int(strike)}_{opt_type}"
-
-                                quotes.append(
-                                    NormalizedOptionQuote(
-                                        timestamp=now,
-                                        provider=self.PROVIDER_ID,
-                                        instrument=contract_id,
-                                        contract_id=contract_id,
-                                        underlying=underlying,
-                                        expiry=exp_dt,
-                                        strike=strike,
-                                        option_type=opt_type,
-                                        ltp=round(ltp, 2),
-                                        bid=round(bid, 2),
-                                        ask=round(ask, 2),
-                                        volume=vol,
-                                        oi=oi,
-                                        oi_change=oi_chg,
-                                        change=round(chg, 2),
-                                        change_percent=round(chg_pct, 2),
-                                        previous_close=round(prev_p, 2),
-                                    )
-                                )
-                            if quotes:
-                                return quotes
+                        quotes.append(
+                            NormalizedOptionQuote(
+                                timestamp=now,
+                                provider=self.PROVIDER_ID,
+                                instrument=contract_id,
+                                contract_id=contract_id,
+                                underlying=underlying,
+                                expiry=exp_dt,
+                                strike=strike,
+                                option_type=opt_type,
+                                ltp=round(ltp, 2),
+                                bid=round(bid, 2),
+                                ask=round(ask, 2),
+                                volume=vol,
+                                oi=oi,
+                                oi_change=oi_chg,
+                                change=round(chg, 2),
+                                change_percent=round(chg_pct, 2),
+                                previous_close=round(prev_p, 2),
+                            )
+                        )
+                    if quotes:
+                        if attempt == 1 and expiry:
+                            logger.info(
+                                "fyers_option_chain_served_latest_expiry",
+                                symbol=underlying,
+                                actual_expiry=exp_dt.date().isoformat(),
+                            )
+                        return quotes
             except Exception as e:
                 logger.debug("fyers_option_chain_api_failed", error=str(e))
 
@@ -651,6 +788,124 @@ class FyersProvider(MarketDataProvider):
         if self._start_lock is None:
             self._start_lock = asyncio.Lock()
         return self._start_lock
+
+    # ── Inbound tick sanity ──────────────────────────────────────────────
+    def _quote_passes_sanity(self, sym: str, q) -> bool:
+        """Validate an inbound quote BEFORE it reaches central_feed.
+
+        Returns False (and records the rejection) when the quote is
+        implausible: an LTP jump beyond tick_sanity_jump_pct vs the last
+        accepted tick, or incoherent intraday OHLC
+        (low <= {open, ltp} <= high).
+
+        NOTE: previous_close is yesterday's settlement and is NEVER required
+        to sit inside today's [low, high] — on gap up/down days it sits
+        outside the day's range by definition. Constraining it froze gap-day
+        symbols (e.g. BANKNIFTY) for the whole session: every tick rejected,
+        no WS ticks, frontend card stuck at the REST snapshot. It is validated
+        separately (positive + within 20% of LTP) to catch corrupt values.
+        A rejected tick is a gap, never a repair — nothing corrected is
+        emitted in its place.
+        """
+        ltp = float(getattr(q, "ltp", 0) or 0)
+        if not ltp > 0:
+            self._record_sanity_reject(sym, "non_positive_ltp", q)
+            return False
+
+        low = getattr(q, "low", None)
+        high = getattr(q, "high", None)
+        open_p = getattr(q, "open", None) or ltp
+        prev = getattr(q, "previous_close", None) or 0.0
+
+        try:
+            low_f = float(low) if low is not None else None
+        except (TypeError, ValueError):
+            low_f = None
+        try:
+            high_f = float(high) if high is not None else None
+        except (TypeError, ValueError):
+            high_f = None
+
+        # Corrupt range guard (high/low swapped or zeroed).
+        if (
+            low_f is not None and high_f is not None
+            and low_f > 0 and high_f > 0 and low_f > high_f
+        ):
+            self._record_sanity_reject(sym, "ohlc_range_inverted", q)
+            return False
+
+        # Tolerance scales with price: broker open/high/low/ltp fields can
+        # jitter by a tick between reads; a fixed 0.0025 tolerance rejected
+        # valid 56k-index ticks on rounding noise.
+        eps = max(0.10, ltp * 0.0002)
+        if low_f is not None and low_f > 0:
+            if open_p < low_f - eps or ltp < low_f - eps:
+                self._record_sanity_reject(sym, "ohlc_incoherent", q)
+                return False
+        if high_f is not None and high_f > 0:
+            if open_p > high_f + eps or ltp > high_f + eps:
+                self._record_sanity_reject(sym, "ohlc_incoherent", q)
+                return False
+
+        # previous_close sanity: must be sane, not inside today's range.
+        try:
+            prev_f = float(prev) if prev else 0.0
+        except (TypeError, ValueError):
+            prev_f = 0.0
+        if prev_f and prev_f > 0:
+            if abs(ltp - prev_f) / prev_f > 0.20:
+                self._record_sanity_reject(sym, "prev_close_implausible", q)
+                return False
+
+        last = self._last_accepted_ltp.get(sym)
+        if last is not None and last > 0:
+            jump_pct = abs(q.ltp - last) / last * 100.0
+            if jump_pct > settings.tick_sanity_jump_pct:
+                self._record_sanity_reject(sym, f"ltp_jump_{jump_pct:.2f}pct", q)
+                return False
+
+        self._last_accepted_ltp[sym] = q.ltp
+        return True
+
+    def _record_sanity_reject(self, sym: str, reason: str, q) -> None:
+        import time as _time
+
+        now_m = _time.monotonic()
+        self._sanity_reject_events.append((now_m, sym))
+        # Keep only the alert window.
+        cutoff = now_m - self._SANITY_REJECT_WINDOW_S
+        self._sanity_reject_events = [
+            (ts, s) for (ts, s) in self._sanity_reject_events if ts >= cutoff
+        ]
+        window_count = sum(1 for _, s in self._sanity_reject_events if s == sym)
+        logger.warning(
+            "tick_sanity_rejected",
+            symbol=sym,
+            reason=reason,
+            ltp=getattr(q, "ltp", None),
+            high=getattr(q, "high", None),
+            low=getattr(q, "low", None),
+            window_count=window_count,
+            note="Tick dropped — gap, not repair (no synthetic substitute)",
+        )
+        if window_count >= self._SANITY_REJECT_ALERT_THRESHOLD and sym not in self._sanity_alerted:
+            self._sanity_alerted.add(sym)
+            logger.error(
+                "tick_sanity_sustained_rejections",
+                symbol=sym,
+                window_count=window_count,
+                window_s=self._SANITY_REJECT_WINDOW_S,
+                hint="Feed may be corrupted — downstream sees a gap until quotes normalize",
+            )
+
+    def sanity_rejection_count(self) -> int:
+        """Total rejections still inside the alert window (for /health/subsystems)."""
+        import time as _time
+
+        if not self._sanity_reject_events:
+            return 0
+        cutoff = _time.monotonic() - self._SANITY_REJECT_WINDOW_S
+        return sum(1 for ts, _ in self._sanity_reject_events if ts >= cutoff)
 
     async def _poller_loop(self) -> None:
         """Backend-owned FYERS poller -> central_feed, with backoff reconnect.
@@ -675,6 +930,10 @@ class FyersProvider(MarketDataProvider):
                     self.token_manager.record_message()
                     for sym, q in quotes_map.items():
                         if q.ltp <= 0:
+                            continue
+                        # Inbound sanity gate: a corrupted quote becomes a gap,
+                        # never a trade input (Truth of Wall).
+                        if not self._quote_passes_sanity(sym, q):
                             continue
                         tick = TickEvent(
                             timestamp=now,

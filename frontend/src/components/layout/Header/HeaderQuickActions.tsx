@@ -3,6 +3,7 @@
 import { memo, useEffect, useState, useCallback } from 'react';
 import { Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 
 interface HeaderQuickActionsProps {
   tickerVisible?: boolean;
@@ -22,6 +23,7 @@ export function HeaderQuickActions({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tickerShortcut] = useState<string>(getPlatformTickerShortcut);
+  const market = useOptionalMarketDataContext();
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -44,14 +46,20 @@ export function HeaderQuickActions({
     }
   }, []);
 
-  const handleManualRefresh = useCallback(() => {
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
-    // Dispatch custom market reload event for data providers
-    window.dispatchEvent(new CustomEvent('droid:feed:refresh'));
-    setTimeout(() => {
+    try {
+      // Refresh the real market-data snapshot (no optimistic placeholder).
+      if (market?.refetch) await market.refetch();
+    } catch (err) {
+      // Failure surfaces through MarketDataContext section errors; keep the
+      // console breadcrumb for diagnostics.
+      console.error('Market data refresh failed:', err);
+    } finally {
       setIsRefreshing(false);
-    }, 800);
-  }, []);
+    }
+  }, [isRefreshing, market]);
 
   return (
     <div className="flex items-center gap-0.5">

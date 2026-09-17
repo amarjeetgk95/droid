@@ -27,6 +27,7 @@ from app.signals.pipeline.gates import (
     MarketStructureGate,
     TriggerIntegrityGate,
     OptionViabilityGate,
+    ChainMarkGate,
 )
 from app.signals.pipeline.enrichment import enrich_candidate
 from app.signals.pipeline.signal_factory import build_signal_instance, register_and_notify
@@ -52,6 +53,7 @@ __all__ = [
     "MarketStructureGate",
     "TriggerIntegrityGate",
     "OptionViabilityGate",
+    "ChainMarkGate",
     "enrich_candidate",
     "build_signal_instance",
     "register_and_notify",

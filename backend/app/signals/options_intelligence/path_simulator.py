@@ -5,21 +5,23 @@ Implements §30 and §31 of Institutional Options Engine.
 Models:
   - First and second order Greek trajectory:
       dOption = (Delta * dSpot) + (0.5 * Gamma * dSpot^2) + (Theta * dt) + (Vega * dIV)
-  - Realistic Indian F&O regulatory costs & friction:
+  - Realistic Indian F&O regulatory costs & friction (single canonical schedule
+    imported from transaction_costs — no local STT/exchange copies):
       * Brokerage (₹20/order)
-      * STT (0.1% on option sell premium)
-      * Exchange Turnover (0.0505% on premium turnover)
+      * STT (unified sell rate on option sell premium)
+      * Exchange Turnover (unified rate on premium turnover)
       * GST (18% on brokerage + turnover charges)
-      * SEBI charges (₹10 / crore)
-      * Stamp duty (0.003% on buy side)
-      * Bid-Ask half-spread drag on entry & exit
-      * Execution slippage
+      * SEBI charges + Stamp duty
+      * Bid-Ask half-spread drag on entry & exit (per-strike LIVE spread)
+      * Execution slippage (per-strike LIVE slip)
   - Multi-scenario path simulations:
       1. Fast Favorable Move (Quick thrust to target)
       2. Slow Favorable Move (Reaches target with maximum theta drag)
       3. Sideways Market (Zero underlying change, pure theta bleed)
-      4. Adverse Move (Hits underlying stop loss)
+      4. Adverse Move (Hits underlying stop loss — wick fill at stop±slip)
       5. IV Crush Scenario (Underlying hits target, but IV drops by e.g. 15-25%)
+      6. Pin Scenario (Underlying pins at strike into expiry)
+      7. Time-Stop Exit (Holding expires without target/stop — flat exit + bleed)
 """
 from __future__ import annotations
 
@@ -29,16 +31,40 @@ from pydantic import BaseModel, Field
 
 from app.signals.options_intelligence.greeks import BlackScholesGreeks, GreeksResult
 
+try:
+    from app.signals.transaction_costs import (
+        UNIFIED_STT_SELL_RATE,
+        UNIFIED_EXCHANGE_TXN_RATE,
+        UNIFIED_GST_RATE,
+        UNIFIED_SEBI_RATE,
+        UNIFIED_STAMP_BUY_RATE,
+        MIN_NET_RR as UNIFIED_MIN_NET_RR,
+        MAX_COST_TO_TARGET_RATIO as UNIFIED_MAX_COST_RATIO,
+    )
+except Exception:  # pragma: no cover — import-time fallback for tooling
+    UNIFIED_STT_SELL_RATE = 0.001
+    UNIFIED_EXCHANGE_TXN_RATE = 0.0005
+    UNIFIED_GST_RATE = 0.18
+    UNIFIED_SEBI_RATE = 0.000001
+    UNIFIED_STAMP_BUY_RATE = 0.00003
+    UNIFIED_MIN_NET_RR = 1.2
+    UNIFIED_MAX_COST_RATIO = 0.30
+
+# Canonical viability thresholds (single source — selector/friction import these).
+VIABILITY_MIN_NET_RR: float = float(UNIFIED_MIN_NET_RR)
+VIABILITY_MAX_COST_RATIO: float = float(UNIFIED_MAX_COST_RATIO)
+VIABILITY_FAST_PROFIT_VS_FRICTION: float = 1.5
+
 
 class IndianOptionCosts(BaseModel):
     brokerage_per_order: float = 20.0  # ₹20 flat per executed order
-    stt_rate_sell: float = 0.001  # 0.1% on option premium at sell
-    exchange_turnover_rate: float = 0.000505  # 0.0505% on premium turnover
-    gst_rate: float = 0.18  # 18% on (brokerage + exchange charges)
-    sebi_charge_rate: float = 0.000001  # ₹10 per crore
-    stamp_duty_rate_buy: float = 0.00003  # 0.003% on buy turnover
-    default_spread_pts: float = 1.0  # ₹1.00 average bid-ask spread
-    default_slippage_pts: float = 0.5  # ₹0.50 average execution slippage
+    stt_rate_sell: float = UNIFIED_STT_SELL_RATE
+    exchange_turnover_rate: float = UNIFIED_EXCHANGE_TXN_RATE
+    gst_rate: float = UNIFIED_GST_RATE
+    sebi_charge_rate: float = UNIFIED_SEBI_RATE
+    stamp_duty_rate_buy: float = UNIFIED_STAMP_BUY_RATE
+    default_spread_pts: float = 1.0  # schedule fallback only — production passes live spread
+    default_slippage_pts: float = 0.5  # schedule fallback only — production passes live slip
 
     def calculate_total_costs(
         self,
@@ -50,6 +76,8 @@ class IndianOptionCosts(BaseModel):
     ) -> dict[str, float]:
         """
         Calculates complete institutional friction breakdown for round-trip option trade.
+        Per-strike LIVE spread/slip should be passed by the simulator; the
+        class defaults are a schedule fallback for offline tooling only.
         """
         if quantity <= 0 or entry_premium <= 0:
             return {"total_friction": 0.0}
@@ -122,6 +150,8 @@ class PathSimulationReport(BaseModel):
     initial_vega: float
     iv: float
     dte_days: float
+    spread_pts: float = 1.0
+    slippage_pts: float = 0.5
 
     # Scenarios
     fast_target: ScenarioOutcome
@@ -129,6 +159,8 @@ class PathSimulationReport(BaseModel):
     sideways: ScenarioOutcome
     adverse_stop: ScenarioOutcome
     iv_crush_target: ScenarioOutcome
+    pin_expiry: Optional[ScenarioOutcome] = None
+    time_stop_exit: Optional[ScenarioOutcome] = None
 
     # Decision metrics
     is_economically_viable: bool
@@ -140,6 +172,8 @@ class PathDependentOptionSimulator:
     Simulates path-dependent price evolution for an option candidate.
     Verifies that expected target moves actually generate positive net expectancy
     after theta decay, potential IV crush, bid-ask spread, and exchange friction.
+    Quantity MUST be the sized qty (lots * lot_size) from the risk engine —
+    simulating 1 lot while sizing 4 hides 4x friction.
     """
 
     def __init__(self, cost_model: Optional[IndianOptionCosts] = None):
@@ -158,10 +192,17 @@ class PathDependentOptionSimulator:
         option_type: Literal["CE", "PE"],
         quantity: int,
         entry_premium: Optional[float] = None,
+        spread_pts: float = 1.0,
+        slippage_pts: float = 0.5,
+        barrier_fill: bool = False,
     ) -> ScenarioOutcome:
         """
         Simulates an explicit path scenario from start to end.
         Re-prices the option using Black-Scholes at t_end with iv_end and spot_end.
+
+        barrier_fill: wick-breach stop fills at stop±slip — the exit premium is
+        marked one full slippage step worse than the model mid (longs exit
+        lower). Applied to the ADVERSE_STOP leg.
         """
         # Starting theoretical premium if not provided
         if entry_premium is None or entry_premium <= 0:
@@ -185,15 +226,21 @@ class PathDependentOptionSimulator:
             volatility=iv_end,
             option_type=option_type,
         )
+        if barrier_fill:
+            # Wick breach: the stop order fills through the touch — one slip
+            # step worse than the model exit for a long (lower sale).
+            exit_premium = max(0.0, exit_premium - max(0.0, float(slippage_pts or 0.0)))
 
         gross_diff = exit_premium - entry_premium
         gross_total = round(gross_diff * quantity, 2)
 
-        # Detailed friction calculation
+        # Detailed friction calculation (per-strike live spread/slip).
         friction_dict = self.costs.calculate_total_costs(
             entry_premium=entry_premium,
             exit_premium=exit_premium,
             quantity=quantity,
+            spread_pts=spread_pts,
+            slippage_pts=slippage_pts,
         )
         friction_total = friction_dict["total_friction"]
         net_pnl = round(gross_total - friction_total, 2)
@@ -252,12 +299,21 @@ class PathDependentOptionSimulator:
         market_premium: Optional[float] = None,
         expected_fast_hours: float = 0.5,  # 30 mins for scalp/fast intraday
         expected_slow_hours: float = 3.0,  # 3 hours for slower intraday move
+        spread_pts: Optional[float] = None,
+        slippage_pts: Optional[float] = None,
     ) -> PathSimulationReport:
         """
-        Evaluates a prospective option trade across the 5 canonical scenarios.
+        Evaluates a prospective option trade across the 7 canonical scenarios.
         Determines overall economic viability.
+
+        spread_pts / slippage_pts are per-strike LIVE values from the chain
+        mark (ask-bid / slip model). Passing None falls back to the schedule
+        defaults for offline tooling — production (selector) always passes
+        live numbers.
         """
         t_years = max(1e-6, dte_days / 365.0)
+        live_spread = float(spread_pts) if spread_pts is not None and float(spread_pts) > 0 else float(self.costs.default_spread_pts)
+        live_slip = float(slippage_pts) if slippage_pts is not None and float(slippage_pts) >= 0 else float(self.costs.default_slippage_pts)
 
         # Calculate initial Greeks
         greeks = BlackScholesGreeks.calculate_greeks(
@@ -282,6 +338,8 @@ class PathDependentOptionSimulator:
             option_type=option_type,
             quantity=quantity,
             entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
         )
 
         # 2. Slow Favorable (Target hit after prolonged holding)
@@ -297,6 +355,8 @@ class PathDependentOptionSimulator:
             option_type=option_type,
             quantity=quantity,
             entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
         )
 
         # 3. Sideways (Underlying unchanged over slow horizon)
@@ -312,9 +372,11 @@ class PathDependentOptionSimulator:
             option_type=option_type,
             quantity=quantity,
             entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
         )
 
-        # 4. Adverse Stop Loss Hit
+        # 4. Adverse Stop Loss Hit (wick fill: stop±slip against the long)
         adverse_scen = self.simulate_path_scenario(
             scenario_name="ADVERSE_STOP",
             spot_start=spot,
@@ -327,6 +389,9 @@ class PathDependentOptionSimulator:
             option_type=option_type,
             quantity=quantity,
             entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
+            barrier_fill=True,
         )
 
         # 5. IV Crush Scenario (Target reached, but IV drops by 20% relative)
@@ -343,17 +408,55 @@ class PathDependentOptionSimulator:
             option_type=option_type,
             quantity=quantity,
             entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
         )
 
-        # Viability Checks
+        # 6. Pin Scenario (underlying pins at the strike into expiry — long
+        #    premium collapses to intrinsic ~0 for ATM/OTM).
+        pin_scen = self.simulate_path_scenario(
+            scenario_name="PIN_EXPIRY",
+            spot_start=spot,
+            spot_end=strike,
+            strike=strike,
+            time_to_expiry_start_years=t_years,
+            holding_hours=max(expected_slow_hours, min(6.25, max(0.25, dte_days * 6.25))),
+            iv_start=iv,
+            iv_end=max(0.05, iv * 0.70),
+            option_type=option_type,
+            quantity=quantity,
+            entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
+        )
+
+        # 7. Time-Stop Exit (holding expires flat — exit at entry spot after
+        #    the slow horizon; pure theta bleed + friction).
+        time_stop_scen = self.simulate_path_scenario(
+            scenario_name="TIME_STOP_EXIT",
+            spot_start=spot,
+            spot_end=spot,
+            strike=strike,
+            time_to_expiry_start_years=t_years,
+            holding_hours=expected_slow_hours,
+            iv_start=iv,
+            iv_end=max(0.05, iv * 0.90),
+            option_type=option_type,
+            quantity=quantity,
+            entry_premium=entry_price,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
+        )
+
+        # Viability Checks (unified constants — single source in transaction_costs).
         viability_reasons: list[str] = []
         is_viable = True
 
-        # Criteria 1: Fast target must produce net gain > 1.25x friction
+        # Criteria 1: Fast target must produce net gain > 1.5x friction
         if fast_scen.net_pnl_total <= 0:
             is_viable = False
             viability_reasons.append("Fast target fails to achieve positive net P&L after friction")
-        elif fast_scen.net_pnl_total < fast_scen.friction_total * 1.5:
+        elif fast_scen.net_pnl_total < fast_scen.friction_total * VIABILITY_FAST_PROFIT_VS_FRICTION:
             is_viable = False
             viability_reasons.append(f"Net profit (₹{fast_scen.net_pnl_total}) is insufficient relative to transaction friction (₹{fast_scen.friction_total})")
 
@@ -367,13 +470,22 @@ class PathDependentOptionSimulator:
             is_viable = False
             viability_reasons.append(f"Option delta ({abs(greeks.delta):.2f}) is too low (< 0.25) to capture underlying move efficiently")
 
-        # Criteria 4: Realistic reward-to-risk in net rupees
+        # Criteria 4: Realistic reward-to-risk in net rupees (unified 1.20 floor)
         loss_at_stop = abs(adverse_scen.net_pnl_total)
         gain_at_target = fast_scen.net_pnl_total
         realized_rr = (gain_at_target / loss_at_stop) if loss_at_stop > 0 else 0.0
-        if realized_rr < 1.20:
+        if realized_rr < VIABILITY_MIN_NET_RR:
             is_viable = False
-            viability_reasons.append(f"Realized net Reward/Risk ({realized_rr:.2f}) is below minimum threshold (1.20)")
+            viability_reasons.append(f"Realized net Reward/Risk ({realized_rr:.2f}) is below minimum threshold ({VIABILITY_MIN_NET_RR:.2f})")
+
+        # Criteria 5: Time-stop exit must not be catastrophic (>2R bleed).
+        try:
+            risk_unit = abs(adverse_scen.gross_pnl_total) + fast_scen.friction_total
+            if time_stop_scen.net_pnl_total < 0 and risk_unit > 0 and abs(time_stop_scen.net_pnl_total) > 2.0 * risk_unit:
+                is_viable = False
+                viability_reasons.append(f"TIME_STOP bleed (₹{time_stop_scen.net_pnl_total:,.0f}) exceeds 2R — holding too long for this decay")
+        except Exception:
+            pass
 
         if is_viable:
             viability_reasons.append(f"Viable: Realized Net R/R = {realized_rr:.2f} (Target Net: ₹{gain_at_target:,.0f}, Stop Net: ₹{-loss_at_stop:,.0f})")
@@ -391,11 +503,15 @@ class PathDependentOptionSimulator:
             initial_vega=greeks.vega,
             iv=iv,
             dte_days=dte_days,
+            spread_pts=live_spread,
+            slippage_pts=live_slip,
             fast_target=fast_scen,
             slow_target=slow_scen,
             sideways=sideways_scen,
             adverse_stop=adverse_scen,
             iv_crush_target=iv_crush_scen,
+            pin_expiry=pin_scen,
+            time_stop_exit=time_stop_scen,
             is_economically_viable=is_viable,
             viability_rationale=viability_reasons,
         )

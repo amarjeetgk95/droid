@@ -61,6 +61,45 @@ class OptionsService:
         # Retrieve raw options from provider
         expiry_dt = datetime.combine(target_expiry_date, datetime.min.time(), tzinfo=timezone.utc)
         raw_quotes = await self.market_service.get_option_chain(underlying, expiry_dt)
+        # The broker rejects stale calendar expiries ("Please provide valid
+        # expiry"). Fall back to its nearest live expiry so the desk shows
+        # real priced strikes instead of an empty ladder.
+        if not raw_quotes and expiry_str is not None:
+            try:
+                latest = await self.market_service.get_option_chain(underlying, None)
+            except Exception:
+                latest = []
+            if latest:
+                logger.info(
+                    "options_chain_served_latest_expiry",
+                    underlying=underlying,
+                    requested_expiry=target_expiry_date.isoformat(),
+                )
+                raw_quotes = latest
+
+        # Honest expiry: the ladder's date is whatever the broker actually
+        # priced (mode of quote expiries) — never the calendar bootstrap's
+        # guess. This also covers the fallback above, where the broker
+        # substitutes its nearest live expiry for a rejected date. Greeks
+        # carry, sync and the response label all follow the resolved date.
+        resolved_expiry_date = target_expiry_date
+        if raw_quotes:
+            try:
+                from collections import Counter
+
+                votes = Counter(
+                    q.expiry.date()
+                    for q in raw_quotes
+                    if getattr(q, "expiry", None) is not None
+                )
+                if votes:
+                    resolved_expiry_date = votes.most_common(1)[0][0]
+            except Exception:
+                resolved_expiry_date = target_expiry_date
+        if resolved_expiry_date != target_expiry_date:
+            target_expiry_date = resolved_expiry_date
+            t = calculate_time_to_expiry(now, target_expiry_date)
+            futures_price = round(spot_price * math.exp(r * t), 2) if spot_price > 0 else 0.0
 
         # Group raw quotes by strike — FYERS truth only.
         strikes_map: dict[float, dict[str, NormalizedOptionQuote]] = {}

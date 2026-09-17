@@ -76,8 +76,12 @@ export function useSmartInterval(
       };
     }
 
+    // Drift-corrected scheduling: each tick's next delay is computed from the
+    // scheduled fire time, so callback duration is not added to the period.
+    let nextRunAt = 0;
     const scheduleNext = (delay: number) => {
       clearExistingTimer();
+      nextRunAt = Date.now() + delay;
       timerRef.current = setTimeout(async () => {
         if (!mountedRef.current) return;
         if (pauseWhenHidden && typeof document !== 'undefined' && document.hidden) {
@@ -85,7 +89,8 @@ export function useSmartInterval(
         }
         await executeOnce();
         if (mountedRef.current) {
-          scheduleNext(intervalMs);
+          const correctDelay = Math.max(0, nextRunAt + intervalMs - Date.now());
+          scheduleNext(correctDelay);
         }
       }, delay);
     };

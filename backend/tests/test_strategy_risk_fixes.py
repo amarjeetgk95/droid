@@ -133,10 +133,30 @@ class TestTrendPullbackGeometry:
 
 
 class TestBreakoutGeometry:
+    @staticmethod
+    def _bullish_squeeze_candles():
+        """Compressed 3-bar base + expansion candle closing beyond 25010."""
+        return [
+            {"open": 24996.0, "high": 25006.0, "low": 24994.0, "close": 25002.0, "volume": 1000},
+            {"open": 25002.0, "high": 25008.0, "low": 24996.0, "close": 25005.0, "volume": 1000},
+            {"open": 25005.0, "high": 25009.0, "low": 24998.0, "close": 25004.0, "volume": 1000},
+            {"open": 25004.0, "high": 25016.0, "low": 25000.0, "close": 25012.0, "volume": 5000},
+        ]
+
+    @staticmethod
+    def _bearish_squeeze_candles():
+        """Compressed 3-bar base + expansion candle closing below 25000."""
+        return [
+            {"open": 25004.0, "high": 25010.0, "low": 24994.0, "close": 24998.0, "volume": 1000},
+            {"open": 24998.0, "high": 25004.0, "low": 24990.0, "close": 24995.0, "volume": 1000},
+            {"open": 24995.0, "high": 25001.0, "low": 24988.0, "close": 24993.0, "volume": 1000},
+            {"open": 24988.0, "high": 24992.0, "low": 24976.0, "close": 24980.0, "volume": 5000},
+        ]
+
     def test_pre_breakout_bullish(self):
         strat = BreakoutStrategy()
         spot = Decimal("25000.00")
-        key_res = Decimal("25010.00")  # spot < key_res
+        key_res = Decimal("25010.00")  # spot < key_res; candle closes beyond it
         ctx = StrategyContext(
             underlying="NIFTY",
             spot_price=spot,
@@ -149,6 +169,7 @@ class TestBreakoutGeometry:
             },
             mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
             regime="TREND_UP",
+            candles=self._bullish_squeeze_candles(),
         )
 
         cand = strat.detect(ctx)
@@ -190,6 +211,7 @@ class TestBreakoutGeometry:
             },
             mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
             regime="TREND_UP",
+            candles=self._bullish_squeeze_candles(),
         )
 
         cand = strat.detect(ctx)
@@ -218,7 +240,7 @@ class TestBreakoutGeometry:
     def test_breakout_chase_exceeded(self):
         strat = BreakoutStrategy()
         key_res = Decimal("25000.00")
-        spot = Decimal("25015.00")  # spot - key_res = 15 > 0.5 * atr (10)
+        spot = Decimal("25015.00")  # spot - key_res = 15 > 0.6 * atr (12)
         ctx = StrategyContext(
             underlying="NIFTY",
             spot_price=spot,
@@ -231,15 +253,16 @@ class TestBreakoutGeometry:
             },
             mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
             regime="TREND_UP",
+            candles=self._bullish_squeeze_candles(),
         )
 
         cand = strat.detect(ctx)
-        assert cand is None, "Expected None when chase exceeds 0.5 * atr"
+        assert cand is None, "Expected None when chase exceeds 0.6 * atr"
 
     def test_breakdown_continuation_bearish(self):
         strat = BreakoutStrategy()
         key_sup = Decimal("25000.00")
-        spot = Decimal("24993.00")  # spot <= key_sup, within 0.5 * atr (7 pts < 10 pts)
+        spot = Decimal("24993.00")  # spot <= key_sup, within 0.6 * atr (7 pts < 12 pts)
         ctx = StrategyContext(
             underlying="NIFTY",
             spot_price=spot,
@@ -252,6 +275,7 @@ class TestBreakoutGeometry:
             },
             mtf={"overall_bias": "BEARISH", "alignment_score": 80.0},
             regime="TREND_DOWN",
+            candles=self._bearish_squeeze_candles(),
         )
 
         cand = strat.detect(ctx)
@@ -280,6 +304,14 @@ class TestBreakoutGeometry:
 
 class TestORBStrategy:
     def _create_orb_context(self, spot: Decimal, ts_ms: int, orb_high: Decimal, orb_low: Decimal) -> StrategyContext:
+        # 5M close beyond the opening range high is required (spot-touch is not
+        # enough). The last closed candle closes above orb_high.
+        candles = [
+            {"open": orb_low, "high": orb_high, "low": orb_low, "close": orb_high - Decimal("2"), "volume": 1000},
+            {"open": orb_high - Decimal("2"), "high": orb_high, "low": orb_low, "close": orb_high - Decimal("1"), "volume": 1000},
+            {"open": orb_high - Decimal("1"), "high": orb_high, "low": orb_low, "close": orb_high - Decimal("1"), "volume": 1000},
+            {"open": orb_high - Decimal("1"), "high": orb_high + Decimal("4"), "low": orb_high - Decimal("2"), "close": orb_high + Decimal("2"), "volume": 5000},
+        ]
         return StrategyContext(
             underlying="NIFTY",
             spot_price=spot,
@@ -292,6 +324,7 @@ class TestORBStrategy:
             },
             mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
             regime="TREND_UP",
+            candles=candles,
         )
 
     def test_orb_session_window_enforcement(self):

@@ -13,7 +13,7 @@ import pytest
 
 from app.providers.fyers import FyersProvider
 from app.providers.registry import get_provider, INDIAN_PROVIDERS
-from app.models.market import DataStatus
+from app.models.market import DataStatus, NormalizedQuote
 
 
 class _FakeResp:
@@ -185,3 +185,48 @@ class TestContractMasterHonest:
         spot = fresh.get_by_symbol("NIFTY 50")
         assert spot is not None
         assert spot.provider == "local_calendar_bootstrap"
+
+
+def _gap_day_quote(**overrides):
+    """BANKNIFTY gap-up day: prev_close 55794.75 sits below today's range."""
+    base = dict(
+        symbol="BANKNIFTY",
+        display_name="BANKNIFTY",
+        timestamp=datetime.now(timezone.utc),
+        ltp=56292.45,
+        open=56150.0,
+        high=56350.0,
+        low=56100.0,
+        previous_close=55794.75,
+        change=497.70,
+        change_percent=0.89,
+        volume=0,
+        open_interest=None,
+        status=DataStatus.LIVE,
+        provider="fyers",
+    )
+    base.update(overrides)
+    return NormalizedQuote(**base)
+
+
+class TestTickSanityGapDays:
+    def test_gap_up_tick_accepted_prev_close_outside_range(self):
+        p = _provider_with(resp=_FakeResp(200, {"s": "ok", "d": []}))
+        assert p._quote_passes_sanity("BANKNIFTY", _gap_day_quote()) is True
+
+    def test_gap_down_tick_accepted(self):
+        p = _provider_with(resp=_FakeResp(200, {"s": "ok", "d": []}))
+        q = _gap_day_quote(ltp=55300.0, open=55400.0, high=55500.0, low=55250.0,
+                           previous_close=55794.75, change=-494.75, change_percent=-0.89)
+        assert p._quote_passes_sanity("BANKNIFTY", q) is True
+
+    def test_truly_incoherent_tick_still_rejected(self):
+        p = _provider_with(resp=_FakeResp(200, {"s": "ok", "d": []}))
+        # LTP far above the day's high -> corrupt, must stay rejected
+        q = _gap_day_quote(ltp=57000.0)
+        assert p._quote_passes_sanity("BANKNIFTY", q) is False
+
+    def test_inverted_range_rejected(self):
+        p = _provider_with(resp=_FakeResp(200, {"s": "ok", "d": []}))
+        q = _gap_day_quote(low=56350.0, high=56100.0)
+        assert p._quote_passes_sanity("BANKNIFTY", q) is False

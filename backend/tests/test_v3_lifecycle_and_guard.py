@@ -329,6 +329,9 @@ def test_guard_level3_duplicate_order():
         order_price=Decimal("120.00"),
         order_quantity=75,
         has_duplicate_order=True,
+        # Fail-closed defaults: pass the earlier levels explicitly so the
+        # intended check (14) is the one exercised.
+        risk_approved=True,
         allow_closed_market=True,
     )
     assert not res.passed
@@ -342,6 +345,9 @@ def test_guard_level4_persistence_unavailable():
         execution_intent_id="intent-1",
         order_price=Decimal("120.00"),
         order_quantity=75,
+        # Fail-closed defaults: pass the earlier levels explicitly so the
+        # intended check (15) is the one exercised.
+        risk_approved=True,
         audit_available=False,
         allow_closed_market=True,
     )
@@ -363,6 +369,8 @@ def test_guard_all_15_checks_pass():
         contract_spec=sig.option_contract,
         max_slippage_pct=0.5,
         risk_approved=True,
+        audit_available=True,
+        db_available=True,
         clock_drift_ms=15.0,
         allow_closed_market=True,
     )

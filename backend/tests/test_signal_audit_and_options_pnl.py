@@ -98,7 +98,13 @@ class TestOptionPnLAndAuditLedger:
         assert closed.status == "WON"
 
     def test_live_mtm_does_not_mix_spot_and_option_premium(self):
-        """Issue 2: Option position MTM must use estimated option price, not spot minus premium."""
+        """Issue 2 + fail-closed: MTM prices off a real broker mark or not at all.
+
+        A spot tick can never revalue an option leg (that is the incommensurable
+        bug), and with no chain mark there is no MTM rather than a Black-76 guess.
+        """
+        from tests.conftest import seed_chain_mark
+
         ledger = SignalAuditLedger()
         # 1. Armed record (unexecuted)
         ledger.record_signal_created(
@@ -142,19 +148,28 @@ class TestOptionPnLAndAuditLedger:
             side="BUY",
         )
 
-        # Spot advances to 25060
-        updated = ledger.update_live_quote("NIFTY", 25060.0)
+        # Spot advances to 25060 with NO chain mark published.
+        ledger.update_live_quote("NIFTY", 25060.0)
 
         armed_rec = ledger.get("SIG-ARMED-01")
         assert armed_rec.unrealized_pnl_inr == 0.0, "Armed trade should have 0.0 unrealized MTM"
         assert armed_rec.unrealized_pnl_points == 0.0
 
         exec_rec = ledger.get("SIG-EXEC-01")
-        # Incommensurable bug would have given: (25060 - 150) * 75 = 1,868,250 INR!
-        assert exec_rec.unrealized_pnl_inr is not None
-        assert abs(exec_rec.unrealized_pnl_inr) < 50000.0, (
-            f"Unrealized P&L is implausibly high ({exec_rec.unrealized_pnl_inr}), spot mixed with premium!"
-        )
+        # FAIL CLOSED: a spot tick alone may not invent a premium. The
+        # incommensurable bug would have printed (25060 - 150) * 75 = 1,868,250.
+        assert exec_rec.unrealized_pnl_inr is None
+        assert exec_rec.economics_unavailable is True
+        assert exec_rec.mark_source == "UNAVAILABLE"
+
+        # A real broker mark is the one thing that may revalue the leg.
+        seed_chain_mark("NIFTY24DEC25050CE", 165.0, strike=25050.0, option_type="CE")
+        ledger.update_live_quote("NIFTY", 25060.0)
+        exec_rec = ledger.get("SIG-EXEC-01")
+        assert exec_rec.mark_source == "CHAIN_LTP"
+        assert exec_rec.current_price == pytest.approx(165.0)
+        assert exec_rec.unrealized_pnl_points == pytest.approx(15.0)
+        assert exec_rec.unrealized_pnl_inr == pytest.approx(15.0 * 75)
 
     def test_option_slippage_calculation_not_astronomical(self):
         """Issue 4: Option fill vs trigger should not compare 150 premium with 25000 spot."""
@@ -185,7 +200,25 @@ class TestOptionPnLAndAuditLedger:
             lots=1,
         )
         rec = ledger.get("SIG-SLIPPAGE-01")
-        assert rec.slippage_points is not None
+        # FAIL CLOSED: with no broker reference price there is no honest way to
+        # measure option slippage, so the field stays unset. It must never be
+        # computed against the index trigger (25050 vs a 150 premium).
+        assert rec.slippage_points is None
+
+        # With a real chain mark for the same contract, slippage is measurable
+        # and premium-domain.
+        from tests.conftest import seed_chain_mark
+
+        seed_chain_mark("NIFTY24DEC25050CE", 151.0, strike=25050.0, option_type="CE")
+        ledger.record_paper_executed(
+            signal_id="SIG-SLIPPAGE-01",
+            paper_order_id="ORD-004B",
+            fill_price=150.0,
+            quantity=75,
+            lots=1,
+        )
+        rec = ledger.get("SIG-SLIPPAGE-01")
+        assert rec.slippage_points == pytest.approx(1.0)
         assert rec.slippage_points < 100.0, f"Slippage points ({rec.slippage_points}) compares spot with premium!"
 
     def test_summary_metrics_includes_target_1_hit(self):

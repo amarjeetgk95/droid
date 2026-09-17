@@ -12,7 +12,6 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
-from pydantic import BaseModel, Field
 
 from app.signals.confluence import ARMED_THRESHOLD, confluence_engine
 from app.signals.contract_resolver import APPROVED_UNDERLYINGS, validate_underlying
@@ -35,6 +34,10 @@ from app.signals.pipeline import (
     build_signal_instance,
     register_and_notify,
     enrich_candidate,
+    # Single-sourced from the pipeline package — do not redefine here.
+    GAP_EXEMPT_STRATEGIES,
+    ScanDiagnostics,
+    is_fallback_quote,
     GateChain,
     KillSwitchGate,
     FeedCircuitGate,
@@ -46,32 +49,14 @@ from app.signals.pipeline import (
     MarketStructureGate,
     TriggerIntegrityGate,
     OptionViabilityGate,
+    ChainMarkGate,
 )
 
 logger = structlog.get_logger()
 
-# Strategies exempt from the opening pre-market gap filter (valuable on gap days)
-GAP_EXEMPT_STRATEGIES = {"GAMMA_SPIKE", "GAMMA_SQUEEZE", "ORB"}
-
-
-class ScanDiagnostics(BaseModel):
-    """Per-underlying scan health — explains WHY a scan is empty instead of silent []."""
-    underlying: str = "UNKNOWN"
-    data_quality: str = "UNKNOWN"  # LIVE | DEGRADED | OFFLINE
-    quote_status: str = "UNKNOWN"
-    provider: str = "UNKNOWN"
-    spot_price: float | None = None
-    candles_count: int = 0
-    strategies_evaluated: int = 0
-    candidates_found: int = 0
-    registered: int = 0
-    reasons: list[str] = Field(default_factory=list)
-    error: str | None = None
-    duration_ms: int = 0
-    throttled_signals_count: int = 0
-    fno_degraded: bool = False
-    vwap_degraded: bool = False
-    vwap_coverage_pct: float = 100.0
+# NOTE: GAP_EXEMPT_STRATEGIES and ScanDiagnostics are imported from
+# app.signals.pipeline (single source of truth) and re-exported here so
+# existing `from app.signals.scanner import ...` call sites keep working.
 
 
 class SignalScanner:
@@ -98,16 +83,8 @@ class SignalScanner:
 
     @staticmethod
     def _is_fallback_quote(quote: Any) -> bool:
-        try:
-            status = str(getattr(quote, "status", "") or "").upper()
-            provider = str(getattr(quote, "provider", "") or "").lower()
-            if any(s in status for s in ("OFFLINE", "DEGRADED", "STALE", "CLOSED", "INVALID")):
-                return True
-            if provider in ("fallback", "synthetic", "mock"):
-                return True
-        except Exception:
-            pass
-        return False
+        # Thin compat wrapper — logic is single-sourced in pipeline.data_acquisition.
+        return bool(is_fallback_quote(quote))
 
     async def scan_instrument(
         self,
@@ -171,6 +148,7 @@ class SignalScanner:
             MarketStructureGate(),
             TriggerIntegrityGate(),
             OptionViabilityGate(),
+            ChainMarkGate(),
         ])
 
         for cand in candidates:
@@ -243,35 +221,90 @@ class SignalScanner:
             if not passed_post:
                 continue
 
-            # 4. Multi-Domain Intelligence Enrichment
-            fused_score, inst_overlay, explain_bundle, fsm_init_state = await enrich_candidate(
+            # 4. Multi-Domain Intelligence Enrichment (PIT inputs threaded from the
+            #    candidate's context snapshot — real decision/quote timestamps, candles, F&O)
+            c_snap = getattr(cand, "context_snapshot", {}) or {}
+            _pit_candles = c_snap.get("candles") if isinstance(c_snap.get("candles"), list) else []
+            _pit_fno = c_snap.get("fno") if isinstance(c_snap.get("fno"), dict) else {}
+            _decision_ts = c_snap.get("timestamp_ms") or getattr(cand, "created_at_utc", None)
+            try:
+                _decision_ts = int(_decision_ts) if _decision_ts is not None else None
+            except Exception:
+                _decision_ts = None
+            _quote_ts = c_snap.get("quote_timestamp_ms")
+            try:
+                _quote_ts = int(_quote_ts) if _quote_ts is not None else None
+            except Exception:
+                _quote_ts = None
+            enriched = await enrich_candidate(
                 cand=cand,
-                active_candles=getattr(cand, "context_snapshot", {}).get("candles", []),
-                fno_data=getattr(cand, "context_snapshot", {}).get("fno", {}),
+                active_candles=_pit_candles,
+                fno_data=_pit_fno,
                 fno_is_degraded=fno_is_degraded,
                 risk_decision=risk_decision,
                 overlay=overlay,
                 rejected_gates=rejected_gates,
+                decision_timestamp_ms=_decision_ts,
+                quote_timestamp_ms=_quote_ts,
             )
+            if len(enriched) == 6:
+                fused_score, inst_overlay, explain_bundle, fsm_init_state, ai_advice, ml_pred = enriched
+            else:  # backward-compat with legacy 4-tuple enrichment results
+                fused_score, inst_overlay, explain_bundle, fsm_init_state = enriched
+                ai_advice, ml_pred = None, None
+            if fsm_init_state == "REJECT":
+                # PIT-blocked: rejection already recorded by enrichment — drop, never register.
+                continue
 
-            # 5. Build SignalInstance and Register
-            instance = build_signal_instance(
-                cand=cand,
-                fused_score=fused_score,
-                fsm_init_state=fsm_init_state,
-                risk_decision=risk_decision,
-                inst_overlay=inst_overlay,
-                ai_advice=None,
-                ml_pred=None,
-                overlay=overlay,
-                explain_bundle=explain_bundle,
-                fno_is_degraded=fno_is_degraded,
-            )
-
-            await register_and_notify(instance)
+            # 5. Build SignalInstance and Register (fail-closed per candidate)
+            try:
+                instance = build_signal_instance(
+                    cand=cand,
+                    fused_score=fused_score,
+                    fsm_init_state=fsm_init_state,
+                    risk_decision=risk_decision,
+                    inst_overlay=inst_overlay,
+                    ai_advice=ai_advice,
+                    ml_pred=ml_pred,
+                    overlay=overlay,
+                    explain_bundle=explain_bundle,
+                    fno_is_degraded=fno_is_degraded,
+                )
+                await register_and_notify(instance)
+            except ValueError as ve:
+                rejected_gates.append(f"{cand.strategy}:FACTORY_REJECTED_{str(ve)[:120]}")
+                logger.info(
+                    "candidate_rejected_factory",
+                    strategy=cand.strategy,
+                    underlying=cand.underlying,
+                    reason=str(ve)[:200],
+                )
+                continue
+            except Exception as e:
+                rejected_gates.append(f"{cand.strategy}:REGISTRATION_FAILED_{type(e).__name__}")
+                logger.warning(
+                    "candidate_registration_failed",
+                    strategy=cand.strategy,
+                    underlying=cand.underlying,
+                    error=str(e)[:200],
+                )
+                continue
             registered_signals.append(instance)
 
         return registered_signals, rejected_gates
+
+    @staticmethod
+    def _strip_new_signals(result: dict[str, Any]) -> dict[str, Any]:
+        """Cached scan results must never re-deliver stale signals as new."""
+        cleaned = dict(result)
+        cleaned["new_signals"] = []
+        for desk_key in ("scalp_desk", "intraday_desk"):
+            desk = cleaned.get(desk_key)
+            if isinstance(desk, dict):
+                desk_copy = dict(desk)
+                desk_copy["new_signals"] = []
+                cleaned[desk_key] = desk_copy
+        return cleaned
 
     def _cache_get(self, key: str) -> dict[str, Any] | None:
         entry = self._scan_cache.get(key)
@@ -281,7 +314,7 @@ class SignalScanner:
         if (time.time() - ts) > self._scan_cache_ttl_s:
             self._scan_cache.pop(key, None)
             return None
-        cached = dict(result)
+        cached = self._strip_new_signals(dict(result))
         cached["cache_hit"] = True
         return cached
 
@@ -290,7 +323,8 @@ class SignalScanner:
         if len(self._scan_cache) > 32:
             oldest = min(self._scan_cache.items(), key=lambda kv: kv[1][0])[0]
             self._scan_cache.pop(oldest, None)
-        self._scan_cache[key] = (time.time(), result)
+        # Never cache new_signals — a cache hit must not replay stale signals.
+        self._scan_cache[key] = (time.time(), self._strip_new_signals(result))
 
     async def _scan_universe(
         self, universe: list[str], timeframe: str, desk: str

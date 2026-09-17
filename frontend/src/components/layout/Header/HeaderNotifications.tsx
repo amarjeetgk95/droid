@@ -71,7 +71,9 @@ export function HeaderNotifications() {
       const next = !prev;
       try {
         localStorage.setItem(AUDIO_ALERTS_KEY, next ? '1' : '0');
-      } catch {}
+      } catch {
+        // Best-effort persistence; the in-memory toggle still applies.
+      }
       return next;
     });
   }, []);
@@ -166,7 +168,7 @@ export function HeaderNotifications() {
         <DropdownMenuLabel className="font-normal px-1 py-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <span className={cn('w-2 h-2 rounded-full', signalCount > 0 ? 'bg-emerald-500' : 'bg-slate-400')} />
+              <span className={cn('w-2 h-2 rounded-full', signalCount > 0 ? 'bg-up' : 'bg-ink-4')} />
               <span className="text-xs font-bold text-foreground">Signals & Market Alerts</span>
             </div>
 
@@ -193,7 +195,7 @@ export function HeaderNotifications() {
                 className={cn(
                   'text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold border',
                   signalCount > 0
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    ? 'bg-up-wash text-up-strong border-up-line'
                     : 'bg-secondary text-muted-foreground border-border',
                 )}
               >
@@ -227,8 +229,8 @@ export function HeaderNotifications() {
                         className={cn(
                           'text-[9px] font-bold px-1.5 py-0.2 rounded border',
                           isLong
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-rose-50 text-rose-700 border-rose-200',
+                            ? 'bg-up-wash text-up-strong border-up-line'
+                            : 'bg-down-wash text-down-strong border-down-line',
                         )}
                       >
                         {sig.direction}
@@ -251,7 +253,7 @@ export function HeaderNotifications() {
           <div className="space-y-0.5">
             <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
               <Link href="/">
-                <div className="p-1.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0 mt-0.5">
+                <div className="p-1.5 rounded-md bg-up-wash text-up border border-up-line shrink-0 mt-0.5">
                   <Radio className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -265,7 +267,7 @@ export function HeaderNotifications() {
 
             <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
               <Link href="/markets">
-                <div className="p-1.5 rounded-md bg-purple-50 text-purple-600 border border-purple-200 shrink-0 mt-0.5">
+                <div className="p-1.5 rounded-md bg-accent-wash text-accent border border-accent-line shrink-0 mt-0.5">
                   <TrendingUp className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -279,7 +281,7 @@ export function HeaderNotifications() {
 
             <DropdownMenuItem asChild className="cursor-pointer p-2 rounded-lg flex items-start gap-2.5 hover:bg-secondary">
               <Link href="/options">
-                <div className="p-1.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 shrink-0 mt-0.5">
+                <div className="p-1.5 rounded-md bg-accent-wash text-accent border border-accent-line shrink-0 mt-0.5">
                   <Activity className="w-3.5 h-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">

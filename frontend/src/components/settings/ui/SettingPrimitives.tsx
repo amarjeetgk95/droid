@@ -1,7 +1,7 @@
 'use client';
 
 import React, { forwardRef } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /* 1. SettingSection                                                          */
@@ -45,6 +45,53 @@ export function SettingSection({
       </div>
       <div className="divide-y divide-[var(--ds-border-subtle)]">{children}</div>
     </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 1a. FeedbackBanner — shared success/error strip (was duplicated in 3 tabs) */
+/* -------------------------------------------------------------------------- */
+
+export interface FeedbackMessage {
+  type: 'success' | 'error';
+  text: string;
+}
+
+export interface FeedbackBannerProps {
+  message: FeedbackMessage | null;
+  onDismiss: () => void;
+  className?: string;
+}
+
+export function FeedbackBanner({ message, onDismiss, className = '' }: FeedbackBannerProps) {
+  if (!message) return null;
+
+  const isSuccess = message.type === 'success';
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`card card-pad flex items-center gap-2.5 text-xs ${
+        isSuccess
+          ? 'border-[var(--ds-bull-line)] bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+          : 'border-[var(--ds-bear-line)] bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
+      } ${className}`}
+    >
+      {isSuccess ? (
+        <CheckCircle2 className="w-4 h-4 shrink-0" />
+      ) : (
+        <AlertCircle className="w-4 h-4 shrink-0" />
+      )}
+      <span className="font-medium">{message.text}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="ml-auto text-xs opacity-70 hover:opacity-100 cursor-pointer"
+      >
+        Dismiss
+      </button>
+    </div>
   );
 }
 
@@ -172,7 +219,7 @@ export function SettingSwitch({
       }`}
     >
       <span
-        className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition duration-120 mt-[1px] ${
+        className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-[var(--ds-surface)] border border-[var(--ds-border-subtle)] shadow-xs transition duration-120 mt-[1px] ${
           checked ? 'translate-x-3.5' : 'translate-x-0.5'
         }`}
       />
@@ -254,7 +301,7 @@ export const SettingInput = forwardRef<HTMLInputElement, SettingInputProps>(
 );
 SettingInput.displayName = 'SettingInput';
 
-export interface SettingSelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {}
+export type SettingSelectProps = React.SelectHTMLAttributes<HTMLSelectElement>;
 
 export const SettingSelect = forwardRef<HTMLSelectElement, SettingSelectProps>(
   ({ className = '', children, ...props }, ref) => {

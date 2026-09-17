@@ -1,5 +1,8 @@
 import { Card } from '@/components/ui/desk';
 
+const CALL_HEADS = ['OI', 'Vol', 'Bid', 'Ask', 'LTP', 'IV%'] as const;
+const PUT_HEADS = ['IV%', 'LTP', 'Bid', 'Ask', 'Vol', 'OI'] as const;
+
 /**
  * OptionChainSkeleton
  *
@@ -29,21 +32,40 @@ export function OptionChainSkeleton({ rows = 10 }: { rows?: number }) {
       </section>
 
       <Card title="Option chain" meta="loading…">
-        <div className="tbl-wrap">
+        <div
+          className="tbl-scroll"
+          style={{ maxHeight: 640, border: '1px solid var(--ds-border)', borderRadius: 4 }}
+          aria-hidden
+        >
           <table className="tbl">
             <thead>
+              <tr className="c">
+                <th colSpan={6} style={{ background: 'var(--ds-bull-wash)' }}>Calls · CE</th>
+                <th rowSpan={2} className="c" style={{ background: 'var(--ds-accent-wash)' }}>Strike</th>
+                <th colSpan={6} style={{ background: 'var(--ds-bear-wash)' }}>Puts · PE</th>
+              </tr>
               <tr>
-                <th colSpan={6} className="c">Calls (CE)</th>
-                <th className="c">Strike</th>
-                <th colSpan={6} className="c">Puts (PE)</th>
+                {CALL_HEADS.map((head) => (
+                  <th key={`ce-${head}`} className="r">{head}</th>
+                ))}
+                {PUT_HEADS.map((head) => (
+                  <th key={`pe-${head}`}>{head}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {Array.from({ length: rows }).map((_, i) => (
                 <tr key={i}>
-                  <td colSpan={6} className="r"><div className="skel" style={{ height: 12 }}>.</div></td>
-                  <td className="c"><div className="skel" style={{ height: 14, width: 90, margin: '0 auto' }}>.</div></td>
-                  <td colSpan={6}><div className="skel" style={{ height: 12 }}>.</div></td>
+                  {Array.from({ length: 13 }).map((__, j) => (
+                    <td key={j} className={j === 6 ? 'c' : j < 6 ? 'r' : undefined}>
+                      <div
+                        className="skel"
+                        style={j === 6 ? { height: 14, width: 90, margin: '0 auto' } : { height: 12 }}
+                      >
+                        .
+                      </div>
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

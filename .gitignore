@@ -22,6 +22,14 @@ wheels/
 venv/
 ENV/
 
+# Debug/diagnostic scratch artifacts (Truth-of-Wall hygiene: no output dumps at repo root)
+_*.txt
+_*.py
+_*.out
+backend/_*.txt
+backend/_*.py
+backend/_*.out
+
 # Node - allow frontend src lib despite Python lib/ rule
 !frontend/src/lib/
 !frontend/src/lib/**

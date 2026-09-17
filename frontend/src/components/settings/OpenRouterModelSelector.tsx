@@ -19,7 +19,6 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string>('ALL');
 
-  const freeOnly = settings.openRouterFreeOnly ?? true;
   const allowPaid = settings.openRouterAllowPaid ?? false;
   const pricingFilter = settings.openRouterPricingFilter ?? 'FREE';
   const selectedModel = settings.openRouterSelectedModel ?? 'auto';
@@ -29,10 +28,11 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
     setError(null);
     try {
       const params: any = {};
-      // free_only controls server filtering
-      const effectiveFreeOnly = !allowPaid;
-      params.free_only = effectiveFreeOnly;
-      if (!effectiveFreeOnly && pricingFilter) {
+      // free_only controls server filtering; an explicit PAID/ALL pricing
+      // filter is only meaningful once paid models are permitted.
+      const freeOnlyParam = !allowPaid || pricingFilter === 'FREE';
+      params.free_only = freeOnlyParam;
+      if (!freeOnlyParam && pricingFilter) {
         params.pricing = pricingFilter;
       }
       if (refresh) params.refresh = true;
@@ -58,12 +58,21 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
     onChange({
       openRouterAllowPaid: enabled,
       openRouterFreeOnly: !enabled,
-      openRouterPricingFilter: enabled ? 'ALL' : 'FREE',
+      openRouterPricingFilter: enabled
+        ? pricingFilter === 'FREE'
+          ? 'ALL'
+          : pricingFilter
+        : 'FREE',
     });
   };
 
   const handlePricingChange = (val: 'FREE' | 'PAID' | 'ALL') => {
-    onChange({ openRouterPricingFilter: val });
+    onChange({
+      openRouterPricingFilter: val,
+      // FREE re-restricts the request but does not revoke the paid permission.
+      openRouterFreeOnly: val === 'FREE',
+      openRouterAllowPaid: val === 'FREE' ? allowPaid : true,
+    });
   };
 
   const filteredModels: OpenRouterModel[] = useMemo(() => {
@@ -141,6 +150,13 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
     }
   };
 
+  /** Truthful per-model price tier — derived from the catalog's `is_free` flag. */
+  const modelPriceLabel = (m: OpenRouterModel): string => (m.is_free ? 'Free' : 'Paid');
+  const modelPriceBadgeClass = (m: OpenRouterModel): string =>
+    m.is_free
+      ? 'bg-secondary text-muted-foreground border-border/60'
+      : 'bg-[var(--ds-warn-wash)] text-[var(--ds-warn-ink)] border-[var(--ds-warn-line)]';
+
   return (
     <div className="space-y-4 bg-card border border-border/60 rounded-lg p-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -169,7 +185,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* AI Provider */}
         <div className="space-y-1">
-          <label className="text-xs font-medium text-foreground">AI Provider</label>
+          <span className="text-xs font-medium text-foreground block">AI Provider</span>
           <div className="w-full bg-secondary/40 border border-border/60 rounded-md px-3 py-2 text-xs font-mono text-foreground">
             OpenRouter
           </div>
@@ -178,24 +194,26 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
 
         {/* Model Mode */}
         <div className="space-y-1">
-          <label className="text-xs font-medium text-foreground">Model Mode</label>
+          <span className="text-xs font-medium text-foreground block">Model Mode</span>
           <div className="w-full border border-border/60 bg-secondary/40 rounded-md px-3 py-2 text-xs font-mono text-foreground flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${freeOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            {freeOnly ? 'FREE ONLY' : `PRICING: ${pricingFilter}`}
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pricingFilter === 'FREE' ? 'bg-up' : 'bg-warn'}`} />
+            {pricingFilter === 'FREE' ? 'FREE ONLY' : `PRICING: ${pricingFilter}`}
           </div>
           <span className="text-[11px] text-muted-foreground">
-            {freeOnly ? 'Paid models are hard-blocked (server validates pricing).' : 'Paid filter active — credits may be used.'}
+            {pricingFilter === 'FREE'
+              ? 'Only zero-cost models are requested (prompt=0 & completion=0).'
+              : 'Paid filter active — credits may be used for matching models.'}
           </span>
         </div>
 
         {/* Allow Paid Toggle */}
         <div className="space-y-1">
-          <label className="text-xs font-medium text-foreground flex items-center gap-1">
+          <span className="text-xs font-medium text-foreground flex items-center gap-1">
             Allow Paid Models
             <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-secondary text-muted-foreground border border-border/60">
               {allowPaid ? 'ON' : 'OFF'}
             </span>
-          </label>
+          </span>
           <label className="flex items-center gap-2 cursor-pointer bg-secondary/50 border border-border rounded-lg px-3 py-2">
             <input
               type="checkbox"
@@ -206,12 +224,13 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
             <span className="text-xs text-foreground">{allowPaid ? 'Enabled — pricing filter applies' : 'OFF — free-only protection active'}</span>
           </label>
           {allowPaid && (
-            <div className="flex gap-1 mt-1">
+            <div className="flex gap-1 mt-1" role="group" aria-label="Pricing filter">
               {(['FREE', 'PAID', 'ALL'] as const).map((pf) => (
                 <button
                   key={pf}
                   type="button"
                   onClick={() => handlePricingChange(pf)}
+                  aria-pressed={pricingFilter === pf}
                   className={`flex-1 py-1 px-2 rounded text-[11px] font-mono border cursor-pointer ${pricingFilter === pf ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:bg-secondary'}`}
                 >
                   {pf}
@@ -225,17 +244,20 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
       {/* Model Selector Dropdown */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-foreground">Model</label>
+          <label htmlFor="openrouter-model-trigger" className="text-xs font-semibold text-foreground">Model</label>
           <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
             <Clock className="w-3 h-3" />
             Models updated: {updatedTime}
-            {usingCached && <span className="text-amber-600 ml-1">(Using cached model list)</span>}
+            {usingCached && <span className="text-warn ml-1">(Using cached model list)</span>}
           </div>
         </div>
 
         <div className="relative">
           <button
+            id="openrouter-model-trigger"
             type="button"
+            aria-haspopup="listbox"
+            aria-expanded={showDropdown}
             onClick={() => setShowDropdown(!showDropdown)}
             className="w-full flex items-center justify-between bg-secondary/50 border border-border rounded-lg px-3 py-2.5 text-xs text-foreground cursor-pointer hover:bg-secondary/80"
           >
@@ -243,14 +265,18 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
               {selectedModel === 'auto' ? (
                 <>
                   <Star className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="font-medium">Auto — Best free for trading</span>
+                  <span className="font-medium">
+                    {defaultModel?.is_free === false ? 'Auto — Highest-ranked model' : 'Auto — Best free for trading'}
+                  </span>
                   {defaultModel && <span className="text-muted-foreground">({defaultModel.name})</span>}
                 </>
               ) : selectedModelObj ? (
                 <>
                   {getCategoryIcon(selectedModelObj.category)}
                   <span className="font-medium">{selectedModelObj.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-secondary text-muted-foreground border border-border/60 rounded font-mono">Free</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${modelPriceBadgeClass(selectedModelObj)}`}>
+                    {modelPriceLabel(selectedModelObj)}
+                  </span>
                   {selectedModelObj.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended</span>}
                 </>
               ) : (
@@ -327,9 +353,13 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                   <div className="flex items-center gap-2">
                     <Star className="w-4 h-4 text-muted-foreground" />
                     <div>
-                      <div className="text-xs font-medium text-foreground">Auto — Best free for trading</div>
+                      <div className="text-xs font-medium text-foreground">
+                        {defaultModel?.is_free === false ? 'Auto — Highest-ranked model' : 'Auto — Best free for trading'}
+                      </div>
                       <div className="text-[11px] text-muted-foreground">
-                        {defaultModel ? `${defaultModel.name} • ${defaultModel.category} • rank ${defaultModel.trading_rank}` : 'Highest-ranked free finance/reasoning model'}
+                        {defaultModel
+                          ? `${defaultModel.name} • ${defaultModel.category} • rank ${defaultModel.trading_rank}${defaultModel.is_free === false ? ' • paid' : ' • free'}`
+                          : 'Highest-ranked model for the active pricing filter'}
                       </div>
                     </div>
                   </div>
@@ -359,7 +389,9 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-foreground truncate">{m.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-secondary text-muted-foreground rounded font-mono border border-border/60">Free</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${modelPriceBadgeClass(m)}`}>
+                            {modelPriceLabel(m)}
+                          </span>
                           {m.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended</span>}
                         </div>
                         <div className="text-[11px] text-muted-foreground truncate flex items-center gap-2">
@@ -389,7 +421,11 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
             <div className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error} — {usingCached ? 'Using cached model list' : 'Retrying will use cached list if available.'}</div>
             <div className="flex items-center gap-2">
               <button type="button" onClick={handleRefresh} className="px-2 py-1 bg-card border border-border rounded text-[11px] font-mono hover:bg-secondary cursor-pointer">Retry Refresh</button>
-              <span className="text-muted-foreground">FREE-only guard: paid models hard-blocked (prompt=0 & completion=0 required). Try Auto — Best Free.</span>
+              <span className="text-muted-foreground">
+                {pricingFilter === 'FREE'
+                  ? 'FREE-only guard active: paid models are blocked (prompt=0 & completion=0 required). Try Auto — Best Free.'
+                  : `Pricing filter ${pricingFilter} active. Switch the filter to FREE for zero-cost models only.`}
+              </span>
             </div>
           </div>
         )}
@@ -401,7 +437,7 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted-foreground">
             <span>Provider: OpenRouter</span>
             <span>•</span>
-            <span>{freeOnly ? 'FREE ONLY' : pricingFilter}</span>
+            <span>{pricingFilter === 'FREE' ? 'FREE ONLY' : pricingFilter}</span>
             <span>•</span>
             <span>{catalog.models.length} shown</span>
             <span>•</span>
@@ -415,7 +451,9 @@ export function OpenRouterModelSelector({ settings, onChange }: Props) {
         <div className="bg-secondary/30 border border-border/60 rounded-lg p-3 text-xs space-y-1">
           <div className="flex items-center gap-2">
             <span className="font-medium text-foreground">{selectedModelObj.name}</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-muted-foreground border border-border/60">Free</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded border ${modelPriceBadgeClass(selectedModelObj)}`}>
+              {modelPriceLabel(selectedModelObj)}
+            </span>
             {selectedModelObj.recommended_for_trading && <span className="text-[10px] text-muted-foreground">Recommended for trading</span>}
             {selectedModelObj.supports_tools && <span className="text-[10px] text-muted-foreground">tools</span>}
           </div>

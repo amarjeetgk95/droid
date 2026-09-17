@@ -1,10 +1,10 @@
-﻿'use client';
+'use client';
 
 /* Manual signal creation, kept out of the desk surface: the old always-visible
    10-field form rendered unstyled inputs and made the page look like a debug
    panel. A dialog keeps the desk clean while preserving the capability. */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, Sparkles } from 'lucide-react';
 import {
   Dialog,
@@ -37,9 +37,24 @@ type CreateForm = {
   executePaper: boolean;
 };
 
+/** Numeric fields are validated explicitly — an invalid number must never be
+ *  silently dropped from the payload as if it were blank. */
+const NUMERIC_FIELDS: Array<{ key: 'trigger' | 'sl' | 't1' | 't2' | 'confidence' | 'lots'; label: string }> = [
+  { key: 'trigger', label: 'Trigger' },
+  { key: 'sl', label: 'Stop loss' },
+  { key: 't1', label: 'Target 1' },
+  { key: 't2', label: 'Target 2' },
+  { key: 'confidence', label: 'Confidence' },
+  { key: 'lots', label: 'Lots' },
+];
+
+type FieldErrors = Partial<Record<(typeof NUMERIC_FIELDS)[number]['key'], string>>;
+
 const EMPTY_FORM: CreateForm = {
   underlying: 'NIFTY',
-  strategy: 'BREAKOUT',
+  // No invented default strategy: the select is populated from the engine
+  // registry and submit is blocked until a real strategy is chosen.
+  strategy: '',
   direction: 'LONG_CALL',
   timeframe: '5M',
   trigger: '',
@@ -69,14 +84,19 @@ export function SignalCreateDialog({
   open,
   onOpenChange,
   strategies,
+  strategiesLoading = false,
+  strategiesError = null,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   strategies: string[];
+  strategiesLoading?: boolean;
+  strategiesError?: string | null;
   onCreated: () => void;
 }) {
   const [form, setForm] = useState<CreateForm>(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; msg: string } | null>(null);
   const aiSettings = useAISettings();
@@ -85,8 +105,27 @@ export function SignalCreateDialog({
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditErr, setAuditErr] = useState<string | null>(null);
 
-  const set = (key: keyof CreateForm, value: string | boolean) =>
+  const set = (key: keyof CreateForm, value: string | boolean) => {
     setForm((p) => ({ ...p, [key]: value }));
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key as keyof FieldErrors];
+      return next;
+    });
+  };
+
+  /* Follow the engine registry: pick the first real strategy when none is
+     selected, drop a selection that no longer exists, and clear the field
+     entirely when the registry is empty (submit stays blocked). */
+  useEffect(() => {
+    if (!open) return;
+    setForm((p) => {
+      if (strategies.length === 0) return p.strategy === '' ? p : { ...p, strategy: '' };
+      if (strategies.includes(p.strategy)) return p;
+      return { ...p, strategy: strategies[0] };
+    });
+  }, [open, strategies]);
 
   const canAudit = (() => {
     const e = Number(form.trigger);
@@ -127,9 +166,61 @@ export function SignalCreateDialog({
     }
   }, [form, thesis, aiSettings, canAudit]);
 
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const runPreview = useCallback(async () => {
+    setPreviewBusy(true);
+    setPreviewText(null);
+    try {
+      const res = await api.previewSignal({
+        underlying: form.underlying,
+        strategy: form.strategy,
+        direction: form.direction,
+        timeframe: form.timeframe,
+        trigger_price: Number(form.trigger) || undefined,
+        stop_loss: Number(form.sl) || undefined,
+        target_1: Number(form.t1) || undefined,
+        target_2: Number(form.t2) || undefined,
+      });
+      setPreviewText(res?.preview ?? JSON.stringify(res, null, 2));
+    } catch (e) {
+      setPreviewText(e instanceof Error ? e.message : 'Preview failed');
+    } finally {
+      setPreviewBusy(false);
+    }
+  }, [form]);
+
   const submit = useCallback(async () => {
-    setBusy(true);
     setNote(null);
+    // Numeric validation: a non-empty field that is not a finite number is an
+    // error, never a silent omission from the payload.
+    const errors: FieldErrors = {};
+    const invalidLabels: string[] = [];
+    for (const f of NUMERIC_FIELDS) {
+      const raw = form[f.key].trim();
+      if (raw !== '' && !Number.isFinite(Number(raw))) {
+        errors[f.key] = 'Enter a valid number.';
+        invalidLabels.push(f.label);
+      }
+    }
+    setFieldErrors(errors);
+    if (invalidLabels.length > 0) {
+      setNote({ ok: false, msg: `Invalid ${invalidLabels.join(', ')} — fix before generating.` });
+      return;
+    }
+    // Strategy must come from the engine registry; never fall back to a
+    // hardcoded name the backend may not register.
+    if (!form.strategy || !strategies.includes(form.strategy)) {
+      setNote({
+        ok: false,
+        msg: strategiesError
+          ? `Strategy unavailable — engine registry stale (${strategiesError}).`
+          : 'No strategy selected — engine registry returned no strategies.',
+      });
+      return;
+    }
+    setBusy(true);
     try {
       const numOrUndef = (s: string): number | undefined => {
         const t = s.trim();
@@ -172,7 +263,7 @@ export function SignalCreateDialog({
     } finally {
       setBusy(false);
     }
-  }, [form, onCreated, onOpenChange]);
+  }, [form, strategies, strategiesError, onCreated, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -196,11 +287,36 @@ export function SignalCreateDialog({
             </label>
             <label className="field">
               <span>Strategy</span>
-              <select className="input" value={form.strategy} onChange={(e) => set('strategy', e.target.value)}>
-                {strategies.map((s) => (
-                  <option key={s} value={s}>{prettyKey(s).toUpperCase()}</option>
-                ))}
+              <select
+                className="input"
+                value={form.strategy}
+                disabled={strategies.length === 0}
+                aria-invalid={strategies.length === 0 || undefined}
+                onChange={(e) => set('strategy', e.target.value)}
+              >
+                {strategies.length === 0 ? (
+                  <option value="">
+                    {strategiesLoading ? 'Loading strategies…' : 'No strategies available'}
+                  </option>
+                ) : (
+                  strategies.map((s) => (
+                    <option key={s} value={s}>{prettyKey(s).toUpperCase()}</option>
+                  ))
+                )}
               </select>
+              {strategies.length === 0 ? (
+                <span style={{ color: 'var(--ds-warn-strong)', fontSize: 11 }}>
+                  {strategiesLoading
+                    ? 'Loading the engine registry…'
+                    : strategiesError
+                      ? `Engine registry unavailable — ${strategiesError}`
+                      : 'Engine registry returned no strategies — creation is blocked.'}
+                </span>
+              ) : strategiesError ? (
+                <span style={{ color: 'var(--ds-warn-strong)', fontSize: 11 }}>
+                  Registry refresh failed — showing last known strategies ({strategiesError}).
+                </span>
+              ) : null}
             </label>
             <label className="field">
               <span>Direction</span>
@@ -221,7 +337,7 @@ export function SignalCreateDialog({
           </div>
 
           <div style={{ display: 'grid', gap: 8 }}>
-            <div style={SECTION_LABEL}>Levels â€” optional</div>
+            <div style={SECTION_LABEL}>Levels — optional</div>
             <div style={GRID_4}>
               {(
                 [
@@ -229,17 +345,21 @@ export function SignalCreateDialog({
                   ['sl', 'Stop loss'],
                   ['t1', 'Target 1'],
                   ['t2', 'Target 2'],
-                ] as Array<[keyof CreateForm, string]>
+                ] as Array<['trigger' | 'sl' | 't1' | 't2', string]>
               ).map(([key, label]) => (
                 <label key={key} className="field">
                   <span>{label}</span>
                   <input
                     className="input num"
                     inputMode="decimal"
-                    placeholder="â€”"
+                    placeholder="—"
+                    aria-invalid={fieldErrors[key] ? true : undefined}
                     value={String(form[key])}
                     onChange={(e) => set(key, e.target.value)}
                   />
+                  {fieldErrors[key] ? (
+                    <span style={{ color: 'var(--ds-bear-strong)', fontSize: 11 }}>{fieldErrors[key]}</span>
+                  ) : null}
                 </label>
               ))}
             </div>
@@ -253,18 +373,26 @@ export function SignalCreateDialog({
                 <input
                   className="input num"
                   inputMode="decimal"
+                  aria-invalid={fieldErrors.confidence ? true : undefined}
                   value={form.confidence}
                   onChange={(e) => set('confidence', e.target.value)}
                 />
+                {fieldErrors.confidence ? (
+                  <span style={{ color: 'var(--ds-bear-strong)', fontSize: 11 }}>{fieldErrors.confidence}</span>
+                ) : null}
               </label>
               <label className="field">
                 <span>Lots</span>
                 <input
                   className="input num"
                   inputMode="decimal"
+                  aria-invalid={fieldErrors.lots ? true : undefined}
                   value={form.lots}
                   onChange={(e) => set('lots', e.target.value)}
                 />
+                {fieldErrors.lots ? (
+                  <span style={{ color: 'var(--ds-bear-strong)', fontSize: 11 }}>{fieldErrors.lots}</span>
+                ) : null}
               </label>
               <label
                 style={{
@@ -308,7 +436,7 @@ export function SignalCreateDialog({
               <div style={{ display: 'grid', gap: 8, background: 'var(--ds-inset)', border: '1px solid var(--ds-border)', borderRadius: 10, padding: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span className={`badge ${audit.decision === 'CONFIRM' ? 'b-bull' : audit.decision === 'REJECT' ? 'b-bear' : audit.decision === 'WATCH' ? 'b-warn' : 'b-neut'}`}>{audit.decision}</span>
-                  <span style={{ fontSize: 12, fontFamily: 'var(--sg-mono)' }}>score {audit.score} · RR {Number(audit.risk_reward_calculated).toFixed(2)}</span>
+                  <span style={{ fontSize: 12, fontFamily: 'var(--ds-mono)' }}>score {audit.score} · RR {Number(audit.risk_reward_calculated).toFixed(2)}</span>
                 </div>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5 }}>{audit.executive_verdict}</p>
                 {audit.invalidation_conditions?.length ? (
@@ -317,6 +445,15 @@ export function SignalCreateDialog({
                 {audit.warning_traps?.length ? (
                   <div style={{ fontSize: 12 }} className="muted"><strong>Traps:</strong><ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>{audit.warning_traps.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {previewText ? (
+              <div style={{ padding: 10, background: 'var(--ds-inset)', border: '1px solid var(--ds-border)', borderRadius: 10 }}>
+                <span style={SECTION_LABEL}>Signal Preview Output</span>
+                <p style={{ margin: '4px 0 0', fontSize: 12, fontFamily: 'var(--ds-mono)', whiteSpace: 'pre-wrap' }}>
+                  {previewText}
+                </p>
               </div>
             ) : null}
           </div>
@@ -331,12 +468,27 @@ export function SignalCreateDialog({
               {note.msg}
             </span>
           ) : null}
+          <button type="button" className="btn" disabled={previewBusy} onClick={() => void runPreview()}>
+            {previewBusy ? 'Previewing…' : 'Preview'}
+          </button>
           <button type="button" className="btn" disabled={busy} onClick={() => onOpenChange(false)}>
             Cancel
           </button>
-          <button type="button" className="btn btn-primary btn-ic" disabled={busy} onClick={() => void submit()}>
+          <button
+            type="button"
+            className="btn btn-primary btn-ic"
+            disabled={busy || !form.strategy || strategies.length === 0}
+            title={
+              strategies.length === 0
+                ? 'Engine registry has no strategies — cannot create a signal'
+                : !form.strategy
+                  ? 'Select a strategy first'
+                  : undefined
+            }
+            onClick={() => void submit()}
+          >
             <Sparkles size={15} />
-            {busy ? 'Generatingâ€¦' : 'Generate'}
+            {busy ? 'Generating…' : 'Generate'}
           </button>
         </DialogFooter>
       </DialogContent>

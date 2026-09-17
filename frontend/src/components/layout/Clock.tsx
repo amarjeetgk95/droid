@@ -69,7 +69,7 @@ function ClockInner() {
   );
 }
 
-// Memoized wrapper — re-renders only when time string changes, parent TopHeader no longer thrashes
+// Memoized wrapper — re-renders only when time string changes, parent chrome no longer thrashes
 export const Clock = memo(ClockInner);
 
 // Separate date display that also uses the same external store but isolated

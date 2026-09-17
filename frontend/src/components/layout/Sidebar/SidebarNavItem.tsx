@@ -18,11 +18,10 @@ interface SidebarNavItemProps {
 
 const STATIC_BADGE_STYLES: Record<NonNullable<NavItem['badgeVariant']>, string> = {
   default: 'bg-muted text-muted-foreground border-border/60',
-  success: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
-  warning: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
-  danger: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
-  purple: 'bg-purple-500/10 text-purple-600 border-purple-500/30',
-  blue: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
+  success: 'bg-up/10 text-up border-up/30',
+  warning: 'bg-warn/10 text-warn border-warn/30',
+  danger: 'bg-down/10 text-down border-down/30',
+  blue: 'bg-accent/10 text-accent border-accent/30',
 };
 
 export const SidebarNavItem = memo(function SidebarNavItem({
@@ -63,7 +62,7 @@ export const SidebarNavItem = memo(function SidebarNavItem({
           {badgeData.label}
         </span>
       ) : item.isBeta ? (
-        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-amber-500/10 text-amber-600 border-amber-500/25 tracking-wide">
+        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-warn/10 text-warn border-warn/25 tracking-wide">
           BETA
         </span>
       ) : item.badge ? (
@@ -98,8 +97,8 @@ export const SidebarNavItem = memo(function SidebarNavItem({
         active
           ? collapsed
             ? 'text-white bg-primary shadow-xs'
-            : 'bg-[#edf4fc] text-[#387ed1] font-semibold border-l-2 border-[#387ed1] rounded-r-[4px] rounded-l-none'
-          : 'text-[#666666] hover:bg-[#f7f7f7] hover:text-[#333333] active:bg-[#f0f0f0]',
+            : 'bg-accent-wash text-primary font-semibold border-l-2 border-primary rounded-r-[4px] rounded-l-none'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted-strong',
       )}
     >
       <Icon
@@ -108,8 +107,8 @@ export const SidebarNavItem = memo(function SidebarNavItem({
           active
             ? collapsed
               ? 'text-white'
-              : 'text-[#387ed1]'
-            : 'text-[#888888] group-hover:text-[#333333]',
+              : 'text-primary'
+            : 'text-ink-4 group-hover:text-foreground',
         )}
         aria-hidden
       />
@@ -136,7 +135,7 @@ export const SidebarNavItem = memo(function SidebarNavItem({
               {badgeData.label}
             </span>
           ) : item.isBeta ? (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-amber-500/10 text-amber-600 border-amber-500/25">
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-warn/10 text-warn border-warn/25">
               BETA
             </span>
           ) : item.badge ? (

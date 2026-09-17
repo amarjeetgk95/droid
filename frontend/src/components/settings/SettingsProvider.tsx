@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback, useReducer } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AppSettings,
   BrokerSettings,
@@ -20,6 +21,13 @@ import { validateSettings, validateSection, ValidationError } from '@/lib/settin
 // ── Context Value ────────────────────────────────────────────────────────────
 
 type SettingsSection = 'broker' | 'quantitative' | 'ai' | 'paper' | 'preferences';
+
+const SETTINGS_SECTIONS: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
+
+export interface SettingsActionResult {
+  success: boolean;
+  error?: string;
+}
 
 interface SettingsContextValue {
   // State
@@ -45,11 +53,11 @@ interface SettingsContextValue {
 
   // Full settings operations
   replaceAllSettings: (newSettings: AppSettings) => void;
-  save: () => Promise<void>;
-  saveSection: (section: SettingsSection) => Promise<void>;
-  reset: () => void;
+  save: () => Promise<SettingsActionResult>;
+  saveSection: (section: SettingsSection) => Promise<SettingsActionResult>;
+  reset: () => Promise<SettingsActionResult>;
   exportJson: (includeSecrets?: boolean) => string;
-  importJson: (jsonStr: string) => { success: boolean; error?: string };
+  importJson: (jsonStr: string) => SettingsActionResult;
 
   // Helpers
   getFieldError: (fieldPath: string) => string | undefined;
@@ -57,6 +65,10 @@ interface SettingsContextValue {
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
+
+export function useOptionalSettings(): SettingsContextValue | null {
+  return useContext(SettingsContext);
+}
 
 export function useSettings(): SettingsContextValue {
   const ctx = useContext(SettingsContext);
@@ -118,10 +130,19 @@ interface SettingsProviderProps {
 }
 
 export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend }: SettingsProviderProps) {
+  const router = useRouter();
   const [settings, dispatch] = useReducer(settingsReducer, undefined, getInitialSettings);
   const [savedSnapshot, setSavedSnapshot] = useState<string>(() => JSON.stringify(getInitialSettings()));
   const savedRef = useRef<string>(savedSnapshot);
   const settingsRef = useRef<AppSettings>(settings);
+  // Pre-hydration local state — used to detect edits made while the remote load is in flight.
+  const initialSnapshotRef = useRef<string>(savedSnapshot);
+  // Callback identity for which hydration already ran (refetches only when the
+  // loader itself changes, e.g. demo-mode flip).
+  const hydratedForRef = useRef<typeof onLoadFromBackend>(undefined);
+  // Survives StrictMode's mount→cleanup→mount cycle (reset at the top of the
+  // hydration effect) so an in-flight load still applies.
+  const aliveRef = useRef(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingSections, setIsSavingSections] = useState<Record<SettingsSection, boolean>>({
     broker: false,
@@ -191,9 +212,8 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
           savedSerializedRef.current[s] = JSON.stringify(savedObj[s]);
         }
       }
-      const saved = parsedSavedRef.current as unknown as Record<string, unknown>;
       const cur = settings as unknown as Record<string, unknown>;
-      const sections: SettingsSection[] = ['broker', 'quantitative', 'ai', 'paper', 'preferences'];
+      const sections: SettingsSection[] = SETTINGS_SECTIONS;
       let globalDirty = false;
       for (const s of sections) {
         const curSection = cur[s];
@@ -241,34 +261,80 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     return map;
   }, [validationErrors]);
 
-  // Hydrate from Supabase
+  // Message helper
+  const showMessage = useCallback((msg: { type: 'success' | 'error'; text: string }) => {
+    if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
+    setSaveMessage(msg);
+    messageTimeoutRef.current = setTimeout(() => setSaveMessage(null), 6000);
+  }, []);
+
+  const clearMessage = useCallback(() => {
+    if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
+    setSaveMessage(null);
+  }, []);
+
+  // Hydrate from backend — runs at most once per loader identity, never
+  // clobbers edits made while the remote load was in flight, and surfaces
+  // load failures.
   useEffect(() => {
     if (!onLoadFromBackend) {
       setIsLoading(false);
       return;
     }
-    let cancelled = false;
+    aliveRef.current = true;
+    const cleanup = () => { aliveRef.current = false; };
+    // StrictMode re-runs the effect; the in-flight load from the first run is
+    // still valid and will apply because aliveRef was reset to true above.
+    if (hydratedForRef.current === onLoadFromBackend) return cleanup;
+    hydratedForRef.current = onLoadFromBackend;
     (async () => {
       try {
         setIsLoading(true);
         const remote = await onLoadFromBackend();
-        if (!cancelled && remote) {
-          dispatch({ type: 'SET', settings: remote });
-          const snap = JSON.stringify(remote);
-          setSavedSnapshot(snap);
-          savedRef.current = snap;
-          saveStoredSettings(remote);
+        if (!aliveRef.current || !remote) return;
+
+        // Sections edited during the in-flight load win over the remote copy;
+        // everything else takes the server value. savedSnapshot stays at the
+        // server payload so preserved edits remain dirty and savable.
+        const initial = JSON.parse(initialSnapshotRef.current) as Record<string, unknown>;
+        const currentRec = settingsRef.current as unknown as Record<string, unknown>;
+        const merged: AppSettings = { ...remote };
+        const editedSections: SettingsSection[] = [];
+        for (const section of SETTINGS_SECTIONS) {
+          if (JSON.stringify(currentRec[section]) !== JSON.stringify(initial[section])) {
+            (merged as unknown as Record<string, unknown>)[section] = currentRec[section];
+            editedSections.push(section);
+          }
         }
-      } catch {
-        // offline/demo — keep localStorage
+
+        dispatch({ type: 'SET', settings: merged });
+        const snap = JSON.stringify(remote);
+        setSavedSnapshot(snap);
+        savedRef.current = snap;
+        saveStoredSettings(merged);
+        if (editedSections.length > 0) {
+          showMessage({
+            type: 'error',
+            text: `Server settings loaded, but unsaved local edits to ${editedSections.join(', ')} were kept. Review and Save.`,
+          });
+        }
+      } catch (err) {
+        if (aliveRef.current) {
+          showMessage({
+            type: 'error',
+            text: err instanceof Error
+              ? `Could not load settings from server (${err.message}) — using local copy.`
+              : 'Could not load settings from server — using local copy.',
+          });
+        }
       } finally {
-        if (!cancelled) setIsLoading(false);
+        setIsLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [onLoadFromBackend]);
+    return cleanup;
+  }, [onLoadFromBackend, showMessage]);
 
-  // Warn before leaving with unsaved changes
+  // Warn before leaving the browser tab with unsaved changes
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       if (!isDirty) return;
@@ -281,17 +347,34 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
     }
   }, [isDirty]);
 
-  // Message helper
-  const showMessage = useCallback((msg: { type: 'success' | 'error'; text: string }) => {
-    if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
-    setSaveMessage(msg);
-    messageTimeoutRef.current = setTimeout(() => setSaveMessage(null), 6000);
-  }, []);
-
-  const clearMessage = useCallback(() => {
-    if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
-    setSaveMessage(null);
-  }, []);
+  // Guard in-app link navigation while dirty: confirm before discarding.
+  useEffect(() => {
+    if (!isDirty) return;
+    function handleClick(event: MouseEvent) {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+      let url: URL;
+      try {
+        url = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (window.confirm('You have unsaved settings changes. Leave this page and discard them?')) {
+        router.push(`${url.pathname}${url.search}${url.hash}`);
+      }
+    }
+    document.addEventListener('click', handleClick, true);
+    return () => document.removeEventListener('click', handleClick, true);
+  }, [isDirty, router]);
 
   // ── Patch helpers ────────────────────────────────────────────────────────
 
@@ -311,105 +394,152 @@ export function SettingsProvider({ children, onSaveToBackend, onLoadFromBackend 
 
   // ── Save ─────────────────────────────────────────────────────────────────
 
-  const save = useCallback(async () => {
+  /** Last persisted (server-side) settings — base for section-only saves. */
+  const getPersistedSettings = useCallback((): AppSettings => {
+    try {
+      const parsed = JSON.parse(savedRef.current) as AppSettings;
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // savedRef is always JSON; fall back to in-memory state below.
+    }
+    return settingsRef.current;
+  }, []);
+
+  const save = useCallback(async (): Promise<SettingsActionResult> => {
     const current = settingsRef.current;
     const validation = validateSettings(current);
     if (!validation.success) {
       const first = validation.errors[0];
       const detail = first ? `${first.path}: ${first.message}` : '';
-      showMessage({
-        type: 'error',
-        text: `Cannot save — ${validation.errors.length} validation error(s). ${detail} — fix highlighted fields.`,
-      });
-      return;
+      const message = `Cannot save — ${validation.errors.length} validation error(s). ${detail} — fix highlighted fields.`;
+      showMessage({ type: 'error', text: message });
+      return { success: false, error: message };
     }
     setIsSaving(true);
     try {
-      saveStoredSettings(current);
+      // Backend first: the local cache is only advanced once the write is
+      // authoritative, so a failed save leaves local and remote consistent
+      // (still dirty) instead of resurrecting old values on the next hydrate.
       if (onSaveToBackend) await onSaveToBackend(current);
+      const storedLocally = saveStoredSettings(current);
       const snap = JSON.stringify(current);
       setSavedSnapshot(snap);
+      savedRef.current = snap;
       setLastSaved(new Date());
+      if (!storedLocally) {
+        const message = 'Saved to server, but the local cache could not be written (storage full or blocked).';
+        showMessage({ type: 'error', text: message });
+        return { success: true, error: message };
+      }
       showMessage({ type: 'success', text: 'All settings saved successfully!' });
+      return { success: true };
     } catch (err) {
-      showMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save settings' });
+      const message = err instanceof Error ? err.message : 'Failed to save settings';
+      showMessage({ type: 'error', text: `${message} — changes were not saved.` });
+      return { success: false, error: message };
     } finally {
       setIsSaving(false);
     }
   }, [onSaveToBackend, showMessage]);
 
-  const saveSection = useCallback(async (section: SettingsSection) => {
+  const saveSection = useCallback(async (section: SettingsSection): Promise<SettingsActionResult> => {
     const current = settingsRef.current;
     const sectionValidation = validateSection(section, (current as unknown as Record<string, unknown>)[section]);
     if (!sectionValidation.success) {
       const first = sectionValidation.errors[0];
-      showMessage({ type: 'error', text: `Cannot save ${section}: ${first?.message ?? 'validation failed'}` });
-      return;
+      const message = `Cannot save ${section}: ${first?.message ?? 'validation failed'}`;
+      showMessage({ type: 'error', text: message });
+      return { success: false, error: message };
     }
     setIsSavingSections(prev => ({ ...prev, [section]: true }));
     try {
-      saveStoredSettings(current);
-      if (onSaveToBackend) await onSaveToBackend(current);
-      const snap = JSON.stringify(current);
+      // Persist ONLY the validated section, layered on the last saved snapshot,
+      // so unsaved/invalid edits in other tabs are never silently published.
+      const persisted = {
+        ...getPersistedSettings(),
+        [section]: (current as unknown as Record<string, unknown>)[section],
+      } as AppSettings;
+      if (onSaveToBackend) await onSaveToBackend(persisted);
+      saveStoredSettings(persisted);
+      const snap = JSON.stringify(persisted);
       setSavedSnapshot(snap);
+      savedRef.current = snap;
       setLastSaved(new Date());
-      showMessage({ type: 'success', text: `${section} saved.` });
+      showMessage({ type: 'success', text: `${section} saved. Other tabs keep their unsaved changes.` });
+      return { success: true };
     } catch (err) {
-      showMessage({ type: 'error', text: err instanceof Error ? err.message : `Failed to save ${section}` });
+      const message = err instanceof Error ? err.message : `Failed to save ${section}`;
+      showMessage({ type: 'error', text: `${message} — ${section} was not saved.` });
+      return { success: false, error: message };
     } finally {
       setIsSavingSections(prev => ({ ...prev, [section]: false }));
     }
-  }, [onSaveToBackend, showMessage]);
+  }, [getPersistedSettings, onSaveToBackend, showMessage]);
 
-  // Ctrl+S
+  // Ctrl+S — only when there is something to persist.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (!isSaving) save();
+        if (!isSaving && isDirty) save();
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSaving, save]);
+  }, [isSaving, isDirty, save]);
 
   // ── Reset / Import / Export ──────────────────────────────────────────────
 
-  const reset = useCallback(async () => {
+  const reset = useCallback(async (): Promise<SettingsActionResult> => {
+    setIsSaving(true);
+    // Push defaults to the backend first — if that fails, local state and the
+    // local cache are left untouched and the failure is surfaced.
+    try {
+      if (onSaveToBackend) await onSaveToBackend(DEFAULT_SETTINGS);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reset settings';
+      showMessage({ type: 'error', text: `${message} — settings were left unchanged.` });
+      setIsSaving(false);
+      return { success: false, error: message };
+    }
     const defaults = resetStoredSettings();
     dispatch({ type: 'REPLACE', settings: defaults });
     const snap = JSON.stringify(defaults);
     setSavedSnapshot(snap);
+    savedRef.current = snap;
     setLastSaved(new Date());
-    if (onSaveToBackend) {
-      try { await onSaveToBackend(defaults); } catch {}
-    }
     showMessage({ type: 'success', text: 'All settings restored to factory defaults.' });
+    setIsSaving(false);
+    return { success: true };
   }, [onSaveToBackend, showMessage]);
 
   const exportJson = useCallback((includeSecrets = false) => {
     return exportSettingsJson(settingsRef.current, { includeSecrets });
   }, []);
 
-  const importJson = useCallback((jsonStr: string): { success: boolean; error?: string } => {
+  const importJson = useCallback((jsonStr: string): SettingsActionResult => {
+    let imported: AppSettings;
     try {
-      const imported = importSettingsJson(jsonStr);
-      const validation = validateSettings(imported);
-      dispatch({ type: 'REPLACE', settings: imported });
-      if (!validation.success) {
-        showMessage({
-          type: 'error',
-          text: `Imported with ${validation.errors.length} warning(s). Review highlighted fields before saving.`,
-        });
-        return { success: true };
-      }
-      showMessage({ type: 'success', text: 'Settings imported successfully! Click Save to persist.' });
-      return { success: true };
+      imported = importSettingsJson(jsonStr);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Invalid JSON file';
       showMessage({ type: 'error', text: message });
       return { success: false, error: message };
     }
+    const validation = validateSettings(imported);
+    if (!validation.success) {
+      const detail = validation.errors
+        .slice(0, 3)
+        .map((e) => `${e.path}: ${e.message}`)
+        .join('; ');
+      const suffix = validation.errors.length > 3 ? ` (+${validation.errors.length - 3} more)` : '';
+      const message = `Import rejected — ${validation.errors.length} invalid value(s). ${detail}${suffix}`;
+      showMessage({ type: 'error', text: message });
+      return { success: false, error: message };
+    }
+    dispatch({ type: 'REPLACE', settings: imported });
+    showMessage({ type: 'success', text: 'Settings imported. Review, then click Save to persist.' });
+    return { success: true };
   }, [showMessage]);
 
   const getFieldError = useCallback((fieldPath: string): string | undefined => {

@@ -51,9 +51,24 @@ def clean_fsm_state():
         signal_fsm._audit_log.clear()
 
 
+def _chain_ce():
+    """A contract carrying a live broker quote (fail-closed admission needs one)."""
+    from app.signals.contract_resolver import resolve_option_contract
+
+    contract = resolve_option_contract("NIFTY", Decimal("24850"), "CE", strike_offset=0)
+    contract.contract_source = "fyers_chain"
+    contract.live_premium = 150.0
+    return contract
+
+
 @pytest.mark.asyncio
 async def test_degraded_fno_blocks_candidate_arming(monkeypatch):
-    """Verify that candidates with fno_degraded=True are rejected with ARMED_BLOCKED_FNO_DEGRADED."""
+    """Verify that candidates with fno_degraded=True fail closed at admission.
+
+    P0-2 contract: degraded F&O can never arm — the FNOIntegrityGate rejects
+    the candidate before any FSM registration, so no VALIDATED watch is created
+    that could later be transitioned by an operator.
+    """
     monkeypatch.setattr(calendar_service, "can_trade_now", _mock_open_permission)
 
     scanner = SignalScanner()
@@ -73,19 +88,18 @@ async def test_degraded_fno_blocks_candidate_arming(monkeypatch):
         risk_reward_t1=1.6,
         risk_reward_t2=3.2,
         confidence=85.0,
+        # Admission is fail-closed: a candidate needs a chain-verified contract
+        # to reach the F&O arming guard this test is actually about.
+        option_contract=_chain_ce(),
         fno_degraded=True,  # DEGRADED F&O
     )
 
     registered, rejected = await scanner._process_candidates([cand])
-    assert len(registered) == 1
-    assert registered[0].fsm_state == "VALIDATED"
-    assert registered[0].confluence_breakdown.get("fno_degraded") is True
+    assert registered == []
     assert any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
 
-    # Verify FSM strictly blocks transition to ARMED
-    ok, err = signal_fsm.transition(registered[0].signal_id, "ARMED")
-    assert not ok
-    assert err == "FNO_DATA_DEGRADED_CANNOT_ARM"
+    # No FSM instance may exist for the rejected candidate.
+    assert not [s for s in signal_fsm.list_active() if s.underlying == "NIFTY"]
 
 
 def test_orb_strategy_fails_closed_without_opening_range_or_candles():
@@ -109,16 +123,25 @@ def test_orb_strategy_fails_closed_without_opening_range_or_candles():
 def test_dynamic_fno_scoring_in_breakout():
     """Verify Breakout strategy continuously scales fno_score with PCR using neutral baseline."""
     strat = BreakoutStrategy()
-    
+
+    # Compressed base + expansion candle closing beyond resistance 24800.
+    candles = [
+        {"open": 24796.0, "high": 24806.0, "low": 24794.0, "close": 24802.0, "volume": 1000},
+        {"open": 24802.0, "high": 24808.0, "low": 24796.0, "close": 24805.0, "volume": 1000},
+        {"open": 24805.0, "high": 24809.0, "low": 24798.0, "close": 24804.0, "volume": 1000},
+        {"open": 24804.0, "high": 24816.0, "low": 24800.0, "close": 24812.0, "volume": 5000},
+    ]
+
     # High PCR = 1.4
     ctx_high = StrategyContext(
         underlying="NIFTY",
         spot_price=Decimal("24805"),
         timeframe="5M",
-        indicators={"atr": 20.0, "volume_ratio": 1.5, "support_resistance": {"resistance": [24800], "support": [24700]}},
+        indicators={"atr": 20.0, "volume_ratio": 1.5, "breakout_pressure": 80.0, "support_resistance": {"resistance": [24800], "support": [24700]}},
         mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
         fno={"pcr": 1.4},
         regime="TREND_UP",
+        candles=candles,
     )
     cand_high = strat.detect(ctx_high)
     assert cand_high is not None
@@ -130,10 +153,11 @@ def test_dynamic_fno_scoring_in_breakout():
         underlying="NIFTY",
         spot_price=Decimal("24805"),
         timeframe="5M",
-        indicators={"atr": 20.0, "volume_ratio": 1.5, "support_resistance": {"resistance": [24800], "support": [24700]}},
+        indicators={"atr": 20.0, "volume_ratio": 1.5, "breakout_pressure": 80.0, "support_resistance": {"resistance": [24800], "support": [24700]}},
         mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
         fno={"pcr": 0.8},
         regime="TREND_UP",
+        candles=candles,
     )
     cand_low = strat.detect(ctx_low)
     assert cand_low is not None
@@ -144,16 +168,18 @@ def test_dynamic_fno_scoring_in_breakout():
 def test_dynamic_scoring_in_vwap_scalp():
     """Verify VWAP scalp calculates dynamic scores based on wick ratio and deviation (not hardcoded 78.0)."""
     strat = VWAPScalpStrategy()
-    
-    # Price 0.5% below VWAP (bouncing up with strong 50% lower wick)
+
+    # Price 0.5% below VWAP (bouncing up with strong lower wick) on a closed 1M candle.
     ctx = StrategyContext(
         underlying="NIFTY",
         spot_price=Decimal("24675"),
         timeframe="1M",
+        is_new_1m_candle=True,
         vwap=Decimal("24800"),  # dev_pct = (24800 - 24675)/24800 = 0.504%
         candles=[
-            {"open": 24680, "high": 24690, "low": 24670, "close": 24675, "volume": 1000},
-            {"open": 24660, "high": 24680, "low": 24640, "close": 24675, "volume": 1200},
+            {"open": 24680, "high": 24690, "low": 24668, "close": 24675, "volume": 1000},
+            {"open": 24670, "high": 24685, "low": 24660, "close": 24672, "volume": 1000},
+            {"open": 24670, "high": 24690, "low": 24660, "close": 24678, "volume": 1200},
         ],
         indicators={"volume_ratio": 1.2},
         mtf={"alignment_score": 75.0},

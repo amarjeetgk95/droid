@@ -23,6 +23,21 @@ from app.signals.risk_engine import StrategySetup, central_risk_engine
 class TestIntradaySwingOptionBuyingMVP:
     """Test Suite for v3.1 Production-MVP Intraday Option Buying."""
 
+    @staticmethod
+    def _nifty_chain_quotes(spot: float = 25000.0) -> dict[float, float]:
+        """Publish-shaped live chain quotes around `spot` (step 50).
+
+        Selection is fail-closed: candidates are priced from the broker chain
+        only, so every selector test supplies the quotes FYERS would return.
+        Premiums are realistic for ~1 DTE at 16% IV (ATM ≈ 120).
+        """
+        atm = round(spot / 50.0) * 50.0
+        return {
+            atm - 50.0: 158.0,  # ITM_1 CE
+            atm: 120.0,         # ATM CE
+            atm + 50.0: 88.0,   # OTM_1 CE
+        }
+
     def test_candidate_types_filtering_atm_and_itm1_only(self):
         """Verify that only ITM_1 and ATM candidates are evaluated (§9)."""
         res = quantitative_contract_selector.select_optimal_contract(
@@ -33,6 +48,7 @@ class TestIntradaySwingOptionBuyingMVP:
             stop_loss_points=25.0,
             target_horizon_hours=0.75,
             candidate_types=["ITM_1", "ATM"],
+            option_chain_quotes=self._nifty_chain_quotes(),
         )
         assert res is not None
         candidate_types = [c.strike_type for c in res.all_candidates]
@@ -42,6 +58,7 @@ class TestIntradaySwingOptionBuyingMVP:
 
     def test_put_option_itm_strike_selection(self):
         """Verify that Put option swing selects In-The-Money (higher strike) (§9 & §10)."""
+        put_quotes = {24950.0: 85.0, 25000.0: 118.0, 25050.0: 160.0}
         res = quantitative_contract_selector.select_optimal_contract(
             underlying="NIFTY",
             spot_price=25000.0,
@@ -50,6 +67,7 @@ class TestIntradaySwingOptionBuyingMVP:
             stop_loss_points=25.0,
             target_horizon_hours=0.75,
             candidate_types=["ITM_1", "ATM"],
+            option_chain_quotes=put_quotes,
         )
         assert res is not None
         assert res.selected_contract.option_type == "PE"
@@ -105,8 +123,13 @@ class TestIntradaySwingOptionBuyingMVP:
         assert cand_above.time_stop_seconds == 180 * 60
 
     def test_theta_drag_guard_rejection(self):
-        """Verify that excessive theta drag (> 20%) marks candidate as unacceptable (§12)."""
-        # A tiny expected move over a long horizon produces huge theta drag
+        """Verify that excessive theta drag (> 20%) fails closed (§12 + P1).
+
+        A tiny expected move over a long horizon produces huge theta drag on
+        the ATM leg, so nothing is acceptable — and P1 never returns a
+        non-viable "best": the selector stands down with None.
+        """
+        atm_only = {25000.0: 120.0}
         res = quantitative_contract_selector.select_optimal_contract(
             underlying="NIFTY",
             spot_price=25000.0,
@@ -114,15 +137,11 @@ class TestIntradaySwingOptionBuyingMVP:
             expected_move_points=10.0,  # Tiny 10 pt move
             stop_loss_points=25.0,
             target_horizon_hours=2.5,   # Long 2.5 hour holding
-            candidate_types=["ITM_1", "ATM"],
+            candidate_types=["ATM"],
             max_theta_drag_ratio=20.0,
+            option_chain_quotes=atm_only,
         )
-        assert res is not None
-        # Both candidates must be rejected for exceeding 20% theta drag ceiling
-        for c in res.all_candidates:
-            assert c.is_acceptable is False
-            assert any("Theta drag" in r for r in c.rejection_reasons)
-        assert res.is_viable is False
+        assert res is None
 
     def test_fast_path_latency_under_150ms(self):
         """Verify fast execution gate latency constraint (§5: Target < 150 ms)."""
@@ -161,7 +180,12 @@ class TestIntradaySwingOptionBuyingMVP:
         assert t_elapsed_ms < 150.0, f"Fast path latency exceeded 150ms: {t_elapsed_ms:.2f}ms"
 
     def test_risk_sizing_respects_equity_budget(self):
-        """Verify position sizing does not exceed 0.75% account risk budget (§17 & §18)."""
+        """Verify position sizing does not exceed 0.75% account risk budget (§17 & §18).
+
+        P1-complete fixture: live premium + selector delta + live spread/IV so
+        the friction gate (netRR>=1.2, cost<=30%) can price the leg. The edge
+        (55pt T1 inside the 5M ceiling, light decay) is comfortably economic.
+        """
         strat_setup = StrategySetup(
             strategy_name="TREND_PULLBACK",
             underlying="NIFTY",
@@ -171,12 +195,14 @@ class TestIntradaySwingOptionBuyingMVP:
             spot_price=Decimal("25000.0"),
             entry_trigger=Decimal("25015.0"),
             raw_structural_stop=Decimal("24995.0"),
-            structural_target_candidates=[Decimal("25045.0"), Decimal("25075.0")],
+            structural_target_candidates=[Decimal("25045.0"), Decimal("25070.0")],
             atr_5m=Decimal("25.0"),
             confidence=80.0,
             option_delta=0.60,
-            option_theta_hour=-7.0,
+            option_theta_hour=-1.5,
             option_premium=140.0,
+            option_spread_pts=0.5,
+            option_iv=0.15,
         )
 
         account_equity = 100000.0  # Rs. 1 Lakh

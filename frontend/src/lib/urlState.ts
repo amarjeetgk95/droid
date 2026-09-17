@@ -75,9 +75,13 @@ export function encodeParam(v: string): string {
 }
 export function decodeParam(v: string | null): string | null {
   if (v === null) return null;
+  // URLSearchParams (used by useQueryParamsWriter and Next itself) serializes
+  // spaces as "+", which decodeURIComponent leaves intact. Normalize first so
+  // encodeParam -> URL -> decodeParam is a true round-trip.
+  const normalized = v.replace(/\+/g, ' ');
   try {
-    return decodeURIComponent(v);
+    return decodeURIComponent(normalized);
   } catch {
-    return v;
+    return normalized;
   }
 }

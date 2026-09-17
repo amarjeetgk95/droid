@@ -31,3 +31,4 @@ from app.ai.scalping_ai import scalping_ai, ScalpingAI
 from app.ai.core_intraday_ai import core_intraday_ai, CoreIntradayAI
 from app.ai.audit_logger import audit_logger, AuditLogger
 from app.ai.ai_evaluator import ai_evaluator, AIEvaluator
+from app.ai.prompt_registry import prompt_registry, PromptRegistry

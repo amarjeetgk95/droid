@@ -60,7 +60,7 @@ def test_api_simulate_path(client):
     assert "is_economically_viable" in data
 
 
-def test_api_select_contract(client):
+def test_api_select_contract(client, monkeypatch):
     payload = {
         "underlying": "NIFTY",
         "spot_price": 24920.0,
@@ -69,6 +69,31 @@ def test_api_select_contract(client):
         "stop_loss_points": 25.0,
         "current_iv": 0.15,
     }
+
+    # The endpoint pulls the broker chain itself (fail-closed selection). Stub
+    # the provider feed so the API test is deterministic without FYERS.
+    from datetime import datetime, timedelta, timezone
+    from app.models.market import NormalizedOptionQuote
+
+    expiry = datetime.now(timezone.utc) + timedelta(days=3)
+
+    def _quote(strike: float, ltp: float) -> NormalizedOptionQuote:
+        return NormalizedOptionQuote(
+            timestamp=datetime.now(timezone.utc), provider="test", instrument="NIFTY",
+            contract_id=f"NSE:NIFTY-TEST-{int(strike)}CE", underlying="NIFTY",
+            expiry=expiry, strike=strike, option_type="CE", ltp=ltp,
+        )
+
+    class _FakeMarketService:
+        async def get_option_chain(self, symbol, expiry=None):
+            return [_quote(24850.0, 170.0), _quote(24900.0, 135.0), _quote(24950.0, 100.0)]
+
+    import app.api.options_intelligence as oi_api
+    monkeypatch.setattr(
+        "app.services.market_service.MarketService",
+        lambda: _FakeMarketService(),
+    )
+
     resp = client.post("/api/v1/options-intelligence/select-contract", json=payload)
     assert resp.status_code == 200
     data = resp.json()

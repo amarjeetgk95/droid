@@ -1,16 +1,23 @@
 """
-Opening Range Breakout (ORB 15M) Strategy
+Opening Range Breakout (ORB 15M) Strategy (P1 overhaul)
 Mathematical rules:
   - Establishes the high and low of the first 15 minutes of the session (09:15 - 09:30 IST).
-  - LONG_CALL: Price crosses above Opening Range High + 1 tick, confirmation 5m close above high, Volume ratio >= 1.3.
-  - LONG_PUT: Price crosses below Opening Range Low - 1 tick, confirmation 5m close below low, Volume ratio >= 1.3.
+  - LONG_CALL: 5M CLOSE above Opening Range High, Volume ratio >= 1.3 (measured, fail-closed).
+  - LONG_PUT: 5M CLOSE below Opening Range Low, Volume ratio >= 1.3 (measured, fail-closed).
+  - P1: intrabar spot touch is NOT enough — require candle close beyond level.
   - SL = Midpoint of Opening Range or Opposite boundary, T1 = ORB Range Height (1.0x), T2 = 2.0x Range Height.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    extract_volume_ratio,
+    VOLUME_ORB_MIN,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
 
@@ -86,12 +93,26 @@ class OpeningRangeBreakoutStrategy(Strategy):
         range_height = max(atr * Decimal("0.5"), orb_high - orb_low)
         mid_point = (orb_high + orb_low) / Decimal("2")
 
-        vol_ratio = float(ind.get("volume_ratio", 1.3))
+        # P1 fail-closed volume: no 1.3 default; measured vol >= 1.3x required.
+        vol_ratio = extract_volume_ratio(ind)
+        if vol_ratio is None:
+            return None
+        if vol_ratio < VOLUME_ORB_MIN:
+            return None
+        # P1: require 5M close beyond level (not intrabar spot touch).
+        if not ctx.candles:
+            return None
+        last_c = ctx.candles[-1]
+        try:
+            c_close = Decimal(str(last_c.get("close", spot)))
+            c_open = Decimal(str(last_c.get("open", spot)))
+        except Exception:
+            return None
         mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
         min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
 
-        # ── BULLISH ORB (LONG_CALL) ──
-        if spot >= orb_high and mtf_bias != "BEARISH":
+        # ── BULLISH ORB (LONG_CALL): 5M close beyond OR high ──
+        if c_close > orb_high and spot >= orb_high and mtf_bias != "BEARISH":
             chase = spot - orb_high
             if chase > (atr * Decimal("0.5")):
                 return None  # Chase exceeded
@@ -112,7 +133,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 rr_t2 = float((t2 - trigger) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
-                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 18.0)))
+                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.3) * 18.0)))
                 mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
                 fno_score = 65.0
                 regime_score = 75.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
@@ -147,8 +168,8 @@ class OpeningRangeBreakoutStrategy(Strategy):
                     ttl_seconds=300,
                 )
 
-        # ── BEARISH ORB (LONG_PUT) ──
-        if spot <= orb_low and mtf_bias != "BULLISH":
+        # ── BEARISH ORB (LONG_PUT): 5M close beyond OR low ──
+        if c_close < orb_low and spot <= orb_low and mtf_bias != "BULLISH":
             chase = orb_low - spot
             if chase > (atr * Decimal("0.5")):
                 return None  # Chase exceeded
@@ -169,7 +190,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 rr_t2 = float((trigger - t2) / risk_pts) if risk_pts > 0 else 3.0
                 contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
-                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 18.0)))
+                tech_score = min(88.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.3) * 18.0)))
                 mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
                 fno_score = 65.0
                 regime_score = 75.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0

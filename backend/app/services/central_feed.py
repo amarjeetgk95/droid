@@ -46,6 +46,8 @@ class CentralMarketDataFeed:
         self.broadcast_count: int = 0
         self.started_at: datetime | None = None
         self.last_broadcast_at: datetime | None = None
+        self.last_tick_at: datetime | None = None
+        self.total_ingested_ticks: int = 0
 
     async def start(self) -> None:
         """Start the background broadcast worker."""
@@ -164,6 +166,8 @@ class CentralMarketDataFeed:
 
         # Cache latest tick per symbol for REST fallback (so get_quote returns LIVE even when Groww REST 404 for indices)
         self._latest_ticks[tick.symbol] = tick
+        self.last_tick_at = datetime.now(timezone.utc)
+        self.total_ingested_ticks += 1
 
         # Asynchronously forward to batch write pipeline (non-blocking)
         from app.services.write_pipeline import write_pipeline
@@ -171,6 +175,19 @@ class CentralMarketDataFeed:
 
         # Publish to event buffer with priority-based load shedding
         return event_buffer.publish(tick)
+
+    def get_feed_health(self) -> dict[str, Any]:
+        """Telemetry on actual broker tick ingestion."""
+        now = datetime.now(timezone.utc)
+        age_s = (now - self.last_tick_at).total_seconds() if self.last_tick_at else None
+        return {
+            "is_running": self._running,
+            "last_tick_at": self.last_tick_at.isoformat() if self.last_tick_at else None,
+            "tick_age_seconds": round(age_s, 2) if age_s is not None else None,
+            "is_ticking": (age_s is not None and age_s <= 15.0),
+            "symbols_cached": len(self._latest_ticks),
+            "total_ingested_ticks": self.total_ingested_ticks,
+        }
 
     def get_latest_tick(self, symbol: str) -> TickEvent | None:
         """Return latest tick for symbol if ingested within last 60s."""

@@ -42,6 +42,63 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/signals", tags=["signals"])
 
+# ── P0-5 AUTH + closed-market privilege ──────────────────────────────────
+# Operator roles allowed to mint closed-market signals (testing/demo only).
+_OPERATOR_ROLES = frozenset({"admin", "operator"})
+
+
+def _operator_email(user: AuthUser | None) -> str:
+    try:
+        return str(getattr(user, "email", "") or "unknown")
+    except Exception:
+        return "unknown"
+
+
+def _require_closed_market_privilege(user: AuthUser | None, allow_closed: bool, confirm: bool) -> None:
+    """P0-5: allow_closed_market=True requires confirm=True + operator role.
+
+    Dev/test convenience: when running non-production with the loopback dev
+    identity (dev@localhost), legacy callers without `confirm` are allowed with
+    a warning so existing paper-trading tests keep passing. Production
+    (auth_required or app_env/mode=production) is strict: missing confirm or
+    non-operator role => 403.
+    """
+    if not allow_closed:
+        return
+    role = str(getattr(user, "role", "") or "").lower()
+    email = _operator_email(user)
+    if role in _OPERATOR_ROLES and confirm:
+        logger.info("closed_market_generation_authorized", user_email=email, role=role)
+        return
+    # Strict in production / when auth is enforced.
+    try:
+        from app.core.config import settings as _settings
+
+        _strict = bool(getattr(_settings, "auth_required", False)) or (
+            "production" in {str(getattr(_settings, "app_env", "")), str(getattr(_settings, "app_mode", ""))}
+        )
+    except Exception:
+        _strict = False
+    if _strict:
+        raise HTTPException(
+            status_code=403,
+            detail="Closed-market generation requires confirm=true + operator role (admin/operator).",
+        )
+    # Non-strict (local dev / TestClient as dev@localhost admin): allow legacy
+    # callers but log loudly so the bypass is visible in audit.
+    if role in _OPERATOR_ROLES:
+        logger.warning(
+            "closed_market_generation_legacy_no_confirm",
+            user_email=email,
+            role=role,
+            hint="pass confirm=true; legacy path allowed only in non-production dev",
+        )
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Closed-market generation requires confirm=true + operator role (admin/operator).",
+    )
+
 
 # ── Request / Response Models ──────────────────────────────────────────
 
@@ -71,6 +128,8 @@ class GenerateSignalRequest(BaseModel):
     notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification")
     rationale: list[str] | None = None
     allow_closed_market: bool = Field(default=False, description="Allow generating signal when market is closed (for testing/demo)")
+    confirm: bool = Field(default=False, description="Explicit operator confirmation for closed-market generation (required with allow_closed_market)")
+    idempotency_key: str | None = Field(default=None, description="Client idempotency key: retries return the original signal")
 
 
 
@@ -114,10 +173,11 @@ VALID_DESKS = {"SCALP", "INTRADAY", "ALL"}
 
 
 def _quote_is_fallback(quote: Any) -> bool:
+    """Delegate to the unified quote-quality policy (single source of truth)."""
     try:
-        status = str(getattr(quote, "status", "") or "").upper()
-        provider = str(getattr(quote, "provider", "") or "").lower()
-        return "OFFLINE" in status or provider in ("fallback", "synthetic", "mock")
+        from app.signals.quote_quality import is_fallback_quote
+
+        return is_fallback_quote(quote)
     except Exception:
         return False
 
@@ -304,6 +364,24 @@ async def get_signal_deep_dive(signal_id: str):
     sizing_5l = calculate_position_sizing(500000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
 
     # Immutable explain bundle — build on-the-fly for old signals so UI never gets null
+    # P0-5: thresholds/weights are single-sourced from scoring_weights.json (armed 78.0).
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+
+        _sw = {}
+        for _p in (
+            _Path(__file__).resolve().parents[2] / "config" / "scoring_weights.json",
+            _Path("backend/config/scoring_weights.json"),
+        ):
+            if _p.exists():
+                _sw = _json.loads(_p.read_text(encoding="utf-8"))
+                break
+        _armed_thr = float((_sw.get("thresholds", {}) or {}).get("armed", 78.0))
+        _wver = (_sw.get("version", 2))
+        _wf = dict((_sw.get("weights_fraction", {}) or {})) or None
+    except Exception:
+        _armed_thr, _wver, _wf = 78.0, 2, None
     explain = getattr(sig, "explain", None)
     if not explain:
         try:
@@ -324,8 +402,8 @@ async def get_signal_deep_dive(signal_id: str):
             data_health = {"fno_degraded": bool(cb.get("fno_degraded", False)), "vwap_degraded": False, "vwap_coverage_pct": 100.0}
             explain = build_signal_explain(
                 sig, float(sig.confidence), ai_adv, ml_p, None,
-                {"weights_fraction": dict(DEFAULT_WEIGHTS), "version": 2},
-                {"armed": 70.0}, [], inputs_snapshot, data_health,
+                {"weights_fraction": (_wf or dict(DEFAULT_WEIGHTS)), "version": _wver},
+                {"armed": _armed_thr}, [], inputs_snapshot, data_health,
             )
         except Exception:
             explain = None
@@ -333,8 +411,8 @@ async def get_signal_deep_dive(signal_id: str):
     return {
         "signal": sig.model_dump(),
         "explain": explain,
-        "weights_version": 2,
-        "threshold_armed": 70,
+        "weights_version": _wver,
+        "threshold_armed": _armed_thr,
         "current_market_price": curr_price,
         "confluence": sig.confluence_breakdown,
         "option_contract": sig.option_contract,
@@ -381,6 +459,15 @@ async def get_signals_audit(
     from app.models.market import DataStatus
     from app.services.calendar_service import calendar_service
     if calendar_service.can_trade_now().allowed:
+        # Refresh open option contracts so MTM has fresh broker LTPs
+        from app.signals.option_marks import option_mark_service
+        open_symbols = signal_audit_ledger.get_open_option_symbols()
+        if open_symbols:
+            try:
+                await option_mark_service.refresh_and_register(open_symbols)
+            except Exception:
+                pass
+
         market_svc = MarketService()
         quotes: dict[str, float] = {}
         for u in APPROVED_UNDERLYINGS:
@@ -403,10 +490,13 @@ async def get_signals_audit(
         return sid.startswith(("sig-test-", "sig-wallet-", "test-", "sig-persist-sanitize"))
     trades = [t for t in trades if not _is_test_trade(t)]
     summary = signal_audit_ledger.get_summary_metrics()
+    from app.signals.safety.feed_health_monitor import feed_health_monitor
+    feed_health = feed_health_monitor.get_telemetry()
     return {
         "trades": [t.model_dump() for t in trades],
         "count": len(trades),
         "summary": summary,
+        "feed_health": feed_health,
         "timestamp_ms": int(time.time() * 1000),
     }
 
@@ -417,20 +507,33 @@ class VoidTradesRequest(BaseModel):
 
 
 @router.post("/audit/void")
-async def void_audit_trades(req: VoidTradesRequest):
+async def void_audit_trades(
+    req: VoidTradesRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     """Quarantine trades: kept as evidence, excluded from P&L and ledger.
     Use for demonstrably corrupt history instead of deleting it."""
     from app.signals.audit_ledger import signal_audit_ledger
 
+    _email = _operator_email(user)
+    logger.info("audit_void_requested", user_email=_email, count=len(req.signal_ids or []))
     if not req.signal_ids:
         raise HTTPException(status_code=400, detail="Pass signal_ids to void.")
     voided: list[str] = []
     for sid in req.signal_ids[:100]:
         try:
-            if signal_audit_ledger.void_trade(str(sid), req.reason):
+            if signal_audit_ledger.void_trade(str(sid), f"{req.reason} (by {_email})"):
                 voided.append(str(sid))
         except Exception as e:
-            logger.warning("void_trade_failed", signal_id=sid, error=str(e))
+            logger.warning("void_trade_failed", signal_id=sid, error=str(e), user_email=_email)
+    try:
+        await signal_sse_hub.broadcast(
+            "audit_voided",
+            {"voided_ids": voided, "count": len(voided), "by": _email},
+            priority="P0",
+        )
+    except Exception:
+        pass
     return {
         "status": "success",
         "voided_count": len(voided),
@@ -441,7 +544,9 @@ async def void_audit_trades(req: VoidTradesRequest):
 
 
 @router.post("/audit/sanitize")
-async def sanitize_signal_audit():
+async def sanitize_signal_audit(
+    user: AuthUser = Depends(get_current_user),
+):
     """
     Trigger comprehensive memory and database sanitization of audit ledger:
     - Purges corrupted prices, ghost signals, and phantom exposure
@@ -454,9 +559,20 @@ async def sanitize_signal_audit():
         sanitize_persisted_signals,
     )
 
+    _email = _operator_email(user)
+    logger.info("audit_sanitize_requested", user_email=_email)
+
     db_count = await restore_signals_from_db()
     mem_count = sanitize_persisted_signals()
     summary = signal_audit_ledger.get_summary_metrics()
+    try:
+        await signal_sse_hub.broadcast(
+            "audit_sanitized",
+            {"db_restored_repaired": db_count, "memory_sanitized": mem_count, "by": _email},
+            priority="P0",
+        )
+    except Exception:
+        pass
 
     return {
         "status": "success",
@@ -537,7 +653,10 @@ class BulkDeleteRequest(BaseModel):
 
 
 @router.post("/bulk-delete")
-async def bulk_delete_signals(req: BulkDeleteRequest):
+async def bulk_delete_signals(
+    req: BulkDeleteRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     """
     Multi-delete + datewise clear. Selectors combine with AND:
     explicit IDs ∪ (FSM + audit records matching underlying/strategy/status/before_ms).
@@ -604,9 +723,13 @@ async def bulk_delete_signals(req: BulkDeleteRequest):
         except Exception as e:
             logger.warning("bulk_delete_item_failed", signal_id=sid, error=str(e))
 
+    _email = _operator_email(user)
+    logger.info("signals_bulk_delete_requested", user_email=_email, requested=len(ids))
     try:
         await signal_sse_hub.broadcast(
-            "signals_bulk_deleted", {"signal_ids": deleted, "count": len(deleted)}, priority="P0"
+            "signals_bulk_deleted",
+            {"signal_ids": deleted, "count": len(deleted), "by": _email},
+            priority="P0",
         )
     except Exception:
         pass
@@ -621,15 +744,22 @@ async def bulk_delete_signals(req: BulkDeleteRequest):
 
 
 @router.delete("/{signal_id}")
-async def delete_signal_by_id(signal_id: str):
+async def delete_signal_by_id(
+    signal_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     """
     Authority to delete a signal: removes from FSM, Audit Ledger, Supabase,
     squares off any open paper position, and broadcasts signal_deleted event.
     """
+    _email = _operator_email(user)
+    logger.info("signal_delete_requested", signal_id=signal_id, user_email=_email)
     res = await _delete_signal_core(signal_id)
 
-    # Broadcast SSE
-    await signal_sse_hub.broadcast("signal_deleted", {"signal_id": signal_id}, priority="P0")
+    # Broadcast SSE (P0-5: include operator for audit trail)
+    await signal_sse_hub.broadcast(
+        "signal_deleted", {"signal_id": signal_id, "by": _email}, priority="P0"
+    )
 
     return {
         "status": "success",
@@ -642,11 +772,16 @@ async def delete_signal_by_id(signal_id: str):
 # ── 6. 1-CLICK PAPER TRADING EXECUTION ────────────────────────────────
 
 @router.post("/{signal_id}/execute-paper")
-async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None = None):
+async def execute_signal_paper(
+    signal_id: str,
+    req: ExecutePaperRequest | None = None,
+    user: AuthUser = Depends(get_current_user),
+):
     """
     1-Click manual execution of any active signal into the Paper Trading Engine.
     Fails closed if the exchange session is closed.
     """
+    _email = _operator_email(user)
     from app.services.calendar_service import calendar_service
     perm = calendar_service.can_trade_now()
     if not perm.allowed:
@@ -654,6 +789,7 @@ async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None =
             status_code=400,
             detail=f"Market is closed ({perm.reason}: NSE trading hours 09:15 - 15:30 IST). Manual paper execution is disabled.",
         )
+    logger.info("paper_execute_requested", signal_id=signal_id, user_email=_email)
 
     try:
         lots = req.lots if req else None
@@ -668,13 +804,17 @@ async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None =
         if not result.success or result.status == "REJECTED":
             raise HTTPException(status_code=400, detail=result.message)
 
-        sig = signal_fsm.get(signal_id)
-        is_bearish = "BEARISH" in (sig.direction if sig else "") or "PUT" in (sig.direction if sig else "")
-        side_val = "SELL" if is_bearish else "BUY"
+        # Long options are always bought: report the engine's actual action,
+        # never a direction-derived SELL (a PUT is still a BUY of the option).
+        _side_raw = str(getattr(result, "side", "") or "").upper()
+        side_val = "SELL" if _side_raw.startswith("SELL") else "BUY"
 
-        # Broadcast P0 execution event
-        await signal_sse_hub.broadcast("paper_execution", result.model_dump(), priority="P0")
+        # Broadcast P0 execution event (P0-5: include operator for audit trail)
+        _exec_payload = result.model_dump()
+        _exec_payload["executed_by"] = _email
+        await signal_sse_hub.broadcast("paper_execution", _exec_payload, priority="P0")
         res_data = result.model_dump()
+        res_data["executed_by"] = _email
         res_data["paper_order"] = {
             "order_id": result.order_id,
             "status": result.status,
@@ -694,11 +834,16 @@ async def execute_signal_paper(signal_id: str, req: ExecutePaperRequest | None =
 # ── 7. AUTO-DETECT LIVE SETUP (PRE-FILL GENERATOR) ────────────────────
 
 @router.post("/auto-detect")
-async def auto_detect_setup(req: AutoDetectRequest):
+async def auto_detect_setup(
+    req: AutoDetectRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     """
     Evaluates live candles and indicators to automatically pre-fill realistic Entry, SL, and Target levels.
     Returns detected=False with baseline levels when no setup triggers (never 500s on empty).
     """
+    _email = _operator_email(user)
+    logger.info("auto_detect_requested", underlying=req.underlying, user_email=_email)
     ensure_market_open_or_raise_http(detail_prefix="Auto-detect setup blocked")
     try:
         u = validate_underlying(req.underlying)
@@ -711,9 +856,18 @@ async def auto_detect_setup(req: AutoDetectRequest):
         selected = matched[0] if matched else (candidates[0] if candidates else None)
 
         if selected:
+            _cand = selected.model_dump()
+            try:
+                await signal_sse_hub.broadcast(
+                    "auto_detect",
+                    {"underlying": u, "detected": True, "by": _email},
+                    priority="P2",
+                )
+            except Exception:
+                pass
             return {
                 "detected": True,
-                "candidate": selected.model_dump(),
+                "candidate": _cand,
                 "message": f"Detected {selected.strategy} {selected.direction} on {req.underlying}",
             }
 
@@ -731,6 +885,9 @@ async def auto_detect_setup(req: AutoDetectRequest):
             "candidate": manual_signal_service.build_baseline_candidate(u, req.strategy, req.timeframe, spot),
             "message": "No active setup triggered; populated baseline levels from spot price.",
         }
+    except HTTPException:
+        # A degraded feed raises 503 above — never downgrade it to 400.
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -738,14 +895,53 @@ async def auto_detect_setup(req: AutoDetectRequest):
 # ── 8. MANUAL SIGNAL GENERATION ───────────────────────────────────────
 
 @router.post("/generate")
-async def generate_signal(req: GenerateSignalRequest):
+async def generate_signal(
+    req: GenerateSignalRequest,
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
     """
     Manual authoritative signal generation with FSM registration, optional paper execution, and Telegram dispatch.
     Rejects unknown underlyings (422) and incoherent levels (400); never fabricates fills off fallback quotes.
+    P0-5: authenticated; allow_closed_market=True requires confirm=true + operator role.
     """
+    _email = _operator_email(user)
+    # P0-5 role gate BEFORE the market-session check (coordinate via imports; drift
+    # math itself stays in manual_signal_service owned by another agent).
+    _require_closed_market_privilege(user, req.allow_closed_market, req.confirm)
     ensure_market_open_or_raise_http(allow_closed=req.allow_closed_market, detail_prefix="Manual signal generation blocked")
+    logger.info(
+        "signal_generate_requested",
+        user_email=_email,
+        underlying=req.underlying or req.instrument_id,
+        allow_closed=req.allow_closed_market,
+    )
     try:
-        return await manual_signal_service.generate(req)
+        # Idempotency-Key header (or body field) → same key returns the original signal.
+        header_key: str | None = None
+        try:
+            header_key = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key")
+        except Exception:
+            header_key = None
+        result = await manual_signal_service.generate(req, idempotency_key=header_key or req.idempotency_key)
+        # P0-5: audit + SSE payload carry the operator identity (manual service owns
+        # drift math; we only annotate provenance here via imports).
+        try:
+            result["created_by"] = _email
+            _sig = (result.get("signal") or {})
+            _sid = _sig.get("signal_id", "unknown")
+        except Exception:
+            _sid = "unknown"
+        logger.info("signal_generated", signal_id=_sid, user_email=_email)
+        try:
+            await signal_sse_hub.broadcast(
+                "signal_created_audit",
+                {"signal_id": _sid, "created_by": _email, "allow_closed_market": bool(req.allow_closed_market)},
+                priority="P0",
+            )
+        except Exception:
+            pass
+        return result
     except InvalidManualSignal as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
@@ -794,7 +990,11 @@ def list_strategy_engines():
 
 @router.post("/preview")
 def preview_signal(req: PreviewSignalRequest):
-    """Generate a Telegram alert formatted preview without publishing."""
+    """Generate a Telegram alert formatted preview without publishing.
+
+    P0-5: preview fabricates IDs for display only — no market validation is
+    performed and nothing is persisted. Do not treat as a tradeable signal.
+    """
     from app.institutional.telegram_notifications import SignalEvent
     from app.institutional.telegram_templates import render_event_message
 
@@ -826,6 +1026,10 @@ def preview_signal(req: PreviewSignalRequest):
         "instrument": ev.instrument,
         "preview": text,
         "event": ev.model_dump(),
+        # P0-5 provenance: fabricated preview, never persisted, never validated.
+        "disclaimer": "Preview only — no market validation performed; signal_id is fabricated and never persisted. Not tradeable.",
+        "persisted": False,
+        "market_validated": False,
     }
 
 
@@ -894,9 +1098,12 @@ def toggle_kill_switch(req: KillSwitchToggleRequest, user: AuthUser = Depends(ge
 
 @router.get("/feed-health")
 def get_feed_health():
-    """Returns per-instrument feed circuit health states."""
+    """Returns authoritative system-wide and per-instrument feed health states."""
+    from app.signals.safety.feed_health_monitor import feed_health_monitor
     from app.signals.safety.feed_circuit import feed_circuit
-    return {"states": feed_circuit.all_states()}
+    telemetry = feed_health_monitor.get_telemetry()
+    telemetry["states"] = feed_circuit.all_states()
+    return telemetry
 
 
 # ── 13. SINGLE SIGNAL QUERY (FALLTHROUGH) ─────────────────────────────

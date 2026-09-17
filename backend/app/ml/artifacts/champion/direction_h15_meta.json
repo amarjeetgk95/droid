@@ -1,0 +1,18 @@
+{
+  "model_version": "direction_h15_v1_challenger",
+  "horizon_minutes": 15,
+  "feature_schema": "f28-v3",
+  "label_schema": "direction_3class_15m",
+  "dataset_version": "candidates_v3",
+  "n_train": 1335,
+  "n_val": 334,
+  "validation_accuracy": 0.8293,
+  "validation_log_loss": 0.6159,
+  "validation_brier_score": 0.3366,
+  "trained_at_utc": "2026-09-17T11:45:25.855544+00:00",
+  "classes": [
+    "BEARISH",
+    "NEUTRAL",
+    "BULLISH"
+  ]
+}

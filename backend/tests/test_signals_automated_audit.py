@@ -11,6 +11,9 @@ from app.signals.outcome_tracker import outcome_tracker
 from app.signals.audit_ledger import signal_audit_ledger
 from app.signals.paper_engine import signal_paper_engine
 from app.services.paper_service import paper_service
+from tests.conftest import chain_contract, seed_chain_mark
+
+CE_SYMBOL = "NSE:NIFTY24DEC24850CE"
 
 
 @pytest.fixture
@@ -43,7 +46,7 @@ def reset_all():
 
 
 @pytest.mark.asyncio
-async def test_automated_paper_execution_on_signal_confirmation():
+async def test_automated_paper_execution_on_signal_confirmation(paper_fills_from_marks):
     # 1. Create an ARMED signal
     sig = SignalInstance(
         underlying="NIFTY",
@@ -61,12 +64,7 @@ async def test_automated_paper_execution_on_signal_confirmation():
         risk_reward_t1=1.5,
         risk_reward_t2=3.0,
         confidence=85.0,
-        option_contract={
-            "broker_symbol": "NSE:NIFTY24DEC24850CE",
-            "strike": 24850,
-            "option_type": "CE",
-            "lot_size": 75,
-        },
+        option_contract=chain_contract(CE_SYMBOL, 24850, "CE", premium=150.0),
         fsm_state="ARMED",
     )
     signal_fsm.register(sig)
@@ -86,6 +84,8 @@ async def test_automated_paper_execution_on_signal_confirmation():
         lots=1,
         status="ARMED",
     )
+    # The broker is quoting this contract — the fill must come from here.
+    seed_chain_mark(CE_SYMBOL, 150.0, strike=24850, option_type="CE")
 
     # 2. Simulate price crossing trigger -> 24860.0
     events = await outcome_tracker.process_price_update_async("NIFTY", Decimal("24860.0"))
@@ -108,7 +108,7 @@ async def test_automated_paper_execution_on_signal_confirmation():
 
 
 @pytest.mark.asyncio
-async def test_automated_square_off_target_hit_with_actual_pnl():
+async def test_automated_square_off_target_hit_with_actual_pnl(paper_fills_from_marks):
     # 1. Setup an active executed signal (2 lots so T1 is a genuine 50% partial)
     sig = SignalInstance(
         underlying="NIFTY",
@@ -127,12 +127,7 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
         risk_reward_t2=3.0,
         confidence=85.0,
         lots=2,
-        option_contract={
-            "broker_symbol": "NSE:NIFTY24DEC24850CE",
-            "strike": 24850,
-            "option_type": "CE",
-            "lot_size": 75,
-        },
+        option_contract=chain_contract(CE_SYMBOL, 24850, "CE", premium=150.0),
         fsm_state="ARMED",
     )
     signal_fsm.register(sig)
@@ -152,11 +147,14 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
         lots=1,
         status="ARMED",
     )
+    seed_chain_mark(CE_SYMBOL, 150.0, strike=24850, option_type="CE")
 
     # 2. Trigger and execute
     await outcome_tracker.process_price_update_async("NIFTY", Decimal("24855.0"))
 
-    # 3. Simulate price rising to Target 1 -> 24935.0
+    # 3. Simulate price rising to Target 1 -> 24935.0. The option leg is repriced
+    #    by the broker, not by the index move.
+    seed_chain_mark(CE_SYMBOL, 200.0, strike=24850, option_type="CE")
     exit_events = await outcome_tracker.process_price_update_async("NIFTY", Decimal("24935.0"))
     assert len(exit_events) == 1
     assert exit_events[0]["event"] == "TARGET_1_HIT"
@@ -174,6 +172,7 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
     assert signal_audit_ledger.get_summary_metrics()["open_trades"] == 1
 
     # 4. Drive the runner to Target 2 -> full close as WON with option-domain PnL
+    seed_chain_mark(CE_SYMBOL, 260.0, strike=24850, option_type="CE")
     final_events = await outcome_tracker.process_price_update_async("NIFTY", Decimal("25005.0"))
     assert len(final_events) == 1
     assert final_events[0]["event"] == "TARGET_2_HIT"
@@ -188,7 +187,7 @@ async def test_automated_square_off_target_hit_with_actual_pnl():
 
 
 @pytest.mark.asyncio
-async def test_automated_square_off_stop_loss_hit_with_loss_pnl():
+async def test_automated_square_off_stop_loss_hit_with_loss_pnl(paper_fills_from_marks):
     # 1. Setup an active executed signal
     sig = SignalInstance(
         underlying="NIFTY",
@@ -206,12 +205,7 @@ async def test_automated_square_off_stop_loss_hit_with_loss_pnl():
         risk_reward_t1=1.5,
         risk_reward_t2=3.0,
         confidence=85.0,
-        option_contract={
-            "broker_symbol": "NSE:NIFTY24DEC24850CE",
-            "strike": 24850,
-            "option_type": "CE",
-            "lot_size": 75,
-        },
+        option_contract=chain_contract(CE_SYMBOL, 24850, "CE", premium=150.0),
         fsm_state="ARMED",
     )
     signal_fsm.register(sig)
@@ -231,11 +225,13 @@ async def test_automated_square_off_stop_loss_hit_with_loss_pnl():
         lots=1,
         status="ARMED",
     )
+    seed_chain_mark(CE_SYMBOL, 150.0, strike=24850, option_type="CE")
 
     # 2. Trigger and execute
     await outcome_tracker.process_price_update_async("NIFTY", Decimal("24855.0"))
 
-    # 3. Simulate price falling to Stop Loss -> 24775.0
+    # 3. Simulate price falling to Stop Loss -> 24775.0 (broker reprices the leg)
+    seed_chain_mark(CE_SYMBOL, 95.0, strike=24850, option_type="CE")
     exit_events = await outcome_tracker.process_price_update_async("NIFTY", Decimal("24775.0"))
     assert len(exit_events) == 1
     assert exit_events[0]["event"] == "STOP_LOSS_HIT"
@@ -254,7 +250,18 @@ async def test_automated_square_off_stop_loss_hit_with_loss_pnl():
     assert audit_rec.exit_price > 0
 
 
-def test_signals_audit_api_endpoints(client):
+def test_signals_audit_api_endpoints(client, mock_market_feed, paper_fills_from_marks):
+    # Fail-closed policy: publish the broker quote this setup resolves to, so
+    # both the fill and the live MTM have a real chain mark to price against
+    # instead of depending on ambient chain state.
+    from app.signals.contract_resolver import resolve_option_contract
+
+    _contract = resolve_option_contract("NIFTY", 24870.0, "CE", strike_offset=0)
+    seed_chain_mark(
+        _contract.broker_symbol, 150.0,
+        underlying="NIFTY", strike=float(_contract.strike or 0), option_type="CE",
+    )
+
     # 1. Generate signal with paper execution
     res = client.post("/api/v1/signals/generate", json={
         "instrument_id": "NIFTY",
@@ -293,6 +300,12 @@ def test_signals_audit_api_endpoints(client):
 
 @pytest.mark.asyncio
 async def test_live_mark_to_market_pnl_updates_on_open_trade():
+    """MTM revalues an open option leg from the broker's own quote.
+
+    Fail-closed: a spot move alone must never revalue an option position, and
+    with no chain mark the record carries no MTM at all. Once a real mark
+    arrives, P&L is premium-domain and exact.
+    """
     sig = SignalInstance(
         underlying="NIFTY",
         strategy="BREAKOUT",
@@ -309,7 +322,7 @@ async def test_live_mark_to_market_pnl_updates_on_open_trade():
         risk_reward_t1=1.5,
         risk_reward_t2=3.0,
         confidence=85.0,
-        option_contract={"broker_symbol": "NSE:NIFTY24DEC24850CE", "strike": 24850, "option_type": "CE", "lot_size": 75},
+        option_contract=chain_contract(CE_SYMBOL, 24850, "CE", premium=150.0),
         fsm_state="ARMED",
     )
     signal_fsm.register(sig)
@@ -338,38 +351,42 @@ async def test_live_mark_to_market_pnl_updates_on_open_trade():
         side="BUY",
         margin_used=150.0 * 75,
     )
-    from app.signals.fill_reconciler import option_fill_reconciler
-
-    # 1. Simulate spot rising by +30 points to 24880.0: MTM revalues the OPTION
-    # premium via Black76 (premium domain), never spot-minus-premium. The
-    # displayed current_price is the premium estimate, never the spot index.
+    # 1. Spot rises +30 with NO chain mark: the option leg must stay unvalued.
     updated = signal_audit_ledger.update_live_quote("NIFTY", 24880.0)
     assert len(updated) == 1
     rec = updated[0]
-    expected_prem = option_fill_reconciler.estimate_option_premium(
-        spot=24880.0, strike=24850, option_type="CE")
-    assert rec.current_price == pytest.approx(expected_prem)
-    assert rec.unrealized_pnl_points == pytest.approx(expected_prem - 150.0)
-    assert rec.unrealized_pnl_inr == pytest.approx((expected_prem - 150.0) * 75)
-    assert rec.is_winner is True
-    assert rec.total_pnl_inr == pytest.approx((expected_prem - 150.0) * 75)
-    assert rec.live_duration_str is not None
+    assert rec.current_price is None
+    assert rec.unrealized_pnl_inr is None
+    assert rec.economics_unavailable is True
+    assert rec.mark_source == "UNAVAILABLE"
 
-    # 2. Simulate spot falling by -20 points to 24830.0 (below fill-domain value)
+    # 2. The broker quotes the contract at 165.0: now MTM is real and exact.
+    seed_chain_mark(CE_SYMBOL, 165.0, strike=24850, option_type="CE")
+    signal_audit_ledger.update_live_quote("NIFTY", 24880.0)
+    rec = signal_audit_ledger.get(sig.signal_id)
+    assert rec.mark_source == "CHAIN_LTP"
+    assert rec.current_price == pytest.approx(165.0)
+    assert rec.unrealized_pnl_points == pytest.approx(15.0)
+    assert rec.unrealized_pnl_inr == pytest.approx(15.0 * 75)
+    assert rec.is_winner is True
+    assert rec.total_pnl_inr == pytest.approx(15.0 * 75)
+    assert rec.live_duration_str is not None
+    assert rec.economics_unavailable is False
+
+    # 3. Broker marks the leg down to 120.0 -> premium-domain loss.
+    seed_chain_mark(CE_SYMBOL, 120.0, strike=24850, option_type="CE")
     signal_audit_ledger.update_live_quote("NIFTY", 24830.0)
     rec2 = signal_audit_ledger.get(sig.signal_id)
-    expected_prem2 = option_fill_reconciler.estimate_option_premium(
-        spot=24830.0, strike=24850, option_type="CE")
-    assert rec2.current_price == pytest.approx(expected_prem2)
-    assert rec2.unrealized_pnl_points == pytest.approx(expected_prem2 - 150.0)
-    assert rec2.unrealized_pnl_inr == pytest.approx((expected_prem2 - 150.0) * 75)
+    assert rec2.current_price == pytest.approx(120.0)
+    assert rec2.unrealized_pnl_points == pytest.approx(-30.0)
+    assert rec2.unrealized_pnl_inr == pytest.approx(-30.0 * 75)
     assert rec2.is_winner is False
 
-    # 3. Test summary metrics aggregation
+    # 4. Test summary metrics aggregation
     summary = signal_audit_ledger.get_summary_metrics()
     assert summary["open_trades"] == 1
-    assert summary["net_unrealized_pnl_inr"] == pytest.approx((expected_prem2 - 150.0) * 75)
-    assert summary["total_pnl_inr"] == pytest.approx((expected_prem2 - 150.0) * 75)
+    assert summary["net_unrealized_pnl_inr"] == pytest.approx(-30.0 * 75)
+    assert summary["total_pnl_inr"] == pytest.approx(-30.0 * 75)
     assert summary["live_losing_trades"] == 1
     assert summary["live_winning_trades"] == 0
 

@@ -1,11 +1,17 @@
 """Immutable forecast explainability bundles for signals + research forecasts.
 
-Pure functions only: no I/O, no imports from app modules (to avoid cycles),
-never throw — every helper degrades gracefully on None / malformed input.
+Pure functions only: no I/O, never throw — every helper degrades gracefully on
+None / malformed input.
+
+The ARMED bar is single-sourced from ``app.signals.confluence`` (which reads
+``config/scoring_weights.json``); the confluence import chain does not import
+this module, so there is no cycle.
 """
 from __future__ import annotations
 
 from typing import Any
+
+from app.signals.confluence import ARMED_THRESHOLD
 
 STRATEGY_RULES: dict[str, str] = {
     "BREAKOUT": "Buy strength when price breaks above resistance with strong volume.",
@@ -20,7 +26,6 @@ STRATEGY_RULES: dict[str, str] = {
 }
 
 WEIGHTS_VERSION_DEFAULT = 2
-THRESHOLD_ARMED_DEFAULT = 70.0
 
 
 def _num(v: Any, default: float | None = None) -> float | None:
@@ -273,13 +278,24 @@ def build_signal_explain(
         if not regime or regime == "None":
             regime = "RANGE"
 
-        fused = _num(fused_score, 50.0) or 50.0
-        try:
-            fused = round(max(15.0, min(98.0, fused)), 1)
-        except Exception:
-            fused = 50.0
+        # Fused None when missing (never 50.0 default): absence is not evidence.
+        # The ARMED bar defaults to the single-source ARMED_THRESHOLD; an
+        # explicit caller override is honoured for provenance only.
+        armed_thr = _num(thresholds.get("armed"), ARMED_THRESHOLD) or ARMED_THRESHOLD
+        fused_raw = _num(fused_score, None)
+        if fused_raw is None:
+            fused = None
+            state = "VALIDATED"
+        else:
+            try:
+                fused = round(max(15.0, min(98.0, fused_raw)), 1)
+            except Exception:
+                fused = None
+            try:
+                state = "ARMED" if (fused is not None and fused >= armed_thr) else "VALIDATED"
+            except Exception:
+                state = "VALIDATED"
 
-        armed_thr = _num(thresholds.get("armed"), THRESHOLD_ARMED_DEFAULT) or THRESHOLD_ARMED_DEFAULT
         weights_version = weights.get("version", WEIGHTS_VERSION_DEFAULT)
         try:
             weights_version = int(weights_version)
@@ -379,7 +395,7 @@ def build_signal_explain(
             pass
 
         try:
-            state = "ARMED" if fused >= armed_thr else "VALIDATED"
+            state = "ARMED" if (fused is not None and fused >= armed_thr) else "VALIDATED"
         except Exception:
             state = "VALIDATED"
 
@@ -408,11 +424,55 @@ def build_signal_explain(
         if not why:
             why = ["Signal passed confluence checks across chart, trend and options data."]
 
+        # gates_passed from real results: domains with non-null scores that
+        # cleared; never hardcoded.
+        try:
+            _gates = []
+            for _m in maths:
+                try:
+                    if _m.get("score") is not None:
+                        _gates.append(str(_m.get("domain")))
+                except Exception:
+                    continue
+            # rejected gates are those explicitly rejected by gate layer.
+            _rej_set = {str(_str(g)).lower() for g in rejected}
+            gates_passed = [g for g in _gates if g.lower() not in _rej_set]
+        except Exception:
+            gates_passed = []
+
+        # Decimal strings for money/price snapshot values.
+        try:
+            from decimal import Decimal as _Dec
+            for _k in ("spot", "current_price", "vwap", "trigger", "stop_loss", "target_1", "target_2"):
+                if _k in inputs_snapshot and inputs_snapshot[_k] is not None:
+                    try:
+                        inputs_snapshot[_k] = format(_Dec(str(inputs_snapshot[_k])), "f")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Provenance {feed, chain, drift, seq, kill}.
+        try:
+            provenance = dict(data_health.get("provenance", {}) if isinstance(data_health.get("provenance"), dict) else {})
+            provenance.setdefault("feed", str(data_health.get("feed_status", data_health.get("status", "UNKNOWN"))))
+            provenance.setdefault("chain", str(data_health.get("chain_mark_status", "UNKNOWN")))
+            provenance.setdefault("drift", str(data_health.get("clock_drift_ms", "UNKNOWN")))
+            provenance.setdefault("seq", str(data_health.get("seq", inputs_snapshot.get("seq", "UNKNOWN"))))
+            try:
+                from app.signals.safety.kill_switch import kill_switch as _ks
+                provenance.setdefault("kill", "ACTIVE" if _ks.is_active() else "OFF")
+            except Exception:
+                provenance.setdefault("kill", "UNKNOWN")
+            data_health["provenance"] = provenance
+        except Exception:
+            pass
+
         return {
             "verdict": {"direction": direction, "confidence": fused, "state": state},
             "maths": maths,
             "penalties": penalties,
-            "gates_passed": ["trigger_integrity", "rsi_confirmation", "risk_engine"],
+            "gates_passed": gates_passed,
             "gates_rejected_by_others": gates_rejected_by_others,
             "inputs_snapshot": inputs_snapshot,
             "why_layman": why[:7],
@@ -425,7 +485,7 @@ def build_signal_explain(
     except Exception:
         try:
             return {
-                "verdict": {"direction": "UNKNOWN", "confidence": _num(fused_score, 50.0) or 50.0, "state": "VALIDATED"},
+                "verdict": {"direction": "UNKNOWN", "confidence": _num(fused_score, None), "state": "VALIDATED"},
                 "maths": [],
                 "penalties": ["Explain degraded — inputs unavailable"],
                 "gates_passed": [],
@@ -436,7 +496,7 @@ def build_signal_explain(
                 "data_health": {"degraded": True},
                 "strategy_rule": "Trade the confirmed direction with defined risk.",
                 "weights_version": WEIGHTS_VERSION_DEFAULT,
-                "threshold_armed": THRESHOLD_ARMED_DEFAULT,
+                "threshold_armed": ARMED_THRESHOLD,
             }
         except Exception:
             return {"verdict": {}, "maths": [], "penalties": [], "why_layman": []}
@@ -452,13 +512,8 @@ def build_forecast_explain(
 ) -> dict:
     """Build an immutable explain bundle for a research forecast. Pure, never throws."""
     try:
-        from app.research.trend_forecast import (
-            LAYER_WEIGHTS as _LW,  # local import, no cycle at runtime
-        )
-        _weights = dict(_LW)
-    except Exception:
+        # No app.research import (pure, no cycles): weights from payload or default.
         _weights = {"mtf_alignment": 0.30, "indicators": 0.30, "ml": 0.25, "options": 0.10, "structure": 0.05}
-    try:
         ens = dict(ensemble_result) if isinstance(ensemble_result, dict) else {}
         if isinstance(ens.get("layer_weights"), dict) and len(ens["layer_weights"]) == 5:
             _weights = dict(ens["layer_weights"])
@@ -646,11 +701,44 @@ def build_forecast_explain(
         except Exception:
             pass
 
+        # Decimal strings for price snapshot (no float loss). max_pain stays a
+        # number: it is an options-context statistic, not a traded price.
+        try:
+            from decimal import Decimal as _Dec2
+            for _k in ("spot", "current_price", "current_price_alias", "vwap"):
+                if _k in inputs_snapshot and inputs_snapshot[_k] is not None:
+                    try:
+                        inputs_snapshot[_k] = format(_Dec2(str(inputs_snapshot[_k])), "f")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Provenance {feed, chain, drift, seq, kill} + gates from real layers.
+        try:
+            _prov = dict(data_health.get("provenance", {}) if isinstance(data_health.get("provenance"), dict) else {})
+            _prov.setdefault("feed", "UNKNOWN")
+            _prov.setdefault("chain", "UNKNOWN")
+            _prov.setdefault("drift", "UNKNOWN")
+            _prov.setdefault("seq", "UNKNOWN")
+            try:
+                from app.signals.safety.kill_switch import kill_switch as _ks2
+                _prov.setdefault("kill", "ACTIVE" if _ks2.is_active() else "OFF")
+            except Exception:
+                _prov.setdefault("kill", "UNKNOWN")
+            data_health["provenance"] = _prov
+        except Exception:
+            pass
+        try:
+            _gp = [m.get("domain") for m in maths if isinstance(m, dict) and m.get("score") is not None]
+        except Exception:
+            _gp = []
+
         return {
             "verdict": {"direction": direction, "confidence": confidence, "state": _str(ens.get("forecast_horizon"), _str(ens.get("timeframe"), "1h"))},
             "maths": maths,
             "penalties": penalties,
-            "gates_passed": [],
+            "gates_passed": _gp,
             "gates_rejected_by_others": [],
             "inputs_snapshot": inputs_snapshot,
             "why_layman": why,

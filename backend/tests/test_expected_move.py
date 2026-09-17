@@ -114,6 +114,8 @@ class TestExpectedMoveEngine:
             stop_loss_points=70.0,
             current_iv=0.165,
             expected_move_projection=proj,
+            # Fail-closed selection: candidates price off the broker chain only.
+            option_chain_quotes={53000.0: 260.0, 53100.0: 205.0, 53200.0: 160.0},
         )
         assert result is not None
         assert result.expected_move_projection is not None

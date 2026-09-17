@@ -32,9 +32,9 @@ export const TaskRoutingGrid = memo(function TaskRoutingGrid({ settings, onChang
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {(Object.keys(TASK_LABELS) as AITaskId[]).map((task) => (
             <div key={task} className="bg-secondary/30 border border-border/40 rounded-lg p-3 space-y-1.5">
-              <div className="text-xs font-medium text-foreground">{TASK_LABELS[task].label}</div>
+              <label htmlFor={`task-model-${task}`} className="text-xs font-medium text-foreground block">{TASK_LABELS[task].label}</label>
               <div className="text-[11px] text-muted-foreground">{TASK_LABELS[task].hint}</div>
-              <input type="text" value={(settings as unknown as { taskModels: Record<string, string> }).taskModels?.[task] || 'auto'} onChange={(e) => handleTaskModel(task, e.target.value)} placeholder="auto or model id" className="w-full bg-card border border-border/70 rounded-md px-2 py-1.5 text-xs font-mono focus:outline-hidden focus:border-ring" />
+              <input id={`task-model-${task}`} type="text" value={(settings as unknown as { taskModels: Record<string, string> }).taskModels?.[task] || 'auto'} onChange={(e) => handleTaskModel(task, e.target.value)} placeholder="auto or model id" className="w-full bg-card border border-border/70 rounded-md px-2 py-1.5 text-xs font-mono focus:outline-hidden focus:border-ring" />
               <div className="text-[10px] text-muted-foreground">Use <span className="font-mono">auto</span> for best free {TASK_LABELS[task].hint}</div>
             </div>
           ))}

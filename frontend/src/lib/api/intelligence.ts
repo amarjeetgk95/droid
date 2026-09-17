@@ -1,5 +1,5 @@
 import { isApiErrorStatus, type ApiCore } from './client';
-import type { HourForecast } from '@/components/research/ForecastCard';
+import type { HourForecast, PortfolioGreeksSummary } from '@/lib/types';
 
 /**
  * 1H forecast v2 contract (P0): v1 keys plus optional v2 honesty fields
@@ -79,8 +79,16 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<HourForecastV2>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
   },
 
+    /**
+     * Consolidated portfolio Greeks ledger across horizons. The endpoint
+     * returns `PortfolioGreeksSummary` directly (no envelope); the optional
+     * `data?: never` field is declared only so the drawer's defensive
+     * `res.data ?? res` unwrap keeps typechecking against the real contract.
+     */
     async getPortfolioGreeksSummary() {
-    return core.request<any>('/api/v1/options-intelligence/portfolio-greeks/summary');
+    return core.request<PortfolioGreeksSummary & { data?: never }>(
+      '/api/v1/options-intelligence/portfolio-greeks/summary',
+    );
   },
 
     async getResearchChartState(instrument: string = 'NIFTY 50', timeframe: string = '5m') {

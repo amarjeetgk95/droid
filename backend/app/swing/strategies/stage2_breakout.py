@@ -93,7 +93,11 @@ class Stage2OptionsStrategy(BaseSwingStrategy):
         greeks = selection.selected_greeks
         contract = selection.selected_contract
         live_prem = float(contract.live_premium) if getattr(contract, "live_premium", None) is not None else None
-        entry_premium = max(1.0, round(live_prem or greeks.theoretical_price, 2))
+        # Fail-closed: no live chain premium = no setup. Never size or level
+        # a trade off a Black-76 theoretical — that fabricates entry economics.
+        if live_prem is None or live_prem <= 0:
+            return None
+        entry_premium = max(1.0, round(live_prem, 2))
 
         delta_mag = max(0.35, min(0.85, abs(greeks.delta)))
         premium_risk = max(5.0, round(stop_dist * delta_mag, 2))

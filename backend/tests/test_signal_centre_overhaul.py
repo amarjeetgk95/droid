@@ -84,7 +84,7 @@ class TestInstitutionalSignalCentre:
     def test_5_strategies_detection(self):
         # Versioned registry contract: renames must update this test + REGISTRY_VERSION,
         # never silently change the traded portfolio.
-        assert REGISTRY_VERSION == "2026.09.09-11+2legacy-p1"
+        assert REGISTRY_VERSION == "2026.09.17-11+1alias-p2"
         assert set(INTRADAY_STRATEGIES.keys()) == set(EXPECTED_INTRADAY_STRATEGIES) == {
             "REGIME_ADAPTIVE_TREND",
             "VOLATILITY_BREAKOUT",
@@ -100,19 +100,35 @@ class TestInstitutionalSignalCentre:
             "MOMENTUM_REACCELERATION",
             "GAMMA_SPIKE",
         }
-        # 11 active + 2 legacy aliases (BREAKOUT, EMA_RIBBON)
-        assert len(STRATEGY_REGISTRY) == 13
-        assert set(STRATEGY_REGISTRY.keys()) >= set(INTRADAY_STRATEGIES.keys()) | set(SCALP_STRATEGIES.keys()) | {"BREAKOUT", "EMA_RIBBON"}
+        # P1: 11 active + BREAKOUT alias (same instance as VOLATILITY_BREAKOUT) = 12;
+        # EMA_RIBBON demoted (importable, disabled, not auto-scanned).
+        assert len(STRATEGY_REGISTRY) == 12
+        assert set(STRATEGY_REGISTRY.keys()) >= set(INTRADAY_STRATEGIES.keys()) | set(SCALP_STRATEGIES.keys()) | {"BREAKOUT"}
+        assert "EMA_RIBBON" not in STRATEGY_REGISTRY
+        assert STRATEGY_REGISTRY["BREAKOUT"] is STRATEGY_REGISTRY["VOLATILITY_BREAKOUT"]
+        from app.signals.strategies import STRATEGY_ENABLED, DEMOTED_STRATEGIES
+        assert STRATEGY_ENABLED.get("EMA_RIBBON") is False
+        assert "EMA_RIBBON" in DEMOTED_STRATEGIES
 
-        # Test Breakout
+        # Test Breakout (P1: squeeze + close-beyond + vol>=1.5x, fail-closed)
         ctx = StrategyContext(
             underlying="NIFTY",
             spot_price=Decimal("24900.0"),
+            timeframe="5M",
+            candles=[
+                {"high": 24780.0, "low": 24750.0, "open": 24755.0, "close": 24770.0},
+                {"high": 24800.0, "low": 24770.0, "open": 24772.0, "close": 24790.0},
+                {"high": 24810.0, "low": 24780.0, "open": 24785.0, "close": 24800.0},
+                {"high": 24860.0, "low": 24850.0, "open": 24852.0, "close": 24858.0},
+                {"high": 24865.0, "low": 24855.0, "open": 24857.0, "close": 24862.0},
+                {"high": 24870.0, "low": 24860.0, "open": 24862.0, "close": 24868.0},
+                {"high": 24910.0, "low": 24885.0, "open": 24890.0, "close": 24900.0},
+            ],
             indicators={
-                "support_resistance": {"resistance": ["24880.0"], "support": ["24700.0"]},
+                "support_resistance": {"resistance": ["24890.0"], "support": ["24700.0"]},
                 "volume_ratio": 1.6,
                 "breakout_pressure": 80.0,
-                "atr": 40.0,
+                "atr": 20.0,
             },
             mtf={"overall_bias": "BULLISH", "alignment_score": 85.0},
             fno={"pcr": 1.2},
@@ -141,7 +157,7 @@ class TestInstitutionalSignalCentre:
         assert "win_rate_pct" in data
         assert "strategy_breakdown" in data
 
-    def test_generate_and_execute_paper_signal(self, client):
+    def test_generate_and_execute_paper_signal(self, client, mock_market_feed, paper_fills_from_marks):
         gen_payload = {
             "underlying": "NIFTY",
             "strategy": "BREAKOUT",
@@ -161,6 +177,16 @@ class TestInstitutionalSignalCentre:
         sig_data = res.json()
         sig_id = sig_data["signal"]["signal_id"]
         assert sig_data["signal"]["underlying"] == "NIFTY"
+
+        # Fail-closed policy: the 1-click execute needs a real broker quote for
+        # the resolved contract before it will fill.
+        from tests.conftest import seed_chain_mark
+
+        _opt = sig_data["signal"]["option_contract"]
+        seed_chain_mark(
+            _opt["broker_symbol"], 150.0,
+            underlying="NIFTY", strike=float(_opt.get("strike") or 0), option_type="CE",
+        )
 
         # 1-Click execute paper
         exec_res = client.post(f"/api/v1/signals/{sig_id}/execute-paper", json={"lots": 2})

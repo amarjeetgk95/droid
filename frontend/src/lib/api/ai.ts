@@ -1,5 +1,92 @@
 import type { ApiCore } from './client';
 
+async function streamChat(
+  core: ApiCore,
+  payload: import('../types').AIChatRequest,
+  onChunk: (chunk: import('../types').AIChatStreamChunk) => void,
+  onError: (err: string) => void,
+  onDone: () => void,
+  signal?: AbortSignal,
+) {
+  const url = `${core.getBaseUrl()}/api/v1/ai/chat/stream`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (core.getToken()) {
+    headers['Authorization'] = `Bearer ${core.getToken()}`;
+  }
+  if (payload.openrouter_api_key) {
+    headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
+  }
+  if (payload.gemini_api_key) {
+    headers['X-Gemini-Key'] = payload.gemini_api_key;
+  }
+  if (payload.openai_api_key) {
+    headers['X-OpenAI-Key'] = payload.openai_api_key;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      onError(`Server error ${response.status}: ${errText.slice(0, 300)}`);
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onError('No readable stream available in response.');
+      return;
+    }
+
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        const jsonStr = trimmed.slice(6).trim();
+        if (jsonStr === '[DONE]') {
+          onDone();
+          return;
+        }
+        try {
+          const chunk: import('../types').AIChatStreamChunk = JSON.parse(jsonStr);
+          onChunk(chunk);
+          if (chunk.type === 'done') {
+            onDone();
+          } else if (chunk.type === 'error') {
+            onError(chunk.delta || 'Unknown stream error');
+          }
+        } catch {
+          // Ignore parse errors on partial chunks
+        }
+      }
+    }
+    onDone();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      onDone();
+    } else {
+      onError(err.message || 'Stream connection failed.');
+    }
+  }
+}
+
 export function createAiApi(core: ApiCore) {
   return {
     async generateAIAnalysis(
@@ -113,8 +200,9 @@ export function createAiApi(core: ApiCore) {
     return core.request<{ data: any; error: string | null; meta: import('../types').ApiMeta }>(`/api/ai/models${qs ? `?${qs}` : ''}`);
   },
 
-    async getMarketBriefing(symbol: string, sessionType: string = 'PRE_MARKET') {
-    return core.request<{ data: import('../types').AIDailyBriefingResponse; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/briefing/${encodeURIComponent(symbol)}?session_type=${sessionType}`);
+    async getMarketBriefing(symbol: string | { instrument: string }, sessionType: string = 'PRE_MARKET') {
+    const instrument = typeof symbol === 'string' ? symbol : symbol.instrument;
+    return core.request<{ data: import('../types').AIDailyBriefingResponse; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/briefing/${encodeURIComponent(instrument)}?session_type=${sessionType}`);
   },
 
     async recommendOptionsStrategy(payload: import('../types').AIOptionsStrategyRequest) {
@@ -132,91 +220,87 @@ export function createAiApi(core: ApiCore) {
     return core.request<{ data: { provider: string; updated_at: string; free_only: boolean; models: import('../types').OpenRouterModel[]; default_model: import('../types').OpenRouterModel | null; using_cached: boolean }; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/models/refresh`, { method: 'POST' });
   },
 
-    async streamAIChat(
-    payload: import('../types').AIChatRequest,
-    onChunk: (chunk: import('../types').AIChatStreamChunk) => void,
-    onError: (err: string) => void,
-    onDone: () => void,
-    signal?: AbortSignal
-  ) {
-    const url = `${core.getBaseUrl()}/api/v1/ai/chat/stream`;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (core.getToken()) {
-      headers['Authorization'] = `Bearer ${core.getToken()}`;
-    }
-    if (payload.openrouter_api_key) {
-      headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
-    }
-    if (payload.gemini_api_key) {
-      headers['X-Gemini-Key'] = payload.gemini_api_key;
-    }
-    if (payload.openai_api_key) {
-      headers['X-OpenAI-Key'] = payload.openai_api_key;
-    }
+    streamAIChat: (
+      payload: import('../types').AIChatRequest,
+      onChunk: (chunk: import('../types').AIChatStreamChunk) => void,
+      onError: (err: string) => void,
+      onDone: () => void,
+      signal?: AbortSignal,
+    ) => streamChat(core, payload, onChunk, onError, onDone, signal),
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal,
+    async chatAi(payload: {
+      message: string;
+      context?: { instrument?: string; [key: string]: unknown };
+      symbol?: string;
+      provider?: string;
+      model?: string | null;
+      temperature?: number;
+      context_page?: string | null;
+      enable_tools?: boolean;
+      allow_paid?: boolean | null;
+      openrouter_api_key?: string | null;
+      gemini_api_key?: string | null;
+      openai_api_key?: string | null;
+    }) {
+      const instrument =
+        payload.symbol ??
+        (typeof payload.context?.instrument === 'string' ? payload.context.instrument : undefined);
+      const request: import('../types').AIChatRequest = {
+        messages: [{ role: 'user', content: payload.message }],
+        symbol: instrument,
+        provider: payload.provider,
+        model: payload.model ?? null,
+        temperature: payload.temperature,
+        context_page: payload.context_page ?? null,
+        enable_tools: payload.enable_tools,
+        allow_paid: payload.allow_paid ?? null,
+        openrouter_api_key: payload.openrouter_api_key ?? null,
+        gemini_api_key: payload.gemini_api_key ?? null,
+        openai_api_key: payload.openai_api_key ?? null,
+      };
+
+      let text = '';
+      let providerUsed: string | null = null;
+      let modelUsed: string | null = null;
+      let streamError: string | null = null;
+
+      await new Promise<void>((resolve) => {
+        void streamChat(
+          core,
+          request,
+          (chunk) => {
+            if (chunk.type === 'content' && chunk.delta) text += chunk.delta;
+            if (chunk.provider_used) providerUsed = chunk.provider_used;
+            if (chunk.model_used) modelUsed = chunk.model_used;
+          },
+          (err) => {
+            streamError = err;
+            resolve();
+          },
+          resolve,
+        );
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        onError(`Server error ${response.status}: ${errText.slice(0, 300)}`);
-        return;
-      }
+      if (!text && streamError) throw new Error(streamError);
+      return { reply: text, provider_used: providerUsed, model_used: modelUsed };
+    },
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        onError('No readable stream available in response.');
-        return;
-      }
-
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const jsonStr = trimmed.slice(6).trim();
-          if (jsonStr === '[DONE]') {
-            onDone();
-            return;
-          }
-          try {
-            const chunk: import('../types').AIChatStreamChunk = JSON.parse(jsonStr);
-            onChunk(chunk);
-            if (chunk.type === 'done') {
-              onDone();
-            } else if (chunk.type === 'error') {
-              onError(chunk.delta || 'Unknown stream error');
-            }
-          } catch {
-            // Ignore parse errors on partial chunks
-          }
-        }
-      }
-      onDone();
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        onDone();
-      } else {
-        onError(err.message || 'Stream connection failed.');
-      }
-    }
-  },
+    testAi(payload: Partial<{
+      provider: string;
+      symbol: string;
+      model: string;
+      apiKey: string;
+      base_url: string;
+      [key: string]: unknown;
+    }> = {}) {
+      const norm: Record<string, unknown> = { ...payload };
+      if (!norm.provider) norm.provider = 'openrouter';
+      if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
+      return core.request<{ data: { success: boolean; provider: string; model?: string; latency_ms?: number; schema_valid?: boolean; error?: string; hint?: string }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ai/test', {
+        method: 'POST',
+        body: JSON.stringify(norm),
+      });
+    },
 
     async testAIProvider(payload: {
     provider: string;

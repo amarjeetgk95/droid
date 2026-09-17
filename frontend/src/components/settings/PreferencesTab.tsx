@@ -1,29 +1,22 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import {
-  Palette,
-  Sliders,
-  Download,
-  Upload,
-  RotateCcw,
-  CheckCircle2,
-  AlertCircle,
-} from 'lucide-react';
-import { PreferencesSettings, AppSettings, exportSettingsJson, importSettingsJson } from '@/lib/settings';
+import { Palette, Sliders, Download, Upload, RotateCcw, RefreshCw } from 'lucide-react';
+import { PreferencesSettings, AppSettings, exportSettingsJson } from '@/lib/settings';
 import {
   SettingSection,
   SettingRow,
   SettingSelect,
   SettingSwitch,
+  FeedbackBanner,
 } from './ui/SettingPrimitives';
 
 interface Props {
   settings: PreferencesSettings;
   fullSettings: AppSettings;
   onChange: (updated: Partial<PreferencesSettings>) => void;
-  onFullSettingsChange: (newFull: AppSettings) => void;
-  onResetAll: () => void;
+  onImportJson: (jsonStr: string) => { success: boolean; error?: string };
+  onResetAll: () => Promise<{ success: boolean; error?: string }>;
   errors?: { path: string; message: string }[];
 }
 
@@ -31,13 +24,14 @@ export function PreferencesTab({
   settings,
   fullSettings,
   onChange,
-  onFullSettingsChange,
+  onImportJson,
   onResetAll,
   errors = [],
 }: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `preferences.${field}`)?.message;
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [includeSecretsInExport, setIncludeSecretsInExport] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
@@ -70,44 +64,42 @@ export function PreferencesTab({
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      try {
-        const content = event.target?.result as string;
-        const imported = importSettingsJson(content);
-        onFullSettingsChange(imported);
-        setMsg({ type: 'success', text: 'Configuration imported successfully.' });
-      } catch {
-        setMsg({ type: 'error', text: 'Invalid JSON backup format.' });
+      const content = event.target?.result as string;
+      // Provider validates the parsed payload with zod and only applies it when
+      // every value is valid — invalid backups are rejected with the reason.
+      const result = onImportJson(content);
+      if (result.success) {
+        setMsg({ type: 'success', text: 'Configuration imported. Review the values, then click Save all.' });
+      } else {
+        setMsg({ type: 'error', text: `Import rejected: ${result.error ?? 'invalid configuration file'}` });
       }
+    };
+    reader.onerror = () => {
+      setMsg({ type: 'error', text: 'Could not read the selected file.' });
     };
     reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleResetAll = async () => {
+    if (!confirm('Are you sure you want to restore all terminal settings to default values?')) return;
+    setResetting(true);
+    setMsg(null);
+    try {
+      const result = await onResetAll();
+      if (result.success) {
+        setMsg({ type: 'success', text: 'All settings restored to factory defaults.' });
+      } else {
+        setMsg({ type: 'error', text: result.error ?? 'Reset failed — settings were left unchanged.' });
+      }
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {msg && (
-        <div
-          className={`card card-pad flex items-center gap-2.5 text-xs ${
-            msg.type === 'success'
-              ? 'border-[var(--ds-bull)]/30 bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
-              : 'border-[var(--ds-bear)]/30 bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
-          }`}
-        >
-          {msg.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 shrink-0" />
-          )}
-          <span className="font-medium">{msg.text}</span>
-          <button
-            type="button"
-            onClick={() => setMsg(null)}
-            className="ml-auto text-xs opacity-70 hover:opacity-100 cursor-pointer"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      <FeedbackBanner message={msg} onDismiss={() => setMsg(null)} />
 
       {/* 1. Display & Regional Formatting */}
       <SettingSection
@@ -225,16 +217,16 @@ export function PreferencesTab({
         >
           <button
             type="button"
-            onClick={() => {
-              if (confirm('Are you sure you want to restore all terminal settings to default values?')) {
-                onResetAll();
-                setMsg({ type: 'success', text: 'All settings restored to factory defaults.' });
-              }
-            }}
-            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)]"
+            onClick={handleResetAll}
+            disabled={resetting}
+            className="btn btn-sm flex items-center gap-1.5 text-[var(--ds-bear)] hover:border-[var(--ds-bear)] disabled:opacity-50"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Restore Defaults</span>
+            {resetting ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5" />
+            )}
+            <span>{resetting ? 'Restoring…' : 'Restore Defaults'}</span>
           </button>
         </SettingRow>
       </SettingSection>

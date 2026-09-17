@@ -2030,12 +2030,21 @@ class TrendForecaster:
             session_label = classify_session_ist(primary_ts).value
         except Exception:
             session_label = result.get("session") or "UNKNOWN"
-        # Settleability of the [now, now+60m] window (covers post-14:30 IST,
+        # Settleability of the [now, now+H] window (covers post-14:30 IST,
         # holidays, specials, weekends via the shared NSE calendar rule).
+        # H is the forecast's own horizon (HORIZON_CONFIG minutes) — a fixed
+        # 60m window wrongly abstains sub-hour forecasts in the last hour
+        # (e.g. a 1m call at 14:34 settles 14:35, long before the close).
+        # Floored at 5m: validate_horizon's minimum supported ML horizon.
         try:
             from app.ml.sessions import classify_window
 
-            settle = classify_window(instrument, now_utc, 60)
+            try:
+                _settle_minutes = int((cfg or {}).get("minutes") or 60)
+            except (TypeError, ValueError):
+                _settle_minutes = 60
+            _settle_minutes = max(5, _settle_minutes)
+            settle = classify_window(instrument, now_utc, _settle_minutes)
             settleable = bool(settle.get("settleable", False))
             settle_reason = str(settle.get("reason", "unknown") or "unknown")
         except Exception as e:

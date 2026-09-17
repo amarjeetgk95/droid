@@ -144,7 +144,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="hidden md:flex items-center gap-2 h-[30px] px-2.5 rounded-[4px] border border-border bg-card hover:bg-[#f7f7f7] transition-colors text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="hidden md:flex items-center gap-2 h-[30px] px-2.5 rounded-[4px] border border-border bg-card hover:bg-muted transition-colors text-xs cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-ring"
           title="Market session schedule & world clocks"
           aria-label={`Market state: ${countdownInfo.label}, ${countdownInfo.countdown}`}
         >
@@ -160,16 +160,16 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <span
               className={cn(
                 'w-1.5 h-1.5 rounded-full shrink-0',
-                countdownInfo.badgeTone === 'live' && 'bg-emerald-500',
-                countdownInfo.badgeTone === 'amber' && 'bg-amber-500',
-                countdownInfo.badgeTone === 'closed' && 'bg-slate-400',
+                countdownInfo.badgeTone === 'live' && 'bg-up',
+                countdownInfo.badgeTone === 'amber' && 'bg-warn',
+                countdownInfo.badgeTone === 'closed' && 'bg-ink-4',
               )}
             />
             <span
               className={cn(
                 'font-semibold text-xs',
-                countdownInfo.badgeTone === 'live' && 'text-emerald-600',
-                countdownInfo.badgeTone === 'amber' && 'text-amber-600',
+                countdownInfo.badgeTone === 'live' && 'text-up',
+                countdownInfo.badgeTone === 'amber' && 'text-warn',
                 countdownInfo.badgeTone === 'closed' && 'text-muted-foreground',
               )}
             >
@@ -195,8 +195,8 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             <span
               className={cn(
                 'text-[10px] font-bold px-1.5 py-0.2 rounded border',
-                countdownInfo.badgeTone === 'live' && 'bg-emerald-50 text-emerald-700 border-emerald-200',
-                countdownInfo.badgeTone === 'amber' && 'bg-amber-50 text-amber-800 border-amber-200',
+                countdownInfo.badgeTone === 'live' && 'bg-up-wash text-up-strong border-up-line',
+                countdownInfo.badgeTone === 'amber' && 'bg-warn-wash text-warn-strong border-warn-line',
                 countdownInfo.badgeTone === 'closed' && 'bg-secondary text-muted-foreground border-border',
               )}
             >
@@ -220,7 +220,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-foreground font-semibold flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="w-1.5 h-1.5 rounded-full bg-up" />
                 Regular Trading
               </span>
               <span className="font-mono font-bold text-foreground">09:15 – 15:30</span>
@@ -235,7 +235,7 @@ function HeaderMarketSessionInner({ marketStatus }: HeaderMarketSessionProps) {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Crypto Derivatives</span>
-              <span className="font-mono font-medium text-emerald-600">24 / 7 Live</span>
+              <span className="font-mono font-medium text-up">24 / 7 Live</span>
             </div>
           </div>
         </div>

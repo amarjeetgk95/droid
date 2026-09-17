@@ -17,6 +17,12 @@ export interface DeskCacheEntry<T> {
   requestVersion: number;
 }
 
+/**
+ * NOTE: no call sites import this module yet (verified by repo-wide search).
+ * It is kept correct and self-contained so wiring it into a desk page is safe;
+ * do not delete without checking with the perf workstream.
+ */
+
 const DEFAULT_TTLS: Record<string, number> = {
   options: 30_000, // 30s
   signals: 20_000, // 20s
@@ -26,14 +32,30 @@ const DEFAULT_TTLS: Record<string, number> = {
 
 const MAX_CACHE_ENTRIES = 30;
 
+/** Wrapper so an in-flight request can identify its own slot when clearing. */
+interface PendingRequest<T> {
+  promise: Promise<T>;
+}
+
 class DeskCacheStore {
   private cache = new Map<string, DeskCacheEntry<any>>();
-  private pendingRequests = new Map<string, Promise<any>>();
+  private pendingRequests = new Map<string, PendingRequest<unknown>>();
   private requestVersions = new Map<string, number>();
 
   private getTTL(key: string): number {
     const prefix = key.split(':')[0];
     return DEFAULT_TTLS[prefix] || DEFAULT_TTLS.default;
+  }
+
+  /**
+   * Monotonic per-key version. Bumping on invalidation tombstones the key:
+   * an in-flight fetch that resolves later sees `thisVersion < latestVersion`
+   * and refuses to repopulate the cache with invalidated data.
+   */
+  private bumpVersion(key: string): number {
+    const version = (this.requestVersions.get(key) || 0) + 1;
+    this.requestVersions.set(key, version);
+    return version;
   }
 
   /**
@@ -55,8 +77,7 @@ class DeskCacheStore {
   set<T>(key: string, data: T, customTtlMs?: number): void {
     const ttl = customTtlMs ?? this.getTTL(key);
     const now = Date.now();
-    const version = (this.requestVersions.get(key) || 0) + 1;
-    this.requestVersions.set(key, version);
+    const version = this.bumpVersion(key);
 
     // LRU eviction if over capacity
     if (this.cache.size >= MAX_CACHE_ENTRIES && !this.cache.has(key)) {
@@ -75,8 +96,10 @@ class DeskCacheStore {
 
   /**
    * Execute fetch with in-flight Promise deduplication and requestVersion race protection.
+   * Deliberately not `async`: an async wrapper would return a new promise on every
+   * call and defeat the identity-based deduplication.
    */
-  async fetchWithDeduplication<T>(
+  fetchWithDeduplication<T>(
     key: string,
     fetcher: () => Promise<T>,
     customTtlMs?: number
@@ -84,49 +107,70 @@ class DeskCacheStore {
     // 1. In-flight Promise deduplication: return existing pending request if present
     const existing = this.pendingRequests.get(key);
     if (existing) {
-      return existing as Promise<T>;
+      return existing.promise as Promise<T>;
     }
 
     // 2. Track request version for race protection
-    const thisVersion = (this.requestVersions.get(key) || 0) + 1;
-    this.requestVersions.set(key, thisVersion);
+    const thisVersion = this.bumpVersion(key);
+    const entry = {} as PendingRequest<T>;
 
-    const promise = (async () => {
+    entry.promise = (async () => {
       try {
         const result = await fetcher();
 
-        // Check if an obsolete request resolved after a newer one
+        // Check if an obsolete request resolved after a newer one / after invalidation
         const latestVersion = this.requestVersions.get(key) || 0;
         if (thisVersion >= latestVersion) {
           this.set(key, result, customTtlMs);
         }
         return result;
       } finally {
-        this.pendingRequests.delete(key);
+        // Only clear the slot if it still belongs to this request — invalidate()
+        // may have replaced it with a newer pending request.
+        if (this.pendingRequests.get(key) === entry) {
+          this.pendingRequests.delete(key);
+        }
       }
     })();
 
-    this.pendingRequests.set(key, promise);
-    return promise;
+    this.pendingRequests.set(key, entry);
+    return entry.promise;
   }
 
   invalidate(key: string): void {
     this.cache.delete(key);
     this.pendingRequests.delete(key);
+    // Tombstone: any in-flight fetch for this key must not write back.
+    this.bumpVersion(key);
   }
 
   invalidatePrefix(prefix: string): void {
-    for (const key of this.cache.keys()) {
+    // Include pending-only and version-only keys so in-flight fetches that were
+    // never cached are tombstoned too.
+    const keys = new Set<string>([
+      ...this.cache.keys(),
+      ...this.pendingRequests.keys(),
+      ...this.requestVersions.keys(),
+    ]);
+    for (const key of keys) {
       if (key.startsWith(prefix)) {
-        this.cache.delete(key);
+        this.invalidate(key);
       }
     }
   }
 
   clear(): void {
+    const knownKeys = new Set<string>([
+      ...this.cache.keys(),
+      ...this.pendingRequests.keys(),
+      ...this.requestVersions.keys(),
+    ]);
     this.cache.clear();
     this.pendingRequests.clear();
-    this.requestVersions.clear();
+    // Tombstone everything so stragglers cannot repopulate a cleared cache.
+    for (const key of knownKeys) {
+      this.bumpVersion(key);
+    }
   }
 
   private evictLRU(): void {

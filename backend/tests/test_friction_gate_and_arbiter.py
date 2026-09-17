@@ -25,6 +25,7 @@ class MockTrade(BaseModel):
 class TestFrictionGate:
     def test_healthy_edge_accepted(self):
         # Target = 60 pts on NIFTY, Risk = 25 pts (large target easily covers ~2-3 pts friction)
+        # P1 fail-closed: live premium + live per-strike spread + per-strike IV required.
         cand = SignalCandidate(
             underlying="NIFTY",
             strategy="VOLATILITY_BREAKOUT",
@@ -40,12 +41,38 @@ class TestFrictionGate:
             risk_points=Decimal("25.0"),
             risk_reward_t1=2.4,
             risk_reward_t2=4.4,
+            greeks={"delta": 0.55, "theta_hour": -2.0, "iv": 0.15},
+            time_stop_seconds=1800,
         )
-        res = friction_gate.evaluate(cand)
+        res = friction_gate.evaluate(
+            cand, live_premium=150.0, live_spread_pts=1.0, live_iv=0.15,
+            expected_holding_seconds=1800,
+        )
         assert res.passed is True
         assert res.expected_net_edge_pts > 15.0
         assert res.net_reward_risk_ratio >= 1.10
         assert res.rejection_reason is None
+
+    def test_missing_live_inputs_fail_closed(self):
+        cand = SignalCandidate(
+            underlying="NIFTY",
+            strategy="VOLATILITY_BREAKOUT",
+            direction="LONG_CALL",
+            timeframe="5M",
+            spot_price=Decimal("25000.0"),
+            entry_min=Decimal("25000.0"),
+            entry_max=Decimal("25010.0"),
+            trigger=Decimal("25010.0"),
+            stop_loss=Decimal("24985.0"),
+            target_1=Decimal("25070.0"),
+            target_2=Decimal("25120.0"),
+            risk_points=Decimal("25.0"),
+            risk_reward_t1=2.4,
+            risk_reward_t2=4.4,
+        )
+        res = friction_gate.evaluate(cand)
+        assert res.passed is False
+        assert "REJECT_NO_LIVE" in (res.rejection_reason or "")
 
     def test_tiny_scalp_target_rejected_by_friction(self):
         # Target = 2 pts on NIFTY (spread + fees will consume 100% of target)
@@ -65,8 +92,13 @@ class TestFrictionGate:
             risk_points=Decimal("5.0"),
             risk_reward_t1=0.4,
             risk_reward_t2=0.8,
+            greeks={"delta": 0.50, "theta_hour": -3.0, "iv": 0.20},
+            time_stop_seconds=900,
         )
-        res = friction_gate.evaluate(cand)
+        res = friction_gate.evaluate(
+            cand, live_premium=120.0, live_spread_pts=1.0, live_iv=0.20,
+            expected_holding_seconds=900,
+        )
         assert res.passed is False
         assert "REJECT" in (res.rejection_reason or "")
 

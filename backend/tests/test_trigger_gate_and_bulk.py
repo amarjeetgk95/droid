@@ -86,16 +86,21 @@ class TestStrategyTriggerLevels:
     def _ctx(self, **kw):
         base = dict(
             underlying="NIFTY",
-            spot_price=Decimal("25000"),
+            spot_price=Decimal("24995"),
             timeframe="5M",
             indicators={
-                "bollinger_bands": {"upper": Decimal("25150"), "middle": Decimal("25000"), "lower": Decimal("25020")},
+                "bollinger_bands": {"upper": Decimal("25200"), "middle": Decimal("25050"), "lower": Decimal("24990")},
                 "rsi": 25.0,
-                "atr": 120.0,
+                "atr": 60.0,
             },
             mtf={"alignment_score": 70.0},
             fno={"pcr": 1.0, "oi_change_pct": 2.0, "atm_iv": 14.0, "max_pain": 25000.0},
             regime="RANGE",
+            candles=[
+                {"open": 25000.0, "high": 25010.0, "low": 24980.0, "close": 24990.0, "volume": 1000},
+                {"open": 24990.0, "high": 25000.0, "low": 24970.0, "close": 24978.0, "volume": 1000},
+                {"open": 24980.0, "high": 24995.0, "low": 24960.0, "close": 24995.0, "volume": 1000},
+            ],
         )
         base.update(kw)
         return StrategyContext(**base)
@@ -125,14 +130,21 @@ class TestStrategyTriggerLevels:
 
     def test_gamma_squeeze_needs_two_of_three(self):
         strat = GammaSqueezeStrategy()
-        # OI surge alone with neutral PCR at max pain → only 2 signals? wall+oi = 2 → fires; drop wall:
+        # OI surge alone with neutral PCR at max pain → only 1 signal → must not fire
         ctx = StrategyContext(
             underlying="NIFTY",
             spot_price=Decimal("25200"),  # above max_pain*1.002 → wall False for PUT; CALL wall True...
             timeframe="5M",
             indicators={"atr": 150.0},
             mtf={"alignment_score": 70.0},
-            fno={"pcr": 1.0, "oi_change_pct": 2.0, "atm_iv": 14.0, "max_pain": 25000.0},
+            fno={
+                "pcr": 1.0,
+                "oi_change_pct": 2.0,
+                "atm_iv": 14.0,
+                "max_pain": 25000.0,
+                "total_call_oi": 100000,
+                "total_put_oi": 100000,
+            },
             regime="HIGH_VOL",
         )
         # neutral PCR + no OI surge → only wall → must not fire
@@ -146,8 +158,23 @@ class TestStrategyTriggerLevels:
             timeframe="5M",
             indicators={"atr": 150.0},
             mtf={"alignment_score": 70.0},
-            fno={"pcr": 0.70, "oi_change_pct": 10.0, "atm_iv": 16.0, "max_pain": 24900.0},
+            fno={
+                "pcr": 0.70,
+                "oi_change_pct": 10.0,
+                "atm_iv": 16.0,
+                "max_pain": 24900.0,
+                "total_call_oi": 120000,
+                "total_put_oi": 150000,
+            },
             regime="HIGH_VOL",
+            candles=[
+                {"open": 24888.0, "high": 24895.0, "low": 24880.0, "close": 24890.0, "volume": 5000},
+                {"open": 24890.0, "high": 24900.0, "low": 24888.0, "close": 24895.0, "volume": 5000},
+                {"open": 24895.0, "high": 24905.0, "low": 24892.0, "close": 24900.0, "volume": 5000},
+                {"open": 24900.0, "high": 24910.0, "low": 24897.0, "close": 24905.0, "volume": 5000},
+                {"open": 24905.0, "high": 24915.0, "low": 24902.0, "close": 24910.0, "volume": 5000},
+                {"open": 24910.0, "high": 24955.0, "low": 24908.0, "close": 24950.0, "volume": 15000},
+            ],
         )
         cand = strat.detect(ctx)
         assert cand is not None

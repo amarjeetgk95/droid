@@ -40,22 +40,26 @@ export function getStoredSettings(): AppSettings {
     settings = applyAllMigrations(settings);
     // If we migrated from v1, eagerly write v2
     if (isV1) {
-      try { writeRaw(STORAGE_KEY_V2, JSON.stringify(settings)); } catch {}
+      writeRaw(STORAGE_KEY_V2, JSON.stringify(settings));
     }
     return settings;
-  } catch {
+  } catch (err) {
+    console.error('Failed to read stored settings:', err);
     return DEFAULT_SETTINGS;
   }
 }
 
-export function saveStoredSettings(settings: AppSettings): void {
-  if (typeof window === 'undefined') return;
+/** @returns true when the write succeeded (or no browser storage exists). */
+export function saveStoredSettings(settings: AppSettings): boolean {
+  if (typeof window === 'undefined') return true;
   try {
     const toSave = { ...settings, schemaVersion: 2 };
     // Single write to V2 only — V1 mirror removed to avoid double write cost per save
     writeRaw(STORAGE_KEY_V2, JSON.stringify(toSave));
+    return true;
   } catch (err) {
     console.error('Failed to save settings to localStorage:', err);
+    return false;
   }
 }
 
@@ -65,7 +69,9 @@ export function resetStoredSettings(): AppSettings {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY_V2);
       localStorage.removeItem(LEGACY_DEV_CONFIG_KEY);
-    } catch {}
+    } catch (err) {
+      console.error('Failed to clear stored settings:', err);
+    }
   }
   return DEFAULT_SETTINGS;
 }

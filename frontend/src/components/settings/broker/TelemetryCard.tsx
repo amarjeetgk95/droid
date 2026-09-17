@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import type { BrokerSettings, AppSettings } from '@/lib/settings';
 import { api } from '@/lib/api';
-import { useSettings } from '@/components/settings/SettingsProvider';
+import { useOptionalSettings } from '@/components/settings/SettingsProvider';
 import { getProviderMeta } from './constants';
 import { SettingSection, StatTile } from '../ui/SettingPrimitives';
 
@@ -20,6 +20,7 @@ interface Props {
 
 export function TelemetryCard({ settings, fullSettings: propFullSettings }: Props) {
   const [tokenStatus, setTokenStatus] = useState<Record<string, unknown> | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -33,12 +34,8 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
     error?: string | null;
   } | null>(null);
 
-  let contextFullSettings: AppSettings | null = null;
-  try {
-    contextFullSettings = (useSettings() as unknown as { settings: AppSettings })?.settings ?? null;
-  } catch {
-    contextFullSettings = null;
-  }
+  const optSettings = useOptionalSettings();
+  const contextFullSettings = optSettings?.settings ?? null;
   const fullSettings = propFullSettings || contextFullSettings;
 
   const providerMeta = getProviderMeta(settings.provider, settings.apiType, tokenStatus);
@@ -48,8 +45,11 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
     try {
       const res = await api.getTokenStatus();
       setTokenStatus(res.data as Record<string, unknown>);
-    } catch {
-      setTokenStatus({ provider: settings.provider, has_token: false, is_valid: false, expires_at: null });
+      setTokenError(null);
+    } catch (err: unknown) {
+      // Never invent a token state — show that telemetry itself is down.
+      setTokenStatus(null);
+      setTokenError(err instanceof Error ? err.message : 'Token telemetry unavailable');
     } finally {
       setLoadingToken(false);
     }
@@ -57,7 +57,6 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
 
   useEffect(() => {
     fetchTokenStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.provider, settings.apiType, tokenMsg]);
 
   const handleRefreshToken = async () => {
@@ -137,6 +136,12 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
       }
     >
       <div className="card-pad space-y-4">
+        {tokenError && (
+          <div className="flex items-center gap-2 text-xs text-[var(--ds-bear-strong)] bg-[var(--ds-bear-wash)] border border-[var(--ds-bear-line)] rounded p-2.5">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Token telemetry unavailable — {tokenError}</span>
+          </div>
+        )}
         {testResult && (
           <div
             className={`card card-pad text-xs space-y-1.5 ${

@@ -12,9 +12,10 @@ export type TimestampedTick = TickEvent & { received_at: number };
 
 const IDLE_TIMEOUT_MS = 30_000;   // force reconnect if no message for 30s
 const IDLE_CHECK_MS = 5_000;      // idle watchdog interval
+const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 /** No ticks for this long => feed marked stale so UI stops claiming LIVE. */
-const FEED_STALE_MS = 30_000;
+const FEED_STALE_MS = 20_000;
 
 export function useMarketStream() {
   const [streamState, setStreamState] = useState<StreamConnectionState>('CONNECTING');
@@ -25,7 +26,7 @@ export function useMarketStream() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backoffRef = useRef<number>(1000);
+  const backoffRef = useRef<number>(MIN_BACKOFF_MS);
   const lastMessageAtRef = useRef<number>(0);
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -33,6 +34,8 @@ export function useMarketStream() {
     if (typeof window === 'undefined') return;
 
     let isUnmounted = false;
+    // Exactly one visibility listener for the lifetime of the effect — never
+    // overwritten, never added twice.
     let visibilityHandler: (() => void) | null = null;
 
     const clearReconnectTimeout = () => {
@@ -42,26 +45,65 @@ export function useMarketStream() {
       }
     };
 
+    const removeVisibilityHandler = () => {
+      if (visibilityHandler) {
+        document.removeEventListener('visibilitychange', visibilityHandler);
+        visibilityHandler = null;
+      }
+    };
+
+    const addVisibilityHandler = () => {
+      if (visibilityHandler || isUnmounted) return;
+      visibilityHandler = () => {
+        if (isUnmounted || document.hidden) return;
+        removeVisibilityHandler();
+        setStreamState('RECONNECTING');
+        createConnection();
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+    };
+
+    const closeCurrentSocket = () => {
+      const ws = wsRef.current;
+      wsRef.current = null;
+      if (!ws) return;
+      // Detach handlers first so the intentional close cannot re-trigger a
+      // reconnect or clobber a newer socket's state.
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    const nextBackoffDelay = () => {
+      const base = Math.min(MAX_BACKOFF_MS, backoffRef.current);
+      // ±20% jitter so many clients do not reconnect in lockstep.
+      const jitter = base * 0.2 * (Math.random() * 2 - 1);
+      backoffRef.current = Math.min(MAX_BACKOFF_MS, base * 2);
+      return Math.max(MIN_BACKOFF_MS, Math.min(MAX_BACKOFF_MS, base + jitter));
+    };
+
     const scheduleReconnect = () => {
-      if (isUnmounted || reconnectTimeoutRef.current) return;
-      // Pause reconnect churn while the tab is hidden — resume on visible.
+      if (isUnmounted) return;
+      // A pending timer or parked visibility handler already owns the retry.
+      if (reconnectTimeoutRef.current || visibilityHandler) return;
+      // Pause reconnect churn while the tab is hidden — the single visibility
+      // handler resumes the connection when the tab becomes visible again.
       if (document.hidden) {
-        visibilityHandler = () => {
-          if (!document.hidden && !isUnmounted) {
-            document.removeEventListener('visibilitychange', visibilityHandler!);
-            visibilityHandler = null;
-            setStreamState('RECONNECTING');
-            createConnection();
-          }
-        };
-        document.addEventListener('visibilitychange', visibilityHandler);
+        addVisibilityHandler();
         setStreamState('DISCONNECTED');
         return;
       }
       setStreamState('RECONNECTING');
       setReconnectCount((prev) => prev + 1);
-      const delay = Math.min(MAX_BACKOFF_MS, backoffRef.current * 1.5 + Math.random() * 500);
-      backoffRef.current = delay;
+      const delay = nextBackoffDelay();
       reconnectTimeoutRef.current = setTimeout(() => {
         reconnectTimeoutRef.current = null;
         createConnection();
@@ -71,6 +113,15 @@ export function useMarketStream() {
     const createConnection = () => {
       if (isUnmounted) return;
       clearReconnectTimeout();
+      // Background tabs do not need a live socket — park behind visibility.
+      if (document.hidden) {
+        setStreamState('DISCONNECTED');
+        addVisibilityHandler();
+        return;
+      }
+      removeVisibilityHandler();
+      // Never leak the previous socket: close it *before* opening a new one.
+      closeCurrentSocket();
 
       const apiUrl = API_BASE.replace(/\/+$/, '');
       const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
@@ -83,14 +134,14 @@ export function useMarketStream() {
         wsRef.current = ws;
 
         ws.onopen = () => {
-          if (isUnmounted) return;
+          if (isUnmounted || wsRef.current !== ws) return;
           setStreamState('CONNECTED');
-          backoffRef.current = 1000;
+          backoffRef.current = MIN_BACKOFF_MS;
           lastMessageAtRef.current = Date.now();
         };
 
         ws.onmessage = (event) => {
-          if (isUnmounted) return;
+          if (isUnmounted || wsRef.current !== ws) return;
           // Any message proves the socket is alive (idle watchdog), but only
           // real MARKET_TICKS prove market data is flowing — heartbeats must
           // NOT mark the feed fresh, otherwise the UI claims LIVE with 0.00 data.
@@ -109,6 +160,7 @@ export function useMarketStream() {
               if (payload.ticks.length > 0) {
                 if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
                 staleTimerRef.current = setTimeout(() => {
+                  staleTimerRef.current = null;
                   if (!isUnmounted) {
                     setTicksFresh(false);
                     setLatestTicks({});
@@ -133,21 +185,24 @@ export function useMarketStream() {
         };
 
         ws.onerror = () => {
-          if (isUnmounted) return;
+          if (isUnmounted || wsRef.current !== ws) return;
           setStreamState('DISCONNECTED');
+          // Some transports fire onerror without onclose — force the close so
+          // the reconnect path is guaranteed to run exactly once.
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
         };
 
         ws.onclose = () => {
+          if (wsRef.current === ws) wsRef.current = null;
           if (isUnmounted) return;
           scheduleReconnect();
         };
       } catch {
-        if (!isUnmounted) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            scheduleReconnect();
-          }, 0);
-        }
+        if (!isUnmounted) scheduleReconnect();
       }
     };
 
@@ -183,12 +238,12 @@ export function useMarketStream() {
       clearInterval(pingInterval);
       clearInterval(idleInterval);
       clearReconnectTimeout();
-      if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
-      if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
-      if (wsRef.current) {
-        wsRef.current.onclose = null; // prevent reconnect after intentional close
-        wsRef.current.close();
+      if (staleTimerRef.current) {
+        clearTimeout(staleTimerRef.current);
+        staleTimerRef.current = null;
       }
+      removeVisibilityHandler();
+      closeCurrentSocket();
     };
   }, []);
 

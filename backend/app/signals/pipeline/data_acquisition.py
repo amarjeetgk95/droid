@@ -55,12 +55,21 @@ class ScanDiagnostics(BaseModel):
 
 
 def is_fallback_quote(quote: Any) -> bool:
+    # P0-2 KILL SYNTHETIC FALLBACKS: mirror quote_quality.SYNTHETIC_PROVIDERS.
+    # Any fabricated provider is rejected even when it self-reports LIVE.
+    try:
+        from app.signals.quote_quality import SYNTHETIC_PROVIDERS as _SYNTH
+        _synth = set(_SYNTH)
+    except Exception:
+        _synth = {"fallback", "synthetic", "mock", "simulated", "dummy",
+                  "paper", "cache", "cached", "replay", "backtest",
+                  "indicative", "delayed", "test"}
     try:
         status = str(getattr(quote, "status", "") or "").upper()
         provider = str(getattr(quote, "provider", "") or "").lower()
         if any(s in status for s in ("OFFLINE", "DEGRADED", "STALE", "CLOSED", "INVALID")):
             return True
-        if provider in ("fallback", "synthetic", "mock"):
+        if provider in _synth:
             return True
     except Exception:
         pass
@@ -113,8 +122,13 @@ def calculate_session_vwap(active_candles: list[dict]) -> tuple[Decimal | None, 
                 if c_dt and c_dt >= session_open and c_dt.date() == latest_candle_time.date():
                     session_candles.append(c)
 
-        vwap_pool = session_candles if session_candles else active_candles
-        vwap_degraded = not bool(session_candles)
+        # P0-2 FAIL-CLOSE: never compute VWAP on a stale pool. When no
+        # session-anchored candles exist the VWAP is UNKNOWN (None), not a
+        # whole-day average masquerading as session VWAP.
+        if not session_candles:
+            return None, True, 0.0
+        vwap_pool = session_candles
+        vwap_degraded = False
         coverage_pct = round(len(session_candles) / max(1, len(active_candles)) * 100.0, 1)
         cum_vol = sum(float(c.get("volume", 0)) for c in vwap_pool)
         cum_pv = sum(
@@ -134,24 +148,39 @@ def detect_market_regime(ta_analysis: dict[str, Any]) -> str:
     Detects quantitative market regime:
     TREND_UP / TREND_DOWN (ADX>=22 + trend), HIGH_VOL (atr_pct>=80),
     COMPRESSION_SQUEEZE (bb_width pct<=20 + adx<18), EVENT, else RANGE.
+    P0-2 FAIL-CLOSE: no synthetic defaults. Missing ADX/ATR/BB inputs
+    yield UNKNOWN instead of a fabricated RANGE that would let strategies
+    fire on unevaluated structure.
     """
-    regime = "RANGE"
-    adx_val = float(
-        ta_analysis.get("trend", {}).get("adx")
-        or ta_analysis.get("momentum", {}).get("adx")
-        or ta_analysis.get("adx")
-        or 20.0
-    )
-    trend_val = ta_analysis.get("trend", {}).get("trend", "RANGE")
+    if not isinstance(ta_analysis, dict) or not ta_analysis:
+        return "UNKNOWN"
+    trend_d = ta_analysis.get("trend", {}) if isinstance(ta_analysis.get("trend"), dict) else {}
+    mom_d = ta_analysis.get("momentum", {}) if isinstance(ta_analysis.get("momentum"), dict) else {}
+    vol_d = ta_analysis.get("volatility", {}) if isinstance(ta_analysis.get("volatility"), dict) else {}
+    adx_raw = trend_d.get("adx") if trend_d.get("adx") is not None else mom_d.get("adx")
+    if adx_raw is None:
+        adx_raw = ta_analysis.get("adx")
+    if adx_raw is None:
+        return "UNKNOWN"
     try:
-        atr_pct = float(ta_analysis.get("volatility", {}).get("atr_percentile", 50.0))
+        adx_val = float(adx_raw)
     except Exception:
-        atr_pct = 50.0
+        return "UNKNOWN"
+    trend_val = trend_d.get("trend", "RANGE")
     try:
-        bbw = ta_analysis.get("volatility", {}).get("bb_width_pctile", ta_analysis.get("bollinger_bandwidth_pctile", 50.0))
-        bbw = float(bbw)
+        atr_pct_raw = vol_d.get("atr_percentile", None)
+        if atr_pct_raw is None:
+            return "UNKNOWN"
+        atr_pct = float(atr_pct_raw)
     except Exception:
-        bbw = 50.0
+        return "UNKNOWN"
+    try:
+        bbw_raw = vol_d.get("bb_width_pctile", ta_analysis.get("bollinger_bandwidth_pctile", None))
+        if bbw_raw is None:
+            return "UNKNOWN"
+        bbw = float(bbw_raw)
+    except Exception:
+        return "UNKNOWN"
     event_flag = bool(ta_analysis.get("event_flag", False) or ta_analysis.get("is_event_day", False))
     if event_flag:
         return "EVENT"
@@ -163,7 +192,7 @@ def detect_market_regime(ta_analysis: dict[str, Any]) -> str:
         return "HIGH_VOL"
     elif bbw <= 20.0 and adx_val < 18.0:
         return "COMPRESSION_SQUEEZE"
-    return regime
+    return "RANGE"
 
 
 async def acquire_market_context(
@@ -227,10 +256,13 @@ async def acquire_market_context(
         diag.duration_ms = int((time.time() - started) * 1000)
         return None, diag
 
-    # Staleness check
+    # Staleness check — P0-2 FAIL-CLOSE: a malformed timestamp is not
+    # "fresh by assumption". Any parse failure rejects the quote outright.
     if getattr(quote, "timestamp", None):
         try:
             q_ts = quote.timestamp
+            if not isinstance(q_ts, datetime):
+                raise ValueError(f"malformed quote.timestamp type={type(q_ts).__name__}")
             if q_ts.tzinfo is None:
                 q_ts = q_ts.replace(tzinfo=UTC)
             age_sec = (datetime.now(UTC) - q_ts).total_seconds()
@@ -241,8 +273,18 @@ async def acquire_market_context(
                 diag.reasons.append(f"Quote age ({round(age_sec, 1)}s) exceeds max allowed ({max_age}s)")
                 diag.duration_ms = int((time.time() - started) * 1000)
                 return None, diag
-        except Exception:
-            pass
+        except ValueError as ve:
+            diag.data_quality = "OFFLINE"
+            diag.error = f"malformed_quote_timestamp: {str(ve)[:120]}"
+            diag.reasons.append(f"Quote timestamp malformed ({str(ve)[:100]}) — fail-closed, no signals")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            return None, diag
+        except Exception as e:
+            diag.data_quality = "OFFLINE"
+            diag.error = f"malformed_quote_timestamp: {str(e)[:120]}"
+            diag.reasons.append(f"Quote timestamp unreadable ({str(e)[:100]}) — fail-closed, no signals")
+            diag.duration_ms = int((time.time() - started) * 1000)
+            return None, diag
 
     spot = Decimal(str(quote.ltp))
     prev_close = getattr(quote, "previous_close", None)
@@ -285,14 +327,24 @@ async def acquire_market_context(
             active_candles = candles_dict.get("1m") or []
 
     diag.candles_count = len(active_candles)
+    # P0-2 FAIL-CLOSE: no candles means no indicators, no VWAP, no regime.
+    # Returning an empty-candle context would let every downstream default
+    # (ADX 20 / RSI 50 / VWAP=spot) fabricate a tradable setup.
+    if not active_candles:
+        diag.data_quality = "OFFLINE"
+        diag.error = "no_active_candles"
+        diag.reasons.append(f"No {timeframe} candles available — fail-closed, no strategies evaluated")
+        diag.duration_ms = int((time.time() - started) * 1000)
+        return None, diag
 
-    # 4. TA Analysis & MTF Alignment
+    # 4. TA Analysis & MTF Alignment — P0-2: no synthetic TA defaults.
     ta_analysis: dict[str, Any] = {}
     if active_candles:
         try:
             ta_analysis = analyze_timeframe(active_candles, symbol=u, timeframe=timeframe) or {}
         except Exception as e:
-            diag.reasons.append(f"TA analysis failed: {str(e)[:100]} — using defaults")
+            diag.reasons.append(f"TA analysis failed: {str(e)[:100]} — fail-closed, no defaults")
+            ta_analysis = {}
 
     mtf_analyses = {}
     for tf_k, c_list in candles_dict.items():
@@ -319,22 +371,36 @@ async def acquire_market_context(
         fno_degraded = True
         fno_data = {}
 
-    # 6. Regime & VWAP
+    # 6. Regime & VWAP — P0-2: regime UNKNOWN when TA is unevaluated;
+    # strategies are skipped (fail-closed) instead of running on defaults.
     regime = detect_market_regime(ta_analysis)
+    if regime == "UNKNOWN" or not ta_analysis:
+        diag.data_quality = "OFFLINE"
+        diag.error = "ta_unavailable_regime_unknown"
+        diag.reasons.append("TA unavailable or incomplete (ADX/ATR/BB missing) — regime UNKNOWN, strategies skipped")
+        diag.duration_ms = int((time.time() - started) * 1000)
+        return None, diag
     vwap_val, vwap_degraded, vwap_coverage_pct = calculate_session_vwap(active_candles)
 
     if ta_analysis:
-        trend_d = ta_analysis.get("trend", {})
-        mom_d = ta_analysis.get("momentum", {})
-        vol_d = ta_analysis.get("volatility", {})
-        volm_d = ta_analysis.get("volume", {})
+        trend_d = ta_analysis.get("trend", {}) if isinstance(ta_analysis.get("trend"), dict) else {}
+        mom_d = ta_analysis.get("momentum", {}) if isinstance(ta_analysis.get("momentum"), dict) else {}
+        vol_d = ta_analysis.get("volatility", {}) if isinstance(ta_analysis.get("volatility"), dict) else {}
+        volm_d = ta_analysis.get("volume", {}) if isinstance(ta_analysis.get("volume"), dict) else {}
 
-        ta_analysis["adx"] = float(trend_d.get("adx") or mom_d.get("adx") or 20.0)
-        ta_analysis["rsi"] = float(mom_d.get("rsi") or 50.0)
-        ta_analysis["atr"] = float(vol_d.get("atr") or 20.0)
+        # P0-2: surface real values only — never invent ADX/RSI/ATR/vol_ratio.
+        _adx_raw = trend_d.get("adx") if trend_d.get("adx") is not None else mom_d.get("adx")
+        if _adx_raw is None:
+            _adx_raw = ta_analysis.get("adx")
+        ta_analysis["adx"] = float(_adx_raw) if _adx_raw is not None else None
+        _rsi_raw = mom_d.get("rsi") if mom_d.get("rsi") is not None else ta_analysis.get("rsi")
+        ta_analysis["rsi"] = float(_rsi_raw) if _rsi_raw is not None else None
+        _atr_raw = vol_d.get("atr") if vol_d.get("atr") is not None else ta_analysis.get("atr")
+        ta_analysis["atr"] = float(_atr_raw) if _atr_raw is not None else None
 
-        rel_vol = volm_d.get("relative_volume") or volm_d.get("ratio") or 1.2
-        ta_analysis["volume_ratio"] = float(rel_vol)
+        rel_vol_raw = volm_d.get("relative_volume") if volm_d.get("relative_volume") is not None else volm_d.get("ratio")
+        ta_analysis["volume_ratio"] = float(rel_vol_raw) if rel_vol_raw is not None else None
+        rel_vol = ta_analysis["volume_ratio"]
 
         bb_u = vol_d.get("bollinger_upper")
         bb_m = vol_d.get("bollinger_middle")
@@ -348,16 +414,22 @@ async def acquire_market_context(
         ta_analysis["bollinger_middle"] = bb_m
         ta_analysis["bollinger_lower"] = bb_l
 
-        # Compute breakout pressure from price action, trend, and volume
+        # Compute breakout pressure from price action, trend, and volume.
+        # P0-2: no invented volume_ratio — skip volume term when unknown.
         bp = 50.0
         if trend_d.get("trend") == "BULLISH":
             bp += 15.0
         elif trend_d.get("trend") == "BEARISH":
             bp -= 15.0
-        if float(rel_vol) > 1.2:
-            bp += 12.0
-        elif float(rel_vol) < 0.8:
-            bp -= 10.0
+        try:
+            _rv = float(rel_vol) if rel_vol is not None else None
+        except Exception:
+            _rv = None
+        if _rv is not None:
+            if _rv > 1.2:
+                bp += 12.0
+            elif _rv < 0.8:
+                bp -= 10.0
         if vwap_val:
             if spot >= vwap_val:
                 bp += 10.0
@@ -383,17 +455,49 @@ async def acquire_market_context(
     except (ValueError, TypeError):
         vix_percentile_val = None
 
-    feat_snap = compute_feature_snapshot(
-        underlying=u,
-        spot_price=float(spot),
-        candles=active_candles,
-        timeframe=timeframe,
-        vwap=float(vwap_val) if vwap_val else None,
-        indicators=ta_analysis,
-        timestamp_ms=int(time.time() * 1000),
-        prior_day_high=float(getattr(quote, "high", 0.0) or 0.0) if getattr(quote, "high", None) else None,
-        prior_day_low=float(getattr(quote, "low", 0.0) or 0.0) if getattr(quote, "low", None) else None,
-    )
+    # P0-2: prior_day_high/low must come from DAILY candles, never from
+    # quote.high/low (today's intraday range is not yesterday's range).
+    prior_day_high: float | None = None
+    prior_day_low: float | None = None
+    try:
+        _daily_raw = await market_svc.get_candles(u, timeframe="1D")
+        _daily = [c.model_dump() if hasattr(c, "model_dump") else dict(c) for c in (_daily_raw or [])]
+        if len(_daily) >= 2:
+            _prev = _daily[-2]
+            _ph, _pl = _prev.get("high"), _prev.get("low")
+            prior_day_high = float(_ph) if _ph is not None else None
+            prior_day_low = float(_pl) if _pl is not None else None
+        elif len(_daily) == 1:
+            # Single daily bar: cannot prove it is "prior day" — leave None
+            # rather than mislabelling today's developing range.
+            prior_day_high, prior_day_low = None, None
+    except Exception as _pd_err:
+        logger.debug("prior_day_fetch_failed", underlying=u, error=str(_pd_err))
+        prior_day_high, prior_day_low = None, None
+
+    feat_snap = None
+    try:
+        feat_snap = compute_feature_snapshot(
+            underlying=u,
+            spot_price=float(spot),
+            candles=active_candles,
+            timeframe=timeframe,
+            vwap=float(vwap_val) if vwap_val else None,
+            indicators=ta_analysis,
+            timestamp_ms=int(time.time() * 1000),
+            prior_day_high=prior_day_high,
+            prior_day_low=prior_day_low,
+        )
+    except Exception as _fs_err:
+        # Feature engine is fail-closed (InsufficientData on <MIN_BARS or
+        # forming candle). No snapshot means strategies cannot evaluate PIT-
+        # safely — skip instead of running on neutral-50 fabrications.
+        logger.info("feature_snapshot_unavailable_skip", underlying=u, error=str(_fs_err)[:120])
+        diag.data_quality = "OFFLINE"
+        diag.error = f"feature_snapshot_insufficient: {str(_fs_err)[:100]}"
+        diag.reasons.append(f"Feature snapshot unavailable ({str(_fs_err)[:100]}) — strategies skipped")
+        diag.duration_ms = int((time.time() - started) * 1000)
+        return None, diag
 
     ctx = StrategyContext(
         underlying=u,  # type: ignore
@@ -407,8 +511,9 @@ async def acquire_market_context(
         candles=active_candles,
         vwap=vwap_val,
         volume_ma_20=vol_ma,
-        is_new_1m_candle=(timeframe == "1M"),
-        is_new_5m_candle=(timeframe == "5M"),
+        # P0-2: case-insensitive — "1m"/"1M" are the same candle.
+        is_new_1m_candle=(str(timeframe).upper() == "1M"),
+        is_new_5m_candle=(str(timeframe).upper() == "5M"),
         fno_degraded=fno_degraded,
         vwap_degraded=vwap_degraded,
         vwap_coverage_pct=vwap_coverage_pct,

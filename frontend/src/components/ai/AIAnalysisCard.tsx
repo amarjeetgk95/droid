@@ -6,10 +6,12 @@ import { api } from '@/lib/api';
 import type { AIInsightResponse, AIHistoryItem, AIDailyBriefingResponse } from '@/lib/types';
 import { buildAnalyzePayload, missingKeyHint, resolveAISettings, toBackendSymbol, useAISettings } from '@/lib/aiPayload';
 import { Card, DirectionBadge, EmptyNote, Meter, RetryButton } from '@/components/ui/desk';
+import { AIProvenanceNote } from './AIProvenanceNote';
+import { errorMessage, isBriefingResponse, isHistoryItem, isInsightResponse } from './schema';
 
 type Tab = 'analysis' | 'briefing' | 'history';
 
-function Section({ label, text }: { label: string; text: string }) {
+function Section({ label, text }: { label: string; text?: string }) {
   if (!text) return null;
   return (
     <div className="stat">
@@ -26,7 +28,7 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
   const [history, setHistory] = useState<AIHistoryItem[]>([]);
   const [briefing, setBriefing] = useState<AIDailyBriefingResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<Tab, string>>>({});
   const [meta, setMeta] = useState<{ model?: string; latency?: number } | null>(null);
 
   const backendSymbol = toBackendSymbol(symbol);
@@ -35,7 +37,8 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setErrors({});
+    const nextErrors: Partial<Record<Tab, string>> = {};
     try {
       const payload = { ...buildAnalyzePayload(backendSymbol, aiSettings), analysis_type: 'multi_timeframe' };
       const [aRes, hRes, bRes] = await Promise.allSettled([
@@ -43,27 +46,74 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
         api.getAIHistory(backendSymbol),
         api.getMarketBriefing(backendSymbol, 'PRE_MARKET'),
       ]);
+
+      // Analysis — keep fulfilled sections even when a sibling sub-fetch fails.
       if (aRes.status === 'fulfilled') {
-        setInsight(aRes.value.data as AIInsightResponse);
-        setMeta({ model: (aRes.value as { model_used?: string }).model_used, latency: (aRes.value as { latency_ms?: number }).latency_ms });
+        const value = aRes.value;
+        if (value.error) {
+          nextErrors.analysis = value.error;
+        } else if (!value.data) {
+          nextErrors.analysis = 'The analysis service returned no payload.';
+        } else if (!isInsightResponse(value.data)) {
+          nextErrors.analysis = 'The analysis response was malformed (missing executive summary).';
+        } else {
+          setInsight(value.data);
+          setMeta({ model: value.model_used, latency: value.latency_ms });
+        }
       } else {
-        throw aRes.reason instanceof Error ? aRes.reason : new Error('AI analysis failed');
+        nextErrors.analysis = errorMessage(aRes.reason, 'AI analysis failed');
       }
-      if (hRes.status === 'fulfilled') setHistory(hRes.value.data || []);
-      if (bRes.status === 'fulfilled') setBriefing(bRes.value.data as AIDailyBriefingResponse);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI analysis failed');
+
+      // History
+      if (hRes.status === 'fulfilled') {
+        const value = hRes.value;
+        if (value.error) {
+          nextErrors.history = value.error;
+        } else if (!Array.isArray(value.data)) {
+          nextErrors.history = 'The history service returned no payload.';
+        } else {
+          const valid = value.data.filter(isHistoryItem);
+          if (value.data.length > 0 && valid.length === 0) {
+            nextErrors.history = 'The history response was malformed.';
+          } else {
+            setHistory(valid);
+          }
+        }
+      } else {
+        nextErrors.history = errorMessage(hRes.reason, 'AI history failed');
+      }
+
+      // Briefing
+      if (bRes.status === 'fulfilled') {
+        const value = bRes.value;
+        if (value.error) {
+          nextErrors.briefing = value.error;
+        } else if (!value.data) {
+          nextErrors.briefing = 'The briefing service returned no payload.';
+        } else if (!isBriefingResponse(value.data)) {
+          nextErrors.briefing = 'The briefing response was malformed (missing executive summary).';
+        } else {
+          setBriefing(value.data);
+        }
+      } else {
+        nextErrors.briefing = errorMessage(bRes.reason, 'Market briefing failed');
+      }
     } finally {
+      setErrors(nextErrors);
       setLoading(false);
     }
   }, [backendSymbol, aiSettings]);
 
   useEffect(() => {
     if (!aiSettings) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- symbol-driven initial fetch
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendSymbol, aiSettings]);
+
+  const briefingLevels =
+    briefing && typeof briefing.key_levels_to_watch === 'object' && briefing.key_levels_to_watch
+      ? Object.entries(briefing.key_levels_to_watch)
+      : [];
 
   return (
     <Card
@@ -88,18 +138,7 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
         ))}
       </div>
 
-      {loading && !insight && tab === 'analysis' ? (
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div className="skel" style={{ height: 28, width: '40%' }}>.</div>
-          <div className="skel" style={{ height: 14, width: '90%' }}>.</div>
-          <div className="skel" style={{ height: 14, width: '70%' }}>.</div>
-        </div>
-      ) : error && !insight ? (
-        <div>
-          <EmptyNote>AI analysis unavailable — {error}</EmptyNote>
-          <div style={{ marginTop: 10 }}><RetryButton onRetry={() => void load()} /></div>
-        </div>
-      ) : tab === 'analysis' ? (
+      {tab === 'analysis' ? (
         insight ? (
           <div style={{ display: 'grid', gap: 12 }}>
             <div className="toolbar">
@@ -116,8 +155,19 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
             <Section label="Regime & levels" text={insight.regime_and_levels} />
             <Section label="Strategy framework" text={insight.recommended_strategy_framework} />
             <Section label="Risk notes" text={insight.risk_management_notes} />
-            {error ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh note: {error}</p> : null}
-            <p className="faint" style={{ fontSize: 11, margin: 0 }}>{insight.disclaimer || 'For research & education — not financial advice.'}{contextPage ? ` · ${contextPage}` : ''}</p>
+            {errors.analysis ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh failed: {errors.analysis}</p> : null}
+            <AIProvenanceNote provider={insight.provider_used || resolved.provider} note={insight.disclaimer} contextPage={contextPage} />
+          </div>
+        ) : loading ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div className="skel" style={{ height: 28, width: '40%' }}>.</div>
+            <div className="skel" style={{ height: 14, width: '90%' }}>.</div>
+            <div className="skel" style={{ height: 14, width: '70%' }}>.</div>
+          </div>
+        ) : errors.analysis ? (
+          <div>
+            <EmptyNote>AI analysis unavailable — {errors.analysis}</EmptyNote>
+            <div style={{ marginTop: 10 }}><RetryButton onRetry={() => void load()} /></div>
           </div>
         ) : (
           <EmptyNote>No analysis yet — press Generate.</EmptyNote>
@@ -126,17 +176,19 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
         briefing ? (
           <div style={{ display: 'grid', gap: 10 }}>
             <div style={{ fontSize: 13, lineHeight: 1.6 }}>{briefing.executive_summary}</div>
-            <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
-              {Object.entries(briefing.key_levels_to_watch || {}).map(([k, v]) => (
-                <div className="stat" key={k}>
-                  <div className="stat-l">{k}</div>
-                  <div className="stat-v num">{typeof v === 'number' ? v.toLocaleString('en-IN') : String(v)}</div>
-                </div>
-              ))}
-            </div>
+            {briefingLevels.length ? (
+              <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
+                {briefingLevels.map(([k, v]) => (
+                  <div className="stat" key={k}>
+                    <div className="stat-l">{k}</div>
+                    <div className="stat-v num">{typeof v === 'number' ? v.toLocaleString('en-IN') : String(v)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <Section label="Options pin & pivots" text={briefing.options_pin_and_pivots} />
             <Section label="FII / DII read" text={briefing.fii_dii_implication} />
-            {(briefing.actionable_playbook || []).length ? (
+            {Array.isArray(briefing.actionable_playbook) && briefing.actionable_playbook.length ? (
               <div className="stat">
                 <div className="stat-l">Playbook</div>
                 <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5, display: 'grid', gap: 4 }}>
@@ -144,20 +196,36 @@ export function AIAnalysisCard({ symbol, contextPage }: { symbol: string; contex
                 </ul>
               </div>
             ) : null}
+            {errors.briefing ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh failed: {errors.briefing}</p> : null}
+            <AIProvenanceNote provider={briefing.provider_used || resolved.provider} contextPage={contextPage} />
+          </div>
+        ) : errors.briefing ? (
+          <div>
+            <EmptyNote>Market briefing unavailable — {errors.briefing}</EmptyNote>
+            <div style={{ marginTop: 10 }}><RetryButton onRetry={() => void load()} /></div>
           </div>
         ) : (
           <EmptyNote>{loading ? 'Loading briefing…' : 'No briefing — press Generate.'}</EmptyNote>
         )
       ) : history.length ? (
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
-          {history.slice(0, 8).map((h) => (
-            <li key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 12.5 }}>
-              <DirectionBadge direction={h.market_bias} />
-              <span className="num faint">{Math.round(Number(h.confidence) || 0)}%</span>
-              <span style={{ flex: 1 }}>{h.executive_summary}</span>
-            </li>
-          ))}
-        </ul>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
+            {history.slice(0, 8).map((h, i) => (
+              <li key={h.id || i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 12.5 }}>
+                <DirectionBadge direction={h.market_bias} />
+                <span className="num faint">{Math.round(Number(h.confidence) || 0)}%</span>
+                <span style={{ flex: 1 }}>{h.executive_summary}</span>
+              </li>
+            ))}
+          </ul>
+          {errors.history ? <p className="muted" style={{ fontSize: 12, margin: 0 }}>Refresh failed: {errors.history}</p> : null}
+          <AIProvenanceNote provider={resolved.provider} contextPage={contextPage} />
+        </div>
+      ) : errors.history ? (
+        <div>
+          <EmptyNote>AI history unavailable — {errors.history}</EmptyNote>
+          <div style={{ marginTop: 10 }}><RetryButton onRetry={() => void load()} /></div>
+        </div>
       ) : (
         <EmptyNote>{loading ? 'Loading history…' : 'No prior analyses for this symbol.'}</EmptyNote>
       )}

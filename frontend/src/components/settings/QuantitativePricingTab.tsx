@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Sliders, Calculator, Percent } from 'lucide-react';
 import { QuantitativeSettings } from '@/lib/settings';
 import {
@@ -20,8 +20,44 @@ interface Props {
 export function QuantitativePricingTab({ settings, onChange, errors = [] }: Props) {
   const getError = (field: string) => errors.find((e) => e.path === `quantitative.${field}`)?.message;
 
-  // Live Cost Simulator — NSE statutory rates are fixed (auto-applied)
+  // Raw drafts — invalid text stays visible and propagates NaN so zod blocks
+  // the save instead of silently snapping to a default.
+  const [riskDraft, setRiskDraft] = useState(() => String(settings.riskFreeRate));
+  const [brokerageDraft, setBrokerageDraft] = useState(() => String(settings.brokeragePerOrder));
+  const [slippageDraft, setSlippageDraft] = useState(() => String(settings.slippagePct));
+
+  useEffect(() => {
+    if (Number.isFinite(settings.riskFreeRate)) setRiskDraft(String(settings.riskFreeRate));
+  }, [settings.riskFreeRate]);
+  useEffect(() => {
+    if (Number.isFinite(settings.brokeragePerOrder)) setBrokerageDraft(String(settings.brokeragePerOrder));
+  }, [settings.brokeragePerOrder]);
+  useEffect(() => {
+    if (Number.isFinite(settings.slippagePct)) setSlippageDraft(String(settings.slippagePct));
+  }, [settings.slippagePct]);
+
+  const handleRiskChange = (raw: string) => {
+    setRiskDraft(raw);
+    onChange({ riskFreeRate: raw.trim() === '' ? NaN : Number(raw) });
+  };
+  const handleBrokerageChange = (raw: string) => {
+    setBrokerageDraft(raw);
+    onChange({ brokeragePerOrder: raw.trim() === '' ? NaN : Number(raw) });
+  };
+  const handleSlippageChange = (raw: string) => {
+    setSlippageDraft(raw);
+    onChange({ slippagePct: raw.trim() === '' ? NaN : Number(raw) });
+  };
+
+  const riskPercentDisplay = Number.isFinite(settings.riskFreeRate)
+    ? `(${(settings.riskFreeRate * 100).toFixed(2)}%)`
+    : '(invalid — fix to save)';
+
+  // Live Cost Simulator — NSE statutory rates are fixed (auto-applied).
+  // Returns null when brokerage is invalid so nothing is fabricated.
   const simulatedCost = useMemo(() => {
+    if (!Number.isFinite(settings.brokeragePerOrder) || settings.brokeragePerOrder < 0) return null;
+
     const lotSize = 75;
     const buyPrice = 120;
     const sellPrice = 160;
@@ -33,7 +69,7 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
     const exchangeCharge = (totalTurnover * 0.05) / 100;
     const sebiCharge = (totalTurnover / 10000000) * 10;
     const stampDuty = (buyTurnover * 0.003) / 100;
-    const brokerage = (settings.brokeragePerOrder || 20) * 2;
+    const brokerage = settings.brokeragePerOrder * 2;
     const gst = ((brokerage + exchangeCharge + sebiCharge) * 18) / 100;
     const totalCharges = stt + exchangeCharge + sebiCharge + stampDuty + brokerage + gst;
     const grossPnl = (sellPrice - buyPrice) * lotSize;
@@ -65,19 +101,21 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
           label="Risk-Free Rate (r)"
           description="Baseline risk-free yield curve based on Indian 91-day T-Bills."
           error={getError('riskFreeRate')}
+          htmlFor="quant-risk-free"
         >
           <div className="flex items-center gap-2">
             <SettingInput
+              id="quant-risk-free"
               type="number"
               step="0.0025"
-              min="0.01"
-              max="0.20"
+              min="0"
+              max="1"
               mono
-              value={settings.riskFreeRate}
-              onChange={(e) => onChange({ riskFreeRate: parseFloat(e.target.value) || 0.0675 })}
+              value={riskDraft}
+              onChange={(e) => handleRiskChange(e.target.value)}
             />
-            <span className="text-xs font-mono text-muted-foreground w-14">
-              ({((settings.riskFreeRate || 0) * 100).toFixed(2)}%)
+            <span className="text-xs font-mono text-muted-foreground w-28">
+              {riskPercentDisplay}
             </span>
           </div>
         </SettingRow>
@@ -136,14 +174,16 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
           label="Flat Brokerage (₹ / Order)"
           description="Commission charged by your execution broker per executed leg."
           error={getError('brokeragePerOrder')}
+          htmlFor="quant-brokerage"
         >
           <SettingInput
+            id="quant-brokerage"
             type="number"
             step="5"
             min="0"
             mono
-            value={settings.brokeragePerOrder}
-            onChange={(e) => onChange({ brokeragePerOrder: parseFloat(e.target.value) || 0 })}
+            value={brokerageDraft}
+            onChange={(e) => handleBrokerageChange(e.target.value)}
           />
         </SettingRow>
 
@@ -151,15 +191,17 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
           label="Estimated Slippage Buffer (%)"
           description="Assumed execution slippage applied to backtests and paper orders."
           error={getError('slippagePct')}
+          htmlFor="quant-slippage"
         >
           <SettingInput
+            id="quant-slippage"
             type="number"
             step="0.01"
             min="0"
-            max="5"
+            max="10"
             mono
-            value={settings.slippagePct}
-            onChange={(e) => onChange({ slippagePct: parseFloat(e.target.value) || 0 })}
+            value={slippageDraft}
+            onChange={(e) => handleSlippageChange(e.target.value)}
           />
         </SettingRow>
       </SettingSection>
@@ -170,24 +212,36 @@ export function QuantitativePricingTab({ settings, onChange, errors = [] }: Prop
         description="Simulated 1-lot NIFTY option trade (75 qty @ ₹120 buy, ₹160 sell, ₹3,000 gross P&L)."
         icon={Calculator}
         action={
-          <span className="badge b-info font-mono" style={{ fontSize: '11px' }}>
-            Break-even: +{simulatedCost.breakEvenPts.toFixed(2)} pts
-          </span>
+          simulatedCost ? (
+            <span className="badge b-info font-mono" style={{ fontSize: '11px' }}>
+              Break-even: +{simulatedCost.breakEvenPts.toFixed(2)} pts
+            </span>
+          ) : (
+            <span className="badge b-warn" style={{ fontSize: '11px' }}>
+              Brokerage invalid — fix to simulate
+            </span>
+          )
         }
       >
         <div className="card-pad">
-          <div className="stat-grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-            <StatTile label="Brokerage" value={`₹${simulatedCost.brokerage.toFixed(2)}`} />
-            <StatTile label="STT (Sell)" value={`₹${simulatedCost.stt.toFixed(2)}`} />
-            <StatTile label="Exchange" value={`₹${simulatedCost.exchangeCharge.toFixed(2)}`} />
-            <StatTile label="GST (18%)" value={`₹${simulatedCost.gst.toFixed(2)}`} />
-            <StatTile label="SEBI & Stamp" value={`₹${(simulatedCost.stampDuty + simulatedCost.sebiCharge).toFixed(2)}`} />
-            <StatTile
-              label="Net realized"
-              value={`₹${simulatedCost.netPnl.toFixed(2)}`}
-              tone={simulatedCost.netPnl >= 0 ? 'positive' : 'negative'}
-            />
-          </div>
+          {simulatedCost ? (
+            <div className="stat-grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+              <StatTile label="Brokerage" value={`₹${simulatedCost.brokerage.toFixed(2)}`} />
+              <StatTile label="STT (Sell)" value={`₹${simulatedCost.stt.toFixed(2)}`} />
+              <StatTile label="Exchange" value={`₹${simulatedCost.exchangeCharge.toFixed(2)}`} />
+              <StatTile label="GST (18%)" value={`₹${simulatedCost.gst.toFixed(2)}`} />
+              <StatTile label="SEBI & Stamp" value={`₹${(simulatedCost.stampDuty + simulatedCost.sebiCharge).toFixed(2)}`} />
+              <StatTile
+                label="Net realized"
+                value={`₹${simulatedCost.netPnl.toFixed(2)}`}
+                tone={simulatedCost.netPnl >= 0 ? 'positive' : 'negative'}
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--ds-warn-strong)]">
+              Enter a valid non-negative brokerage to compute the round-trip cost breakdown.
+            </p>
+          )}
         </div>
       </SettingSection>
     </div>

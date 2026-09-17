@@ -24,10 +24,10 @@ export function SidebarHeader({
   const isConnecting = streamState === 'CONNECTING' || streamState === 'RECONNECTING';
 
   const dotColor = isLive
-    ? 'bg-emerald-500'
+    ? 'bg-up'
     : isConnecting
-    ? 'bg-amber-500'
-    : 'bg-rose-500';
+    ? 'bg-warn'
+    : 'bg-down';
 
   const statusLabel = isLive ? 'Live' : isConnecting ? 'Syncing' : 'Offline';
 
@@ -49,7 +49,7 @@ export function SidebarHeader({
             <span>D</span>
             <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5" title={`Feed ${statusLabel}`}>
               {isLive && (
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-up opacity-75" />
               )}
               <span className={cn('relative inline-flex rounded-full h-2.5 w-2.5 ring-1 ring-card', dotColor)} />
             </span>
@@ -60,7 +60,7 @@ export function SidebarHeader({
               <span className="font-bold tracking-tight text-[14px] text-foreground leading-none">
                 Droid
               </span>
-              <span className="text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded-[2px] text-primary bg-[#edf4fc] border border-[rgba(56,126,209,0.25)] leading-none">
+              <span className="text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded-[2px] text-primary bg-accent-wash border border-accent-line leading-none">
                 Pro
               </span>
             </div>
@@ -76,12 +76,12 @@ export function SidebarHeader({
               onClick={onToggleCollapse}
               aria-label="Expand sidebar (⌘B)"
               title="Expand sidebar (⌘B)"
-              className="relative flex h-8 w-8 items-center justify-center rounded-[4px] text-white font-bold text-[14px] tracking-tight bg-primary shadow-xs cursor-pointer hover:bg-[#2a6fc0] transition"
+              className="relative flex h-8 w-8 items-center justify-center rounded-[4px] text-white font-bold text-[14px] tracking-tight bg-primary shadow-xs cursor-pointer hover:bg-primary/90 transition"
             >
               <span>D</span>
               <span className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2">
                 {isLive && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-up opacity-75" />
                 )}
                 <span className={cn('relative inline-flex rounded-full h-2 w-2 ring-1 ring-card', dotColor)} />
               </span>

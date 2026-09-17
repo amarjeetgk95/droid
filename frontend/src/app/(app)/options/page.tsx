@@ -1,52 +1,22 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
-import dynamic from 'next/dynamic';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import { OptionChainResponse, MaxPainResult } from '@/lib/types';
-import { Card, fmtINR, fmtNum } from '@/components/ui/desk';
-import { FreshnessClock } from '@/components/common/FreshnessClock';
+import type { MaxPainResult, OptionChainResponse } from '@/lib/types';
 import { OptionsHeader } from '@/components/options/OptionsHeader';
 import { OptionChainTable } from '@/components/options/OptionChainTable';
-import { PayoffChart } from '@/components/options/PayoffChart';
 import { IVSmileChart } from '@/components/options/IVSmileChart';
-import { ExpectedMoveCard, ExpectedMoveData } from '@/components/options/ExpectedMoveCard';
-import { GreeksSummaryCard, GreeksSummaryData } from '@/components/options/GreeksSummaryCard';
-import { ErrorCard } from '@/components/ui/ErrorCard';
-import { AIAnalysisCard, AIStrategyPanel, AITradeValidator } from '@/components/ai';
-import { deskCache } from '@/lib/useDeskCache';
-import { useEnumQueryParam, useQueryParam, useQueryParamsWriter, decodeParam, encodeParam } from '@/lib/urlState';
+import { PayoffChart } from '@/components/options/PayoffChart';
+import { ExpectedMoveCard, type ExpectedMoveData } from '@/components/options/ExpectedMoveCard';
+import { InstitutionalFlowTracker } from '@/components/options/InstitutionalFlowTracker';
 import { OptionChainSkeleton } from '@/components/options/OptionChainSkeleton';
+import { ErrorCard } from '@/components/ui/ErrorCard';
+import { useMarketSession } from '@/hooks/useMarketSession';
 
-// Flow ladder loads lazily; it owns its own polling hook.
-const InstitutionalFlowTracker = dynamic(
-  () => import('@/components/options/InstitutionalFlowTracker').then((m) => m.InstitutionalFlowTracker),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="card card-pad">
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>Loading institutional flow…</p>
-      </div>
-    ),
-  },
-);
+type ViewMode = 'standard' | 'greeks';
+type ForecastDirection = 'BULLISH' | 'BEARISH';
 
-/** Slim AI-research verdict: 3 plain lines folded from the old AiResearchTab. */
-interface ResearchVerdict {
-  research_assessment?: string;
-  uncertainty_level?: string;
-  bull_case_summary?: string;
-  bear_case_summary?: string;
-  ai_impact?: string;
-  impact_rationale?: string[];
-  contradiction_analysis?: {
-    strongest_counter_argument?: string;
-    counter_weight_score?: number;
-    invalidation_conditions?: string[];
-  };
-}
-
-/** Intelligence endpoints return models directly; options endpoints wrap in {data,meta}. */
+/** Intelligence endpoints may return the model directly or wrapped in {data,meta}. */
 function unwrapModel<T>(raw: unknown): T {
   if (raw && typeof raw === 'object' && 'data' in raw && 'meta' in raw) {
     return (raw as { data: T }).data;
@@ -54,203 +24,129 @@ function unwrapModel<T>(raw: unknown): T {
   return raw as T;
 }
 
-function OptionsPageInner() {
-  // Single shared symbol/expiry state for every section below — no forks.
-  // Desk state lives in the URL (Phase 5): symbol/expiry/view are deep-linkable.
-  const writeParams = useQueryParamsWriter();
-  const symbolParam = useQueryParam('symbol');
-  const selectedSymbol = useMemo(() => decodeParam(symbolParam) ?? 'NIFTY', [symbolParam]);
-  const expiryParam = useQueryParam('expiry');
-  const selectedExpiry = useMemo(() => decodeParam(expiryParam) ?? '', [expiryParam]);
-  const viewMode = useEnumQueryParam<'standard' | 'greeks'>('view', ['standard', 'greeks'] as const, 'standard');
-  const [forecastDirection, setForecastDirection] = useState<'BULLISH' | 'BEARISH'>('BULLISH');
-
-  const setSelectedSymbol = useCallback(
-    (sym: string) => {
-      void writeParams({ symbol: sym === 'NIFTY' ? null : encodeParam(sym), expiry: null });
-    },
-    [writeParams],
-  );
-  const setSelectedExpiry = useCallback(
-    (exp: string) => {
-      void writeParams({ expiry: exp ? encodeParam(exp) : null });
-    },
-    [writeParams],
-  );
-  const setViewMode = useCallback(
-    (vm: 'standard' | 'greeks') => {
-      void writeParams({ view: vm === 'standard' ? null : vm });
-    },
-    [writeParams],
-  );
+export default function OptionsPage() {
+  const [selectedSymbol, setSelectedSymbol] = useState('NIFTY');
+  const [selectedExpiry, setSelectedExpiry] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('standard');
+  const [forecastDirection, setForecastDirection] = useState<ForecastDirection>('BULLISH');
 
   const [chainData, setChainData] = useState<OptionChainResponse | null>(null);
+  const [chainAsOf, setChainAsOf] = useState<string | null>(null);
+  const [chainKey, setChainKey] = useState<string | null>(null);
   const [maxPainData, setMaxPainData] = useState<MaxPainResult | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState<number>(0);
-  // Truth-of-data: last successful chain observation (excluded from deps intentionally;
-  // only set inside the fetch effect below).
-  const [chainFetchedAt, setChainFetchedAt] = useState<Date | null>(null);
-  const [chainFetching, setChainFetching] = useState<boolean>(true);
-
-  // 1h (INTRADAY) forecast state, derived from the same symbol + chain spot.
   const [expectedMove, setExpectedMove] = useState<ExpectedMoveData | null>(null);
-  const [greeks, setGreeks] = useState<GreeksSummaryData | null>(null);
-  const [research, setResearch] = useState<ResearchVerdict | null>(null);
-  const [forecastLoading, setForecastLoading] = useState<boolean>(false);
-  const [forecastError, setForecastError] = useState<string | null>(null);
+  const [expectedMoveLoading, setExpectedMoveLoading] = useState(false);
+  const [expectedMoveError, setExpectedMoveError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const { isOpen } = useMarketSession();
+  const marketClosed = !isOpen;
 
   useEffect(() => {
-    let isMounted = true;
-    const cacheKey = `options:${selectedSymbol}:${selectedExpiry || 'default'}`;
-    const cached = deskCache.get<{ chainData: unknown; maxPainData: unknown }>(cacheKey);
-
-    if (cached) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setChainData(cached.data.chainData as OptionChainResponse);
-      setMaxPainData(cached.data.maxPainData as MaxPainResult);
-      setLoading(false);
-      if (!cached.isStale) return;
-    } else {
-      setLoading(true);
-    }
+    let active = true;
+    setLoading(true);
 
     const run = async () => {
       try {
-        setChainFetching(true);
-        if (!selectedExpiry) {
-          const [chainRes, mpRes] = await Promise.all([
-            api.getOptionChain(selectedSymbol, undefined),
-            api.getMaxPain(selectedSymbol, undefined),
-          ]);
-          if (!isMounted) return;
-          setChainData(chainRes.data);
-          setMaxPainData(mpRes.data);
-          setChainFetchedAt(new Date());
-
-          if (chainRes.data.expiry) {
-            setSelectedExpiry(chainRes.data.expiry);
-          }
-
-          deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpRes.data });
-          setError(null);
-          return;
-        }
-
         const [chainRes, mpRes] = await Promise.all([
-          api.getOptionChain(selectedSymbol, selectedExpiry),
-          api.getMaxPain(selectedSymbol, selectedExpiry),
+          api.getOptionChain(selectedSymbol, selectedExpiry || undefined),
+          api.getMaxPain(selectedSymbol, selectedExpiry || undefined),
         ]);
-        if (!isMounted) return;
+        if (!active) return;
         setChainData(chainRes.data);
         setMaxPainData(mpRes.data);
-        setChainFetchedAt(new Date());
-        deskCache.set(cacheKey, { chainData: chainRes.data, maxPainData: mpRes.data });
+        setChainAsOf(chainRes.meta?.timestamp ?? null);
+        setChainKey(`${selectedSymbol}|${chainRes.data?.expiry ?? selectedExpiry}`);
+        // The ladder's date is whatever the broker actually priced; adopt it so
+        // the selector, freshness badge and forecast all reference one expiry.
+        if (chainRes.data?.expiry && chainRes.data.expiry !== selectedExpiry) {
+          setSelectedExpiry(chainRes.data.expiry);
+        }
         setError(null);
       } catch (err) {
-        if (!isMounted) return;
+        if (!active) return;
         setError(err instanceof Error ? err.message : 'Failed to fetch options data');
       } finally {
-        if (isMounted) {
-          setLoading(false);
-          setChainFetching(false);
-        }
+        if (active) setLoading(false);
       }
     };
 
     void run();
-
     return () => {
-      isMounted = false;
+      active = false;
     };
   }, [selectedSymbol, selectedExpiry, reloadToken]);
 
-  const spotPrice = chainData?.spot_price || 0;
-  const atmIv = chainData?.analytics?.atm_iv;
-  const currentIv = (() => {
-    if (atmIv !== null && atmIv !== undefined && atmIv > 0) return atmIv / 100;
-    return null;
-  })();
+  const spotPrice = chainData?.spot_price ?? 0;
+  const atmIv = chainData?.analytics?.atm_iv ?? null;
+  // `current_iv` is a FRACTION in the API (0.15 = 15%); `atm_iv` arrives as a
+  // percent (15.0), so convert before projecting.
+  const currentIv = typeof atmIv === 'number' && atmIv > 0 ? atmIv / 100 : null;
+  const chainAligned = chainKey === `${selectedSymbol}|${selectedExpiry}`;
 
-  // 1h forecast fetch: same symbol + chain spot, fixed INTRADAY horizon.
   useEffect(() => {
-    if (!spotPrice || spotPrice <= 0 || currentIv === null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    let active = true;
+
+    if (!chainAligned || spotPrice <= 0 || currentIv === null) {
       setExpectedMove(null);
-      setGreeks(null);
-      setResearch(null);
-      return;
+      setExpectedMoveError(null);
+      setExpectedMoveLoading(false);
+      return () => {
+        active = false;
+      };
     }
-    let mounted = true;
-    setForecastLoading(true);
+
+    setExpectedMoveLoading(true);
     const run = async () => {
       try {
-        const [emRaw, gkRaw, rsRaw] = await Promise.all([
-          api.projectExpectedMove({
-            underlying: selectedSymbol,
-            spot: spotPrice,
-            direction: forecastDirection,
-            horizon: 'INTRADAY',
-            current_iv: currentIv,
-          }),
-          api.getPortfolioGreeksSummary(),
-          api.getFinancialResearch(selectedSymbol, 'INTRADAY', forecastDirection),
-        ]);
-        if (!mounted) return;
-        setExpectedMove(unwrapModel<ExpectedMoveData>(emRaw));
-        setGreeks(unwrapModel<GreeksSummaryData>(gkRaw));
-        setResearch(unwrapModel<ResearchVerdict>(rsRaw));
-        setForecastError(null);
+        const res = await api.projectExpectedMove({
+          underlying: selectedSymbol,
+          spot: spotPrice,
+          direction: forecastDirection,
+          horizon: 'INTRADAY',
+          current_iv: currentIv,
+        });
+        if (!active) return;
+        setExpectedMove(unwrapModel<ExpectedMoveData>(res));
+        setExpectedMoveError(null);
       } catch (err) {
-        if (!mounted) return;
-        setForecastError(err instanceof Error ? err.message : 'Failed to fetch 1h forecast');
+        if (!active) return;
+        setExpectedMove(null);
+        setExpectedMoveError(err instanceof Error ? err.message : 'Expected move projection unavailable');
       } finally {
-        if (mounted) setForecastLoading(false);
+        if (active) setExpectedMoveLoading(false);
       }
     };
+
     void run();
     return () => {
-      mounted = false;
+      active = false;
     };
-  }, [selectedSymbol, spotPrice, currentIv, forecastDirection]);
+  }, [selectedSymbol, chainAligned, spotPrice, currentIv, forecastDirection]);
 
-  // Positioning strip: walls = strikes with highest call / put OI in this expiry.
-  let callWall: number | null = null;
-  let putWall: number | null = null;
-  if (chainData?.strikes?.length) {
-    let maxCallOi = -1;
-    let maxPutOi = -1;
-    for (const row of chainData.strikes) {
+  const { callWall, putWall } = useMemo(() => {
+    let cw: number | null = null;
+    let pw: number | null = null;
+    let maxCallOi = 0;
+    let maxPutOi = 0;
+    for (const row of chainData?.strikes ?? []) {
       const cOi = row.call?.open_interest ?? 0;
       const pOi = row.put?.open_interest ?? 0;
       if (cOi > maxCallOi) {
         maxCallOi = cOi;
-        callWall = row.strike;
+        cw = row.strike;
       }
       if (pOi > maxPutOi) {
         maxPutOi = pOi;
-        putWall = row.strike;
+        pw = row.strike;
       }
     }
-    if (maxCallOi <= 0) callWall = null;
-    if (maxPutOi <= 0) putWall = null;
-  }
+    return { callWall: cw, putWall: pw };
+  }, [chainData]);
 
-  const analytics = chainData?.analytics;
-  const maxPainStrike = analytics?.max_pain_strike ?? maxPainData?.max_pain_strike ?? null;
-  const pcrOi = analytics?.pcr_oi;
-  const pcrVol = analytics?.pcr_volume;
-
-  const verdictLine1 = research
-    ? `${(research.research_assessment || 'MIXED').replace(/_/g, ' ')} · uncertainty ${research.uncertainty_level || 'MODERATE'} · AI impact ${research.ai_impact || 'NO_CHANGE'}`
-    : null;
-  const verdictLine2 = research
-    ? `Bull: ${research.bull_case_summary || 'Not stated.'} Bear: ${research.bear_case_summary || 'Not stated.'}`
-    : null;
-  const verdictLine3 = research
-    ? `Invalidation: ${(research.contradiction_analysis?.invalidation_conditions?.[0] || research.contradiction_analysis?.strongest_counter_argument || 'Local structural stop breach.')}`
-    : null;
+  const hasChain = chainData !== null;
 
   return (
     <div className="ds-page">
@@ -261,43 +157,40 @@ function OptionsPageInner() {
               <h1>Derivatives — Options</h1>
               <span className="badge b-info" style={{ fontSize: 11 }}>{selectedSymbol}</span>
             </div>
-            <p className="muted num">
-              {selectedExpiry || chainData?.expiry ? `Expiry ${selectedExpiry || chainData?.expiry}` : 'Loading chain…'} · 1h INTRADAY forecast
+            <p className="num">
+              {selectedExpiry || chainData?.expiry
+                ? `Expiry ${selectedExpiry || chainData?.expiry}`
+                : 'Loading chain…'}{' '}
+              · chain, max pain, IV smile &amp; 1h expected move
             </p>
           </div>
           <span className="spacer" />
-          <FreshnessClock
-            lastAt={chainFetchedAt}
-            fetching={chainFetching}
-            sourceLabel="REST · on change"
-          />
-          <div className="seg" role="group" aria-label="Forecast direction">
-            {(['BULLISH', 'BEARISH'] as const).map((d) => (
+          <div className="seg" role="group" aria-label="Expected move direction">
+            {(['BULLISH', 'BEARISH'] as const).map((dir) => (
               <button
-                key={d}
+                key={dir}
                 type="button"
                 className="seg-btn"
-                data-active={forecastDirection === d}
-                aria-pressed={forecastDirection === d}
-                onClick={() => setForecastDirection(d)}
+                data-active={forecastDirection === dir}
+                aria-pressed={forecastDirection === dir}
+                onClick={() => setForecastDirection(dir)}
               >
-                {d === 'BULLISH' ? 'Call · Bullish' : 'Put · Bearish'}
+                {dir === 'BULLISH' ? 'Call · Bullish' : 'Put · Bearish'}
               </button>
             ))}
           </div>
         </div>
       </header>
 
-      {/* 1. Header: underlying + expiry selects + live telemetry ribbon */}
       <OptionsHeader
-        analytics={chainData?.analytics || null}
+        analytics={chainData?.analytics ?? null}
         selectedSymbol={selectedSymbol}
         onSelectSymbol={(sym) => {
           setSelectedSymbol(sym);
           setSelectedExpiry('');
         }}
         selectedExpiry={selectedExpiry || chainData?.expiry || ''}
-        expiries={chainData?.expiries || []}
+        expiries={chainData?.expiries ?? []}
         onSelectExpiry={(exp) => setSelectedExpiry(exp)}
         viewMode={viewMode}
         onToggleViewMode={setViewMode}
@@ -312,94 +205,44 @@ function OptionsPageInner() {
           mode="full-page"
           onRetry={() => {
             setError(null);
-            setReloadToken(v => v + 1);
+            setReloadToken((v) => v + 1);
           }}
           isRetrying={loading}
         />
-      ) : loading && !chainData ? (
+      ) : loading && !hasChain ? (
         <OptionChainSkeleton rows={12} />
       ) : (
         <>
-
-          {/* 3. Option chain dense table */}
           <OptionChainTable
-            strikes={chainData?.strikes || []}
+            strikes={chainData?.strikes ?? []}
             viewMode={viewMode}
             spotPrice={spotPrice}
+            asOf={chainAsOf}
+            marketClosed={marketClosed}
+            fetching={loading}
           />
 
-          {/* 4. Expected move + greeks summary (+ 3-line research verdict) */}
-          <Card
-            title="1h forecast"
-            meta="INTRADAY · chain spot + IV"
-          >
-            <p className="muted" style={{ margin: '0 0 12px', fontSize: 12.5 }}>
-              INTRADAY expected move from chain spot and IV, plus portfolio greeks. Research verdict folded to 3 lines.
-            </p>
-
-            <div className="stat" style={{ marginBottom: 10 }}>
-              <div className="stat-l">Research verdict</div>
-              {forecastLoading && !research ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Loading research verdict…</div>
-              ) : verdictLine1 ? (
-                <div style={{ display: 'grid', gap: 2, fontSize: 12, marginTop: 4 }}>
-                  <div>{verdictLine1}</div>
-                  <div className="muted">{verdictLine2}</div>
-                  <div className="muted">{verdictLine3}</div>
-                </div>
-              ) : (
-                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                  No AI research — quant baseline (neutral).{forecastError ? ` Forecast note: ${forecastError}` : ''}
-                </div>
-              )}
-            </div>
-
-            {forecastLoading && !expectedMove ? (
-              <p className="muted" style={{ margin: 0, fontSize: 12 }}>Loading 1h forecast…</p>
-            ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
-                <ExpectedMoveCard data={expectedMove} />
-                <GreeksSummaryCard summary={greeks} />
-                {forecastError && (expectedMove || greeks) ? (
-                  <p className="muted" style={{ margin: 0, fontSize: 12 }}>Forecast note: {forecastError}</p>
-                ) : null}
-              </div>
-            )}
-          </Card>
-
-          {/* 5. AI: analysis + strategy architect + trade auditor */}
-          <AIAnalysisCard symbol={selectedSymbol} contextPage="options" />
-          <AIStrategyPanel symbol={selectedSymbol} />
-          <AITradeValidator symbol={selectedSymbol} spotPrice={spotPrice} />
-
-          {/* 6. Payoff / IV plain cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-            <PayoffChart
-              data={maxPainData}
-              spotPrice={spotPrice}
-            />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <PayoffChart data={maxPainData} spotPrice={spotPrice} />
             <IVSmileChart
-              strikes={chainData?.strikes || []}
-              atmStrike={chainData?.analytics?.atm_strike || 0}
+              strikes={chainData?.strikes ?? []}
+              atmStrike={chainData?.analytics?.atm_strike ?? 0}
             />
           </div>
 
-          {/* 6. Flow table slim */}
+          <ExpectedMoveCard
+            data={expectedMove}
+            loading={expectedMoveLoading || (loading && !chainAligned)}
+            error={expectedMoveError}
+          />
+
           <InstitutionalFlowTracker
             symbol={selectedSymbol}
-            expiry={selectedExpiry || chainData?.expiry}
+            expiry={selectedExpiry || chainData?.expiry || undefined}
+            marketClosed={marketClosed}
           />
         </>
       )}
     </div>
-  );
-}
-
-/** Suspense boundary required: useSearchParams on a prerendered static route. */
-export default function OptionsPage() {
-  return (
-    <Suspense fallback={<div className="ds-page" />}>
-      <OptionsPageInner />
-    </Suspense>
   );
 }

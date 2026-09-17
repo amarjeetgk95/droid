@@ -147,6 +147,10 @@ async def test_sweep_preempted_runner_still_settles_paper_and_audit():
     signal_fsm._signals[sig.signal_id] = sig
     seed_audit_records(sig.signal_id)
     seed_reconciliation(sig)
+    # Fail-closed: the residual exit needs a real broker mark for this contract.
+    from tests.conftest import seed_chain_mark
+
+    seed_chain_mark(OPTION_CONTRACT["broker_symbol"], 130.0, strike=24900, option_type="CE")
 
     with patch.object(calendar_service, "can_trade_now", return_value=make_perm(True)):
         with patch.object(signal_paper_engine, "close_signal_position", new_callable=AsyncMock) as mock_close:

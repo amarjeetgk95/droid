@@ -27,6 +27,8 @@ class FeedState:
     suppress_candidates: bool = False
     needs_resync: bool = False
     last_snapshot_ms: int | None = None
+    degraded_count: int = 0
+    escalated: bool = False
 
 
 class FeedCircuitBreaker:
@@ -51,7 +53,13 @@ class FeedCircuitBreaker:
 
     def trip(self, instrument_id: str, anomaly: str, reason: str) -> FeedState:
         st = self._get(instrument_id)
+        st.degraded_count += 1
         if st.health == "FEED_DEGRADED":
+            # Escalate on repeated trips (5+): page risk desk, keep suppressed.
+            if st.degraded_count >= 5 and not st.escalated:
+                st.escalated = True
+                logger.critical("feed_degraded_escalated", instrument=instrument_id,
+                                degraded_count=st.degraded_count)
             return st
         st.health = "FEED_DEGRADED"
         st.reason = reason
@@ -87,13 +95,33 @@ class FeedCircuitBreaker:
         if st.health not in ("FEED_DEGRADED", "RECOVERING"):
             logger.warning("snapshot_received_while_healthy", instrument=instrument_id)
             return st
-        if validate_fn:
-            ok, reason = validate_fn(snapshot_timestamp_ms, sequence_id)
-            if not ok:
-                logger.warning("snapshot_validation_failed", instrument=instrument_id, reason=reason)
-                st.health = "FEED_DEGRADED"
-                st.reason = f"snapshot validation failed: {reason}"
-                return st
+        # validate_fn is REQUIRED — None never skips validation. When None is
+        # passed we run a default sanity validator (timestamp/seq monotonic)
+        # rather than passing through; production callers must supply an
+        # explicit validator.
+        fn = validate_fn
+        if fn is None:
+            logger.warning("snapshot_validation_default_used", instrument=instrument_id)
+
+            def fn(ts_ms: int, seq: int):  # type: ignore[misc]
+                try:
+                    import time as _t
+                    now = int(_t.time() * 1000)
+                    if ts_ms is None or seq is None:
+                        return False, "missing timestamp/seq"
+                    if int(ts_ms) - now > 2000:
+                        return False, "snapshot timestamp in future"
+                    if int(seq) < 0:
+                        return False, "negative sequence"
+                    return True, "default-ok"
+                except Exception as _e:
+                    return False, str(_e)[:150]
+        ok, reason = fn(snapshot_timestamp_ms, sequence_id)
+        if not ok:
+            logger.warning("snapshot_validation_failed", instrument=instrument_id, reason=reason)
+            st.health = "FEED_DEGRADED"
+            st.reason = f"snapshot validation failed: {reason}"
+            return st
         self._rebuild_derived_state(instrument_id, snapshot_timestamp_ms)
         st.health = "HEALTHY"
         st.reason = None
@@ -119,10 +147,12 @@ class FeedCircuitBreaker:
         )
 
     def is_healthy(self, instrument_id: str) -> bool:
+        # Block unless HEALTHY: UNKNOWN and RECOVERING both deny execution.
         return self._get(instrument_id).health == "HEALTHY"
 
     def is_degraded(self, instrument_id: str) -> bool:
-        return self._get(instrument_id).health == "FEED_DEGRADED"
+        # RECOVERING still suppresses: the feed is not proven healthy yet.
+        return self._get(instrument_id).health in ("FEED_DEGRADED", "RECOVERING")
 
     def suppresses(self, instrument_id: str) -> bool:
         return self._get(instrument_id).suppress_candidates
@@ -147,6 +177,8 @@ class FeedCircuitBreaker:
             "suppress_candidates": st.suppress_candidates,
             "needs_resync": st.needs_resync,
             "last_snapshot_ms": st.last_snapshot_ms,
+            "degraded_count": st.degraded_count,
+            "escalated": st.escalated,
         }
 
 

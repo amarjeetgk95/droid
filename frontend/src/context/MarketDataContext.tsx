@@ -27,6 +27,7 @@ type MarketDataContextType = {
   regimeOverview: MarketRegimeOverview | null;
   mlPrediction: any | null;
   fiiDii: any | null;
+  summaryData: any | null;
   loading: boolean;
   /** First non-null section error — back-compat convenience. */
   error: string | null;
@@ -60,6 +61,8 @@ export function useMarketTicks(): MarketTicksSnapshot {
 const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
 const DEFAULT_REFRESH_MS = 5000;
+/** Coalesce rapid WS health flips (reconnect storms) into one re-time. */
+const HEALTH_RESCHEDULE_DEBOUNCE_MS = 1200;
 
 const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, marketStatus: null };
 
@@ -73,6 +76,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   const [regimeOverview, setRegimeOverview] = useState<MarketRegimeOverview | null>(null);
   const [mlPrediction, setMlPrediction] = useState<any | null>(null);
   const [fiiDii, setFiiDii] = useState<any | null>(null);
+  const [summaryData, setSummaryData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<SectionErrors>(EMPTY_ERRORS);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
@@ -84,6 +88,12 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   const { latestTicks, streamState, ticksFresh, lastTickAt } = useMarketStream();
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
+  /** Reschedules the next REST sync without an immediate fetch. */
+  const scheduleRef = useRef<(() => void) | null>(null);
+  const activeIntervalRef = useRef(activeInterval);
+  /** Latest feed health, read by the scheduler without re-subscribing. */
+  const streamHealthRef = useRef({ streamState, ticksFresh });
+  const healthInitializedRef = useRef(false);
 
   // Single implementation shared by polling, visibility refresh and refetch().
   const fetchData = useCallback(async () => {
@@ -96,7 +106,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
         try {
           const summaryRes = await api.getDashboardSummary();
           summaryData = summaryRes.data;
-        } catch (err) {
+        } catch {
           // summaryData stays null, errors populated below
         }
         if (!mountedRef.current) return;
@@ -143,6 +153,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
           if (summaryData.regime_overview && mountedRef.current) setRegimeOverview(summaryData.regime_overview as MarketRegimeOverview);
           if (summaryData.ml_prediction && mountedRef.current) setMlPrediction(summaryData.ml_prediction);
           if (summaryData.fii_dii && mountedRef.current) setFiiDii(summaryData.fii_dii);
+          if (mountedRef.current) setSummaryData(summaryData);
         }
         setErrors(nextErrors);
         setLastFetch(new Date());
@@ -203,21 +214,36 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   useEffect(() => {
     mountedRef.current = true;
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
 
     // Adaptive scheduler:
     // When WebSocket is CONNECTED and ticks are fresh, REST only needs a quiet sync (25s).
     // When WebSocket is disconnected or connecting, REST polls at 5s fallback.
     // When document.hidden, completely pause polling.
     const schedule = () => {
+      if (disposed) return;
       if (typeof document !== 'undefined' && document.hidden) return;
-      const isLiveWs = streamState === 'CONNECTED' && ticksFresh;
-      const baseInterval = isLiveWs ? 25000 : Math.max(4000, activeInterval);
+      const health = streamHealthRef.current;
+      const isLiveWs = health.streamState === 'CONNECTED' && health.ticksFresh;
+      const baseInterval = isLiveWs ? 25000 : Math.max(4000, activeIntervalRef.current);
       const jitter = baseInterval * (0.85 + Math.random() * 0.3); // ±15% jitter
       timeout = setTimeout(() => {
+        if (disposed) return;
         void fetchData();
         schedule();
       }, jitter);
     };
+
+    // Re-time the next sync without forcing a fetch. Used by focus/visibility
+    // events, interval changes and feed-health flips.
+    const reschedule = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      schedule();
+    };
+    scheduleRef.current = reschedule;
 
     void fetchData();
     schedule();
@@ -225,10 +251,12 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     const onVisibility = () => {
       if (!document.hidden) {
         void fetchData(); // refetch immediately when tab becomes visible
-        if (timeout) clearTimeout(timeout);
-        schedule();
+        reschedule();
       } else {
-        if (timeout) clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
@@ -240,16 +268,14 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
       if (now - lastFocusFetch > 2000) {
         lastFocusFetch = now;
         void fetchData();
-        if (timeout) clearTimeout(timeout);
-        schedule();
+        reschedule();
       }
     };
     window.addEventListener('focus', onFocus);
 
     const onBrokerAuth = () => {
       void fetchData();
-      if (timeout) clearTimeout(timeout);
-      schedule();
+      reschedule();
     };
     window.addEventListener('broker:authenticated', onBrokerAuth);
 
@@ -261,21 +287,55 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
           onBrokerAuth();
         }
       };
-    } catch {}
+    } catch {
+      // Feature-detect: BroadcastChannel is unavailable in this environment.
+      // Non-fatal — broker auth still reaches this context via the window
+      // 'broker:authenticated' event handled above.
+    }
 
     return () => {
+      disposed = true;
       mountedRef.current = false;
-      if (timeout) clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      scheduleRef.current = null;
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('broker:authenticated', onBrokerAuth);
       if (bc) {
         try {
           bc.close();
-        } catch {}
+        } catch {
+          // Best-effort teardown: the channel is discarded on unmount either
+          // way, and a close() failure must never break effect cleanup.
+        }
       }
     };
-  }, [activeInterval, fetchData, streamState, ticksFresh]);
+  }, [fetchData]);
+
+  // Feed-health flips re-time the next REST sync (adaptive interval) but never
+  // force an immediate fetch — a CONNECTED/DISCONNECTED flap during reconnect
+  // storms would otherwise fire a REST burst. Debounced to collapse storms.
+  useEffect(() => {
+    streamHealthRef.current = { streamState, ticksFresh };
+    if (!healthInitializedRef.current) {
+      healthInitializedRef.current = true;
+      return;
+    }
+    const debounce = setTimeout(() => {
+      scheduleRef.current?.();
+    }, HEALTH_RESCHEDULE_DEBOUNCE_MS);
+    return () => clearTimeout(debounce);
+  }, [streamState, ticksFresh]);
+
+  // User-configured interval changes re-time the next sync only.
+  useEffect(() => {
+    if (activeIntervalRef.current === activeInterval) return;
+    activeIntervalRef.current = activeInterval;
+    scheduleRef.current?.();
+  }, [activeInterval]);
 
   const value = useMemo<MarketDataContextType>(() => ({
     cards,
@@ -285,6 +345,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     regimeOverview,
     mlPrediction,
     fiiDii,
+    summaryData,
     loading,
     error: errors.cards ?? errors.breadth ?? errors.health ?? errors.marketStatus,
     errors,
@@ -294,7 +355,7 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
     refreshInterval: activeInterval,
     setRefreshInterval: setActiveInterval,
     refetch: fetchData,
-  }), [cards, breadth, health, marketStatus, regimeOverview, mlPrediction, fiiDii, loading, errors, lastFetch, streamState, ticksFresh, activeInterval, fetchData]);
+  }), [cards, breadth, health, marketStatus, regimeOverview, mlPrediction, fiiDii, summaryData, loading, errors, lastFetch, streamState, ticksFresh, activeInterval, fetchData]);
 
   // NOTE: ticks snapshot is memoised separately and provided via
   // MarketTicksContext so per-tick updates never invalidate `value` above.
@@ -310,7 +371,8 @@ export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH
   );
 }
 
-export function useMarketDataContext(options?: { useSummaryEndpoint?: boolean }) {
+/** Kept for API compatibility; the provider owns the summary endpoint choice. */
+export function useMarketDataContext(_options?: { useSummaryEndpoint?: boolean }) {
   const ctx = useContext(MarketDataContext);
   if (!ctx) throw new Error('useMarketDataContext must be used within MarketDataProvider');
   return ctx;

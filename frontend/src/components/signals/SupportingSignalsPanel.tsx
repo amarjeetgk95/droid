@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Card, DirectionBadge, EmptyNote, RetryButton, fmtNum } from '@/components/ui/desk';
+import { asNum, confPct, fmtConf } from '@/components/signals/signalsNormalize';
 import WhyPanel from '@/components/forecast/WhyPanel';
 
 type CompactSignal = {
@@ -44,7 +45,9 @@ export function SupportingSignalsPanel() {
             id,
             symbol,
             bias: s.direction,
-            score: (s as Record<string, unknown>).score ?? s.confidence,
+            // Score is absent on most scanner rows — leave it null so the
+            // table shows '—' instead of echoing confidence as a fake score.
+            score: (s as Record<string, unknown>).score ?? null,
             confidence: s.confidence,
           };
         });
@@ -139,7 +142,9 @@ export function SupportingSignalsPanel() {
             </thead>
             <tbody>
               {rows.map((r) => {
-                const conf = fmtNum(r.confidence, 1);
+                // Confidence arrives 0..1 or 0..100 — normalize once, never
+                // render "0.7" as "0.7%".
+                const conf = asNum(r.confidence);
                 const isOpen = expandedId === r.id;
                 const cached = deepDiveCache[r.id];
                 const isLoading = deepDiveLoading === r.id;
@@ -152,7 +157,14 @@ export function SupportingSignalsPanel() {
                         <DirectionBadge direction={r.bias} />
                       </td>
                       <td className="r num">{fmtNum(r.score, 1)}</td>
-                      <td className="r num">{conf === '—' ? '—' : `${conf}%`}</td>
+                      <td className="r num">
+                        <span className="sg-conf">
+                          <span className="bar" aria-hidden="true">
+                            <i style={{ width: `${confPct(conf)}%` }} />
+                          </span>
+                          <span className="sg-num">{fmtConf(conf)}</span>
+                        </span>
+                      </td>
                       <td className="r">
                         <button
                           type="button"

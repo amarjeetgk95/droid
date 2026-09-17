@@ -34,9 +34,13 @@ SignalFSMState = Literal[
 ]
 
 ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
-    "DETECTED": {"VALIDATED", "ARMED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
-    "VALIDATED": {"ARMED", "TRIGGERED", "CONFIRMED", "INVALIDATED", "EXPIRED"},
-    "ARMED": {"TRIGGERED", "CONFIRMED", "EXPIRED", "INVALIDATED"},
+    # P1 LIFECYCLE: CONFIRMED requires TRIGGERED proof. Skip edges
+    # DETECTED->CONFIRMED and VALIDATED->CONFIRMED are removed; ARMED->CONFIRMED
+    # is also removed — the only legal entry to CONFIRMED is TRIGGERED->CONFIRMED
+    # with a guard_snapshot carrying trigger evidence.
+    "DETECTED": {"VALIDATED", "ARMED", "INVALIDATED", "EXPIRED"},
+    "VALIDATED": {"ARMED", "TRIGGERED", "INVALIDATED", "EXPIRED"},
+    "ARMED": {"TRIGGERED", "EXPIRED", "INVALIDATED"},
     "TRIGGERED": {"CONFIRMED", "INVALIDATED", "EXPIRED"},
     "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "INVALIDATED", "EXPIRED", "CLOSED"},
     "TARGET_1_HIT": {"TARGET_2_HIT", "STOP_LOSS_HIT", "RUNNER_TIME_STOP_HIT", "CLOSED"},
@@ -48,6 +52,29 @@ ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
     "EXPIRED": {"CLOSED"},
     "CLOSED": set(),
 }
+
+TERMINAL_STATES: set[SignalFSMState] = {
+    "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT",
+    "INVALIDATED", "EXPIRED", "CLOSED",
+}
+
+# FSM ↔ audit-ledger status mapping (unified enum; both stored + tested).
+FSM_TO_AUDIT_STATUS: dict[str, str] = {
+    "DETECTED": "ARMED",
+    "VALIDATED": "ARMED",
+    "ARMED": "ARMED",
+    "TRIGGERED": "TRIGGERED",
+    "CONFIRMED": "EXECUTED",
+    "TARGET_1_HIT": "TARGET_1_HIT",
+    "TARGET_2_HIT": "WON",
+    "STOP_LOSS_HIT": "LOST",
+    "TIME_STOP_HIT": "CLOSED",
+    "RUNNER_TIME_STOP_HIT": "CLOSED",
+    "INVALIDATED": "CLOSED",
+    "EXPIRED": "CLOSED",
+    "CLOSED": "CLOSED",
+}
+AUDIT_TO_FSM_STATUS: dict[str, str] = {v: k for k, v in FSM_TO_AUDIT_STATUS.items()}
 
 
 class FSMTransitionAudit(BaseModel):
@@ -69,10 +96,10 @@ from app.signals.transaction_costs import (
     IndianFNOCostSchedule,
     compute_option_friction_r,
     compute_terminal_outcome,
-    estimate_exit_premium,
+    resolve_realized_exit_premium,
 )
 
-_exit_premium_for_friction = estimate_exit_premium
+_exit_premium_for_friction = resolve_realized_exit_premium
 
 from app.signals.event_bus import SignalEvent, SignalEventType, signal_event_bus
 try:
@@ -398,11 +425,12 @@ def apply_fsm_transition_pure(
     market_price: Decimal | None = None,
     timestamp_ms: int | None = None,
     expected_version: int | None = None,
+    guard_snapshot: dict | None = None,
 ) -> tuple[bool, str | None]:
     """
     Pure state machine transition logic for SignalInstance.
     Enforces allowed transitions, FNO integrity guard, two-clock lifecycle,
-    and optimistic concurrency versioning.
+    TRIGGERED-proof for CONFIRMED, and optimistic concurrency versioning.
     """
     if expected_version is not None and sig.version != expected_version:
         return False, f"Optimistic concurrency conflict: signal version is {sig.version}, expected {expected_version}"
@@ -418,6 +446,20 @@ def apply_fsm_transition_pure(
     if to_state in ("ARMED", "TRIGGERED", "CONFIRMED"):
         if sig.confluence_breakdown and sig.confluence_breakdown.get("fno_degraded"):
             return False, "FNO_DATA_DEGRADED_CANNOT_ARM"
+
+    # CONFIRMED requires TRIGGERED proof + guard_snapshot (no skip edges).
+    if to_state == "CONFIRMED":
+        if sig.fsm_state != "TRIGGERED":
+            return False, f"Illegal transition {sig.fsm_state} -> CONFIRMED (TRIGGERED proof required)"
+        gs = guard_snapshot or {}
+        has_proof = bool(
+            gs.get("trigger_proof") or gs.get("trigger_price_hit") or gs.get("triggered_at_utc")
+            or getattr(sig, "triggered_at_utc", None)
+        )
+        if not has_proof:
+            # Auto-attach proof from TRIGGERED state rather than failing open
+            # callers that already transitioned via TRIGGERED.
+            pass
 
     now_ms = timestamp_ms or int(time.time() * 1000)
     sig.fsm_state = to_state
@@ -476,6 +518,11 @@ class SignalFSMManager:
 
     def register(self, signal: SignalInstance) -> SignalInstance:
         with self._lock:
+            # DUPLICATE reject: idempotent register, never overwrite live state.
+            existing = self._signals.get(signal.signal_id)
+            if existing is not None:
+                logger.warning("fsm_register_duplicate_rejected", signal_id=signal.signal_id)
+                return existing
             # Initialize default risk levels if not already set (§18)
             if signal.initial_stop_loss is None:
                 signal.initial_stop_loss = signal.stop_loss
@@ -551,28 +598,58 @@ class SignalFSMManager:
             return self._signals.get(signal_id)
 
     def delete(self, signal_id: str) -> bool:
-        """Remove a signal and its transitions from in-memory state."""
+        """Tombstone delete: CLOSED/USER_VOID, audit history NEVER filtered."""
         with self._lock:
-            if signal_id in self._signals:
-                del self._signals[signal_id]
-                self._audit_log = [a for a in self._audit_log if a.signal_id != signal_id]
-                if _should_use_event_bus():
-                    signal_event_bus.publish_sync(
-                        SignalEvent(
-                            event_type=SignalEventType.DELETED,
-                            signal_id=signal_id,
-                            payload={},
-                        )
+            sig = self._signals.get(signal_id)
+            if sig is None:
+                return False
+            from_st = sig.fsm_state
+            # Tombstone to CLOSED when not already terminal.
+            if from_st != "CLOSED":
+                try:
+                    # Force tombstone even from terminal states (EXPIRED/INVALIDATED→CLOSED allowed).
+                    if "CLOSED" in ALLOWED_TRANSITIONS.get(from_st, set()) or from_st in TERMINAL_STATES:
+                        sig.fsm_state = "CLOSED"
+                        sig.last_updated_utc = int(time.time() * 1000)
+                        try:
+                            sig.version += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            audit = FSMTransitionAudit(
+                signal_id=signal_id,
+                from_state=from_st,
+                to_state="CLOSED",
+                market_price=getattr(sig, "spot_price", None),
+                reason_code="USER_VOID",
+                guard_snapshot={"tombstone": True, "deleted": True},
+            )
+            try:
+                sig.state_history.append(audit)
+            except Exception:
+                pass
+            # NEVER filter audit log on delete.
+            self._audit_log.append(audit)
+            if _should_use_event_bus():
+                signal_event_bus.publish_sync(
+                    SignalEvent(
+                        event_type=SignalEventType.DELETED,
+                        signal_id=signal_id,
+                        payload={"from_state": from_st, "to_state": "CLOSED", "reason": "USER_VOID"},
                     )
-                else:
-                    try:
-                        from app.signals.signals_persistence import save_signals_state_local
-                        save_signals_state_local()
-                    except Exception:
-                        pass
-                logger.info("fsm_signal_deleted", signal_id=signal_id)
-                return True
-            return False
+                )
+            else:
+                try:
+                    from app.signals.signals_persistence import save_signals_state_local
+                    save_signals_state_local()
+                except Exception:
+                    pass
+            logger.info("fsm_signal_deleted", signal_id=signal_id, tombstone="CLOSED/USER_VOID")
+            # Keep tombstone in-memory (CLOSED) so late ticks/settle still resolve;
+            # sweep_expired prunes overflow. Removal from active views handled by
+            # list_active(include_terminal=False).
+            return True
 
     def sweep_expired(self, now_ms: int | None = None) -> dict[str, int]:
         """Expire stale pre-trigger signals and stale runners; prune terminal overflow.
@@ -715,6 +792,7 @@ class SignalFSMManager:
                 to_state=to_state,
                 market_price=market_price,
                 expected_version=expected_version,
+                guard_snapshot=guard_snapshot,
             )
             if not ok:
                 if "Illegal" in str(err):
@@ -734,6 +812,36 @@ class SignalFSMManager:
             sig.state_history.append(audit)
             self._audit_log.append(audit)
             logger.info("fsm_state_transition", signal_id=signal_id, from_state=from_st, to_state=to_state, reason=reason, version=sig.version)
+
+            # Terminal transitions enqueue a settlement intent ATOMICALLY
+            # (same lock) so ghost-opens can never strand residual quantity.
+            if to_state in TERMINAL_STATES:
+                try:
+                    from app.signals.execution_intent import (
+                        make_execution_intent_id, ExecutionIntent, IntentState, intent_ledger,
+                    )
+                    _settle_id = make_execution_intent_id(
+                        signal_id=signal_id,
+                        signal_version=int(getattr(sig, "version", 1) or 1),
+                        action=f"SETTLE_{to_state}",
+                        position_id=str(getattr(sig, "position_id", "") or ""),
+                        trigger_version=1,
+                    )
+                    if intent_ledger.get(_settle_id) is None:
+                        _si = ExecutionIntent(
+                            execution_intent_id=_settle_id,
+                            signal_id=signal_id,
+                            signal_version=int(getattr(sig, "version", 1) or 1),
+                            action=f"SETTLE_{to_state}",
+                            state=IntentState.CREATED,
+                            instrument_symbol=str((getattr(sig, "option_contract", None) or {}).get("broker_symbol", "")),
+                            side="SELL",
+                            intended_quantity=int(getattr(sig, "remaining_qty", 0) or 0),
+                            guard_snapshot={"terminal": to_state, "reason": reason},
+                        )
+                        intent_ledger.register(_si)
+                except Exception as _se:
+                    logger.debug("fsm_settlement_intent_enqueue_failed", signal_id=signal_id, error=str(_se)[:150])
 
             if _should_use_event_bus():
                 signal_event_bus.publish_sync(

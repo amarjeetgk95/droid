@@ -1,0 +1,32 @@
+{
+  "trained_at": "2026-09-17T14:58:58.324846+00:00",
+  "n_samples": 120,
+  "feature_names": [
+    "rsi_1h",
+    "adx_1h",
+    "supertrend_1h",
+    "supertrend_15m",
+    "supertrend_4h",
+    "bb_pct_b_1h",
+    "atr_pct_1h",
+    "ret_5",
+    "ret_15",
+    "relative_volume",
+    "vwap_distance",
+    "pcr_oi",
+    "max_pain_distance",
+    "vix",
+    "minutes_to_close"
+  ],
+  "n_features": 15,
+  "horizon_minutes": 60,
+  "target_spec_version": "v2-atr-em-session",
+  "model_version": "XGBoost-LightGBM-Ensemble-v2.0-h60",
+  "metrics": {
+    "xgb_accuracy": 0.6667,
+    "xgb_logloss": 0.8121,
+    "lgb_accuracy": 0.5833,
+    "lgb_logloss": 0.8135,
+    "ensemble_accuracy": 0.625
+  }
+}

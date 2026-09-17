@@ -1,208 +1,64 @@
 """
-Institutional Breakout / Breakdown Strategy
-Mathematical rules:
-  - LONG_CALL: Close >= Resistance + 1 tick, Volume Ratio >= 1.8, Breakout Pressure >= 72, 15M MTF != BEARISH, RSI 55-78
-  - LONG_PUT: Close <= Support - 1 tick, Volume Ratio >= 1.8, Breakout Pressure >= 72, 15M MTF != BULLISH, RSI 22-45
-  - SL = Entry - 1.5 * ATR (or S/R level), T1 = Entry + 1.5R, T2 = Entry + 3.0R
-  - Quality target: 80% win rate — neutral baseline scoring, no free points.
+Institutional Breakout / Breakdown Strategy (P1: retired duplicate).
+
+Single-logic contract: BREAKOUT is a pointer to the shared
+VOLATILITY_BREAKOUT instance (see strategies/__init__.py). This module keeps
+the legacy BreakoutStrategy import path for back-compat but delegates all
+detection to VolatilityBreakoutStrategy so there is exactly one breakout
+logic. Breakout economics preserved: T1 = 1.5R, T2 = 3.0R advisory
+(risk_engine overwrites).
+
+P1 gates (inherited): squeeze required, CLOSE beyond level (not intrabar
+spot touch), measured volume >= 1.5x fail-closed, pressure measured
+fail-closed, S/R missing fail-closed.
 """
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Optional
 from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
-from app.signals.contract_resolver import normalize_price, resolve_option_contract
-from app.signals.risk_engine import resolve_realistic_atr
+from app.signals.strategies.volatility_breakout import VolatilityBreakoutStrategy
 
 
 class BreakoutStrategy(Strategy):
-    name = "BREAKOUT"
+    """Legacy alias — delegates to VolatilityBreakoutStrategy (single logic)."""
+
+    name = "BREAKOUT"  # type: ignore[assignment]
+
+    _delegate = VolatilityBreakoutStrategy()
 
     def detect(self, ctx: StrategyContext) -> Optional[SignalCandidate]:
-        ind = ctx.indicators
-        spot = ctx.spot_price
-        tick = Decimal("0.05")
-
-        # Extract indicators
-        sr = ind.get("support_resistance", {})
-        raw_res = sr.get("resistance")
-        raw_sup = sr.get("support")
-        resistances = []
-        if isinstance(raw_res, (list, tuple, set)):
-            resistances = [Decimal(str(r)) for r in raw_res if r is not None]
-        elif raw_res is not None:
+        cand = self._delegate.detect(ctx)
+        if cand is None:
+            return None
+        # Preserve BREAKOUT identity for callers that instantiate this class
+        # directly, while keeping identical geometry/scoring logic.
+        try:
+            object.__setattr__(cand, "strategy", self.name)  # pydantic v2 path
+        except Exception:
             try:
-                resistances = [Decimal(str(raw_res))]
+                cand.strategy = self.name  # type: ignore
             except Exception:
                 pass
+        # BREAKOUT advisory multiples are T1=1.5R / T2=3.0R; the shared
+        # VOL logic emits 1.5/2.5. Keep BREAKOUT's 3.0R T2 by extending T2
+        # proportionally from the same risk base (risk_engine overwrites).
+        try:
+            from decimal import Decimal
+            from app.signals.contract_resolver import normalize_price
 
-        supports = []
-        if isinstance(raw_sup, (list, tuple, set)):
-            supports = [Decimal(str(s)) for s in raw_sup if s is not None]
-        elif raw_sup is not None:
-            try:
-                supports = [Decimal(str(raw_sup))]
-            except Exception:
-                pass
-
-        atr = resolve_realistic_atr(ctx.underlying, spot, ind)
-        vol_ratio = float(ind.get("volume_ratio") or ind.get("volume", {}).get("relative_volume") or 1.2)
-        breakout_pressure = float(ind.get("breakout_pressure") or ind.get("scores", {}).get("breakout_pressure") or 65.0)
-        mtf_bias = ctx.mtf.get("overall_bias", "NEUTRAL")
-
-        # ── BULLISH BREAKOUT (LONG_CALL) ──
-        if resistances:
-            key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
-            if (spot >= key_res or breakout_pressure >= 68) and mtf_bias != "BEARISH":
-                # Wick trap check: only reject if prior candle spiked above resistance, closed below, and spot is retreating
-                if len(ctx.candles) >= 2 and spot < key_res:
-                    prev_c = ctx.candles[-2]
-                    prev_high = Decimal(str(prev_c.get("high", spot)))
-                    prev_close = Decimal(str(prev_c.get("close", spot)))
-                    if prev_high >= key_res and prev_close < key_res * Decimal("0.998") and spot < prev_close:
-                        return None  # Wick trap — rejected from resistance and falling
-                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
-                if spot < key_res:
-                    # Pre-breakout setup: trigger above resistance
-                    trigger = normalize_price(key_res + min_gap, tick)
-                    if trigger <= spot or abs(trigger - spot) < min_gap:
-                        trigger = normalize_price(max(trigger, spot) + tick, tick)
-                    entry_min = normalize_price(key_res, tick)
-                    entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
-                    stop_loss = normalize_price(key_res - (atr * Decimal("0.75")), tick)
+            tick = Decimal("0.05")
+            risk_pts = cand.risk_points
+            if risk_pts and risk_pts > Decimal("0"):
+                if cand.direction == "LONG_CALL":
+                    t2 = normalize_price(cand.trigger + (risk_pts * Decimal("3.0")), tick)
                 else:
-                    # Breakout continuation: spot >= key_res
-                    chase = spot - key_res
-                    raw_atr_val = Decimal(str(ind.get("atr") or ind.get("volatility", {}).get("atr") or 0))
-                    chase_limit = max(atr * Decimal("0.5"), raw_atr_val * Decimal("0.5"))
-                    if chase > chase_limit:
-                        return None  # Chase exceeded
-                    raw_trigger = spot + min_gap
-                    trigger = normalize_price(raw_trigger, tick)
-                    if trigger <= spot or abs(trigger - spot) < min_gap:
-                        trigger = normalize_price(max(trigger, spot) + tick, tick)
-                    entry_min = normalize_price(spot, tick)
-                    entry_max = normalize_price(trigger + (atr * Decimal("0.1")), tick)
-                    stop_loss = normalize_price(key_res - (atr * Decimal("0.5")), tick)
-
-                risk_pts = trigger - stop_loss
-                if risk_pts > Decimal("0"):
-                    t1 = normalize_price(trigger + (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(trigger + (risk_pts * Decimal("3.0")), tick)
-                    contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
-
-                    # Neutral baseline: start at 50, earn points only on strong evidence
-                    tech_score = min(92.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 20.0) + (max(0.0, breakout_pressure - 72) * 0.5)))
-                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
-                    fno_score = round(min(88.0, max(45.0, 50.0 + ((pcr_val - 1.0) * 40.0))), 1)
-                    regime_score = 80.0 if ctx.regime in ("TREND_UP", "HIGH_VOL") else 55.0
-
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
-                        strategy=self.name,
-                        direction="LONG_CALL",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
-                        entry_min=entry_min,
-                        entry_max=entry_max,
-                        trigger=trigger,
-                        stop_loss=stop_loss,
-                        target_1=t1,
-                        target_2=t2,
-                        risk_points=risk_pts,
-                        risk_reward_t1=1.5,
-                        risk_reward_t2=3.0,
-                        technical_score=tech_score,
-                        mtf_score=mtf_score,
-                        fno_score=fno_score,
-                        regime_score=regime_score,
-                        overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1),
-                        rationale=[
-                            f"Resistance break at ₹{key_res:,.2f}",
-                            f"Volume expansion ratio {vol_ratio:.2f}x",
-                            f"Breakout pressure {breakout_pressure:.0f}/100",
-                            f"MTF bias {mtf_bias}",
-                        ],
-                        option_contract=contract,
-                        ttl_seconds=300,
-                    )
-
-        # ── BEARISH BREAKDOWN (LONG_PUT) ──
-        if supports:
-            key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if (spot <= key_sup or breakout_pressure >= 68) and mtf_bias != "BULLISH":
-                # Wick trap check: only reject if prior candle spiked below support, closed above, and spot is bouncing
-                if len(ctx.candles) >= 2 and spot > key_sup:
-                    prev_c = ctx.candles[-2]
-                    prev_low = Decimal(str(prev_c.get("low", spot)))
-                    prev_close = Decimal(str(prev_c.get("close", spot)))
-                    if prev_low <= key_sup and prev_close > key_sup * Decimal("1.002") and spot > prev_close:
-                        return None  # Wick trap — rejected from support and bouncing
-                min_gap = max(atr * Decimal("0.25"), spot * Decimal("0.0006"))
-                if spot > key_sup:
-                    # Pre-breakdown setup: trigger below support
-                    trigger = normalize_price(key_sup - min_gap, tick)
-                    if trigger >= spot or abs(spot - trigger) < min_gap:
-                        trigger = normalize_price(min(trigger, spot) - tick, tick)
-                    entry_max = normalize_price(key_sup, tick)
-                    entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
-                    stop_loss = normalize_price(key_sup + (atr * Decimal("0.75")), tick)
-                else:
-                    # Breakdown continuation: spot <= key_sup
-                    chase = key_sup - spot
-                    raw_atr_val = Decimal(str(ind.get("atr") or ind.get("volatility", {}).get("atr") or 0))
-                    chase_limit = max(atr * Decimal("0.5"), raw_atr_val * Decimal("0.5"))
-                    if chase > chase_limit:
-                        return None  # Chase exceeded
-                    raw_trigger = spot - min_gap
-                    trigger = normalize_price(raw_trigger, tick)
-                    if trigger >= spot or abs(spot - trigger) < min_gap:
-                        trigger = normalize_price(min(trigger, spot) - tick, tick)
-                    entry_max = normalize_price(spot, tick)
-                    entry_min = normalize_price(trigger - (atr * Decimal("0.1")), tick)
-                    stop_loss = normalize_price(key_sup + (atr * Decimal("0.5")), tick)
-
-                risk_pts = stop_loss - trigger
-                if risk_pts > Decimal("0"):
-                    t1 = normalize_price(trigger - (risk_pts * Decimal("1.5")), tick)
-                    t2 = normalize_price(trigger - (risk_pts * Decimal("3.0")), tick)
-                    contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
-
-                    tech_score = min(92.0, max(50.0, 50.0 + (max(0.0, vol_ratio - 1.4) * 20.0) + (max(0.0, breakout_pressure - 72) * 0.5)))
-                    mtf_score = max(50.0, float(ctx.mtf.get("alignment_score", 70.0)) - 10.0)
-                    pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
-                    fno_score = round(min(88.0, max(45.0, 50.0 + ((1.0 - pcr_val) * 40.0))), 1)
-                    regime_score = 80.0 if ctx.regime in ("TREND_DOWN", "HIGH_VOL") else 55.0
-
-                    return SignalCandidate(
-                        underlying=ctx.underlying,
-                        strategy=self.name,
-                        direction="LONG_PUT",
-                        timeframe=ctx.timeframe,
-                        spot_price=spot,
-                        entry_min=entry_min,
-                        entry_max=entry_max,
-                        trigger=trigger,
-                        stop_loss=stop_loss,
-                        target_1=t1,
-                        target_2=t2,
-                        risk_points=risk_pts,
-                        risk_reward_t1=1.5,
-                        risk_reward_t2=3.0,
-                        technical_score=tech_score,
-                        mtf_score=mtf_score,
-                        fno_score=fno_score,
-                        regime_score=regime_score,
-                        overall_confidence=round((tech_score * 0.4) + (mtf_score * 0.2) + (fno_score * 0.2) + (regime_score * 0.2), 1),
-                        rationale=[
-                            f"Support breakdown at ₹{key_sup:,.2f}",
-                            f"Volume expansion ratio {vol_ratio:.2f}x",
-                            f"Breakout pressure {breakout_pressure:.0f}/100",
-                            f"MTF bias {mtf_bias}",
-                        ],
-                        option_contract=contract,
-                        ttl_seconds=300,
-                    )
-
-        return None
+                    t2 = normalize_price(cand.trigger - (risk_pts * Decimal("3.0")), tick)
+                try:
+                    object.__setattr__(cand, "target_2", t2)
+                    object.__setattr__(cand, "risk_reward_t2", 3.0)
+                except Exception:
+                    cand.target_2 = t2  # type: ignore
+                    cand.risk_reward_t2 = 3.0  # type: ignore
+        except Exception:
+            pass
+        return cand

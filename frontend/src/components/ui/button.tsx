@@ -9,17 +9,17 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-[#2a6fc0] active:bg-[#245fa5]",
+        default: "bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80",
         destructive:
-          "bg-destructive text-white hover:bg-[#d94a2b] focus-visible:ring-destructive/20",
-        buy: "bg-primary text-white hover:bg-[#2a6fc0] active:bg-[#245fa5]",
-        sell: "bg-[#eb5b3c] text-white hover:bg-[#d94a2b] active:bg-[#c23d20]",
+          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20",
+        buy: "bg-primary text-white hover:bg-primary/90 active:bg-primary/80",
+        sell: "bg-down text-white hover:bg-down/90 active:bg-down/80",
         outline:
-          "border border-border bg-background shadow-xs hover:bg-[#f7f7f7] hover:border-primary/50 text-foreground",
+          "border border-border bg-background hover:bg-muted hover:border-primary/50 text-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-[#ebebeb]",
+          "bg-secondary text-secondary-foreground hover:bg-muted",
         ghost:
-          "hover:bg-[#f7f7f7] hover:text-foreground",
+          "hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

@@ -79,7 +79,7 @@ export function SidebarFlyout({ group, onNavigate, telemetryBadges }: SidebarFly
                 />
               )}
               {hasLiveBadge && !activeGroup && (
-                <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-card" aria-hidden />
+                <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-up ring-2 ring-card" aria-hidden />
               )}
             </button>
           </DropdownMenuTrigger>
@@ -163,7 +163,7 @@ export function SidebarFlyout({ group, onNavigate, telemetryBadges }: SidebarFly
                         {badge.label}
                       </span>
                     ) : item.isBeta ? (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-amber-500/10 text-amber-600 border-amber-500/25">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border leading-none bg-warn/10 text-warn border-warn/25">
                         BETA
                       </span>
                     ) : item.shortcut ? (

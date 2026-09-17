@@ -1,17 +1,50 @@
 """
-Strategy I1 — REGIME_ADAPTIVE_TREND (§10).
+Strategy I1 — REGIME_ADAPTIVE_TREND (§10, P1 overhaul).
 Primary intraday macro directional engine. Focuses on higher-timeframe trend alignment (15M / 1H),
-macro market structure (HH_HL or LH_LL), and trend strength (ADX >= 22).
+macro market structure (HH_HL or LH_LL), and trend strength (ADX >= 22, single shared cutoff).
 Desk: INTRADAY (5M / 15M / 1H)
+P1: fail-closed ADX (no 25.0 default), dynamic earn-from-50 scoring.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
-from app.signals.strategies.base import Strategy, StrategyContext, SignalCandidate
+from app.signals.strategies.base import (
+    Strategy,
+    StrategyContext,
+    SignalCandidate,
+    ADX_TREND_CUTOFF,
+)
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.features.structure import extract_market_structure
 from app.signals.features.ema_features import extract_ema_features
+
+
+def _dynamic_scores(
+    adx_val: float,
+    ema_fast_slope: float,
+    pcr: float,
+    direction: str,
+    regime: str,
+    mtf_align: float,
+    vol_ratio: Optional[float] = None,
+) -> tuple[float, float, float, float, float]:
+    # Technical: earn from 50 on ADX strength + EMA slope + expansion.
+    tech = 50.0 + (max(0.0, adx_val - ADX_TREND_CUTOFF) * 1.2) + (min(6.0, abs(ema_fast_slope) * 40.0))
+    if vol_ratio is not None:
+        tech += max(0.0, vol_ratio - 1.2) * 8.0
+    tech_score = round(min(90.0, max(50.0, tech)), 1)
+    mtf_score = round(max(50.0, float(mtf_align) - 10.0), 1)
+    if direction == "LONG_CALL":
+        fno_score = round(min(88.0, max(45.0, 50.0 + ((pcr - 1.0) * 40.0))), 1)
+    else:
+        fno_score = round(min(88.0, max(45.0, 50.0 + ((1.0 - pcr) * 40.0))), 1)
+    if direction == "LONG_CALL":
+        regime_score = 85.0 if regime == "TREND_UP" else (70.0 if regime == "HIGH_VOL" else 55.0)
+    else:
+        regime_score = 85.0 if regime == "TREND_DOWN" else (70.0 if regime == "HIGH_VOL" else 55.0)
+    overall = round(0.40 * tech_score + 0.20 * mtf_score + 0.20 * fno_score + 0.20 * regime_score, 1)
+    return tech_score, mtf_score, fno_score, regime_score, overall
 
 
 class RegimeAdaptiveTrendStrategy(Strategy):
@@ -37,19 +70,27 @@ class RegimeAdaptiveTrendStrategy(Strategy):
         tick = Decimal("0.05")
         ind = ctx.indicators
 
-        # Check Trend Strength (ADX >= 20)
-        adx_val = 25.0
-        if "trend" in ind and isinstance(ind["trend"], dict):
-            adx_val = float(ind["trend"].get("adx", 25.0))
-        elif "adx" in ind:
-            adx_val = float(ind.get("adx", 25.0))
+        # P1: Check Trend Strength (ADX >= 22, fail-closed, no 25.0 default).
+        adx_val: Optional[float] = None
+        if "trend" in ind and isinstance(ind["trend"], dict) and ind["trend"].get("adx") is not None:
+            try:
+                adx_val = float(ind["trend"].get("adx"))
+            except (TypeError, ValueError):
+                adx_val = None
+        elif ind.get("adx") is not None:
+            try:
+                adx_val = float(ind.get("adx"))
+            except (TypeError, ValueError):
+                adx_val = None
+        if adx_val is None:
+            return None
 
-        if adx_val < 20.0:
+        if adx_val < ADX_TREND_CUTOFF:
             return None
 
         # Check Multi-Timeframe Alignment
         mtf_bias = str(ctx.mtf.get("overall_bias", "NEUTRAL")).upper()
-        mtf_score = float(ctx.mtf.get("alignment_score", 70.0))
+        mtf_score_raw = float(ctx.mtf.get("alignment_score", 70.0))
 
         closes = [float(c.get("close", 0)) for c in candles]
         ema_feat = extract_ema_features(closes, current_price=float(spot))
@@ -71,6 +112,21 @@ class RegimeAdaptiveTrendStrategy(Strategy):
         # Minimum trigger gap
         min_gap = max(atr_val * Decimal("0.30"), spot * Decimal("0.0006"))
 
+        # F&O + volume context for dynamic scoring (fail-open scoring only).
+        try:
+            pcr_val = float(ctx.fno.get("pcr", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            pcr_val = 1.0
+        vol_ratio: Optional[float] = None
+        try:
+            vr = ind.get("volume_ratio")
+            if vr is None and isinstance(ind.get("volume"), dict):
+                vr = ind["volume"].get("relative_volume")
+            if vr is not None:
+                vol_ratio = float(vr)
+        except (TypeError, ValueError):
+            vol_ratio = None
+
         # ── BULLISH MACRO TREND ──
         if (
             (ctx.regime == "TREND_UP" or mtf_bias == "BULLISH")
@@ -88,6 +144,10 @@ class RegimeAdaptiveTrendStrategy(Strategy):
             t2 = normalize_price(entry_min + (risk_pts * Decimal("2.5")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "CE", strike_offset=0)
 
+            tech_s, mtf_s, fno_s, reg_s, conf = _dynamic_scores(
+                adx_val, float(ema_feat.fast_slope or 0.0), pcr_val, "LONG_CALL",
+                ctx.regime, mtf_score_raw, vol_ratio,
+            )
             return SignalCandidate(
                 underlying=ctx.underlying,
                 strategy=self.name,
@@ -109,11 +169,11 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 ttl_seconds=900,
                 time_stop_seconds=2700,
                 runner_ttl_seconds=4500,
-                technical_score=85.0,
-                mtf_score=mtf_score,
-                fno_score=70.0,
-                regime_score=85.0,
-                overall_confidence=82.0,
+                technical_score=tech_s,
+                mtf_score=mtf_s,
+                fno_score=fno_s,
+                regime_score=reg_s,
+                overall_confidence=conf,
                 rationale=[
                     f"Higher-timeframe bullish trend alignment with ADX={adx_val:.1f}",
                     f"EMA ribbon bullish ordered (fast slope: {ema_feat.fast_slope:+.2f}%)",
@@ -139,6 +199,10 @@ class RegimeAdaptiveTrendStrategy(Strategy):
             t2 = normalize_price(entry_max - (risk_pts * Decimal("2.5")), tick)
             contract = resolve_option_contract(ctx.underlying, spot, "PE", strike_offset=0)
 
+            tech_s, mtf_s, fno_s, reg_s, conf = _dynamic_scores(
+                adx_val, float(ema_feat.fast_slope or 0.0), pcr_val, "LONG_PUT",
+                ctx.regime, mtf_score_raw, vol_ratio,
+            )
             return SignalCandidate(
                 underlying=ctx.underlying,
                 strategy=self.name,
@@ -160,11 +224,11 @@ class RegimeAdaptiveTrendStrategy(Strategy):
                 ttl_seconds=900,
                 time_stop_seconds=2700,
                 runner_ttl_seconds=4500,
-                technical_score=85.0,
-                mtf_score=mtf_score,
-                fno_score=70.0,
-                regime_score=85.0,
-                overall_confidence=82.0,
+                technical_score=tech_s,
+                mtf_score=mtf_s,
+                fno_score=fno_s,
+                regime_score=reg_s,
+                overall_confidence=conf,
                 rationale=[
                     f"Higher-timeframe bearish trend alignment with ADX={adx_val:.1f}",
                     f"EMA ribbon bearish ordered (fast slope: {ema_feat.fast_slope:+.2f}%)",

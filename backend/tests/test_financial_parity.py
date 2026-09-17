@@ -40,6 +40,7 @@ def _create_confirmed_signal(breakeven_activated: bool = False) -> SignalInstanc
         fsm_state="CONFIRMED",
         breakeven_activated=breakeven_activated,
         option_contract={
+            "broker_symbol": "NSE:NIFTY26SEP24000CE",
             "strike": 24000,
             "option_type": "CE",
             "dte": 3.0,
@@ -49,12 +50,27 @@ def _create_confirmed_signal(breakeven_activated: bool = False) -> SignalInstanc
     return sig
 
 
+def _seed_exit_mark(price: float) -> None:
+    """Publish the real chain mark the exit leg prices from.
+
+    Friction is premium-vs-premium and fail-closed: without a broker mark for
+    the exact contract the FSM records no net-R at all (cost_breakdown_r=None).
+    The parity assertions derive expected_net from the breakdown itself, so
+    any positive mark keeps them self-consistent — the scenario price just
+    keeps the premium direction honest (wins above the 120 fill, losses below).
+    """
+    from tests.conftest import seed_chain_mark
+
+    seed_chain_mark("NSE:NIFTY26SEP24000CE", price, underlying="NIFTY", strike=24000.0, option_type="CE")
+
+
 def test_target_1_hit_financial_parity():
     fsm = SignalFSMManager()
     sig = _create_confirmed_signal()
     fsm._signals[sig.signal_id] = sig
 
     market_price = Decimal("24105.0")
+    _seed_exit_mark(150.0)
     ok, err = fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=market_price)
     assert ok is True
 
@@ -77,9 +93,11 @@ def test_target_2_hit_financial_parity():
     sig = _create_confirmed_signal()
     # Transition to T1 first, then T2
     fsm._signals[sig.signal_id] = sig
+    _seed_exit_mark(150.0)
     fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("24105.0"))
 
     market_price = Decimal("24185.0")
+    _seed_exit_mark(190.0)
     ok, err = fsm.transition(sig.signal_id, "TARGET_2_HIT", market_price=market_price)
     assert ok is True
 
@@ -98,6 +116,7 @@ def test_stop_loss_hit_standard_financial_parity():
     fsm._signals[sig.signal_id] = sig
 
     market_price = Decimal("23945.0")
+    _seed_exit_mark(85.0)
     ok, err = fsm.transition(sig.signal_id, "STOP_LOSS_HIT", market_price=market_price)
     assert ok is True
 
@@ -115,6 +134,7 @@ def test_stop_loss_hit_breakeven_ratcheted_financial_parity():
     fsm._signals[sig.signal_id] = sig
 
     market_price = Decimal("24010.0")
+    _seed_exit_mark(115.0)
     ok, err = fsm.transition(sig.signal_id, "STOP_LOSS_HIT", market_price=market_price)
     assert ok is True
 
@@ -132,6 +152,7 @@ def test_time_stop_hit_financial_parity():
     fsm._signals[sig.signal_id] = sig
 
     market_price = Decimal("24030.0")
+    _seed_exit_mark(123.0)
     ok, err = fsm.transition(sig.signal_id, "TIME_STOP_HIT", market_price=market_price)
     assert ok is True
 
@@ -147,9 +168,11 @@ def test_runner_time_stop_hit_financial_parity():
     fsm = SignalFSMManager()
     sig = _create_confirmed_signal()
     fsm._signals[sig.signal_id] = sig
+    _seed_exit_mark(150.0)
     fsm.transition(sig.signal_id, "TARGET_1_HIT", market_price=Decimal("24105.0"))
 
     market_price = Decimal("24140.0")
+    _seed_exit_mark(170.0)
     ok, err = fsm.transition(sig.signal_id, "RUNNER_TIME_STOP_HIT", market_price=market_price)
     assert ok is True
 

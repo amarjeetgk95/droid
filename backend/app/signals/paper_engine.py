@@ -12,12 +12,27 @@ from typing import Optional, Any
 import structlog
 from pydantic import BaseModel
 
-from app.signals.contract_resolver import calculate_position_sizing, validate_underlying
+from app.signals.contract_resolver import (
+    calculate_position_sizing,
+    chain_premium_of,
+    validate_underlying,
+)
 from app.signals.fsm import signal_fsm
 from app.services.paper_service import paper_service
 from app.models.paper import OrderPayload
 
 logger = structlog.get_logger()
+
+#: Price-domain OFF_DOMAIN: option premiums live <5000; index spot >5000.
+#: A premium leg filled at spot scale (or vice versa) is the wrong instrument.
+#: Same-domain fills must sit inside a 3% band of the chain mark.
+OFF_DOMAIN_SPOT_THRESHOLD = 5000.0
+OFF_DOMAIN_BAND_PCT = 0.03
+#: Legacy alias (kept for compat; tightened from 10% to 3% band).
+MAX_FILL_DEVIATION_FROM_CHAIN_MARK = 0.03
+
+#: Intent TTL for PENDING orders (ms): stale PENDING auto-cancels to EXPIRED.
+PENDING_INTENT_TTL_MS = 30_000
 
 
 class SignalPaperExecutionResult(BaseModel):
@@ -35,6 +50,9 @@ class SignalPaperExecutionResult(BaseModel):
     order_id: str
     status: str
     message: str
+    # P1 provenance: where the fill came from + chain mark at fill time.
+    fill_source: str = "CHAIN"
+    chain_mark_at_fill: float | None = None
 
 
 class SignalPaperEngine:
@@ -65,9 +83,11 @@ class SignalPaperEngine:
         direction_label = "CE" if "CALL" in sig.direction else "PE"
 
         # ── Centralized Market Session Check ──
+        # P1 SAFETY: never bypass session on execute — only close_signal_position
+        # may allow closed-market square-offs. allow_closed_market is ignored here.
         from app.services.calendar_service import calendar_service
         perm = calendar_service.can_trade_now()
-        if not allow_closed_market and not perm.allowed:
+        if not perm.allowed:
             logger.warning("paper_execution_blocked_market_closed", signal_id=signal_id, reason=perm.reason)
             return SignalPaperExecutionResult(
                 success=False,
@@ -84,6 +104,8 @@ class SignalPaperEngine:
                 order_id="",
                 status="REJECTED",
                 message=f"MARKET_CLOSED: {perm.reason} (NSE trading hours: 09:15 - 15:30 IST)",
+                fill_source="NONE",
+                chain_mark_at_fill=None,
             )
 
         # Position Sizing — wallet-bound: size off live available margin, not initial capital.
@@ -107,10 +129,23 @@ class SignalPaperEngine:
             final_lots = lots_override
             final_qty = final_lots * lot_size
         else:
+            # Premium-risk sizing: for option signals size off the premium
+            # (chain mark when available), never the index spot. Spot-scale
+            # risk (e.g. 75pt stop on 24800 spot) understates premium risk by
+            # orders of magnitude and oversizes the position.
+            _sizing_entry = sig.spot_price
+            try:
+                if sig.option_contract:
+                    from app.signals.contract_resolver import chain_premium_of as _cpo
+                    _prem = _cpo(sig.option_contract)
+                    if _prem is not None and float(_prem) > 0:
+                        _sizing_entry = _prem
+            except Exception:
+                pass
             sizing = calculate_position_sizing(
                 available_capital=avail_cap,
                 risk_percent=risk_percent,
-                entry_price=sig.spot_price,
+                entry_price=_sizing_entry,
                 stop_loss=sig.stop_loss,
                 lot_size=lot_size,
             )
@@ -138,30 +173,72 @@ class SignalPaperEngine:
                 message="INVALID_PRICE: Spot price is non-positive",
             )
 
-        # If signal represents an option contract, estimate option premium instead of spot price
+        # ─ Reference mark for the option premium ──
+        # A REAL chain mark is the broker's truth; a Black-76 estimate is only
+        # a labeled fallback. Either way the reference must sit on the same
+        # tick grid as the fill, because the execution guard measures slippage
+        # as |reference - fill| / fill. An unaligned chain mid (0.23 on a 0.05
+        # tick) quantizes to a 0.25 fill, and comparing the two domains then
+        # reports a phantom 8% "slippage" that rejects a perfectly tradeable
+        # order purely on rounding - one tick on a low premium is a huge
+        # percentage, so such contracts became unfillable for no real reason.
         from app.signals.fill_reconciler import option_fill_reconciler
+        from app.signals.safety.decimal_types import normalize_price_to_tick
+        tick_sz = opt.get("tick_size", "0.05") if isinstance(opt, dict) else "0.05"
+
         if sig.option_contract:
-            live_prem = sig.option_contract.get("live_premium")
-            if live_prem is not None and float(live_prem) > 0:
-                # Live chain mid-price: the broker's truth, not a model estimate.
-                base_price = float(live_prem)
+            # ── FAIL CLOSED: a fill requires a real broker price ──
+            # Preference order is deliberate: the mark registry first (the exact
+            # object the ledger later marks the position against, so entry and
+            # valuation cannot drift), then the cached chain mid on the contract.
+            # There is NO Black-76 substitute — a model price is not a fill.
+            from app.signals.option_marks import option_mark_registry, option_mark_service
+
+            mark = option_mark_registry.get_usable(broker_sym, allow_model=False)
+            if mark is None or mark.price is None:
+                try:
+                    await option_mark_service.refresh_and_register([broker_sym])
+                except Exception as me:
+                    logger.warning("paper_execution_mark_fetch_failed", signal_id=signal_id, error=str(me)[:150])
+                mark = option_mark_registry.get_usable(broker_sym, allow_model=False)
+
+            if mark is not None and mark.price is not None:
+                base_price = float(mark.price)
             else:
-                strike = float(sig.option_contract.get("strike", raw_price))
-                opt_type = str(sig.option_contract.get("option_type", "CE"))
-                dte = float(sig.option_contract.get("dte", 3.0))
-                base_price = option_fill_reconciler.estimate_option_premium(
-                    spot=raw_price,
-                    strike=strike,
-                    option_type=opt_type,
-                    dte_days=dte,
-                )
+                live_prem = chain_premium_of(sig.option_contract)
+                if live_prem is None:
+                    logger.warning(
+                        "paper_execution_blocked_no_chain_mark",
+                        signal_id=signal_id,
+                        broker_symbol=broker_sym,
+                    )
+                    return SignalPaperExecutionResult(
+                        success=False,
+                        signal_id=signal_id,
+                        underlying=u,
+                        strategy=sig.strategy,
+                        side=f"BUY_{direction_label}",
+                        quantity=final_qty,
+                        lots=final_lots,
+                        fill_price=0.0,
+                        stop_loss=float(sig.stop_loss),
+                        target_1=float(sig.target_1),
+                        target_2=float(sig.target_2),
+                        order_id="",
+                        status="REJECTED",
+                        message=(
+                            f"CHAIN_MARK_UNAVAILABLE: no live FYERS quote for {broker_sym}. "
+                            "Trade skipped — no model price is used to fill."
+                        ),
+                    )
+                base_price = float(live_prem)
+            # Snap the reference onto the tradable grid before comparison.
+            base_price = float(normalize_price_to_tick(base_price, tick_sz))
         else:
             base_price = raw_price
 
         spread_impact = base_price * 0.0005
         raw_fill = base_price + spread_impact if side == "BUY" else base_price - spread_impact
-        from app.signals.safety.decimal_types import normalize_price_to_tick
-        tick_sz = opt.get("tick_size", "0.05") if isinstance(opt, dict) else "0.05"
         fill_price = float(normalize_price_to_tick(raw_fill, tick_sz))
         if fill_price <= 0:
             return SignalPaperExecutionResult(
@@ -265,12 +342,17 @@ class SignalPaperEngine:
             action=f"BUY_{direction_label}",
             position_id="",
             trigger_version=1,
+            side=side,
+            symbol=broker_sym,
+            price_tick=format(Decimal(str(fill_price)), "f"),
+            quantity=final_qty,
         )
         fyers_tag = make_fyers_order_tag(intent_id)
 
-        # Check existing intent for duplicate dispatch
+        # Check existing intent for duplicate dispatch (guard-14 ledger lookup)
+        from app.signals.execution_intent import is_duplicate_intent
         existing_intent = intent_ledger.get(intent_id)
-        if existing_intent and existing_intent.state in (IntentState.SUBMITTED, IntentState.FILLED):
+        if existing_intent and existing_intent.state in (IntentState.SUBMITTED, IntentState.FILLED, IntentState.PARTIALLY_FILLED):
             logger.warning("execution_intent_duplicate_rejected", intent_id=intent_id, signal_id=signal_id)
             return SignalPaperExecutionResult(
                 success=False,
@@ -287,20 +369,40 @@ class SignalPaperEngine:
                 order_id="",
                 status="REJECTED",
                 message=f"DUPLICATE_ORDER: Intent {intent_id} already submitted or filled",
+                fill_source="NONE",
+                chain_mark_at_fill=float(base_price) if 'base_price' in dir() else None,
             )
 
-        # Run 15-check hierarchical execution guard
+        # Run 15-check hierarchical execution guard (fail-closed defaults)
+        try:
+            from app.signals.safety.clocks import get_event_clock as _gec
+            _drift = _gec(u).metrics.drift_ms
+        except Exception:
+            _drift = 0.0
+        try:
+            from app.signals.safety.feed_health_monitor import feed_health_monitor as _fhm
+            _tel = _fhm.get_telemetry()
+            _feed = "HEALTHY" if str(_tel.get("status")) == "LIVE" else str(_tel.get("status"))
+            if _feed in ("CLOSED", "AUTH_REQUIRED", "CHAIN_UNAVAILABLE", "SYNCING"):
+                from app.signals.safety.feed_circuit import feed_circuit as _fc
+                _feed = "HEALTHY" if not _fc.is_degraded(u) else "FEED_DEGRADED"
+        except Exception:
+            _feed = "HEALTHY"
         guard_res = final_execution_guard(
             signal=sig,
             execution_intent_id=intent_id,
             order_price=fill_price,
             order_quantity=final_qty,
             latest_price=base_price,
-            market_session_state="OPEN" if allow_closed_market else ("OPEN" if perm.allowed else "CLOSED"),
+            feed_health=_feed,
+            market_session_state="OPEN" if perm.allowed else "CLOSED",
             contract_spec=sig.option_contract,
             max_slippage_pct=0.5,
             risk_approved=True,
-            allow_closed_market=allow_closed_market,
+            clock_drift_ms=float(_drift) if _drift is not None else 0.0,
+            allow_closed_market=False,
+            audit_available=True,
+            db_available=True,
         )
         if not guard_res.passed:
             logger.warning("execution_guard_rejected", signal_id=signal_id, reason=guard_res.reason, check=guard_res.failed_check)
@@ -353,9 +455,21 @@ class SignalPaperEngine:
             price=fill_price,
             client_order_id=fyers_tag,
         )
-        paper_order = await paper_service.place_order(order_payload, allow_closed_market=allow_closed_market)
+        paper_order = await paper_service.place_order(order_payload, allow_closed_market=False)
 
         if paper_order.status == "PENDING":
+            # Intent TTL/cancel for PENDING: stale PENDING auto-expires.
+            import time as _t
+            _age_ms = 0
+            try:
+                _age_ms = int(_t.time() * 1000) - int(getattr(current_intent, "created_at_utc", int(_t.time() * 1000)))
+            except Exception:
+                _age_ms = 0
+            if _age_ms > PENDING_INTENT_TTL_MS:
+                try:
+                    current_intent.transition_to(IntentState.EXPIRED, reason="PENDING_TTL_EXCEEDED")
+                except Exception:
+                    pass
             logger.warning("paper_order_unexpected_pending", signal_id=signal_id, order_id=paper_order.order_id)
             return SignalPaperExecutionResult(
                 success=False,
@@ -372,6 +486,8 @@ class SignalPaperEngine:
                 order_id=paper_order.order_id,
                 status="PENDING",
                 message="Order is resting (PENDING) — market has not touched it yet",
+                fill_source="CHAIN",
+                chain_mark_at_fill=float(base_price) if 'base_price' in locals() else None,
             )
 
         if paper_order.status == "REJECTED":
@@ -393,8 +509,56 @@ class SignalPaperEngine:
                 message=paper_order.rejection_reason or "Order rejected by paper service",
             )
 
+        # ── Fill sanity: the service must have priced the same instrument ──
+        # The paper service re-prices MARKET orders from its own live quote, and
+        # its option path is supposed to consult the option chain (never the
+        # underlying spot). If that ever regresses, or a caller hands it a symbol
+        # it misresolves, it would return an index-scale number for a premium leg
+        # and the ledger would book economics off the wrong instrument entirely.
+        # Reject rather than reconcile: the service has already recorded this
+        # fill against its own position, so accepting a different price here
+        # would leave the portfolio and the audit ledger disagreeing.
+        service_fill = float(paper_order.fill_price or 0.0)
+        # Tightened OFF_DOMAIN: price-domain check (>5000) + 3% band.
+        if sig.option_contract and service_fill > 0 and base_price > 0:
+            _off_domain = ((service_fill > OFF_DOMAIN_SPOT_THRESHOLD) != (base_price > OFF_DOMAIN_SPOT_THRESHOLD))
+            _dev = abs(service_fill - base_price) / base_price if base_price else 0.0
+            if _off_domain or _dev > OFF_DOMAIN_BAND_PCT:
+                logger.error(
+                    "paper_fill_rejected_off_domain",
+                    signal_id=signal_id,
+                    broker_symbol=broker_sym,
+                    chain_mark=base_price,
+                    service_fill=service_fill,
+                    deviation_pct=round(_dev * 100.0, 1),
+                    off_domain=_off_domain,
+                )
+                return SignalPaperExecutionResult(
+                    success=False,
+                    signal_id=signal_id,
+                    underlying=u,
+                    strategy=sig.strategy,
+                    side=f"BUY_{direction_label}",
+                    quantity=final_qty,
+                    lots=final_lots,
+                    fill_price=0.0,
+                    stop_loss=float(sig.stop_loss),
+                    target_1=float(sig.target_1),
+                    target_2=float(sig.target_2),
+                    order_id=paper_order.order_id,
+                    status="REJECTED",
+                    message=(
+                        f"OFF_DOMAIN_FILL: service filled {broker_sym} at ₹{service_fill:,.2f} "
+                        f"against chain mark ₹{base_price:,.2f} ({_dev * 100.0:.1f}% off). "
+                        "Not the same instrument — trade skipped."
+                    ),
+                    fill_source="CHAIN",
+                    chain_mark_at_fill=float(base_price),
+                )
+
         # Update FSM with order details — trust the service's actual fill
-        # (live quote + friction) over this engine's pre-trade estimate.
+        # (live quote + friction) over this engine's pre-trade estimate, now
+        # that it is confirmed to be the same instrument as the chain mark.
         actual_fill = float(paper_order.fill_price or fill_price)
         sig.paper_order = paper_order.model_dump()
         sig.actual_fill_price = Decimal(str(actual_fill))
@@ -434,8 +598,24 @@ class SignalPaperEngine:
         except Exception as re_err:
             logger.warning("reconcile_entry_init_failed", signal_id=signal_id, error=str(re_err))
 
-        if sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
-            signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(actual_fill)), reason="PAPER_TRADE_EXECUTED")
+        # Record fill provenance.
+        try:
+            if isinstance(sig.paper_order, dict):
+                sig.paper_order["fill_source"] = "CHAIN"
+                sig.paper_order["chain_mark_at_fill"] = float(base_price)
+        except Exception:
+            pass
+
+        if sig.fsm_state == "TRIGGERED":
+            signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(actual_fill)), reason="PAPER_TRADE_EXECUTED",
+                                  guard_snapshot={"trigger_proof": True, "paper_receipt": paper_order.order_id})
+        elif sig.fsm_state in ("DETECTED", "VALIDATED", "ARMED"):
+            # No skip edges: must pass through TRIGGERED first.
+            ok_t, _ = signal_fsm.transition(sig.signal_id, "TRIGGERED", market_price=Decimal(str(actual_fill)), reason="PAPER_TRADE_TRIGGER_PROOF",
+                                            guard_snapshot={"trigger_proof": True})
+            if ok_t:
+                signal_fsm.transition(sig.signal_id, "CONFIRMED", market_price=Decimal(str(actual_fill)), reason="PAPER_TRADE_EXECUTED",
+                                      guard_snapshot={"trigger_proof": True, "paper_receipt": paper_order.order_id})
 
         # Record into Signal Audit Ledger
         try:
@@ -490,6 +670,8 @@ class SignalPaperEngine:
                 f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{actual_fill:,.2f}"
                 + (f" (downsized from {requested_lots} lot(s) to fit wallet ₹{live_available_margin:,.2f})" if downsized else "")
             ),
+            fill_source="CHAIN",
+            chain_mark_at_fill=float(base_price),
         )
 
     async def close_signal_position(
@@ -516,6 +698,9 @@ class SignalPaperEngine:
 
         # Resolve exit price if missing — prefer the live position LTP
         # (VirtualPosition.ltp; there is no `current_price` field).
+        # FAIL CLOSED: when neither the position LTP nor a fresh broker mark
+        # exists, settle flat (entry fill) with economics_unavailable + NO_MARK.
+        _flat_no_mark = False
         if exit_price is None:
             pos_id = f"{broker_sym}_INTRADAY"
             pos = paper_service._positions.get(pos_id)
@@ -523,15 +708,20 @@ class SignalPaperEngine:
             if live_ltp and float(live_ltp) > 0:
                 exit_price = float(live_ltp)
             elif sig.option_contract:
-                try:
-                    from app.signals.fill_reconciler import option_fill_reconciler
-                    opt = sig.option_contract
-                    strike = float(opt.get("strike", float(sig.trigger or 0.0)))
-                    opt_type = opt.get("option_type", "CE" if "CALL" in sig.direction else "PE")
-                    spot = float(sig.spot_price or sig.trigger or 0.0)
-                    exit_price = option_fill_reconciler.estimate_option_premium(spot, strike, opt_type)
-                except Exception:
-                    exit_price = float(sig.actual_fill_price or sig.trigger or 0.0)
+                from app.signals.option_marks import option_mark_registry
+                mark = option_mark_registry.get_usable(broker_sym, allow_model=False)
+                if mark is not None and mark.price is not None:
+                    exit_price = float(mark.price)
+                else:
+                    entry_ref = float(sig.actual_fill_price or sig.entry_price or 0.0)
+                    logger.warning(
+                        "exit_price_unavailable_settling_flat",
+                        signal_id=signal_id,
+                        broker_symbol=broker_sym,
+                        entry_ref=entry_ref,
+                    )
+                    exit_price = entry_ref
+                    _flat_no_mark = True
             else:
                 exit_price = float(sig.actual_fill_price or sig.trigger or 0.0)
 
@@ -579,11 +769,20 @@ class SignalPaperEngine:
                 reason=reason,
             )
         else:
+            _exit_reason = "NO_MARK" if _flat_no_mark else reason
             rec = signal_audit_ledger.record_square_off(
                 signal_id=signal_id,
                 exit_price=exit_price,
-                exit_reason=reason,
+                exit_reason=_exit_reason,
             )
+            # Flat settlements set economics_unavailable + NO_MARK.
+            try:
+                if _flat_no_mark and rec is not None:
+                    rec.economics_unavailable = True
+                    if not rec.exit_reason or rec.exit_reason == reason:
+                        rec.exit_reason = "NO_MARK"
+            except Exception:
+                pass
         return rec
 
 

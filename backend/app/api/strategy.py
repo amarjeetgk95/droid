@@ -76,22 +76,48 @@ async def get_templates():
 
 @router.post("/build-template")
 async def build_template(template_id: str = Query(...), symbol: str = Query(default="NIFTY")):
+    """Build a template strategy off the LIVE FYERS spot.
+
+    Truth-of-Wall: premiums/quantities are caller-supplied estimation inputs
+    for payoff math; the spot and strikes come from the real feed. With no
+    live quote this endpoint fails closed (404) instead of fabricating a
+    strategy on a hardcoded spot.
+    """
+    from app.services.market_service import MarketService
+    from fastapi import HTTPException
+
     underlying = symbol.upper().replace(" 50", "")
-    spot = 24500.0
+    try:
+        quote = await MarketService().get_quote(symbol.upper())
+    except Exception:
+        quote = None
+    spot = float(quote.ltp) if quote is not None and quote.ltp and quote.ltp > 0 else None
+    if spot is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No live FYERS spot for {underlying} — template strategies require real market data (no fabricated spot).",
+        )
+
+    # Premiums are estimation placeholders the caller is expected to replace —
+    # they only shape the payoff curve, never claim to be market prices.
+    est_atm_premium = round(spot * 0.0057, 2)
+    est_otm_premium = round(est_atm_premium * 0.32, 2)
     legs = [
-        StrategyLeg(id="leg_1", option_type="CE", side="BUY", strike=spot, quantity=1, price=140.0, expiry="2026-09-24", lot_size=75),
-        StrategyLeg(id="leg_2", option_type="CE", side="SELL", strike=spot + 300, quantity=1, price=45.0, expiry="2026-09-24", lot_size=75),
+        StrategyLeg(id="leg_1", option_type="CE", side="BUY", strike=spot, quantity=1, price=est_atm_premium, expiry=None, lot_size=75),
+        StrategyLeg(id="leg_2", option_type="CE", side="SELL", strike=spot + 300, quantity=1, price=est_otm_premium, expiry=None, lot_size=75),
     ]
     payoff = _compute_payoff(spot, legs)
+    debit = (est_atm_premium - est_otm_premium)
+    width = 300.0
     data = {
         "template_id": template_id,
         "underlying": underlying,
         "spot_price": spot,
         "legs": [l.model_dump() for l in legs],
-        "max_profit": 155.0 * 75,
-        "max_loss": -95.0 * 75,
-        "risk_reward": 1.63,
-        "pop_percent": 54.5,
+        "premium_note": "Premiums are estimation inputs for payoff shape only — replace with live chain premiums before trading.",
+        "max_profit": round((width - debit) * 75, 2),
+        "max_loss": round(debit * 75, 2),
+        "risk_reward": round((width - debit) / debit, 2) if debit > 0 else None,
         "payoff_curve": payoff,
     }
     return envelope(data, provider=_PROVIDER)
@@ -111,24 +137,19 @@ async def calculate_payoff(payload: PayoffRequest):
 
 @router.get("/scanner")
 async def get_strategy_scanner(min_pop: float = Query(default=20.0)):
-    data = [
+    """Multi-factor strategy scanner.
+
+    Truth-of-Wall: no fabricated recommendations. The historical response
+    served invented "STRONG_BUY" entries with made-up PoP/ROI numbers. A real
+    scanner requires live option-chain analytics; until that exists this
+    returns an honest empty result with the limitation stated.
+    """
+    data: list[dict] = []
+    return envelope(
         {
-            "symbol": "NIFTY",
-            "strategy": "Bull Call Spread",
-            "strikes": "24500 CE / 24800 CE",
-            "pop_percent": 58.2,
-            "max_roi_percent": 163.0,
-            "net_debit": 95.0,
-            "recommendation": "STRONG_BUY",
+            "scans": data,
+            "count": 0,
+            "limitation": "Strategy scanner not yet wired to live option-chain analytics — no recommendations are fabricated (Truth of Wall).",
         },
-        {
-            "symbol": "BANKNIFTY",
-            "strategy": "Iron Condor",
-            "strikes": "56000 PE / 56500 PE / 58000 CE / 58500 CE",
-            "pop_percent": 68.5,
-            "max_roi_percent": 42.0,
-            "net_credit": 145.0,
-            "recommendation": "NEUTRAL_INCOME",
-        },
-    ]
-    return envelope(data, provider=_PROVIDER)
+        provider=_PROVIDER,
+    )

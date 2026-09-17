@@ -258,12 +258,16 @@ class DashboardSummary(BaseModel):
     ml_prediction: dict[str, Any] | None = None
     fii_dii: dict[str, Any] | None = None
     regime_overview: dict[str, Any] | None = None
+    # Live F&O snapshot (PCR / max pain / ATM IV) for the War Room tiles.
+    # Sourced from the same get_fno_context truth as research options-context;
+    # None (with errors["options"]) when the chain is unreachable — never zeros.
+    options_analytics: dict[str, Any] | None = None
     errors: dict[str, str] = {}
     degraded: bool = False
     generated_at: str
 
 
-SUMMARY_FRESH_TTL = 3.0
+SUMMARY_FRESH_TTL = 8.0
 _summary_cache: dict[str, tuple[float, DashboardSummary]] = {}
 _summary_refresh_lock = asyncio.Lock()
 _summary_refresh_task: asyncio.Task | None = None
@@ -326,6 +330,28 @@ async def _compute_summary() -> DashboardSummary:
         r = await regime_service.classify_market_regime("NIFTY")
         return r.model_dump(mode="json")
 
+    async def _fetch_options():
+        # Fail-soft by contract: coordinator marks UNAVAILABLE on raise, and
+        # the processing step below records errors["options"] instead.
+        from app.fno.context import get_fno_context
+        fno = await get_fno_context("NIFTY")
+        if not fno or not fno.get("available"):
+            raise RuntimeError(fno.get("reason", "F&O snapshot unavailable") if fno else "F&O snapshot unavailable")
+        return {
+            "underlying": "NIFTY",
+            "pcr_oi": fno.get("pcr"),
+            "pcr_volume": fno.get("pcr_vol") or fno.get("pcr_volume"),
+            "max_pain_strike": fno.get("max_pain"),
+            "atm_iv": fno.get("atm_iv"),
+            "call_wall": fno.get("call_wall"),
+            "put_wall": fno.get("put_wall"),
+            "days_to_expiry": fno.get("days_to_expiry") or fno.get("distance_to_expiry_days") or fno.get("near_days"),
+            "spot": fno.get("spot"),
+            "available": True,
+            "data_quality": "LIVE" if not fno.get("synthetic") else "DEGRADED",
+            "timestamp": fno.get("timestamp"),
+        }
+
     fetch_specs = {
         "cards": (_fetch_cards, "market_service"),
         "breadth": (_fetch_breadth, "market_service"),
@@ -334,6 +360,7 @@ async def _compute_summary() -> DashboardSummary:
         "ml": (_fetch_ml, "ml_predictor"),
         "fii_dii": (_fetch_fii, "fii_dii_service"),
         "regime": (_fetch_regime, "regime_service"),
+        "options": (_fetch_options, "fno_context"),
     }
 
     results = await market_data_coordinator.get_many(fetch_specs)
@@ -384,12 +411,26 @@ async def _compute_summary() -> DashboardSummary:
     fii_dict = _to_dict(fii_val.data) if fii_val else None
     if fii_val is None or fii_val.status == "UNAVAILABLE" or fii_dict is None:
         errors["fii_dii"] = "FII/DII data unavailable"
+    elif isinstance(fii_dict, dict):
+        # Contract aliases the War Room FII-net tile reads: cash-market nets
+        # in ₹cr (the only nets the daily file provides). Additive only.
+        if fii_dict.get("fii_net_crores") is None and fii_dict.get("fii_cash_net_crores") is not None:
+            fii_dict["fii_net_crores"] = fii_dict.get("fii_cash_net_crores")
+        if fii_dict.get("dii_net_crores") is None and fii_dict.get("dii_cash_net_crores") is not None:
+            fii_dict["dii_net_crores"] = fii_dict.get("dii_cash_net_crores")
 
     # Process regime
     regime_val = results.get("regime")
     regime_dict = _to_dict(regime_val.data) if regime_val else None
     if regime_val is None or regime_val.status == "UNAVAILABLE" or regime_dict is None:
         errors["regime"] = "Regime classification unavailable"
+
+    # Process options (independent leg: never fails the summary)
+    options_val = results.get("options")
+    options_dict = _to_dict(options_val.data) if options_val else None
+    if options_val is None or options_val.status == "UNAVAILABLE" or not isinstance(options_dict, dict):
+        errors["options"] = "Options analytics unavailable — chain unreachable"
+        options_dict = None
 
     is_degraded = bool(errors) or any(
         v.status == "DEGRADED" for v in results.values() if v is not None
@@ -403,6 +444,7 @@ async def _compute_summary() -> DashboardSummary:
         ml_prediction=ml_dict,
         fii_dii=fii_dict,
         regime_overview=regime_dict,
+        options_analytics=options_dict,
         errors=errors,
         degraded=is_degraded,
         generated_at=datetime.now(timezone.utc).isoformat(),

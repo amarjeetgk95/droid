@@ -93,6 +93,11 @@ class PaperTradingService:
         self._realized_by_user: dict[str, float] = {}
         self._idempotency: dict[str, dict[str, VirtualOrder]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # Loop a given lock was created on. asyncio.Lock binds to the loop it is
+        # first awaited on; per-test event loops (TestClient) would otherwise
+        # keep acquiring a lock owned by a dead loop. Mirrors the rebind guard
+        # in core/service_lifecycle.py (_provider_lock/_telegram_lock).
+        self._lock_loops: dict[str, asyncio.AbstractEventLoop | None] = {}
         self._locks_guard = threading.Lock()
         self._last_mtm_persist: dict[str, float] = {}
         self.max_single_order_qty = max_single_order_qty
@@ -105,11 +110,28 @@ class PaperTradingService:
 
     def _lock_for(self, user_id: Optional[UUID]) -> asyncio.Lock:
         key = self._user_key(user_id)
+        try:
+            current_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
         with self._locks_guard:
             lock = self._locks.get(key)
-            if lock is None:
+            bound = self._lock_loops.get(key)
+            # Replace the lock only when its loop is provably dead (test/worker
+            # teardown) — nobody can still hold it, so mutual exclusion is
+            # preserved. A live-but-different loop keeps the existing lock,
+            # matching the pre-rebind behaviour; see core/service_lifecycle.py
+            # for the same guard pattern.
+            if lock is None or (
+                bound is not None
+                and bound.is_closed()
+                and (current_loop is None or bound is not current_loop)
+            ):
                 lock = asyncio.Lock()
                 self._locks[key] = lock
+                self._lock_loops[key] = current_loop
+            elif lock is not None and key not in self._lock_loops:
+                self._lock_loops[key] = bound
             return lock
 
     def _pos_store(self, user_id: Optional[UUID]) -> dict[str, VirtualPosition]:
@@ -408,20 +430,21 @@ class PaperTradingService:
         if otype == "MARKET":
             if live is not None:
                 return self._apply_friction(live, payload.side), "LIVE", False
-            if payload.price and payload.price > 0:
-                logger.warning(
-                    "paper_fill_client_fallback",
-                    symbol=payload.symbol, reason="live_unavailable",
-                )
-                return float(payload.price), "CLIENT_FALLBACK", False
+            # Fail-closed: no live quote = no fill. Never fill a MARKET order
+            # at the client-supplied estimate — that fabricates economics.
+            logger.warning(
+                "paper_fill_rejected_no_live",
+                symbol=payload.symbol, reason="live_unavailable_market",
+            )
             return None, None, False
 
         if otype == "LIMIT":
             if not payload.price or payload.price <= 0:
                 return None, None, False
             if live is None:
-                logger.warning("paper_fill_client_fallback", symbol=payload.symbol, reason="live_unavailable_limit")
-                return float(payload.price), "CLIENT_FALLBACK", False
+                # Cannot verify limit touch without live — rest the order.
+                logger.warning("paper_fill_pending_no_live", symbol=payload.symbol, reason="live_unavailable_limit")
+                return None, None, True
             adj = self._apply_friction(live, payload.side)
             if payload.side == "BUY":
                 if adj <= payload.price:

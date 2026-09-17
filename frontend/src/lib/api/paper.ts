@@ -1,17 +1,27 @@
 import type { ApiCore } from './client';
 
 export function createPaperApi(core: ApiCore) {
+  const squareOffPosition = (positionId: string) =>
+    core.request<{ data: import('../types').VirtualPosition; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/paper/position/square-off/${encodeURIComponent(positionId)}`, {
+      method: 'POST',
+    });
+
+  const squareOffAllPositions = () =>
+    core.request<{ data: import('../types').VirtualPosition[]; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/paper/square-off-all', {
+      method: 'POST',
+    });
+
   return {
     async getFIIDIIOverview() {
     return core.request<{ data: import('../types').FIIDIIOverviewResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/overview');
   },
 
-    async getFlowSnapshot() {
-    return core.request<{ data: { live: boolean; pit_note: string; flow: { event_date: string | null; fii_cash_5d_z: number | null; dii_cash_5d_z: number | null; fii_lsr: number | null } | null; composite: { score: number | null; sentiment: string; status: string } | null; drift: { degraded: boolean; reason: string } | null; futures: { status: string } }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/flow');
+    async getFiiDiiActivity() {
+    return core.request<{ data: import('../types').FIIDIIOverviewResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/overview');
   },
 
-    async getMLPrediction(symbol: string = 'NIFTY') {
-    return core.request<{ data: import('../types').MLPredictionResponse; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}`);
+    async getFlowSnapshot() {
+    return core.request<{ data: { live: boolean; pit_note: string; flow: { event_date: string | null; fii_cash_5d_z: number | null; dii_cash_5d_z: number | null; fii_lsr: number | null } | null; composite: { score: number | null; sentiment: string; status: string } | null; drift: { degraded: boolean; reason: string } | null; futures: { status: string } }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/flow');
   },
 
     async getPaperOrders() {
@@ -53,17 +63,13 @@ export function createPaperApi(core: ApiCore) {
     });
   },
 
-    async squareOffAllPositions() {
-    return core.request<{ data: import('../types').VirtualPosition[]; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/paper/square-off-all', {
-      method: 'POST',
-    });
-  },
+    squareOffAllPositions,
 
-    async squareOffPosition(positionId: string) {
-    return core.request<{ data: import('../types').VirtualPosition; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/paper/position/square-off/${encodeURIComponent(positionId)}`, {
-      method: 'POST',
-    });
-  },
+    closeAllPaperPositions: squareOffAllPositions,
+
+    squareOffPosition,
+
+    closePaperPosition: squareOffPosition,
   };
 }
 

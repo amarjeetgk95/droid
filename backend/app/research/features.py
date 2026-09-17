@@ -287,10 +287,17 @@ class FeatureLayer:
             except (TypeError, ValueError):
                 rsi = 50.0
             vote: Optional[str] = None
-            if st_dir == "BULLISH" and rsi >= 50.0:
+            # RSI breaks ties when it conflicts with lagging supertrend, and
+            # an exact 50.0 (neutral default for <15 candles) abstains so thin
+            # higher-TF bars can't outvote real intraday momentum.
+            if st_dir == "BULLISH" and rsi > 50.0:
                 vote = "BULLISH"
             elif st_dir == "BEARISH" and rsi < 50.0:
                 vote = "BEARISH"
+            elif st_dir == "BULLISH" and rsi < 50.0:
+                vote = "BEARISH"
+            elif st_dir == "BEARISH" and rsi > 50.0:
+                vote = "BULLISH"
             if vote == "BULLISH":
                 bull_votes += 1
                 total_votes += 1

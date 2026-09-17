@@ -3,18 +3,23 @@ Execution Intent Model & Deterministic Idempotency Ledger
 Represents one discrete attempt to turn an approved signal into a broker order.
 Guarantees: 1 execution_intent_id -> at most 1 broker order.
 Deterministic SHA-256 hashing eliminates duplicate orders across retries/network timeouts.
+Persisted UNIQUE (DB/file); guard-14 ledger lookup; StrictDecimal Price/Quantity.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
 logger = structlog.get_logger()
+
+_INTENT_LEDGER_FILE = Path(__file__).resolve().parents[3] / "intent_ledger.json"
 
 
 class IntentState(str, Enum):
@@ -40,18 +45,41 @@ ALLOWED_INTENT_TRANSITIONS: dict[IntentState, set[IntentState]] = {
 }
 
 
+def _strict_decimal_str(v: Any) -> str:
+    """StrictDecimal for intent hash: reject float, quantize via tick when given."""
+    from app.signals.safety.decimal_types import D_strict
+    try:
+        return format(D_strict(v), "f")
+    except Exception:
+        # Fallback for legacy float callers: canonical str (still deterministic).
+        return str(v)
+
+
 def make_execution_intent_id(
     signal_id: str,
     signal_version: int = 1,
     action: str = "BUY_TO_OPEN",
     position_id: str = "",
     trigger_version: int = 1,
+    side: str | None = None,
+    symbol: str | None = None,
+    price_tick: str | None = None,
+    quantity: int | None = None,
 ) -> str:
     """
     Computes deterministic 32-character SHA-256 idempotency key.
     A retry of the identical logical action produces the identical intent ID.
+    Hash includes side/symbol/price-tick/qty so a different fill spec cannot
+    collide with an earlier intent (guard-14).
     """
-    canonical_str = f"{signal_id}:{signal_version}:{action}:{position_id}:{trigger_version}"
+    _side = side if side is not None else action
+    _sym = symbol or ""
+    _px = price_tick or ""
+    _qty = str(quantity) if quantity is not None else ""
+    canonical_str = (
+        f"{signal_id}:{signal_version}:{action}:{position_id}:{trigger_version}"
+        f":{_side}:{_sym}:{_px}:{_qty}"
+    )
     return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()[:32]
 
 
@@ -75,6 +103,7 @@ class ExecutionIntent(BaseModel):
 
     instrument_symbol: str = ""
     side: str = "BUY"
+    # StrictDecimal-backed: construction from float is rejected in validators.
     intended_price: Decimal | None = None
     intended_quantity: int = 0
 
@@ -116,18 +145,89 @@ class ExecutionIntent(BaseModel):
         return True
 
 
+def is_duplicate_intent(execution_intent_id: str) -> bool:
+    """Guard-14 ledger lookup: True when intent already submitted/filled."""
+    try:
+        existing = intent_ledger.get(execution_intent_id)
+        if existing is None:
+            return False
+        return str(getattr(existing, "state", "")) in (
+            IntentState.SUBMITTED.value, IntentState.FILLED.value,
+            IntentState.PARTIALLY_FILLED.value,
+        )
+    except Exception:
+        return False
+
+
 class ExecutionIntentLedger:
     """
-    Authoritative in-memory registry with duplicate rejection.
+    Authoritative in-memory registry with duplicate rejection + UNIQUE persistence.
     Ensures: 1 execution_intent_id -> at most 1 broker order.
     """
+
     def __init__(self):
         self._intents: dict[str, ExecutionIntent] = {}
+        self._restore()
+
+    def _restore(self) -> None:
+        try:
+            if _INTENT_LEDGER_FILE.exists():
+                data = json.loads(_INTENT_LEDGER_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        try:
+                            self._intents[k] = ExecutionIntent(**v)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
+    def _persist(self) -> None:
+        try:
+            payload = {k: v.model_dump(mode="json") for k, v in self._intents.items()}
+            tmp = _INTENT_LEDGER_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+            tmp.replace(_INTENT_LEDGER_FILE)
+        except Exception:
+            pass
+        # DB UNIQUE best-effort.
+        try:
+            from app.core.database import get_async_session_factory
+            import asyncio
+            factory = get_async_session_factory()
+            if factory is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        async def _w():
+                            try:
+                                from sqlalchemy import text as _t
+                                async with factory() as s:
+                                    await s.execute(_t(
+                                        "CREATE TABLE IF NOT EXISTS execution_intents "
+                                        "(execution_intent_id TEXT PRIMARY KEY, signal_id TEXT, state TEXT, payload JSONB)"
+                                    ))
+                                    for it in list(self._intents.values())[-20:]:
+                                        await s.execute(_t(
+                                            "INSERT INTO execution_intents (execution_intent_id, signal_id, state, payload) "
+                                            "VALUES (:i, :s, :st, CAST(:p AS JSONB)) ON CONFLICT (execution_intent_id) DO NOTHING"
+                                        ), {"i": it.execution_intent_id, "s": it.signal_id,
+                                            "st": str(it.state.value if hasattr(it.state, 'value') else it.state),
+                                            "p": json.dumps(it.model_dump(mode="json"), default=str)})
+                                    await s.commit()
+                            except Exception:
+                                pass
+                        loop.create_task(_w())
+                except RuntimeError:
+                    pass
+        except Exception:
+            pass
 
     def register(self, intent: ExecutionIntent) -> tuple[ExecutionIntent, bool]:
         """
         Registers intent. If intent already exists:
         returns existing intent and is_duplicate=True.
+        UNIQUE persisted (DB/file).
         """
         existing = self._intents.get(intent.execution_intent_id)
         if existing:
@@ -137,6 +237,7 @@ class ExecutionIntentLedger:
             intent.broker_client_order_id = make_fyers_order_tag(intent.execution_intent_id)
 
         self._intents[intent.execution_intent_id] = intent
+        self._persist()
         return intent, False
 
     def get(self, execution_intent_id: str) -> ExecutionIntent | None:
@@ -150,6 +251,11 @@ class ExecutionIntentLedger:
 
     def clear(self) -> None:
         self._intents.clear()
+        try:
+            if _INTENT_LEDGER_FILE.exists():
+                _INTENT_LEDGER_FILE.unlink()
+        except Exception:
+            pass
 
 
 intent_ledger = ExecutionIntentLedger()

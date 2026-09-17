@@ -363,9 +363,13 @@ class TestBrokerFeedback:
         pass
 
     @pytest.mark.asyncio
-    async def test_paper_service_broker_feedback_updates_position(self):
+    async def test_paper_service_broker_feedback_updates_position(self, paper_fills_from_marks):
         from app.services.paper_service import paper_service
         from app.models.paper import OrderPayload
+        # Fail-closed pricing: a MARKET order fills only against a real broker
+        # mark for the exact contract, so publish the quote FYERS would return.
+        from tests.conftest import seed_chain_mark
+        seed_chain_mark("NIFTY25JUN25000CE", 100.0, underlying="NIFTY", strike=25000.0, option_type="CE")
         # Reset
         await paper_service.reset_portfolio_async()
         payload = OrderPayload(symbol="NIFTY25JUN25000CE", underlying="NIFTY", side="BUY", order_type="MARKET", product="INTRADAY", quantity=50, price=100)

@@ -25,6 +25,10 @@ CACHE_FILE = Path("live_contracts_cache.json")
 REFRESH_INTERVAL_MS = 60_000
 
 
+#: A chain row older than this is not a live mark (one refresh cycle + slack).
+CHAIN_ROW_MAX_AGE_MS = 90_000
+
+
 class LiveStrikeInfo(BaseModel):
     broker_symbol: str
     underlying: str
@@ -37,10 +41,43 @@ class LiveStrikeInfo(BaseModel):
     fetched_at_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
 
     @property
+    def spread_healthy(self) -> bool:
+        """True only when both sides are positive and uncrossed (ask >= bid)."""
+        try:
+            return float(self.bid) > 0 and float(self.ask) > 0 and float(self.ask) >= float(self.bid)
+        except Exception:
+            return False
+
+    @property
     def mid(self) -> float:
-        if self.bid > 0 and self.ask > 0:
+        # Fail-closed mid: a crossed book (ask < bid) or a zero side is never
+        # averaged — fall back to the broker LTP instead of a fabricated mid.
+        if self.spread_healthy:
             return round((self.bid + self.ask) / 2.0, 2)
         return round(self.ltp, 2)
+
+    def quote_mid(self, allow_stale: bool = False) -> float:
+        """Strict mid: 0.0 when the book is crossed/empty unless explicitly allowed.
+
+        ``allow_stale=True`` falls back to the (possibly LTP-derived) ``mid``
+        for display-only paths; pricing paths must keep the default and treat
+        0.0 as "no usable mark".
+        """
+        if self.spread_healthy:
+            return round((self.bid + self.ask) / 2.0, 2)
+        if allow_stale:
+            return round(self.ltp, 2)
+        return 0.0
+
+    def age_ms(self, now_ms: int | None = None) -> int:
+        now = now_ms if now_ms is not None else int(time.time() * 1000)
+        try:
+            return max(0, now - int(self.fetched_at_ms))
+        except Exception:
+            return 0
+
+    def is_fresh(self, max_age_ms: int = CHAIN_ROW_MAX_AGE_MS, now_ms: int | None = None) -> bool:
+        return self.age_ms(now_ms) <= max_age_ms
 
 
 def _today_ist() -> date:
@@ -100,11 +137,15 @@ class LiveContractCache:
         expiry: date,
         strike: int,
         option_type: str,
+        max_age_ms: int = CHAIN_ROW_MAX_AGE_MS,
+        allow_stale: bool = False,
     ) -> Optional[LiveStrikeInfo]:
         """True broker symbol for an exact (underlying, expiry, strike, type).
 
         Only serves entries fetched during the current IST session — a
-        yesterday-expiry symbol must never leak into today's orders.
+        yesterday-expiry symbol must never leak into today's orders. Rows
+        older than ``max_age_ms`` (default 90s) are stale and rejected, and a
+        crossed/empty book is rejected unless ``allow_stale`` is explicit.
         """
         try:
             info = self._map.get(_key(underlying, expiry, strike, option_type))
@@ -113,18 +154,31 @@ class LiveContractCache:
             fetched_day = datetime.fromtimestamp(info.fetched_at_ms / 1000.0, tz=IST).date()
             if fetched_day != _today_ist():
                 return None
+            if not allow_stale and info.age_ms() > max_age_ms:
+                return None
             if not info.broker_symbol or info.broker_symbol.endswith("_OPT"):
                 return None
+            if not allow_stale:
+                # Crossed book or empty book with no LTP fallback: no mark.
+                if info.bid and info.ask and float(info.ask) < float(info.bid):
+                    return None
+                if not info.spread_healthy and not (info.ltp and float(info.ltp) > 0):
+                    return None
             return info
         except Exception:
             return None
 
-    def find_by_symbol(self, broker_symbol: str) -> Optional[LiveStrikeInfo]:
+    def find_by_symbol(
+        self,
+        broker_symbol: str,
+        max_age_ms: int = CHAIN_ROW_MAX_AGE_MS,
+        allow_stale: bool = False,
+    ) -> Optional[LiveStrikeInfo]:
         """Reverse lookup: exact broker symbol -> strike info (current session).
 
         The cache is keyed by (underlying, expiry, strike, type); the mark
         registry is keyed by broker symbol. This bridges the two without
-        scanning, and enforces the same same-session rule as `lookup`.
+        scanning, and enforces the same same-session/freshness rules as `lookup`.
         """
         if not broker_symbol:
             return None
@@ -140,15 +194,64 @@ class LiveContractCache:
                 fetched_day = datetime.fromtimestamp(info.fetched_at_ms / 1000.0, tz=IST).date()
                 if fetched_day != _today_ist():
                     return None
+                if not allow_stale and info.age_ms() > max_age_ms:
+                    return None
+                if not allow_stale and info.bid and info.ask and float(info.ask) < float(info.bid):
+                    return None
                 return info
         except Exception:
             return None
         return None
 
     def snapshot(self) -> dict[str, LiveStrikeInfo]:
-        """Shallow copy of the strike map for read-only consumers."""
+        """Same-session filtered view of the strike map for read-only consumers.
+
+        Stale rows (fetched on a prior IST day) and expired contracts
+        (expiry before today IST) are never served — consumers must not see
+        yesterday's symbols as today's tradables.
+        """
+        today = _today_ist()
         with self._lock:
-            return dict(self._map)
+            out: dict[str, LiveStrikeInfo] = {}
+            for k, info in self._map.items():
+                try:
+                    fetched_day = datetime.fromtimestamp(info.fetched_at_ms / 1000.0, tz=IST).date()
+                    if fetched_day != today:
+                        continue
+                    if info.expiry_date < today:
+                        continue
+                    out[k] = info
+                except Exception:
+                    continue
+            return out
+
+    def purge_expired(self) -> int:
+        """Drop expired/stale rows (expiry before today IST, or fetched on a
+        prior session and older than one refresh cycle). Returns drop count."""
+        today = _today_ist()
+        now_ms = int(time.time() * 1000)
+        dropped = 0
+        with self._lock:
+            for k in list(self._map.keys()):
+                info = self._map.get(k)
+                if info is None:
+                    continue
+                try:
+                    expired = info.expiry_date < today
+                    try:
+                        fetched_day = datetime.fromtimestamp(info.fetched_at_ms / 1000.0, tz=IST).date()
+                    except Exception:
+                        fetched_day = today
+                    stale_session = fetched_day != today and (now_ms - int(info.fetched_at_ms)) > REFRESH_INTERVAL_MS
+                    if expired and (fetched_day != today or (now_ms - int(info.fetched_at_ms)) > REFRESH_INTERVAL_MS):
+                        self._map.pop(k, None)
+                        dropped += 1
+                    elif stale_session:
+                        self._map.pop(k, None)
+                        dropped += 1
+                except Exception:
+                    continue
+        return dropped
 
     def register_mark_info(
         self,
@@ -187,6 +290,11 @@ class LiveContractCache:
             )
             with self._lock:
                 self._map[_key(underlying, expiry, int(strike), otype)] = info
+            try:
+                from app.signals.option_marks import option_mark_service
+                option_mark_service.register_chain_strike(info)
+            except Exception:
+                pass
         except Exception as e:
             logger.debug("live_contracts_register_mark_failed", error=str(e)[:150])
 
@@ -247,11 +355,24 @@ class LiveContractCache:
                     )
                     with self._lock:
                         self._map[_key(u, exp_date, strike, otype)] = info
+                    try:
+                        from app.signals.option_marks import option_mark_service
+                        option_mark_service.register_chain_strike(info)
+                    except Exception:
+                        pass
                     added += 1
                 except Exception:
                     continue
         with self._lock:
             self._last_refresh_ms = int(time.time() * 1000)
+        # Background hygiene: drop contracts whose expiry is before today IST
+        # (and prior-session stale rows) so dead symbols never leak forward.
+        try:
+            purged = self.purge_expired()
+            if purged:
+                logger.info("live_contracts_purged_expired", purged=purged)
+        except Exception:
+            pass
         if added:
             self.save()
             logger.info("live_contracts_refreshed", strikes=added)

@@ -93,10 +93,18 @@ class OptionFillReconciler:
         dte_days: float = 3.0,
         iv: float = 0.15,
         risk_free_rate: float = 0.07,
+        allow_model: bool = False,
     ) -> float:
         """
         Estimates theoretical option premium using Black-76 when market quotes are absent.
+        GATED behind allow_model=True — production fill paths must never call this
+        without explicit opt-in (model prices are not fills).
         """
+        if not allow_model:
+            raise ValueError(
+                "estimate_option_premium is model-gated: pass allow_model=True explicitly. "
+                "Production fills/exits must use chain marks, never a model price."
+            )
         flag = "CE" if "C" in option_type.upper() else "PE"
         t_years = max(0.0001, dte_days / 365.0)
         try:
@@ -111,21 +119,50 @@ class OptionFillReconciler:
     def reconcile_entry(
         self,
         sig: SignalInstance,
-        fill_price: float,
+        fill_price: float | None,
         quantity: int,
         lot_size: int = 75,
-    ) -> FillReconciliationRecord:
+    ) -> FillReconciliationRecord | None:
         """
         Registers actual entry fill, sets initial position and pre-computes 50% staged exit qty.
+        Corrupted entries (None/non-positive/off-domain) return None + quarantine
+        (RECONCILIATION_REQUIRED) — never fabricate a premium.
+        Idempotent on (signal, stage=ENTRY, fill_ts bucket).
         """
-        # Guard: Option fill price can NEVER be an index spot price (>5000 pts)
+        # Guard: an option fill can NEVER be an index spot price (>5000 pts).
+        # FAIL CLOSED: do not repair it with a Black-76 estimate — that would
+        # manufacture the very premium we are trying to verify. Record the raw
+        # observation, flag the record, and let the audit ledger refuse to book
+        # cross-domain P&L downstream.
         is_opt = bool(sig.option_contract or "CALL" in sig.direction or "PUT" in sig.direction)
-        if is_opt and fill_price > 5000.0:
-            logger.error("corrupted_option_fill_price_detected", signal_id=sig.signal_id, bad_price=fill_price)
-            strike = float((sig.option_contract or {}).get("strike", 0.0)) or float(sig.spot_price or sig.trigger)
-            opt_type = (sig.option_contract or {}).get("option_type", "CE" if "CALL" in sig.direction else "PE")
-            fill_price = self.estimate_option_premium(float(sig.spot_price or sig.trigger), strike, opt_type)
-            logger.info("reconcile_entry_clamped_to_estimate", signal_id=sig.signal_id, estimated_price=fill_price)
+        if fill_price is None or (isinstance(fill_price, (int, float)) and float(fill_price) <= 0):
+            logger.error("corrupted_option_fill_none", signal_id=sig.signal_id, note="None/non-positive fill → quarantine")
+            rec_q = FillReconciliationRecord(
+                signal_id=sig.signal_id, underlying=sig.underlying, strategy=sig.strategy,
+                direction=sig.direction, lot_size=lot_size, intended_qty=int(quantity or 0),
+                remaining_qty=int(quantity or 0), entry_fill_price=0.0,
+                reconciliation_status="RECONCILIATION_REQUIRED",
+                reconciliation_notes="corrupted entry: None/non-positive fill",
+            )
+            self._records[sig.signal_id] = rec_q
+            return None
+        domain_bad = is_opt and float(fill_price) > 5000.0
+        if domain_bad:
+            logger.error(
+                "corrupted_option_fill_price_detected",
+                signal_id=sig.signal_id,
+                bad_price=fill_price,
+                note="entry not premium-domain; no estimate substituted",
+            )
+            rec_q = FillReconciliationRecord(
+                signal_id=sig.signal_id, underlying=sig.underlying, strategy=sig.strategy,
+                direction=sig.direction, lot_size=lot_size, intended_qty=int(quantity or 0),
+                remaining_qty=int(quantity or 0), entry_fill_price=float(fill_price),
+                reconciliation_status="RECONCILIATION_REQUIRED",
+                reconciliation_notes=f"entry {fill_price} is not premium-domain",
+            )
+            self._records[sig.signal_id] = rec_q
+            return None
 
         now_ms = int(time.time() * 1000)
         d_fill = Decimal(str(fill_price))
@@ -168,6 +205,8 @@ class OptionFillReconciler:
             updated_at_utc=now_ms,
             execution_intent_id=getattr(sig, "execution_intent_id", None),
             position_id=getattr(sig, "position_id", None),
+            reconciliation_status="RECONCILED",
+            reconciliation_notes=None,
         )
         self._records[sig.signal_id] = rec
         logger.info(
@@ -178,6 +217,10 @@ class OptionFillReconciler:
             t1_qty=t1_qty,
         )
         return rec
+
+    def _t1_idem_key(self, signal_id: str, exit_fill_price: float, exit_time_ms: int) -> str:
+        bucket = int(exit_time_ms // 1000)
+        return f"{signal_id}:TARGET_1:{exit_fill_price}:{bucket}"
 
     def reconcile_t1_exit(
         self,
@@ -191,14 +234,39 @@ class OptionFillReconciler:
           - Calculates net option P&L and statutory costs for closed portion.
           - Updates remaining_qty for the runner.
           - FSM auto-ratchets SL to Cost and starts the Runner Clock.
+          Domain-guarded + idempotent on (signal, stage, fill_ts).
         """
         now_ms = exit_time_ms or int(time.time() * 1000)
-        rec = self._records.get(sig.signal_id)
+        # Idempotency: same (signal, stage, fill_ts bucket) returns existing.
+        _idem = self._t1_idem_key(sig.signal_id, float(exit_fill_price or 0), now_ms)
+        existing = self._records.get(sig.signal_id)
+        if existing is not None and existing.t1_fill_price == exit_fill_price:
+            # Same price already booked for T1 — check fill history for same bucket.
+            for f in existing.fills:
+                if f.stage == "TARGET_1" and abs(int(f.timestamp_utc // 1000) - int(now_ms // 1000)) < 2:
+                    return existing
+        # Domain guard (same as final exit): option T1 must be premium-domain.
+        _is_opt_t1 = bool((getattr(sig, "option_contract", None) or {}) or ("CALL" in str(sig.direction) or "PUT" in str(sig.direction)))
+        if _is_opt_t1 and float(exit_fill_price or 0) > 5000.0:
+            logger.error("fill_t1_domain_mismatch_withheld", signal_id=sig.signal_id, exit_price=exit_fill_price)
+            rec_bad = existing or FillReconciliationRecord(
+                signal_id=sig.signal_id, underlying=sig.underlying, strategy=sig.strategy,
+                direction=sig.direction, reconciliation_status="RECONCILIATION_REQUIRED",
+                reconciliation_notes=f"T1 exit {exit_fill_price} not premium-domain",
+            )
+            rec_bad.reconciliation_status = "RECONCILIATION_REQUIRED"
+            rec_bad.reconciliation_notes = f"T1 exit {exit_fill_price} not premium-domain"
+            self._records[sig.signal_id] = rec_bad
+            return rec_bad
+        rec = existing
         if not rec:
             # Create synthetic record if entry wasn't explicitly registered
             lot_sz = 75 if sig.underlying == "NIFTY" else (30 if sig.underlying == "BANKNIFTY" else 10)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
+            if rec is None:
+                # Corrupted entry → quarantine record already stored; return it.
+                return self._records[sig.signal_id]
 
         # Quantity to close
         close_qty = rec.t1_qty
@@ -268,56 +336,49 @@ class OptionFillReconciler:
             lot_sz = 75 if sig.underlying == "NIFTY" else (30 if sig.underlying == "BANKNIFTY" else 10)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
+            if rec is None:
+                return self._records[sig.signal_id]
+        # Idempotency (signal, stage, fill_ts): same final already booked → noop.
+        try:
+            for f in rec.fills:
+                if f.stage == exit_reason and abs(int(f.timestamp_utc // 1000) - int(now_ms // 1000)) < 2 and f.price == exit_fill_price:
+                    return rec
+        except Exception:
+            pass
 
         close_qty = rec.remaining_qty
         if close_qty > 0:
-            # Domain repair: option premiums live below ~5000. A spot-scale
-            # entry (e.g. trigger 23807 stored as fill) paired with a premium
-            # exit (132.98) fabricates a -₹17L P&L. Repair via Black76
-            # estimate; if unrepairable, close the position without poisoning
-            # P&L with cross-domain garbage.
+            # Domain guard (fail closed, no repair): option premiums live below
+            # ~5000, so a spot-scale entry (e.g. trigger 23807 stored as a fill)
+            # paired with a premium exit would fabricate a -₹17L P&L. Close the
+            # position but book nothing — a Black-76 "repair" here would only
+            # swap one invented number for another.
             _is_opt = bool(
                 (sig.option_contract or {})
                 or ("CALL" in str(sig.direction) or "PUT" in str(sig.direction))
                 or rec.option_type
                 or rec.strike
             )
-            _should_repair = _is_opt and (
-                (rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0)
-                or (exit_reason == "STOP_LOSS_HIT" and rec.entry_fill_price < exit_fill_price)
-            )
-            if _should_repair:
-                _repaired: Optional[float] = None
-                try:
-                    _opt = sig.option_contract or {}
-                    _strike = float(_opt.get("strike") or rec.strike or 0.0)
-                    _otype = str(_opt.get("option_type") or rec.option_type or ("CE" if "CALL" in str(sig.direction) else "PE"))
-                    _spot = float(sig.trigger or sig.spot_price or 0.0)
-                    if _strike > 0 and _spot > 0:
-                        _repaired = self.estimate_option_premium(spot=_spot, strike=_strike, option_type=_otype)
-                except Exception:
-                    _repaired = None
-                if _repaired and _repaired < 5000.0:
-                    logger.warning(
-                        "fill_entry_spot_scale_repaired",
-                        signal_id=sig.signal_id,
-                        bad_entry=rec.entry_fill_price,
-                        repaired=_repaired,
-                    )
-                    rec.entry_fill_price = _repaired
-                else:
-                    logger.error(
-                        "fill_entry_spot_scale_unrepairable_hold_pnl",
-                        signal_id=sig.signal_id,
-                        entry=rec.entry_fill_price,
-                        exit_price=exit_fill_price,
-                    )
-                    rec.remaining_qty = 0
-                    sig.remaining_qty = Decimal("0")
-                    rec.is_fully_closed = True
-                    rec.exit_reason = exit_reason
-                    rec.updated_at_utc = now_ms
-                    return rec
+            _domain_mismatch = _is_opt and (rec.entry_fill_price > 5000.0) != (exit_fill_price > 5000.0)
+            if _is_opt and rec.entry_fill_price > 5000.0:
+                _domain_mismatch = True
+            if _domain_mismatch:
+                logger.error(
+                    "fill_domain_mismatch_pnl_withheld",
+                    signal_id=sig.signal_id,
+                    entry=rec.entry_fill_price,
+                    exit_price=exit_fill_price,
+                )
+                rec.remaining_qty = 0
+                sig.remaining_qty = Decimal("0")
+                rec.is_fully_closed = True
+                rec.exit_reason = exit_reason
+                rec.reconciliation_status = "RECONCILIATION_REQUIRED"
+                rec.reconciliation_notes = (
+                    f"entry {rec.entry_fill_price} and exit {exit_fill_price} are not in the same price domain"
+                )
+                rec.updated_at_utc = now_ms
+                return rec
             buy_turnover = round(rec.entry_fill_price * close_qty, 2)
             sell_turnover = round(exit_fill_price * close_qty, 2)
             costs: CostBreakdown = calculate_option_costs(
@@ -352,11 +413,19 @@ class OptionFillReconciler:
         rec.exit_reason = exit_reason
         rec.updated_at_utc = now_ms
 
-        # Compute blended realized R:R (premium-domain only; a spot-scale
-        # entry here means the repair above was bypassed — skip R, keep P&L).
-        # R = initial risk in INR = (entry_fill_price - stop_loss) * intended_qty
-        option_risk_pts = max(1.0, rec.entry_fill_price * 0.30)  # default 30% option stop if not explicit
-        risk_inr = option_risk_pts * rec.intended_qty
+        # Compute blended realized R:R from FSM risk_r (authoritative risk),
+        # never the 30% heuristic. Falls back to premium fraction only when
+        # risk_r is missing (legacy rows).
+        try:
+            _fsm_risk = getattr(sig, "risk_r", None)
+            if _fsm_risk is not None and float(_fsm_risk) > 0:
+                risk_inr = float(_fsm_risk) * float(rec.intended_qty or 0)
+            else:
+                option_risk_pts = max(1.0, rec.entry_fill_price * 0.30)
+                risk_inr = option_risk_pts * rec.intended_qty
+        except Exception:
+            option_risk_pts = max(1.0, rec.entry_fill_price * 0.30)
+            risk_inr = option_risk_pts * rec.intended_qty
         if risk_inr > 0 and not (rec.entry_fill_price > 5000.0 and exit_fill_price < 5000.0):
             rec.realized_rr = round(rec.net_realized_pnl_inr / risk_inr, 2)
 

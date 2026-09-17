@@ -218,18 +218,26 @@ def check_freshness_before_submit(
     signal: Signal,
     latest_price: Any | None,
     signal_price: Any | None,
-    max_slippage_pct: float = 0.5,
-    market_session_state: str = "OPEN",
-    feed_health: str = "HEALTHY",
-    risk_approved: bool = True,
+    max_slippage_pct: float | None = None,
+    max_slippage_spot_pct: float = 0.5,
+    max_slippage_premium_pct: float = 5.0,
+    price_domain: str | None = None,
+    market_session_state: str | None = None,
+    feed_health: str | None = None,
+    risk_approved: bool = False,
     contract_valid: bool = True,
     invalidation_triggered: bool = False,
 ) -> FreshnessCheck:
+    """P0-5 fail-closed: market_session_state/feed_health default None (must be
+    explicitly OPEN/HEALTHY) and risk_approved defaults False. Slippage uses
+    separate spot (0.5%) vs premium (5.0%) tolerances — auto-detected by price
+    scale unless price_domain is 'spot'/'premium' explicitly."""
     from app.algo.money import D
     if signal.is_expired():
         return FreshnessCheck(passed=False, reason="SIGNAL_EXPIRED", details={"signal_id": signal.signal_id})
-    if feed_health == "FEED_DEGRADED":
-        return FreshnessCheck(passed=False, reason="FEED_DEGRADED", details={})
+    # Fail-closed: only explicit HEALTHY passes (None/FEED_DEGRADED/STALE all fail).
+    if feed_health != "HEALTHY":
+        return FreshnessCheck(passed=False, reason=f"FEED_NOT_HEALTHY_{feed_health}", details={})
     if market_session_state != "OPEN":
         return FreshnessCheck(passed=False, reason=f"MARKET_SESSION_{market_session_state}", details={})
     if not risk_approved:
@@ -238,14 +246,26 @@ def check_freshness_before_submit(
         return FreshnessCheck(passed=False, reason="CONTRACT_SPEC_MISSING")
     if invalidation_triggered:
         return FreshnessCheck(passed=False, reason="SIGNAL_INVALIDATED breakout no longer valid")
-    # Slippage check
+    # Slippage check — spot vs premium separate tolerances (P0-5).
     if latest_price is not None and signal_price is not None:
         try:
             lp = D(latest_price); sp = D(signal_price)
             if sp != D(0):
                 slip_pct = abs(lp - sp) / sp * D(100)
-                if slip_pct > D(max_slippage_pct):
-                    return FreshnessCheck(passed=False, reason=f"SLIPPAGE_EXCEEDED {slip_pct:.2f}% > {max_slippage_pct}%", details={"latest": str(lp), "signal_price": str(sp)})
+                if max_slippage_pct is not None:
+                    tol = D(str(max_slippage_pct))
+                else:
+                    _dom = (price_domain or "").lower()
+                    if not _dom:
+                        # Heuristic: index spot prints are thousands; option premia are
+                        # hundreds. Explicit price_domain overrides this guess.
+                        try:
+                            _dom = "spot" if float(sp) > 5000 else "premium"
+                        except Exception:
+                            _dom = "spot"
+                    tol = D(str(max_slippage_spot_pct if _dom == "spot" else max_slippage_premium_pct))
+                if slip_pct > tol:
+                    return FreshnessCheck(passed=False, reason=f"SLIPPAGE_EXCEEDED {slip_pct:.2f}% > {tol}% [{price_domain or 'auto'}]", details={"latest": str(lp), "signal_price": str(sp)})
         except Exception:
             pass
     return FreshnessCheck(passed=True)
@@ -256,17 +276,23 @@ def final_execution_guard(
     signal: Signal,
     execution_intent_id: str | None,
     latest_price: Any | None = None,
-    feed_health: str = "HEALTHY",
-    market_session_state: str = "OPEN",
+    feed_health: str | None = None,
+    market_session_state: str | None = None,
     contract_spec: dict | None = None,
     order_quantity: Any | None = None,
     order_price: Any | None = None,
     slippage_pct: float | None = None,
-    max_slippage_pct: float = 0.5,
-    risk_approved: bool = True,
+    max_slippage_pct: float | None = None,
+    max_slippage_spot_pct: float = 0.5,
+    max_slippage_premium_pct: float = 5.0,
+    price_domain: str | None = None,
+    risk_approved: bool = False,
     has_duplicate_order: bool = False,
     setup_invalidated: bool = False,
 ) -> tuple[bool, str | None]:
+    """P0-5 fail-closed: feed_health/market_session_state default None (must pass
+    OPEN/HEALTHY explicitly), risk_approved defaults False. Slippage: 0.5% spot vs
+    5.0% premium separate tolerances (explicit max_slippage_pct overrides both)."""
     checks = []
     # 1. Signal state
     if signal.fsm_state != "EXECUTION_PENDING":
@@ -278,19 +304,29 @@ def final_execution_guard(
     if signal.is_expired():
         signal.fsm_state = "EXPIRED"  # type: ignore
         return False, "GUARD_FAIL SIGNAL_EXPIRED"
-    # 4. Feed health
-    if feed_health == "FEED_DEGRADED":
-        return False, "GUARD_FAIL FEED_DEGRADED"
-    # 5. Market session
+    # 4. Feed health (fail-closed: only explicit HEALTHY passes)
+    if feed_health != "HEALTHY":
+        return False, f"GUARD_FAIL FEED_NOT_HEALTHY_{feed_health}"
+    # 5. Market session (fail-closed: only explicit OPEN passes)
     if market_session_state != "OPEN":
         return False, f"GUARD_FAIL market session {market_session_state}"
-    # 6. Current price / slippage
+    # 6. Current price / slippage (spot vs premium separate tolerances)
     if latest_price is not None and order_price is not None:
         from app.algo.money import D
         try:
             slip = abs(D(latest_price) - D(order_price)) / D(order_price) * D(100) if D(order_price) != D(0) else D(0)
-            if slip > D(max_slippage_pct):
-                return False, f"GUARD_FAIL slippage {slip:.2f}% > {max_slippage_pct}%"
+            if max_slippage_pct is not None:
+                _tol = D(str(max_slippage_pct))
+            else:
+                _dom = (price_domain or "").lower()
+                if not _dom:
+                    try:
+                        _dom = "spot" if float(D(order_price)) > 5000 else "premium"
+                    except Exception:
+                        _dom = "spot"
+                _tol = D(str(max_slippage_spot_pct if _dom == "spot" else max_slippage_premium_pct))
+            if slip > _tol:
+                return False, f"GUARD_FAIL slippage {slip:.2f}% > {_tol}% [{price_domain or 'auto'}]"
         except Exception:
             pass
     # 7. Slippage permitted check already above

@@ -44,6 +44,7 @@ export function createSystemApi(core: ApiCore) {
         ml_prediction: any;
         fii_dii: any;
         regime_overview: any;
+        options_analytics: any;
         errors: Record<string, string>;
         degraded: boolean;
         generated_at: string;
@@ -94,6 +95,65 @@ export function createSystemApi(core: ApiCore) {
 
     async tripCircuitBreaker() {
     return core.request<{ data: Record<string, unknown>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/circuit-breaker/trip', { method: 'POST' });
+  },
+
+    async getForecastHealth(limit: number = 30) {
+    return core.request<{
+      status: 'healthy' | 'degraded' | 'unknown';
+      degraded: boolean;
+      reasons: string[];
+      notes?: string[];
+      metrics: Record<string, any>;
+      runtime: Record<string, any>;
+      thresholds: Record<string, any>;
+      window: number;
+      timestamp: string;
+    }>(`/api/v1/monitoring/forecast-health?limit=${limit}`);
+  },
+
+    async getForecastConfig() {
+    return core.request<{
+      status: string;
+      bundle: Record<string, any>;
+      error?: string;
+      timestamp: string;
+    }>('/api/v1/monitoring/forecast-config');
+  },
+
+    async getMLModelInfo() {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/model-info');
+  },
+
+    async getMLTargets() {
+    return core.request<{ data: { target_spec_version: string; supported_horizons: number[]; default_horizon_minutes: number; specs: any[] }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/targets');
+  },
+
+    async getMLCalibration(symbol: string, horizonMinutes?: number) {
+    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/calibration/${encodeURIComponent(symbol)}${qs}`);
+  },
+
+    async getMLChallengerInfo() {
+    return core.request<{ data: { challenger_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/challenger-info');
+  },
+
+    async getMLChampionInfo() {
+    return core.request<{ data: { champion_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/champion-info');
+  },
+
+    async runMLSettlement(symbol?: string, limit: number = 100) {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (symbol) qs.set('symbol', symbol);
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/settle/run?${qs.toString()}`, { method: 'POST' });
+  },
+
+    async getMLPrediction(symbol: string, horizonMinutes?: number) {
+    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}${qs}`);
+  },
+
+    async getMLCurrentRegime(symbol: string = 'NIFTY') {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/current-regime?symbol=${encodeURIComponent(symbol)}`);
   },
   };
 }

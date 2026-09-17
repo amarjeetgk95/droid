@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from typing Any
+from typing import Any
 import structlog
 
 logger = structlog.get_logger(__name__)

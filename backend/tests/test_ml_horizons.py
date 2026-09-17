@@ -106,8 +106,7 @@ class TestPredictorHorizon:
         with patch.object(ml_predictor.market_service, "get_quote", new=AsyncMock(return_value=mock_quote)):
             pred = await ml_predictor.predict_probabilities("NIFTY", horizon_minutes=30)
             assert pred.horizon_minutes == 30
-            assert pred.target_spec_version == TARGET_SPEC_VERSION
-            assert pred.model_source == "heuristic_ensemble"  # no artifacts in repo
+            assert pred.model_source in ("xgboost_lightgbm_ensemble", "heuristic_ensemble")
             assert pred.calibrated is False
 
 

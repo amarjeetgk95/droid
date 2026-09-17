@@ -6,7 +6,7 @@
    Fetches deep-dive (FSM) + audit (ledger) in parallel; either may 404 and
    the drawer degrades to whatever source survived. */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtINR } from '@/components/ui/desk';
@@ -14,12 +14,19 @@ import { normalizeDirection } from '@/components/ui/desk';
 import {
   asNum,
   asStr,
+  fmtConf,
   fmtDateTimeMs,
   getObj,
+  isOpenLedgerStatus,
   pickNum,
   pickStr,
+  score0100ToPct,
   stateTone,
 } from './signalsNormalize';
+
+/** Focusable descendants for the drawer's Tab trap. */
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function n(v: unknown): number | null {
   return asNum(v);
@@ -98,6 +105,9 @@ export function SignalDetailDrawer({ signalId, onClose }: { signalId: string | n
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
   const load = useCallback(async () => {
     if (!signalId) return;
     setLoading(true);
@@ -145,11 +155,52 @@ export function SignalDetailDrawer({ signalId, onClose }: { signalId: string | n
   useEffect(() => {
     if (!signalId) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      // Focus trap: Tab cycles inside the drawer while it is open.
+      if (e.key !== 'Tab') return;
+      const node = drawerRef.current;
+      if (!node) return;
+      const focusables = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (el) => !el.hasAttribute('disabled'),
+      );
+      if (focusables.length === 0) {
+        e.preventDefault();
+        node.focus();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      const inside = active !== null && node.contains(active);
+      if (e.shiftKey && (!inside || active === first)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (!inside || active === last)) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [signalId, onClose]);
+
+  /* Initial focus into the dialog + focus restore to the invoking control. */
+  useEffect(() => {
+    if (!signalId) return;
+    restoreFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
+    const node = drawerRef.current;
+    if (node) {
+      const first = node.querySelector<HTMLElement>(FOCUSABLE);
+      (first ?? node).focus();
+    }
+    return () => {
+      const restore = restoreFocusRef.current;
+      if (restore && restore.isConnected && typeof restore.focus === 'function') restore.focus();
+    };
+  }, [signalId]);
 
   if (!signalId) return null;
 
@@ -161,7 +212,10 @@ export function SignalDetailDrawer({ signalId, onClose }: { signalId: string | n
   const dirRaw = src.direction ?? 'NEUTRAL';
   const dirNorm = normalizeDirection(dirRaw);
   const state = pickStr(src, 'fsm_state', 'status', 'state') ?? '—';
-  const conf = pickNum(src, 'confidence', 'score');
+  // Domain split: confidence (0..1 or 0..100) and score (0..100) are distinct
+  // evidence channels — never merge one into the other's slot.
+  const conf = pickNum(src, 'confidence', 'confidence_pct');
+  const score = pickNum(src, 'score', 'score0100', 'overall_confidence');
   const verdict = explain ? getObj(explain.verdict) : null;
 
   /* Levels: prefer deep-dive levels block, else raw fields. */
@@ -191,7 +245,7 @@ export function SignalDetailDrawer({ signalId, onClose }: { signalId: string | n
   const upnl = pickNum(audit ?? {}, 'unrealized_pnl_inr');
   const tpnl = pickNum(audit ?? {}, 'total_pnl_inr');
   const maxLoss = fill !== null && qty !== null ? fill * qty : null;
-  const isOpen = /^(ARMED|CONFIRMED|EXECUTED|TARGET_1_HIT)$/.test(state.toUpperCase());
+  const isOpen = isOpenLedgerStatus(state);
 
   /* Contract. */
   const contract = getObj(sig?.option_contract) ?? getObj(audit?.option_contract);
@@ -258,19 +312,28 @@ export function SignalDetailDrawer({ signalId, onClose }: { signalId: string | n
 
   return (
     <div className="sg-ovl" onClick={onClose} role="presentation">
-      <aside className="sg-drawer" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`Signal dossier ${signalId}`}>
+      <aside
+        ref={drawerRef}
+        className="sg-drawer"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sg-drawer-title"
+        tabIndex={-1}
+      >
         <div className="sg-dhead">
           <div>
             <p className="sg-eyebrow">Signal dossier</p>
-            <h3 className="sg-dtitle">
+            <h3 className="sg-dtitle" id="sg-drawer-title">
               {symbol} <span className="sg-strat">· {strategy.replace(/_/g, ' ').toLowerCase()}</span>
             </h3>
             <div className="sg-dtags">
-              <span className={`sg-dir ${dirNorm === 'BULLISH' ? 'long' : dirNorm === 'BEARISH' ? 'short' : ''}`} style={dirNorm === 'NEUTRAL' ? { color: 'var(--sg-ink-3)' } : undefined}>
+              <span className={`sg-dir ${dirNorm === 'BULLISH' ? 'long' : dirNorm === 'BEARISH' ? 'short' : ''}`} style={dirNorm === 'NEUTRAL' ? { color: 'var(--ds-ink-3)' } : undefined}>
                 {dirNorm === 'NEUTRAL' ? 'NEUTRAL' : dirNorm === 'BULLISH' ? 'LONG' : 'SHORT'}
               </span>
               <span className={`sg-tag ${stateTone(state) === 'bull' ? 'bull' : stateTone(state) === 'bear' ? 'bear' : stateTone(state) === 'info' ? 'info' : stateTone(state) === 'warn' ? 'warn' : 'neut'}`}>{state}</span>
-              {conf !== null ? <span className="sg-num" style={{ fontWeight: 700 }}>{conf > 1 ? `${conf.toFixed(1)}%` : `${Math.round(conf * 100)}%`} CONF</span> : null}
+              {conf !== null ? <span className="sg-num" style={{ fontWeight: 700 }}>{fmtConf(conf)} CONF</span> : null}
+              {score !== null ? <span className="sg-num" style={{ color: 'var(--ds-ink-2)' }}>{Math.round(score0100ToPct(score))} SCORE</span> : null}
             </div>
           </div>
           <div className="sg-dactions">

@@ -71,6 +71,16 @@ def test_intraday_orb_strategy():
     feat = extract_intraday_swing_features(candles)
     regime = MarketRegime(regime="BULL", confidence=80.0)
 
+    # Selection is fail-closed: candidates price off the broker chain only, so
+    # the strategy needs live chain quotes to produce a setup at all.
+    # Spot here is features.close = 24380 -> ATM 24400 (step 50).
+    from types import SimpleNamespace
+    chain = SimpleNamespace(strikes=[
+        SimpleNamespace(strike=24350.0, call=SimpleNamespace(ltp=70.0)),
+        SimpleNamespace(strike=24400.0, call=SimpleNamespace(ltp=55.0)),
+        SimpleNamespace(strike=24450.0, call=SimpleNamespace(ltp=40.0)),
+    ])
+
     strat = IntradayORBStrategy()
     setup = strat.evaluate(
         underlying="NIFTY",
@@ -78,6 +88,7 @@ def test_intraday_orb_strategy():
         candles=candles,
         regime=regime,
         portfolio_equity=1_000_000.0,
+        options_chain=chain,
     )
 
     assert setup is not None
@@ -85,6 +96,10 @@ def test_intraday_orb_strategy():
     assert setup.timeframe == "15M"
     assert setup.strategy == "INTRADAY_ORB_CE"
     assert setup.hard_exit_time == "15:15:00"
+    assert setup.entry_premium > 0
+    assert setup.stop_premium < setup.entry_premium
+    assert setup.target_premium_1 > setup.entry_premium
+    assert setup.target_premium_2 > setup.target_premium_1
 
 
 def test_intraday_accelerated_breakeven_trailing():

@@ -119,6 +119,15 @@ class AutomatedSignalWorker:
             import time as _time
             from app.signals.audit_ledger import signal_audit_ledger
             from app.signals.sse import signal_sse_hub
+            from app.signals.option_marks import option_mark_service
+
+            # Realtime active contracts refresh: fetch exact broker quotes for open positions
+            open_symbols = signal_audit_ledger.get_open_option_symbols(sym)
+            if open_symbols:
+                try:
+                    await option_mark_service.refresh_and_register(open_symbols)
+                except Exception as oe:
+                    logger.debug("worker_option_marks_refresh_failed", underlying=sym, count=len(open_symbols), error=str(oe)[:150])
 
             updated_recs = signal_audit_ledger.update_live_quote(sym, float(price_val))
             if updated_recs:

@@ -6,7 +6,7 @@ Tick-size quantization before execution, quantity validation, serialization as d
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP, getcontext
+from decimal import Decimal, ROUND_HALF_UP, getcontext, localcontext
 from typing import Union
 import re
 
@@ -19,6 +19,27 @@ def D(v: DecimalLike) -> Decimal:
     if isinstance(v, Decimal):
         return v
     return Decimal(str(v))
+
+
+def D_strict(v: DecimalLike) -> Decimal:
+    """Strict Decimal constructor for guard/execution paths — rejects float.
+
+    Binary float carries representation error into financial math. Guard paths
+    must pass str/Decimal/int only.
+    """
+    if isinstance(v, float):
+        raise TypeError(f"D_strict rejects float ({v!r}); pass str/Decimal instead")
+    if isinstance(v, Decimal):
+        return v
+    if isinstance(v, int):
+        return Decimal(v)
+    if isinstance(v, str):
+        if not is_decimal_string(v.strip()):
+            raise ValueError(f"D_strict: invalid decimal string {v!r}")
+        with localcontext() as ctx:
+            ctx.prec = 28
+            return Decimal(v.strip())
+    raise TypeError(f"D_strict: unsupported type {type(v).__name__}")
 
 
 def _quant(v: DecimalLike) -> Decimal:
@@ -193,13 +214,15 @@ def normalize_exposure(
 def normalize_price_to_tick(price: DecimalLike, tick_size: DecimalLike, rounding=ROUND_HALF_UP) -> Decimal:
     """
     raw price → Decimal normalization → tick-size quantization → broker-valid price.
-    Enforces explicit rounding policy.
+    Enforces explicit rounding policy. Uses localcontext prec=28 for determinism.
     """
-    p = D(price)
-    t = D(tick_size)
-    ticks = (p / t).to_integral_value(rounding=rounding)
-    quantized = (ticks * t).quantize(t if t.as_tuple().exponent < 0 else Decimal("0.01"))
-    return quantized
+    with localcontext() as ctx:
+        ctx.prec = 28
+        p = D(price)
+        t = D(tick_size)
+        ticks = (p / t).to_integral_value(rounding=rounding)
+        quantized = (ticks * t).quantize(t if t.as_tuple().exponent < 0 else Decimal("0.01"))
+        return quantized
 
 
 # ── Quantity validation ───────────────────────────────────────────────
@@ -212,24 +235,28 @@ def validate_quantity(
 ) -> tuple[bool, str | None]:
     """
     Validate minimum quantity, increment, lot size.
-    Never silently alter intended quantity.
+    Never silently alter intended quantity. Includes tick quantize check:
+    quantity must already be quantized to quantity_step (no silent rounding).
     """
-    q = D(quantity)
-    mn = D(min_qty)
-    step = D(quantity_step)
-    if q < mn:
-        return False, f"ORDER_INVALID_QUANTITY: {q} < minimum {mn}"
-    if q <= D(0):
-        return False, "ORDER_INVALID_QUANTITY: qty must be > 0"
-    remainder = (q - mn) % step if step != D(0) else D(0)
-    if remainder != D(0):
-        if abs(remainder) > D("0.000000001") and abs(remainder - step) > D("0.000000001"):
-            return False, f"ORDER_INVALID_QUANTITY: {q} not multiple of step {step} from min {mn}"
-    if lot_size is not None and lot_size != D(0):
-        lots = D(lot_size)
-        if q % lots != D(0):
-            return False, f"ORDER_INVALID_QUANTITY: {q} not multiple of lot_size {lots}"
-    return True, None
+    with localcontext() as ctx:
+        ctx.prec = 28
+        q = D(quantity)
+        mn = D(min_qty)
+        step = D(quantity_step)
+        if q < mn:
+            return False, f"ORDER_INVALID_QUANTITY: {q} < minimum {mn}"
+        if q <= D(0):
+            return False, "ORDER_INVALID_QUANTITY: qty must be > 0"
+        # Quantize check: (q - mn) must be an exact multiple of step.
+        remainder = (q - mn) % step if step != D(0) else D(0)
+        if remainder != D(0):
+            if abs(remainder) > D("0.000000001") and abs(remainder - step) > D("0.000000001"):
+                return False, f"ORDER_INVALID_QUANTITY: {q} not multiple of step {step} from min {mn}"
+        if lot_size is not None and lot_size != D(0):
+            lots = D(lot_size)
+            if q % lots != D(0):
+                return False, f"ORDER_INVALID_QUANTITY: {q} not multiple of lot_size {lots}"
+        return True, None
 
 
 # ── Serialization ─────────────────────────────────────────────────────

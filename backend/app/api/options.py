@@ -16,7 +16,8 @@ async def get_option_chain(
 ):
     """Retrieve full interactive option chain strike ladder with Greeks and IV."""
     chain = await options_service.get_option_chain_matrix(symbol, expiry)
-    return envelope(chain, provider=_PROVIDER, status=DataStatus.OFFLINE)
+    status = DataStatus.LIVE if getattr(chain, "strikes", None) else DataStatus.OFFLINE
+    return envelope(chain, provider=_PROVIDER, status=status)
 
 
 @router.get("/{symbol}/analytics")
