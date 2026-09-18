@@ -194,8 +194,6 @@ async def list_active_signals(
     Returns active signals with live price distance, contract specs, R:R metrics, and desk categorization.
     Never fails hard on a stale quote — per-signal quotes degrade independently (allSettled pattern).
     """
-    import asyncio
-
     if instrument and instrument.upper() not in VALID_INSTRUMENTS:
         raise HTTPException(
             status_code=422,
@@ -203,7 +201,28 @@ async def list_active_signals(
         )
     if desk and desk.upper() not in VALID_DESKS:
         raise HTTPException(status_code=422, detail=f"Unknown desk '{desk}'. Use SCALP, INTRADAY, or ALL.")
+    return await build_active_signals_payload(
+        instrument=instrument,
+        strategy=strategy,
+        status=status,
+        desk=desk,
+        is_scalp=is_scalp,
+    )
 
+
+async def build_active_signals_payload(
+    instrument: str | None = None,
+    strategy: str | None = None,
+    status: str | None = None,
+    desk: str | None = None,
+    is_scalp: bool | None = None,
+) -> dict[str, Any]:
+    """Compose the active-signals payload (FSM state + live quote distances).
+
+    Shared by `GET /api/v1/signals/active` and the CommandView composition leg
+    (`GET /api/v1/view/command`) so the two surfaces can never drift. Callers
+    must validate `instrument`/`desk` against their approved sets first.
+    """
     include_terminal = (status == "ALL" or (status is not None and status in ("CLOSED", "EXPIRED", "INVALIDATED", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "RUNNER_TIME_STOP_HIT")))
     signals = signal_fsm.list_active(underlying=instrument, strategy=strategy, include_terminal=include_terminal)
 

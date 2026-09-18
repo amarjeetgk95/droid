@@ -21,6 +21,7 @@ from app.api import options_intelligence as options_intelligence_api
 from app.api import research as research_api
 from app.api import swing as swing_api
 from app.api import monitoring as monitoring_api
+from app.api import view as view_api
 from app.api.signals import router as signals_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
@@ -398,6 +399,7 @@ def create_app() -> FastAPI:
     app.include_router(research_api.router)
     app.include_router(swing_api.router)
     app.include_router(monitoring_api.router)
+    app.include_router(view_api.router)
     
     return app
 
