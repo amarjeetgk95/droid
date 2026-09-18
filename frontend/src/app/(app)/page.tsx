@@ -7,11 +7,13 @@ import {
   PaperPnLWidget,
   SystemHealthStrip,
   MLPredictionBadges,
+  CommandDesk,
 } from '@/components/command-center';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
 import { PaperTradingProvider } from '@/context/PaperTradingContext';
 import { WhyStrip } from '@/components/dashboard/WhyStrip';
 import { ForecastOutcomes } from '@/components/dashboard/ForecastOutcomes';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 /** Research endpoints key off the index symbol names used by the prediction store. */
 const RESEARCH_SYMBOL: Record<SupportedInstrument, string> = {
@@ -23,6 +25,10 @@ const RESEARCH_SYMBOL: Record<SupportedInstrument, string> = {
 export default function CommandCenterPage() {
   const { instrument, timeframe } = useInstrument();
   const researchSymbol = RESEARCH_SYMBOL[instrument];
+
+  if (isMinimalUi()) {
+    return <CommandDesk />;
+  }
 
   return (
     <div className="space-y-5">
