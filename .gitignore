@@ -68,6 +68,7 @@ backend/hpi_state.json
 hpi_state.json
 backend/*_state.json
 *_state.json
+intent_ledger.json
 telegram_state.json
 backend/telegram_state.json
 market_snapshot.json
