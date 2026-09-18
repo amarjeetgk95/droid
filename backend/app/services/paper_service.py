@@ -67,6 +67,18 @@ DAILY_LOSS_KILL_PCT = 0.25
 MTM_PERSIST_EPS = 1.0
 
 
+def apply_friction(price: float, side: str) -> float:
+    """Apply the canonical execution friction (spread + slippage) to a price.
+
+    Single source of truth for the paper fill engine AND signal-side pre-trade
+    estimates/guards: a BUY pays up, a SELL receives less, rounded to 2 dp.
+    """
+    bps = SPREAD_BPS + SLIPPAGE_BPS
+    px = float(price)
+    adj = px * (bps / 10_000.0)
+    return round(px + adj if side == "BUY" else px - adj, 2)
+
+
 def _utcnow_str() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -200,9 +212,7 @@ class PaperTradingService:
 
     @staticmethod
     def _apply_friction(live: float, side: str) -> float:
-        bps = SPREAD_BPS + SLIPPAGE_BPS
-        adj = live * (bps / 10_000.0)
-        return round(live + adj if side == "BUY" else live - adj, 2)
+        return apply_friction(live, side)
 
     @staticmethod
     def _estimate_costs(symbol: str, side: str, fill: float, qty: int) -> float:
@@ -1101,6 +1111,21 @@ class PaperTradingService:
 
         async with lock:
             return list(self._pos_store(user_id).values())
+
+    async def get_position_snapshot(
+        self,
+        position_id: str,
+        user_id: Optional[UUID] = None,
+    ) -> VirtualPosition | None:
+        """Locked, side-effect-free single-position read.
+
+        Unlike :meth:`get_positions` this performs no network MTM refresh, so
+        settlement/close paths can inspect the book without broker IO while
+        still reading under the same lock as ``place_order``.
+        """
+        lock = self._lock_for(user_id)
+        async with lock:
+            return self._pos_store(user_id).get(position_id)
 
     async def get_orders_async(
         self,

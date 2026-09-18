@@ -254,7 +254,7 @@ class AutomatedSignalWorker:
         ledger so no ghost EXECUTED rows (frozen MTM, no exit) survive overnight.
         Idempotent — signals without paper orders or already settled are skipped."""
         try:
-            from app.signals.paper_engine import signal_paper_engine
+            from app.signals.paper_engine import SignalPaperExecutionResult, signal_paper_engine
             settled = 0
             for sig in signal_fsm.list_active(include_terminal=True):
                 # RUNNER_TIME_STOP_HIT / TIME_STOP_HIT must be included: the
@@ -266,21 +266,38 @@ class AutomatedSignalWorker:
                     continue
                 if not getattr(sig, "paper_order", None):
                     continue
+                close_res = None
                 try:
-                    await signal_paper_engine.close_signal_position(
+                    close_res = await signal_paper_engine.close_signal_position(
                         sig.signal_id,
                         exit_price=None,
                         reason="EOD_SQUAREOFF",
                         allow_closed_market=True,
                     )
-                    settled += 1
                 except Exception as ce:
-                    logger.debug("eod_square_off_failed", signal_id=sig.signal_id, error=str(ce)[:150])
+                    logger.warning("eod_square_off_failed", signal_id=sig.signal_id, error=str(ce)[:150])
+                    continue
+
+                # A rejected/unfilled exit (or a missing close result) must NOT
+                # be forced to CLOSED: the paper position and the signal FSM are
+                # left exactly as they were, with no claim/skip flag recorded,
+                # so a later EOD pass (or the next open-market tick through the
+                # outcome tracker) retries the settlement.
+                if close_res is None or (
+                    isinstance(close_res, SignalPaperExecutionResult) and not close_res.success
+                ):
+                    logger.warning(
+                        "eod_square_off_not_filled_retry_next_pass",
+                        signal_id=sig.signal_id,
+                        status=getattr(close_res, "status", None),
+                        detail=getattr(close_res, "message", None),
+                    )
                     continue
                 try:
                     signal_fsm.transition(sig.signal_id, "CLOSED", market_price=None, reason="EOD_SESSION_SQUARE_OFF")
                 except Exception:
                     pass
+                settled += 1
             if settled:
                 logger.info("eod_positions_settled", count=settled)
         except Exception as e:

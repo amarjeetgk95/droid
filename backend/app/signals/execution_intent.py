@@ -71,16 +71,20 @@ def make_execution_intent_id(
     """
     Computes deterministic 32-character SHA-256 idempotency key.
     A retry of the identical logical action produces the identical intent ID.
-    Hash includes side/symbol/price-tick/qty so a different fill spec cannot
-    collide with an earlier intent (guard-14).
+
+    The key is a function of (signal_id, signal_version, action, position_id,
+    trigger_version, side, symbol, quantity) ONLY. The estimated fill price
+    (``price_tick``) is deliberately excluded: it moves with the live quote, so
+    hashing it minted a fresh client_order_id on every retry and defeated the
+    paper service's idempotency map (double fills). ``price_tick`` stays in the
+    signature for backward compatibility and is not part of the hash.
     """
     _side = side if side is not None else action
     _sym = symbol or ""
-    _px = price_tick or ""
     _qty = str(quantity) if quantity is not None else ""
     canonical_str = (
         f"{signal_id}:{signal_version}:{action}:{position_id}:{trigger_version}"
-        f":{_side}:{_sym}:{_px}:{_qty}"
+        f":{_side}:{_sym}:{_qty}"
     )
     return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()[:32]
 

@@ -9,190 +9,23 @@ Provides comprehensive lifecycle auditing for quantitative signals:
 from __future__ import annotations
 
 import time
-import uuid
-from typing import Any, Optional, Literal
-from pydantic import BaseModel, Field, computed_field
+from typing import Any, Optional
 import structlog
 
-from app.signals.safety.clocks import ist_from_timestamp
+from app.signals.audit_models import (
+    AUDIT_TO_FSM_STATUS,
+    FSM_TO_AUDIT_STATUS as FSM_TO_AUDIT_STATUS,
+    SETTLED_STATUSES,
+    AuditStateEvent,
+    AuditTradeRecord,
+    format_timestamp_ist as format_timestamp_ist,
+)
+from app.signals.audit_settlement import AuditSettlementMixin
 
 logger = structlog.get_logger()
 
-# Unified status enum with FSM: ledger stores BOTH fsm_state (canonical) and
-# status (display). Mapping is single-sourced here and covered by test.
-FSM_TO_AUDIT_STATUS: dict[str, str] = {
-    "DETECTED": "ARMED",
-    "VALIDATED": "ARMED",
-    "ARMED": "ARMED",
-    "TRIGGERED": "TRIGGERED",
-    "CONFIRMED": "EXECUTED",
-    "TARGET_1_HIT": "TARGET_1_HIT",
-    "TARGET_2_HIT": "WON",
-    "STOP_LOSS_HIT": "LOST",
-    "TIME_STOP_HIT": "CLOSED",
-    "RUNNER_TIME_STOP_HIT": "CLOSED",
-    "INVALIDATED": "CLOSED",
-    "EXPIRED": "CLOSED",
-    "CLOSED": "CLOSED",
-}
-AUDIT_TO_FSM_STATUS: dict[str, str] = {
-    "ARMED": "ARMED",
-    "TRIGGERED": "TRIGGERED",
-    "CONFIRMED": "CONFIRMED",
-    "EXECUTED": "CONFIRMED",
-    "TARGET_1_HIT": "TARGET_1_HIT",
-    "WON": "TARGET_2_HIT",
-    "LOST": "STOP_LOSS_HIT",
-    "CLOSED": "CLOSED",
-    "VOID": "CLOSED",
-}
 
-SETTLED_STATUSES: frozenset[str] = frozenset({"WON", "LOST", "CLOSED", "VOID"})
-
-
-def format_timestamp_ist(epoch_ms: Optional[int]) -> Optional[str]:
-    """Format epoch millisecond timestamp into full IST date and time string."""
-    if not epoch_ms:
-        return None
-    try:
-        dt = ist_from_timestamp(epoch_ms / 1000.0)
-        return dt.strftime("%d %b %Y, %H:%M:%S IST")
-    except Exception:
-        return None
-
-
-class AuditStateEvent(BaseModel):
-    timestamp_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
-    from_state: str
-    to_state: str
-    market_price: Optional[float] = None
-    reason: str = "STATE_UPDATE"
-
-
-class AuditTradeRecord(BaseModel):
-    audit_id: str = Field(default_factory=lambda: f"AUD-{uuid.uuid4().hex[:8].upper()}")
-    signal_id: str
-    underlying: str
-    strategy: str
-    direction: str
-    timeframe: str = "5M"
-
-    # Contract specs
-    option_symbol: Optional[str] = None
-    option_type: Optional[str] = None
-    option_strike: Optional[float] = None
-    expiry: Optional[str] = None
-    lot_size: int = 75
-    lots: int = 1
-    quantity: int = 75
-
-    # Planned signal levels
-    spot_price_at_creation: float = 0.0
-    trigger_price: float = 0.0
-    entry_min: float = 0.0
-    entry_max: float = 0.0
-    stop_loss: float = 0.0
-    target_1: float = 0.0
-    target_2: float = 0.0
-    risk_points: float = 0.0
-    risk_reward_t1: float = 1.5
-    risk_reward_t2: float = 3.0
-    confidence: float = 80.0
-    is_scalp: bool = False
-    signal_type: str = "INTRADAY"
-
-    # Paper execution details
-    paper_order_id: Optional[str] = None
-    paper_side: Optional[str] = None
-    actual_fill_price: Optional[float] = None
-    executed_at_utc: Optional[int] = None
-    slippage_points: Optional[float] = None
-    margin_used: Optional[float] = None
-
-    # Exit & Square-off details
-    exit_price: Optional[float] = None
-    exited_at_utc: Optional[int] = None
-    exit_reason: Optional[str] = None
-    holding_time_seconds: Optional[int] = None
-    holding_time_str: Optional[str] = None
-
-    # Actual Profit & Loss (Audited)
-    actual_pnl_inr: Optional[float] = None
-    actual_pnl_points: Optional[float] = None
-    actual_pnl_pct: Optional[float] = None
-    theoretical_pnl_points: Optional[float] = None
-    theoretical_pnl_inr: Optional[float] = None
-
-    # Live Real-Time Mark-to-Market (MTM) Metrics
-    current_price: Optional[float] = None
-    unrealized_pnl_inr: Optional[float] = None
-    unrealized_pnl_points: Optional[float] = None
-    unrealized_pnl_pct: Optional[float] = None
-    total_pnl_inr: Optional[float] = None
-    live_duration_seconds: Optional[int] = None
-    live_duration_str: Optional[str] = None
-
-    # Mark provenance (single mark authority). Says WHICH price produced
-    # current_price, so a broker print is never confused with a model output:
-    #   CHAIN_BIDASK / CHAIN_LTP  real broker print
-    #   MODEL_BLACK76             labeled theoretical value
-    #   INDEX_SPOT                non-option instrument
-    #   UNAVAILABLE               fail-closed: MTM deliberately not updated
-    mark_source: Optional[str] = None
-    mark_age_ms: Optional[int] = None
-    mark_note: Optional[str] = None
-    #: True when the last MTM attempt had no usable price. Stale beats wrong:
-    #: the previous mark is retained and this flags the gap to the UI.
-    economics_unavailable: bool = False
-
-    # Status — unified with FSM via mapping table (both stored).
-    # fsm_state is the canonical FSM domain; status is the ledger display domain.
-    status: str = "ARMED"
-    fsm_state: Optional[str] = None
-    outcome_label: Optional[str] = None
-    is_winner: Optional[bool] = None
-    # Chain-mark re-validation provenance for restored receipts.
-    source: Optional[str] = None
-    chain_revalidated: bool = False
-
-    # History
-    state_history: list[AuditStateEvent] = Field(default_factory=list)
-    created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
-    updated_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
-
-    @computed_field
-    @property
-    def created_at_str(self) -> str:
-        return format_timestamp_ist(self.created_at_utc) or ""
-
-    @computed_field
-    @property
-    def executed_at_str(self) -> Optional[str]:
-        return format_timestamp_ist(self.executed_at_utc)
-
-    def compute_live_duration(self, now_ms: Optional[int] = None) -> tuple[int, str]:
-        now = now_ms or int(time.time() * 1000)
-        start = self.executed_at_utc or self.created_at_utc
-        duration_s = max(1, int((now - start) / 1000))
-        mins, secs = divmod(duration_s, 60)
-        hrs, mins = divmod(mins, 60)
-        dur_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s"
-        return duration_s, dur_str
-
-    def format_holding_time(self) -> str:
-        if not self.holding_time_seconds:
-            if self.status in ("ARMED", "TRIGGERED", "CONFIRMED", "EXECUTED", "TARGET_1_HIT"):
-                _, d_str = self.compute_live_duration()
-                return f"{d_str} (Live)"
-            return "—"
-        mins, secs = divmod(self.holding_time_seconds, 60)
-        hrs, mins = divmod(mins, 60)
-        if hrs > 0:
-            return f"{hrs}h {mins}m {secs}s"
-        return f"{mins}m {secs}s"
-
-
-class SignalAuditLedger:
+class SignalAuditLedger(AuditSettlementMixin):
     """
     Authoritative append-only in-memory ledger for Signal & Paper Trade Audit with PnL reconciliation.
     """
@@ -411,191 +244,6 @@ class SignalAuditLedger:
 
         # Asynchronously persist to Supabase
         self._schedule_persist(rec)
-        return rec
-
-    def record_square_off(
-        self,
-        signal_id: str,
-        exit_price: float,
-        exit_reason: str,
-        exit_time_ms: Optional[int] = None,
-    ) -> Optional[AuditTradeRecord]:
-        """
-        Calculates exact actual profit and loss upon trade exit and closes the trade record.
-        """
-        rec = self._trades.get(signal_id)
-        if not rec:
-            return None
-
-        # Guard: Once trade is closed/settled, return ALREADY_SETTLED without history append.
-        if rec.status in SETTLED_STATUSES:
-            logger.debug("trade_already_settled_skip_square_off", signal_id=signal_id, status=rec.status)
-            return rec
-
-        now_ms = exit_time_ms or int(time.time() * 1000)
-        qty = rec.quantity or (rec.lots * rec.lot_size)
-        side = (rec.paper_side or "BUY").upper()
-        is_bullish = ("CALL" in rec.direction or "BULLISH" in rec.direction) and not ("PUT" in rec.direction or "BEARISH" in rec.direction)
-        is_option = bool(rec.option_symbol or rec.option_type or rec.option_strike)
-
-        # ── FAIL CLOSED on economics ──
-        # A realized P&L requires two *real* premium-domain prices: the actual
-        # fill and the actual exit. Nothing here may fall back to a Black-76
-        # estimate or treat a spot index level as a premium. When either side is
-        # missing or out of domain we still settle the record (so no position
-        # lingers) but book no P&L and flag it for review.
-        entry_price = rec.actual_fill_price
-        economics_ok = True
-        if is_option:
-            if entry_price is None or entry_price > 5000.0 or exit_price > 5000.0:
-                economics_ok = False
-        elif entry_price is None:
-            entry_price = rec.trigger_price
-
-        if not economics_ok:
-            rec.status = "CLOSED"
-            rec.exit_price = exit_price if not (is_option and exit_price > 5000.0) else None
-            rec.exited_at_utc = now_ms
-            rec.exit_reason = exit_reason
-            rec.outcome_label = f"{exit_reason} :: ECONOMICS_UNAVAILABLE"
-            rec.is_winner = None
-            rec.economics_unavailable = True
-            rec.actual_pnl_inr = None
-            rec.actual_pnl_points = None
-            rec.actual_pnl_pct = None
-            rec.total_pnl_inr = None
-            rec.unrealized_pnl_inr = 0.0
-            rec.unrealized_pnl_points = 0.0
-            rec.unrealized_pnl_pct = 0.0
-            rec.updated_at_utc = now_ms
-            rec.state_history.append(
-                AuditStateEvent(
-                    timestamp_utc=now_ms,
-                    from_state="EXECUTED",
-                    to_state="CLOSED",
-                    market_price=exit_price,
-                    reason=f"SQUARE_OFF {exit_reason} (no P&L: entry/exit not premium-domain)",
-                )
-            )
-            logger.warning(
-                "square_off_economics_unavailable",
-                signal_id=signal_id,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                reason=exit_reason,
-            )
-            self._schedule_persist(rec)
-            return rec
-
-        # Calculate actual PnL
-        if is_option:
-            # For option purchases, profit is exit premium minus entry premium
-            if side == "BUY":
-                points_diff = exit_price - entry_price
-                # Invariant: An option buyer's loss is strictly bounded by 100% of premium paid
-                if points_diff < -entry_price:
-                    points_diff = -entry_price
-            else:
-                points_diff = entry_price - exit_price
-
-            # Theoretical P&L is only meaningful against an independent price
-            # reference. With no model permitted there is no second basis, so it
-            # collapses to the realized move rather than a fabricated anchor.
-            theo_diff = points_diff
-        else:
-            # Spot / Futures underlying tracking
-            if is_bullish:
-                points_diff = exit_price - entry_price
-                theo_diff = exit_price - rec.trigger_price
-            else:
-                points_diff = entry_price - exit_price
-                theo_diff = rec.trigger_price - exit_price
-
-        actual_pnl_inr = round(points_diff * qty, 2)
-        if is_option and side == "BUY":
-            max_loss_inr = round(entry_price * qty, 2)
-            if actual_pnl_inr < -max_loss_inr:
-                actual_pnl_inr = -max_loss_inr
-
-        margin = rec.margin_used or (entry_price * qty)
-        pnl_pct = round((actual_pnl_inr / margin * 100.0), 2) if margin > 0 else 0.0
-        if is_option and side == "BUY":
-            pnl_pct = max(-100.0, pnl_pct)
-
-        # Holding duration
-        start_ts = rec.executed_at_utc or rec.created_at_utc
-        duration_s = max(1, int((now_ms - start_ts) / 1000))
-        mins, secs = divmod(duration_s, 60)
-        hrs, mins = divmod(mins, 60)
-        duration_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s"
-
-        theo_pnl_inr = round(theo_diff * qty, 2)
-
-        # Winner classification aligned with FSM terminal domain states
-        if exit_reason in ("STOP_LOSS_HIT", "LOSS"):
-            is_win = False
-            final_status = "LOST"
-        elif exit_reason in ("TARGET_1_HIT", "TARGET_2_HIT", "WON"):
-            is_win = True
-            final_status = "WON"
-        else:
-            is_win = actual_pnl_inr > 0
-            final_status = "WON" if is_win else ("LOST" if actual_pnl_inr < 0 else "CLOSED")
-
-        rec.exit_price = exit_price
-        rec.exited_at_utc = now_ms
-        rec.exit_reason = exit_reason
-        rec.holding_time_seconds = duration_s
-        rec.holding_time_str = duration_str
-        rec.actual_pnl_inr = actual_pnl_inr
-        rec.actual_pnl_points = round(points_diff, 2)
-        rec.actual_pnl_pct = pnl_pct
-        rec.theoretical_pnl_points = round(theo_diff, 2)
-        rec.theoretical_pnl_inr = theo_pnl_inr
-        rec.current_price = exit_price
-        rec.unrealized_pnl_inr = 0.0
-        rec.unrealized_pnl_points = 0.0
-        rec.unrealized_pnl_pct = 0.0
-        rec.total_pnl_inr = actual_pnl_inr
-        rec.status = final_status
-        rec.outcome_label = exit_reason
-        rec.is_winner = is_win
-        # Zero-economics guard: prices moved but nothing booked — flag loudly
-        # instead of letting a ₹0 close masquerade as a flat trade.
-        if actual_pnl_inr == 0 and qty > 0 and abs(points_diff) > 0:
-            rec.outcome_label = f"{exit_reason} :: ZERO_PNL_REVIEW"
-            rec.is_winner = None
-            logger.warning(
-                "square_off_zero_pnl_flagged",
-                signal_id=signal_id,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                qty=qty,
-                reason=exit_reason,
-            )
-        rec.updated_at_utc = now_ms
-
-        rec.state_history.append(
-            AuditStateEvent(
-                timestamp_utc=now_ms,
-                from_state="EXECUTED",
-                to_state=final_status,
-                market_price=exit_price,
-                reason=f"SQUARE_OFF {exit_reason} (P&L: ₹{actual_pnl_inr:+,.2f})",
-            )
-        )
-        logger.info(
-            "audit_trade_squared_off",
-            signal_id=signal_id,
-            exit_price=exit_price,
-            pnl_inr=actual_pnl_inr,
-            duration=duration_str,
-            reason=exit_reason,
-        )
-
-        # Asynchronously persist squared-off trade to Supabase
-        self._schedule_persist(rec)
-
         return rec
 
     def update_live_quote(self, underlying: str, current_price: float) -> list[AuditTradeRecord]:
@@ -869,7 +517,14 @@ class SignalAuditLedger:
                 except Exception as e:
                     logger.debug("audit_paper_sync_fsm_mirror_failed", signal_id=rec.signal_id, error=str(e)[:150])
                 rec.actual_fill_price = pos.average_price
-                rec.quantity = pos.quantity
+                # Never shrink the trade quantity to the position's residual
+                # after a T1 partial. `record_square_off`'s gross fallback
+                # prices the whole original position, and the reconciler net
+                # (the canonical source) is quantity-independent, so rewriting
+                # this field mid-life made the final booked PnL depend on
+                # whether a sync happened to run between T1 and the exit.
+                if int(pos.quantity or 0) >= int(rec.quantity or 0):
+                    rec.quantity = pos.quantity
                 rec.current_price = pos.ltp
                 rec.unrealized_pnl_inr = pos.unrealized_pnl
                 rec.total_pnl_inr = pos.unrealized_pnl

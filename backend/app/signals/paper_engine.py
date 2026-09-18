@@ -15,10 +15,11 @@ from pydantic import BaseModel
 from app.signals.contract_resolver import (
     calculate_position_sizing,
     chain_premium_of,
+    resolve_sizing_for_contract,
     validate_underlying,
 )
 from app.signals.fsm import signal_fsm
-from app.services.paper_service import paper_service
+from app.services.paper_service import paper_service, apply_friction
 from app.models.paper import OrderPayload
 
 logger = structlog.get_logger()
@@ -121,38 +122,7 @@ class SignalPaperEngine:
         else:
             avail_cap = _live_available
         live_available_margin = _live_available
-        
-        if quantity_override and quantity_override > 0:
-            final_qty = quantity_override
-            final_lots = max(1, quantity_override // lot_size)
-        elif lots_override and lots_override > 0:
-            final_lots = lots_override
-            final_qty = final_lots * lot_size
-        else:
-            # Premium-risk sizing: for option signals size off the premium
-            # (chain mark when available), never the index spot. Spot-scale
-            # risk (e.g. 75pt stop on 24800 spot) understates premium risk by
-            # orders of magnitude and oversizes the position.
-            _sizing_entry = sig.spot_price
-            try:
-                if sig.option_contract:
-                    from app.signals.contract_resolver import chain_premium_of as _cpo
-                    _prem = _cpo(sig.option_contract)
-                    if _prem is not None and float(_prem) > 0:
-                        _sizing_entry = _prem
-            except Exception:
-                pass
-            sizing = calculate_position_sizing(
-                available_capital=avail_cap,
-                risk_percent=risk_percent,
-                entry_price=_sizing_entry,
-                stop_loss=sig.stop_loss,
-                lot_size=lot_size,
-            )
-            final_lots = max(1, sizing["lots"])
-            final_qty = final_lots * lot_size
 
-        # Estimate Fill Price with simulated spread (0.05%) and slippage
         raw_price = float(sig.spot_price)
         if raw_price <= 0:
             logger.warning("paper_execution_blocked_invalid_spot_price", signal_id=signal_id, spot=raw_price)
@@ -182,12 +152,17 @@ class SignalPaperEngine:
         # reports a phantom 8% "slippage" that rejects a perfectly tradeable
         # order purely on rounding - one tick on a low premium is a huge
         # percentage, so such contracts became unfillable for no real reason.
+        #
+        # Resolved BEFORE sizing so the option-buyer sizer and the fill price
+        # share one premium reference. The mark gate itself stays fail-closed
+        # below (a missing mark rejects the trade; no model price is a fill).
         from app.signals.fill_reconciler import option_fill_reconciler
         from app.signals.safety.decimal_types import normalize_price_to_tick
         tick_sz = opt.get("tick_size", "0.05") if isinstance(opt, dict) else "0.05"
 
+        base_price = raw_price
+        premium_mark_available = False
         if sig.option_contract:
-            # ── FAIL CLOSED: a fill requires a real broker price ──
             # Preference order is deliberate: the mark registry first (the exact
             # object the ledger later marks the position against, so entry and
             # valuation cannot drift), then the cached chain mid on the contract.
@@ -204,13 +179,60 @@ class SignalPaperEngine:
 
             if mark is not None and mark.price is not None:
                 base_price = float(mark.price)
+                premium_mark_available = True
             else:
                 live_prem = chain_premium_of(sig.option_contract)
-                if live_prem is None:
+                if live_prem is not None:
+                    base_price = float(live_prem)
+                    premium_mark_available = True
+            # Snap the reference onto the tradable grid before comparison.
+            base_price = float(normalize_price_to_tick(base_price, tick_sz))
+
+        # Sizing. Option legs (CE/PE per the contract dict) size in the PREMIUM
+        # domain through the canonical option-buyer resolver: entry is the same
+        # broker mark that prices the fill, and the stop is the signal stop
+        # projected into premium terms. Passing the index-scale `sig.stop_loss`
+        # against a premium entry made risk_points index-scale, so the math
+        # produced 0 lots and the old `max(1, ...)` floor fabricated a 1-lot
+        # trade. Non-option instruments keep the spot-domain
+        # `calculate_position_sizing` path.
+        if quantity_override and quantity_override > 0:
+            final_qty = quantity_override
+            final_lots = max(1, quantity_override // lot_size)
+        elif lots_override and lots_override > 0:
+            final_lots = lots_override
+            final_qty = final_lots * lot_size
+        else:
+            _is_option_leg = False
+            if sig.option_contract:
+                _ctype = str(opt.get("option_type") or "").upper()
+                _itype = str(opt.get("instrument_type") or "").upper()
+                _is_option_leg = (
+                    _ctype in ("CE", "PE", "CALL", "PUT")
+                    or _itype in ("OPTION", "CE", "PE", "CALL", "PUT")
+                    or "CE" in broker_sym.upper()
+                    or "PE" in broker_sym.upper()
+                )
+            if _is_option_leg and premium_mark_available and base_price > 0:
+                sizing = resolve_sizing_for_contract(
+                    opt,
+                    available_capital=avail_cap,
+                    risk_percent=risk_percent,
+                    option_entry_premium=base_price,
+                    option_stop_premium=self._premium_stop_for(sig, base_price),
+                    max_lots=50,
+                )
+                final_lots = max(0, int(sizing.get("lots") or 0))
+                final_qty = final_lots * lot_size
+                if final_lots < 1:
+                    # No forced floor: the resolver's own risk-capital and 20%
+                    # allocation gates just refused the smallest lot, so the
+                    # wallet keeps its money instead of buying an oversized lot.
                     logger.warning(
-                        "paper_execution_blocked_no_chain_mark",
+                        "paper_execution_blocked_sizing",
                         signal_id=signal_id,
-                        broker_symbol=broker_sym,
+                        reason=sizing.get("reason"),
+                        premium=base_price,
                     )
                     return SignalPaperExecutionResult(
                         success=False,
@@ -218,28 +240,66 @@ class SignalPaperEngine:
                         underlying=u,
                         strategy=sig.strategy,
                         side=f"BUY_{direction_label}",
-                        quantity=final_qty,
-                        lots=final_lots,
+                        quantity=0,
+                        lots=0,
                         fill_price=0.0,
                         stop_loss=float(sig.stop_loss),
                         target_1=float(sig.target_1),
                         target_2=float(sig.target_2),
                         order_id="",
                         status="REJECTED",
-                        message=(
-                            f"CHAIN_MARK_UNAVAILABLE: no live FYERS quote for {broker_sym}. "
-                            "Trade skipped — no model price is used to fill."
-                        ),
+                        message=f"SIZING_REJECTED: {sizing.get('reason') or 'no lots fit the risk/allocation caps'}",
+                        fill_source="NONE",
+                        chain_mark_at_fill=float(base_price),
                     )
-                base_price = float(live_prem)
-            # Snap the reference onto the tradable grid before comparison.
-            base_price = float(normalize_price_to_tick(base_price, tick_sz))
-        else:
-            base_price = raw_price
+            else:
+                # Spot-domain sizing: entry and stop share the spot scale. The
+                # historical 1-lot floor stays; the wallet downsize loop below
+                # and the INSUFFICIENT_FUNDS gate are the authority on whether
+                # even that lot fits available margin.
+                sizing = calculate_position_sizing(
+                    available_capital=avail_cap,
+                    risk_percent=risk_percent,
+                    entry_price=base_price,
+                    stop_loss=sig.stop_loss,
+                    lot_size=lot_size,
+                )
+                final_lots = max(1, sizing["lots"])
+                final_qty = final_lots * lot_size
 
-        spread_impact = base_price * 0.0005
-        raw_fill = base_price + spread_impact if side == "BUY" else base_price - spread_impact
-        fill_price = float(normalize_price_to_tick(raw_fill, tick_sz))
+        # ── FAIL CLOSED: a fill requires a real broker price ──
+        if sig.option_contract and not premium_mark_available:
+            logger.warning(
+                "paper_execution_blocked_no_chain_mark",
+                signal_id=signal_id,
+                broker_symbol=broker_sym,
+            )
+            return SignalPaperExecutionResult(
+                success=False,
+                signal_id=signal_id,
+                underlying=u,
+                strategy=sig.strategy,
+                side=f"BUY_{direction_label}",
+                quantity=final_qty,
+                lots=final_lots,
+                fill_price=0.0,
+                stop_loss=float(sig.stop_loss),
+                target_1=float(sig.target_1),
+                target_2=float(sig.target_2),
+                order_id="",
+                status="REJECTED",
+                message=(
+                    f"CHAIN_MARK_UNAVAILABLE: no live FYERS quote for {broker_sym}. "
+                    "Trade skipped — no model price is used to fill."
+                ),
+            )
+
+        # Estimate the fill with the SAME friction the paper service applies
+        # (SPREAD_BPS + SLIPPAGE_BPS), then snap to the contract's tick grid the
+        # execution guard validates against. Previously this used an inline
+        # 5 bps estimate while the service filled at 15 bps, so the guard
+        # measured slippage against a price the ledger would never see.
+        fill_price = float(normalize_price_to_tick(apply_friction(base_price, "BUY"), tick_sz))
         if fill_price <= 0:
             return SignalPaperExecutionResult(
                 success=False,
@@ -336,6 +396,10 @@ class SignalPaperEngine:
         from app.signals.safety.execution_guard import final_execution_guard
         from app.signals.position import Position, position_registry
 
+        # The id is a function of (signal_id, version, action, quantity, side,
+        # symbol) ONLY — the live quote is deliberately excluded, so a retry
+        # after the mark moves maps to the same intent (and the same
+        # client_order_id) instead of minting a fresh one and double-filling.
         intent_id = make_execution_intent_id(
             signal_id=sig.signal_id,
             signal_version=getattr(sig, "strategy_version", 1),
@@ -344,15 +408,27 @@ class SignalPaperEngine:
             trigger_version=1,
             side=side,
             symbol=broker_sym,
-            price_tick=format(Decimal(str(fill_price)), "f"),
             quantity=final_qty,
         )
         fyers_tag = make_fyers_order_tag(intent_id)
 
         # Check existing intent for duplicate dispatch (guard-14 ledger lookup)
-        from app.signals.execution_intent import is_duplicate_intent
         existing_intent = intent_ledger.get(intent_id)
         if existing_intent and existing_intent.state in (IntentState.SUBMITTED, IntentState.FILLED, IntentState.PARTIALLY_FILLED):
+            # A FILLED intent is replayed as the original success: the broker
+            # order id and fill price are immutable, and re-dispatching (or
+            # re-registering the position) would double the book. Non-filled
+            # in-flight intents keep the historical DUPLICATE_ORDER rejection.
+            if existing_intent.state == IntentState.FILLED:
+                replay = self._replay_filled_intent(existing_intent, sig, u, direction_label, lot_size)
+                if replay is not None:
+                    logger.info(
+                        "execution_intent_duplicate_replayed",
+                        intent_id=intent_id,
+                        signal_id=signal_id,
+                        order_id=replay.order_id,
+                    )
+                    return replay
             logger.warning("execution_intent_duplicate_rejected", intent_id=intent_id, signal_id=signal_id)
             return SignalPaperExecutionResult(
                 success=False,
@@ -370,7 +446,7 @@ class SignalPaperEngine:
                 status="REJECTED",
                 message=f"DUPLICATE_ORDER: Intent {intent_id} already submitted or filled",
                 fill_source="NONE",
-                chain_mark_at_fill=float(base_price) if 'base_price' in dir() else None,
+                chain_mark_at_fill=float(base_price),
             )
 
         # Run 15-check hierarchical execution guard (fail-closed defaults)
@@ -674,6 +750,147 @@ class SignalPaperEngine:
             chain_mark_at_fill=float(base_price),
         )
 
+    @staticmethod
+    def _premium_stop_for(sig: Any, entry_premium: float) -> Optional[float]:
+        """Project a signal's stop into premium terms for option-buyer sizing.
+
+        Uses the canonical ``resolve_premium_risk_points`` (explicit premium
+        stop > delta-gamma projection off the spot stop > conservative
+        fallback). Returns None when no positive premium stop can be derived so
+        the option-buyer resolver applies its own 35%-of-premium default.
+        """
+        try:
+            from app.signals.transaction_costs import resolve_premium_risk_points
+
+            try:
+                spot_risk = abs(float(sig.trigger) - float(sig.stop_loss))
+            except Exception:
+                spot_risk = 0.0
+            risk_pts = float(resolve_premium_risk_points(sig, float(entry_premium), spot_risk))
+            if 0.0 < risk_pts < float(entry_premium):
+                return round(float(entry_premium) - risk_pts, 4)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _replay_filled_intent(
+        existing_intent: Any,
+        sig: Any,
+        underlying: str,
+        direction_label: str,
+        lot_size: int,
+    ) -> Optional[SignalPaperExecutionResult]:
+        """Rebuild the original success result for an already-FILLED intent.
+
+        Source preference: the paper service order (live state), then the
+        persisted intent ledger record, then the signal's own ``paper_order`` /
+        registered Position. Returns None when no filled state can be proven,
+        in which case the caller keeps the historical duplicate rejection.
+        """
+        fill_price = 0.0
+        quantity = 0
+        order_id = ""
+        # The engine's success results label every fill CHAIN (the mark that
+        # priced it); replay must return the same provenance as the original.
+        fill_source = "CHAIN"
+        chain_mark = None
+
+        # 1. Paper service: the authoritative order record for this client id.
+        try:
+            client_id = str(existing_intent.broker_client_order_id or "")
+            broker_id = str(existing_intent.broker_order_id or "")
+            for order in paper_service.get_orders():
+                if str(getattr(order, "status", "")) != "FILLED":
+                    continue
+                matched = client_id and str(getattr(order, "client_order_id", "") or "") == client_id
+                matched = matched or (broker_id and str(getattr(order, "order_id", "") or "") == broker_id)
+                if matched:
+                    fill_price = float(order.fill_price or 0.0)
+                    quantity = int(order.quantity or 0)
+                    order_id = str(order.order_id or "")
+                    break
+        except Exception:
+            pass
+
+        # 2. The persisted intent record (survives a service restart).
+        if fill_price <= 0:
+            try:
+                fill_price = float(existing_intent.actual_fill_price or 0.0)
+            except Exception:
+                fill_price = 0.0
+        if quantity <= 0:
+            try:
+                quantity = int(existing_intent.filled_quantity or 0)
+            except Exception:
+                quantity = 0
+        if not order_id:
+            order_id = str(existing_intent.broker_order_id or "")
+
+        # 3. FSM paper_order / registered Position.
+        po = sig.paper_order if isinstance(getattr(sig, "paper_order", None), dict) else None
+        if po:
+            if fill_price <= 0:
+                try:
+                    fill_price = float(po.get("fill_price") or 0.0)
+                except Exception:
+                    fill_price = 0.0
+            if quantity <= 0:
+                try:
+                    quantity = int(po.get("quantity") or 0)
+                except Exception:
+                    quantity = 0
+            if not order_id:
+                order_id = str(po.get("order_id") or "")
+            if chain_mark is None:
+                try:
+                    _cm = po.get("chain_mark_at_fill")
+                    chain_mark = float(_cm) if _cm is not None else None
+                except Exception:
+                    chain_mark = None
+        if fill_price <= 0 or quantity <= 0 or not order_id:
+            try:
+                from app.signals.position import position_registry
+
+                pos = position_registry.get_by_signal(sig.signal_id)
+                if pos is not None:
+                    if fill_price <= 0:
+                        fill_price = float(pos.entry_price or 0.0)
+                    if quantity <= 0:
+                        quantity = int(pos.entry_quantity or 0)
+                    if not order_id:
+                        order_id = str(pos.broker_order_id or "")
+            except Exception:
+                pass
+
+        if fill_price <= 0 or quantity <= 0 or not order_id:
+            return None
+
+        lots = quantity // lot_size if lot_size > 0 else 0
+        if lots < 1:
+            lots = max(1, int(getattr(sig, "lots", 0) or 0))
+        return SignalPaperExecutionResult(
+            success=True,
+            signal_id=sig.signal_id,
+            underlying=underlying,
+            strategy=sig.strategy,
+            side=f"BUY_{direction_label}",
+            quantity=quantity,
+            lots=lots,
+            fill_price=fill_price,
+            stop_loss=float(sig.stop_loss),
+            target_1=float(sig.target_1),
+            target_2=float(sig.target_2),
+            order_id=order_id,
+            status="FILLED",
+            message=(
+                f"DUPLICATE_REPLAY: intent {existing_intent.execution_intent_id} already filled "
+                f"as {order_id} ({lots} Lots / {quantity} Qty @ ₹{fill_price:,.2f})"
+            ),
+            fill_source=fill_source or "CHAIN",
+            chain_mark_at_fill=chain_mark,
+        )
+
     async def close_signal_position(
         self,
         signal_id: str,
@@ -684,26 +901,45 @@ class SignalPaperEngine:
     ) -> Optional[Any]:
         """
         Closes full or partial open paper position for a signal and records the actual profit and loss audit.
+
+        Settlement is gated on the paper service actually filling the exit
+        order: a rejected/unfilled exit leaves the virtual position, the audit
+        record and the signal FSM untouched. An already-settled audit row
+        short-circuits to a no-op (close-once).
         """
         sig = signal_fsm.get(signal_id)
         if not sig or not sig.paper_order:
             return None
 
-        from app.signals.audit_ledger import signal_audit_ledger
+        from app.signals.audit_ledger import SETTLED_STATUSES, signal_audit_ledger
 
         broker_sym = sig.paper_order.get("symbol")
         qty = sig.paper_order.get("quantity")
         if not broker_sym or not qty:
             return None
 
+        # ── Close-once: a settled audit row is terminal. No exit order, no
+        # audit rewrite, no registry mutation. (record_square_off is guarded
+        # too, but this avoids even dispatching an exit for a settled signal.)
+        _audit_rec = signal_audit_ledger.get(signal_id)
+        if _audit_rec is not None and _audit_rec.status in SETTLED_STATUSES:
+            logger.info("paper_close_already_settled", signal_id=signal_id, status=_audit_rec.status)
+            return _audit_rec
+
+        pos_id = f"{broker_sym}_INTRADAY"
+        # Locked, side-effect-free read under the service lock (no network MTM
+        # during settlement). Replaces direct `paper_service._positions` access.
+        pos = await paper_service.get_position_snapshot(pos_id)
+
         # Resolve exit price if missing — prefer the live position LTP
         # (VirtualPosition.ltp; there is no `current_price` field).
         # FAIL CLOSED: when neither the position LTP nor a fresh broker mark
-        # exists, settle flat (entry fill) with economics_unavailable + NO_MARK.
+        # exists the audit-only path settles flat (entry fill) with
+        # economics_unavailable + NO_MARK; with an open virtual position the
+        # exit order is dispatched and the settlement gate below refuses to
+        # book anything unless the service confirms a FILLED exit.
         _flat_no_mark = False
         if exit_price is None:
-            pos_id = f"{broker_sym}_INTRADAY"
-            pos = paper_service._positions.get(pos_id)
             live_ltp = getattr(pos, "ltp", None) if pos else None
             if live_ltp and float(live_ltp) > 0:
                 exit_price = float(live_ltp)
@@ -730,14 +966,12 @@ class SignalPaperEngine:
             "MARKET_CLOSED", "EOD_SQUAREOFF", "DELETED_BY_USER", "TIME_STOP_EXCEEDED", "RUNNER_TTL_EXCEEDED"
         )
 
-        pos_id = f"{broker_sym}_INTRADAY"
         # Partial only when this close leaves residual quantity open (e.g. 50%
         # staged T1 on a multi-lot position). A single-lot T1 closes everything
         # and must settle via record_square_off, not linger as a runner.
         # Reference quantity prefers the live paper position, else the audit record.
         is_partial = False
-        if pos_id in paper_service._positions and paper_service._positions[pos_id].is_open:
-            pos = paper_service._positions[pos_id]
+        if pos is not None and pos.is_open:
             exit_side = "SELL" if pos.side == "BUY" else "BUY"
             pos_qty_before = pos.quantity
             final_close_qty = quantity_to_close if (quantity_to_close and quantity_to_close <= pos.quantity) else pos.quantity
@@ -753,7 +987,22 @@ class SignalPaperEngine:
                 quantity=final_close_qty,
                 price=exit_price,
             )
-            await paper_service.place_order(exit_payload, allow_closed_market=permit_closed)
+            exit_order = await paper_service.place_order(exit_payload, allow_closed_market=permit_closed)
+
+            # ── Settlement gate: only a confirmed fill books a close. ──
+            # A rejected/unfilled exit must not settle the audit row or close
+            # the registry position while the virtual position remains open.
+            if exit_order.status != "FILLED":
+                logger.warning(
+                    "paper_exit_not_filled_settlement_skipped",
+                    signal_id=signal_id,
+                    symbol=broker_sym,
+                    order_id=exit_order.order_id,
+                    status=exit_order.status,
+                    detail=exit_order.rejection_reason,
+                )
+                return self._exit_not_filled_result(sig, exit_order)
+
             logger.info("paper_position_closed", signal_id=signal_id, symbol=broker_sym, exit_price=exit_price, qty=final_close_qty, reason=reason)
         elif reason == "TARGET_1_HIT" and quantity_to_close:
             audit_ref = signal_audit_ledger.get(signal_id)
@@ -783,7 +1032,55 @@ class SignalPaperEngine:
                         rec.exit_reason = "NO_MARK"
             except Exception:
                 pass
+
+        # ── Signal-domain Position lifecycle ──
+        # Mirror a successful full close into the position registry so the
+        # registered Position and the portfolio Greeks ledger stop carrying
+        # exposure for a settled trade. close_position() is idempotent; T1
+        # partial closes keep the runner Position open by design.
+        if not is_partial:
+            try:
+                from app.signals.position import position_registry
+                reg_pos = position_registry.get(sig.position_id) if sig.position_id else None
+                if reg_pos is None:
+                    reg_pos = position_registry.get_by_signal(signal_id)
+                if reg_pos is not None:
+                    position_registry.close_position(reg_pos.position_id, reason=reason)
+            except Exception as pe:
+                logger.warning("position_registry_close_failed", signal_id=signal_id, error=str(pe))
         return rec
+
+    def _exit_not_filled_result(self, sig: Any, order: Any) -> SignalPaperExecutionResult:
+        """Explicit failure for a close whose exit order did not fill.
+
+        Preserves the service's own status/rejection vocabulary so callers can
+        surface the exact boundary rejection while the virtual position, the
+        audit record and the signal FSM remain exactly as they were.
+        """
+        qty = int(getattr(order, "quantity", 0) or 0)
+        lots = int(getattr(sig, "lots", 0) or 0)
+        if lots <= 0:
+            lot_size = int((sig.option_contract or {}).get("lot_size", 0) or 0)
+            lots = max(1, qty // lot_size) if lot_size > 0 else 0
+        status = str(getattr(order, "status", "REJECTED") or "REJECTED")
+        return SignalPaperExecutionResult(
+            success=False,
+            signal_id=sig.signal_id,
+            underlying=sig.underlying,
+            strategy=sig.strategy,
+            side=str(getattr(order, "side", "SELL") or "SELL"),
+            quantity=qty,
+            lots=lots,
+            fill_price=0.0,
+            stop_loss=float(sig.stop_loss),
+            target_1=float(sig.target_1),
+            target_2=float(sig.target_2),
+            order_id=str(getattr(order, "order_id", "") or ""),
+            status=status,
+            message=getattr(order, "rejection_reason", None) or f"EXIT_NOT_FILLED: {status}",
+            fill_source="NONE",
+            chain_mark_at_fill=None,
+        )
 
 
 signal_paper_engine = SignalPaperEngine()
