@@ -195,10 +195,45 @@
       "freshness_s": 0,
       "degraded": true,
       "version": 3
+    },
+    "paper": {
+      "value": {
+        "portfolio": null,
+        "positions": null
+      },
+      "updated_at": "2026-09-18T07:22:01.412306+00:00",
+      "freshness_s": 0,
+      "degraded": true,
+      "version": 8
+    },
+    "forecast": {
+      "value": {
+        "forecast": null,
+        "predictions": null
+      },
+      "updated_at": "2026-09-18T07:21:01.412306+00:00",
+      "freshness_s": 60,
+      "degraded": true,
+      "version": 4
+    },
+    "algo": {
+      "value": {
+        "account": null,
+        "exposure": null,
+        "orders": null,
+        "portfolio_greeks": null
+      },
+      "updated_at": "2026-09-18T07:22:01.412306+00:00",
+      "freshness_s": 0,
+      "degraded": true,
+      "version": 5
     }
   },
   "hints": [],
   "errors": {
-    "risk_events": "FII/DII data unavailable"
+    "risk_events": "FII/DII data unavailable",
+    "paper": "Paper book unavailable",
+    "forecast": "Forecast track record unavailable",
+    "algo": "Algo account snapshot unavailable"
   }
 }

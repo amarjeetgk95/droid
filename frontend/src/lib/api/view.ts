@@ -19,6 +19,9 @@ export const COMMAND_VIEW_SECTIONS = [
   'kill_switch',
   'ml',
   'risk_events',
+  'paper',
+  'forecast',
+  'algo',
 ] as const;
 
 export const COMMAND_SECTION_ENVELOPE_KEYS = [

@@ -8,6 +8,7 @@ import {
 } from '@/context/InstrumentContext';
 import { MarketSessionProvider } from '@/context/MarketSessionContext';
 import { SignalStreamProvider } from '@/context/SignalStreamContext';
+import { AppStreamProvider } from '@/context/AppStreamContext';
 import { MarketDataProvider } from '@/context/MarketDataContext';
 import { LiveMarketProvider } from '@/context/LiveMarketContext';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -48,7 +49,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           <MarketDataProvider refreshInterval={5000} useSummaryEndpoint>
             <LiveMarketProvider>
               <TooltipProvider delayDuration={150}>
-                <AppShellFrame>{children}</AppShellFrame>
+                <AppStreamProvider>
+                  <AppShellFrame>{children}</AppShellFrame>
+                </AppStreamProvider>
               </TooltipProvider>
             </LiveMarketProvider>
           </MarketDataProvider>
