@@ -3,7 +3,7 @@ import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act, cleanup } from '@testing-library/react';
 
-const { apiMock, sessionMock, polls } = vi.hoisted(() => {
+const { apiMock, sessionMock, polls, sectionsMock, statusMock } = vi.hoisted(() => {
   const apiMock: Record<string, ReturnType<typeof vi.fn>> = {
     getSignalsFeedHealth: vi.fn(async () => ({ states: {} })),
     getSignalsKillSwitch: vi.fn(async () => ({ active: false })),
@@ -15,7 +15,22 @@ const { apiMock, sessionMock, polls } = vi.hoisted(() => {
   };
   const sessionMock = { phase: 'OPEN', isOpen: true };
   const polls: Array<() => unknown> = [];
-  return { apiMock, sessionMock, polls };
+  const sectionsMock: { feed_health: unknown; kill_switch: unknown } = {
+    feed_health: null,
+    kill_switch: null,
+  };
+  const statusMock: {
+    connected: boolean;
+    lastEventAt: number | null;
+    reconnects: number;
+    source: 'sse' | 'fetch';
+  } = {
+    connected: true,
+    lastEventAt: Date.parse('2026-09-18T07:22:01.000Z'),
+    reconnects: 0,
+    source: 'sse',
+  };
+  return { apiMock, sessionMock, polls, sectionsMock, statusMock };
 });
 
 vi.mock('@/lib/api', () => ({ api: apiMock }));
@@ -26,6 +41,15 @@ vi.mock('@/hooks/usePolling', () => ({
   usePolling: (cb: () => unknown) => {
     polls.push(cb);
   },
+}));
+vi.mock('@/context/AppStreamContext', () => ({
+  useCommandSection: (name: string) =>
+    name === 'feed_health'
+      ? sectionsMock.feed_health
+      : name === 'kill_switch'
+        ? sectionsMock.kill_switch
+        : null,
+  useStreamStatus: () => statusMock,
 }));
 vi.mock('@/context/InstrumentContext', () => ({
   useInstrument: () => ({
@@ -48,6 +72,11 @@ afterEach(() => {
   sessionMock.phase = 'OPEN';
   sessionMock.isOpen = true;
   polls.length = 0;
+  sectionsMock.feed_health = null;
+  sectionsMock.kill_switch = null;
+  statusMock.connected = true;
+  statusMock.lastEventAt = Date.parse('2026-09-18T07:22:01.000Z');
+  statusMock.source = 'sse';
 });
 
 async function flushPoll() {
@@ -58,30 +87,97 @@ async function flushPoll() {
   });
 }
 
-describe('SystemHealthStrip feed circuits', () => {
-  it('renders object feed states as health strings without crashing', async () => {
-    apiMock.getSignalsFeedHealth.mockResolvedValue({
-      states: {
-        NIFTY: { instrument_id: 'NIFTY', health: 'FEED_DEGRADED', reason: 'sequence gap' },
-        BANKNIFTY: 'HEALTHY',
-        SENSEX: {},
+function sectionEnvelope(value: unknown, degraded = false) {
+  return {
+    value,
+    updated_at: '2026-09-18T07:22:01.000Z',
+    freshness_s: 1,
+    degraded,
+    version: 1,
+  };
+}
+
+describe('SystemHealthStrip stream consumption', () => {
+  it('renders feed circuits, kill switch and broker posture from stream sections without polling', () => {
+    sectionsMock.feed_health = sectionEnvelope({
+      subsystems: {
+        status: 'ok',
+        elements: {
+          central_feed: true,
+          signal_worker: true,
+          broker_configured: true,
+          token_status: 'present',
+          broker_provider_status: 'ok:fyers',
+        },
+        timestamp: '2026-09-18T07:22:01.000Z',
+      },
+      feed_circuits: {
+        states: {
+          NIFTY: { instrument_id: 'NIFTY', health: 'FEED_DEGRADED', reason: 'sequence gap' },
+          BANKNIFTY: 'HEALTHY',
+          SENSEX: {},
+        },
+        spot_feed: { tick_age_seconds: 7 },
+        broker: { provider: 'fyers', token_status: 'present' },
       },
     });
+    sectionsMock.kill_switch = sectionEnvelope({ active: false, reason: null });
+
     render(<SystemHealthStrip />);
-    await flushPoll();
 
     expect(screen.getByText('FEED_DEGRADED')).toBeTruthy();
     expect(screen.getByText('HEALTHY')).toBeTruthy();
     expect(screen.getAllByText('UNKNOWN').length).toBeGreaterThan(0);
+    expect(screen.getByText('STANDBY')).toBeTruthy();
+    expect(screen.getByText('FYERS ACTIVE')).toBeTruthy();
+    expect(screen.getByText('7s')).toBeTruthy();
+    expect(screen.getByText('SSE · command stream')).toBeTruthy();
+    expect(apiMock.getSignalsFeedHealth).not.toHaveBeenCalled();
+    expect(apiMock.getSignalsKillSwitch).not.toHaveBeenCalled();
+    expect(apiMock.getBrokerTokenStatus).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
   });
 
-  it('shows unavailable instead of healthy when the feed leg fails', async () => {
-    apiMock.getSignalsFeedHealth.mockRejectedValue(new Error('backend down'));
+  it('shows unavailable instead of healthy when the feed circuit leg is missing', () => {
+    sectionsMock.feed_health = sectionEnvelope(
+      {
+        subsystems: {
+          status: 'ok',
+          elements: { token_status: 'missing', broker_provider_status: 'ok:fyers' },
+          timestamp: '2026-09-18T07:22:01.000Z',
+        },
+        feed_circuits: null,
+      },
+      true,
+    );
+
     render(<SystemHealthStrip />);
-    await flushPoll();
 
     expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0);
     expect(screen.queryByText('HEALTHY')).toBeNull();
+    expect(screen.getByText('REAUTH REQD')).toBeTruthy();
+    expect(screen.getByText(/missing: feed circuits/)).toBeTruthy();
+  });
+
+  it('renders an active kill switch from the kill_switch section', () => {
+    sectionsMock.kill_switch = sectionEnvelope({ active: true, reason: 'operator panic stop' });
+
+    render(<SystemHealthStrip />);
+
+    expect(screen.getByText('HALTED')).toBeTruthy();
+    expect(screen.queryByText('STANDBY')).toBeNull();
+  });
+
+  it('renders unavailable, never fabricated values, before the stream has any sections', () => {
+    statusMock.lastEventAt = null;
+
+    render(<SystemHealthStrip />);
+
+    expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('UNAVAILABLE').length).toBe(2);
+    expect(screen.queryByText('HEALTHY')).toBeNull();
+    expect(screen.queryByText('STANDBY')).toBeNull();
+    expect(screen.queryByText('HALTED')).toBeNull();
   });
 });
 

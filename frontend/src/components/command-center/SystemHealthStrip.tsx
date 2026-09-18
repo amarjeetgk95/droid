@@ -1,9 +1,8 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React from 'react';
+import { useCommandSection, useStreamStatus } from '@/context/AppStreamContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
-import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { StatusDot, type StatusDotState } from '@/components/ui/status-dot';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
@@ -15,16 +14,13 @@ interface FeedCircuit {
   reason: string | null;
 }
 
-interface KillSwitchState {
-  active: boolean;
-  reason: string | null;
-}
-
 interface BrokerTokenState {
   isTokenValid: boolean;
-  provider: string;
-  state: string | null;
-  dataLagSeconds: number | null;
+  provider: string | null;
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
 function num(v: unknown): number | null {
@@ -61,75 +57,71 @@ function feedTone(health: string): { dot: StatusDotState; text: string } {
   }
 }
 
+/** `/health/subsystems` posture: "ok:fyers" → "fyers"; otherwise no active provider. */
+function providerFromPolicy(raw: unknown): string | null {
+  const policy = str(raw);
+  if (!policy) return null;
+  const separator = policy.indexOf(':');
+  if (separator === -1) return null;
+  const kind = policy.slice(0, separator).toLowerCase();
+  const name = policy.slice(separator + 1).trim();
+  return kind === 'ok' && name.length > 0 ? name : null;
+}
+
+/**
+ * System health strip — pure consumer of the unified command stream.
+ *
+ * Feed circuits come verbatim from `feed_health.value.feed_circuits` (the
+ * `/signals/feed-health` payload), broker/token posture from
+ * `feed_health.value.subsystems.elements` (`/health/subsystems`), and the kill
+ * switch from `kill_switch.value`. Nothing here polls: a section that has not
+ * arrived and a leg the backend reports as null both render as unavailable —
+ * never as a fabricated value.
+ */
 export const SystemHealthStrip: React.FC = () => {
   const { isOpen } = useMarketSession();
-  const [feeds, setFeeds] = useState<FeedCircuit[] | null>(null);
-  const [killSwitch, setKillSwitch] = useState<KillSwitchState | null>(null);
-  const [token, setToken] = useState<BrokerTokenState | null>(null);
-  const [legErrors, setLegErrors] = useState<string[]>([]);
-  const [lastAt, setLastAt] = useState<Date | null>(null);
-  const hasDataRef = useRef(false);
+  const status = useStreamStatus();
+  const feedHealthSection = useCommandSection('feed_health');
+  const killSwitchSection = useCommandSection('kill_switch');
 
-  const load = useCallback(async () => {
-    const [feedRes, killRes, tokenRes] = await Promise.allSettled([
-      api.getSignalsFeedHealth(),
-      api.getSignalsKillSwitch(),
-      api.getBrokerTokenStatus(),
-    ]);
+  const feedHealthValue = asRecord(feedHealthSection?.value);
+  const feedCircuits = asRecord(feedHealthValue?.feed_circuits);
+  const rawStates = asRecord(feedCircuits?.states);
+  const feeds: FeedCircuit[] | null = rawStates
+    ? Object.entries(rawStates).map(([id, state]) => parseFeed(id, state))
+    : null;
 
-    const failures: string[] = [];
+  const killSwitchValue = asRecord(killSwitchSection?.value);
+  const killSwitchActive =
+    killSwitchValue && typeof killSwitchValue.active === 'boolean' ? killSwitchValue.active : null;
 
-    if (feedRes.status === 'fulfilled') {
-      const rawStates = (feedRes.value as { states?: unknown })?.states;
-      if (rawStates && typeof rawStates === 'object') {
-        setFeeds(
-          Object.entries(rawStates as Record<string, unknown>).map(([id, state]) =>
-            parseFeed(id, state),
-          ),
-        );
-      } else {
-        setFeeds(null);
-        failures.push('feed circuits');
-      }
-    } else {
-      setFeeds(null);
-      failures.push('feed circuits');
-    }
+  const subsystems = asRecord(feedHealthValue?.subsystems);
+  const elements = asRecord(subsystems?.elements);
+  const tokenStatus = str(elements?.token_status);
+  const brokerLeg = asRecord(feedCircuits?.broker);
+  const spotFeed = asRecord(feedCircuits?.spot_feed);
+  const dataLagSeconds = num(spotFeed?.tick_age_seconds);
 
-    if (killRes.status === 'fulfilled' && typeof killRes.value?.active === 'boolean') {
-      setKillSwitch({
-        active: killRes.value.active,
-        reason: typeof killRes.value.reason === 'string' ? killRes.value.reason : null,
-      });
-    } else {
-      setKillSwitch(null);
-      failures.push('kill switch');
-    }
+  const token: BrokerTokenState | null =
+    elements === null || tokenStatus === null
+      ? null
+      : {
+          isTokenValid: tokenStatus === 'present',
+          provider:
+            providerFromPolicy(elements.broker_provider_status) ?? str(brokerLeg?.provider),
+        };
 
-    if (tokenRes.status === 'fulfilled' && tokenRes.value?.data) {
-      const d = tokenRes.value.data as unknown as Record<string, unknown>;
-      setToken({
-        isTokenValid: d.is_token_valid === true,
-        provider: str(d.provider) ?? '—',
-        state: str(d.state),
-        dataLagSeconds: num(d.data_lag_seconds),
-      });
-    } else {
-      setToken(null);
-      failures.push('broker token');
-    }
+  const legErrors: string[] = [];
+  if (feedHealthSection !== null && feeds === null) legErrors.push('feed circuits');
+  if (killSwitchSection !== null && killSwitchActive === null) legErrors.push('kill switch');
+  if (feedHealthSection !== null && token === null) legErrors.push('broker token');
 
-    setLegErrors(failures);
-    if (failures.length < 3) {
-      setLastAt(new Date());
-      hasDataRef.current = true;
-    }
-  }, []);
+  const degraded =
+    legErrors.length > 0 ||
+    feedHealthSection?.degraded === true ||
+    killSwitchSection?.degraded === true;
 
-  usePolling(() => {
-    if (!isOpen && hasDataRef.current) return;
-    return load();
-  }, 5000);
+  const lastAt = status.lastEventAt !== null ? new Date(status.lastEventAt) : null;
 
   const brokerVariant: BadgeVariant =
     token === null ? 'neutral' : token.isTokenValid ? 'success' : 'danger';
@@ -166,11 +158,11 @@ export const SystemHealthStrip: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <span className="text-ink-3 font-semibold">KILL SWITCH:</span>
           <Badge
-            variant={killSwitch === null ? 'neutral' : killSwitch.active ? 'danger' : 'success'}
+            variant={killSwitchActive === null ? 'neutral' : killSwitchActive ? 'danger' : 'success'}
             size="xs"
-            dot={killSwitch !== null}
+            dot={killSwitchActive !== null}
           >
-            {killSwitch === null ? 'UNAVAILABLE' : killSwitch.active ? 'HALTED' : 'STANDBY'}
+            {killSwitchActive === null ? 'UNAVAILABLE' : killSwitchActive ? 'HALTED' : 'STANDBY'}
           </Badge>
         </div>
 
@@ -180,7 +172,7 @@ export const SystemHealthStrip: React.FC = () => {
             {token === null
               ? 'UNAVAILABLE'
               : token.isTokenValid
-                ? `${token.provider.toUpperCase()} ACTIVE`
+                ? `${(token.provider ?? '—').toUpperCase()} ACTIVE`
                 : 'REAUTH REQD'}
           </Badge>
         </div>
@@ -188,17 +180,15 @@ export const SystemHealthStrip: React.FC = () => {
         <div className="text-ink-3 font-semibold">
           DATA LAG:{' '}
           <strong className="text-foreground">
-            {token?.dataLagSeconds !== null && token?.dataLagSeconds !== undefined
-              ? `${Math.round(token.dataLagSeconds)}s`
-              : 'unavailable'}
+            {dataLagSeconds !== null ? `${Math.round(dataLagSeconds)}s` : 'unavailable'}
           </strong>
         </div>
 
         <FreshnessClock
           lastAt={lastAt}
           marketClosed={!isOpen}
-          dataQuality={legErrors.length > 0 ? 'DEGRADED' : null}
-          sourceLabel="REST · 5s poll"
+          dataQuality={degraded ? 'DEGRADED' : null}
+          sourceLabel={status.source === 'sse' ? 'SSE · command stream' : 'REST · command view'}
           note={legErrors.length > 0 ? `missing: ${legErrors.join(', ')}` : undefined}
         />
       </div>
