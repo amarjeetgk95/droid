@@ -50,7 +50,8 @@ describe('nav-config navigation layout', () => {
 
   it('keeps every href backed by a real page under app/(app)', () => {
     const appDir = path.resolve(process.cwd(), 'src', 'app', '(app)');
-    for (const href of ALL_NAV_HREFS) {
+    const hrefs = new Set([...ALL_NAV_HREFS, ...getNavItems(true).map((i) => i.href)]);
+    for (const href of hrefs) {
       const page =
         href === '/'
           ? path.join(appDir, 'page.tsx')
@@ -130,14 +131,14 @@ describe('P2-4 minimal shell nav (flag on)', () => {
     expect(getNavGroups(true)).toBe(MINIMAL_NAV_GROUPS);
     const items = getNavGroups(true).flatMap((g) => g.items);
     expect(items).toHaveLength(4);
-    expect(items.map((i) => i.href)).toEqual(['/', '/execute', '/lab', '/ai']);
+    expect(items.map((i) => i.href)).toEqual(['/', '/positions', '/lab', '/ai']);
     expect(items.map((i) => i.label)).toEqual(['Command', 'Positions', 'Lab', 'Copilot']);
     expect(items.map((i) => i.shortcut)).toEqual(['⌘1', '⌘2', '⌘3', '⌘4']);
   });
 
   it('binds minimal hotkeys to the 4 destinations and leaves legacy bindings intact', () => {
     expect(findNavItemByShortcut('⌘1', true)?.href).toBe('/');
-    expect(findNavItemByShortcut('⌘2', true)?.href).toBe('/execute');
+    expect(findNavItemByShortcut('⌘2', true)?.href).toBe('/positions');
     expect(findNavItemByShortcut('⌘3', true)?.href).toBe('/lab');
     expect(findNavItemByShortcut('⌘4', true)?.href).toBe('/ai');
     expect(findNavItemByShortcut('⌘0', true)).toBeUndefined();
@@ -154,7 +155,7 @@ describe('P2-4 minimal shell nav (flag on)', () => {
   it('keeps Settings and System reachable in minimal mode (footer dock + long tail)', () => {
     expect(getNavItems(true).map((i) => i.href)).toEqual([
       '/',
-      '/execute',
+      '/positions',
       '/lab',
       '/ai',
       '/system',
@@ -168,7 +169,7 @@ describe('P2-4 minimal shell nav (flag on)', () => {
 
   it('advertises only the active shortcut binding per shell mode', () => {
     expect(getNavShortcut('/', true)).toBe('⌘1');
-    expect(getNavShortcut('/execute', true)).toBe('⌘2');
+    expect(getNavShortcut('/positions', true)).toBe('⌘2');
     expect(getNavShortcut('/markets', true)).toBeUndefined();
     expect(getNavShortcut('/settings', true)).toBe('⌘,');
     expect(getNavShortcut('/markets', false)).toBe('⌘2');

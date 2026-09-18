@@ -226,7 +226,7 @@ export const MINIMAL_NAV_GROUPS: NavGroup[] = [
     items: [
       {
         id: 'positions',
-        href: '/execute',
+        href: '/positions',
         label: 'Positions',
         icon: Crosshair,
         description: 'Orders, algo state, capital, risk & swing positions',
@@ -356,7 +356,7 @@ export function findNavItemByShortcut(shortcut: string, minimal = false): NavIte
 
 /**
  * Shortcut label currently bound to `href` for the active shell, e.g. `⌘2`
- * resolves to `/execute` in minimal mode and `/markets` in legacy mode.
+ * resolves to `/positions` in minimal mode and `/markets` in legacy mode.
  * Returns undefined when the destination has no active binding (palette
  * rows must never advertise a shortcut that navigates elsewhere).
  */
