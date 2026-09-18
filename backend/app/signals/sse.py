@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable
 import structlog
 
 logger = structlog.get_logger()
@@ -40,6 +40,27 @@ class SignalSSEHub:
         self._seq: int = 0
         self._dropped: int = 0
         self._lag_max: int = 0
+        # Notification-only observers (e.g. the unified app stream). They are
+        # dispatched synchronously after the subscriber fan-out, never affect
+        # delivery, and their failures are quarantined.
+        self._listeners: set[Callable[[str, dict, str, int], None]] = set()
+
+    def add_listener(self, listener: Callable[[str, dict, str, int], None]) -> None:
+        self._listeners.add(listener)
+
+    def remove_listener(self, listener: Callable[[str, dict, str, int], None]) -> None:
+        self._listeners.discard(listener)
+
+    def _notify_listeners(self, event_type: str, data: dict, priority: str, seq: int) -> None:
+        if not self._listeners:
+            return
+        for listener in list(self._listeners):
+            try:
+                listener(event_type, data, priority, seq)
+            except Exception as e:
+                logger.warning(
+                    "sse_listener_failed", event_type=event_type, error=str(e)[:150]
+                )
 
     def next_seq(self) -> int:
         self._seq += 1
@@ -96,6 +117,10 @@ class SignalSSEHub:
                         self._dropped += 1
             except Exception:
                 self.unsubscribe(q)
+        # Additive notification hook: the unified app stream mirrors broadcasts
+        # as `signal.event` frames. Existing `/signals/stream` delivery above is
+        # untouched; listener failures never escape.
+        self._notify_listeners(event_type, data, priority, seq)
 
     async def event_generator(self, queue: asyncio.Queue) -> AsyncGenerator[str, None]:
         try:

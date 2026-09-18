@@ -3,6 +3,8 @@ import json
 import random
 from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.core.config import settings
+from app.services.app_stream import ticket_store
 from app.services.central_feed import central_feed
 import structlog
 
@@ -21,7 +23,23 @@ async def websocket_market_feed(websocket: WebSocket):
         FYERS stream or Telegram services — those live in lifespan.
       - Closing the browser/dashboard tab therefore cannot affect FYERS or
         Telegram. Dashboard is fully independent of their lifecycle.
+
+    AUTH (P1-4/D1): browsers cannot set an Authorization header on a WebSocket
+    upgrade, so a single-use ticket minted by `POST /api/v1/stream/ticket` is
+    accepted as `?ticket=`. When `AUTH_REQUIRED=true` a valid ticket is
+    mandatory; when auth is not enforced an absent ticket preserves the
+    pre-ticket behavior (invalid supplied tickets are still rejected).
     """
+    ticket = websocket.query_params.get("ticket")
+    if settings.auth_required or ticket is not None:
+        if not ticket_store.redeem_ticket(ticket):
+            # Accept first so clients observe the application close code (an
+            # un-accepted close is surfaced as an opaque handshake denial).
+            await websocket.accept()
+            await websocket.close(
+                code=4401, reason="Valid single-use stream ticket required"
+            )
+            return
     await websocket.accept()
     client_queue = await central_feed.register_client(websocket)
 

@@ -296,6 +296,16 @@ async def _compose_command_view() -> dict[str, Any]:
     }
 
 
+async def compose_command_view() -> dict[str, Any]:
+    """Public composition entry point for the app stream broadcaster.
+
+    Returns exactly the same envelope as ``GET /api/v1/view/command`` — it is a
+    thin alias over ``_compose_command_view`` so the endpoint's response
+    semantics cannot drift from the stream's section view.
+    """
+    return await _compose_command_view()
+
+
 @router.get("/command")
 async def get_command_view() -> dict[str, Any]:
     """Frozen CommandView v1 — fail-open per section, never fabricates data."""
