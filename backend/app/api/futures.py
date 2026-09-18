@@ -17,8 +17,12 @@ market_service = MarketService()
 _PROVIDER = "futures_engine"
 
 
-@router.get("/{symbol}/overview")
-async def get_futures_overview(symbol: str):
+async def build_futures_overview(symbol: str) -> dict:
+    """Compose the futures overview payload for one underlying.
+
+    Shared by the ``/{symbol}/overview`` endpoint and the CommandView
+    composer so both surfaces serve identical data (no HTTP round-trip).
+    """
     underlying = symbol.upper().replace(" 50", "")
     try:
         quote = await market_service.get_quote(underlying)
@@ -53,6 +57,11 @@ async def get_futures_overview(symbol: str):
         },
     }
     return envelope(data, provider=_PROVIDER, status=DataStatus.LIVE if is_live else DataStatus.OFFLINE)
+
+
+@router.get("/{symbol}/overview")
+async def get_futures_overview(symbol: str):
+    return await build_futures_overview(symbol)
 
 
 @router.get("/{symbol}/term-structure")

@@ -27,9 +27,11 @@ import structlog
 from fastapi import APIRouter
 
 from app.api import dashboard as dashboard_api
+from app.api import futures as futures_api
 from app.api import health as health_api
 from app.api import signals as signals_api
 from app.api.dashboard import DashboardSummary, SUMMARY_FRESH_TTL
+from app.event_engine.service import event_engine_service
 from app.signals.safety.kill_switch import kill_switch
 
 logger = structlog.get_logger(__name__)
@@ -54,6 +56,16 @@ SECTION_KEYS: tuple[str, ...] = (
 #: comparatively heavy, so a 3s cache absorbs concurrent Command-screen loads.
 SIGNALS_FRESH_TTL = 3.0
 _signals_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+#: Slow-moving overlays composed at the stream's ~2s cadence: a 60s TTL keeps
+#: broker/event probes out of the hot path while the legs stay honest (null on
+#: failure, never zeros).
+FUTURES_FRESH_TTL = 60.0
+EVENT_RISK_FRESH_TTL = 60.0
+FUTURES_SYMBOLS: tuple[str, ...] = ("NIFTY", "BANKNIFTY")
+EVENT_RISK_UNDERLYING = "BANKNIFTY"
+_futures_cache: dict[str, tuple[float, dict[str, Any], datetime | None]] = {}
+_event_risk_cache: dict[str, tuple[float, dict[str, Any] | None, datetime | None]] = {}
 
 #: section -> (sha256(value), version). Single-process asyncio: this map is only
 #: touched synchronously (no await between read and update), so no locks needed.
@@ -141,6 +153,99 @@ async def _get_active_signals() -> dict[str, Any]:
     return payload
 
 
+def _futures_has_data(data: Any) -> bool:
+    """True only when the overview carries real broker futures data.
+
+    The endpoint is self-describing: everything is `null`/`UNAVAILABLE` when
+    no broker futures feed is wired, so those payloads become `null` upstream
+    instead of surfacing placeholder shells as if they were data.
+    """
+    if not isinstance(data, dict):
+        return False
+    if data.get("near_future_price") is not None or data.get("basis_pts") is not None:
+        return True
+    term = data.get("term_structure")
+    if (
+        isinstance(term, dict)
+        and term.get("contracts")
+        and term.get("curve_state") not in (None, "UNAVAILABLE", "UNKNOWN")
+    ):
+        return True
+    buildup = data.get("buildup")
+    if isinstance(buildup, dict) and buildup.get("buildup_type") not in (None, "UNAVAILABLE", "UNKNOWN"):
+        return True
+    rollover = data.get("rollover")
+    return isinstance(rollover, dict) and rollover.get("rollover_percent") is not None
+
+
+async def _get_futures_overviews() -> tuple[dict[str, Any], datetime | None]:
+    """NIFTY/BANKNIFTY futures overviews, cached 60s, fail-open per instrument.
+
+    Reuses the same composition `GET /api/v1/futures/{symbol}/overview` serves
+    (service call, not HTTP). An instrument with no broker futures data maps to
+    `None` — never a fabricated basis/OI shell. Returns the oldest live
+    observation time so the section can report honest freshness.
+    """
+    cached = _futures_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < FUTURES_FRESH_TTL:
+        return cached[1], cached[2]
+
+    values: dict[str, Any] = {}
+    oldest: datetime | None = None
+    for symbol in FUTURES_SYMBOLS:
+        data: Any = None
+        ts: datetime | None = None
+        try:
+            payload = await futures_api.build_futures_overview(symbol)
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                meta = payload.get("meta")
+                if isinstance(meta, dict):
+                    ts = _parse_time(meta.get("timestamp"))
+        except Exception as exc:
+            logger.warning("command_view_futures_failed", symbol=symbol, error=str(exc)[:150])
+        if _futures_has_data(data):
+            values[symbol] = data
+            if ts is not None and (oldest is None or ts < oldest):
+                oldest = ts
+        else:
+            values[symbol] = None
+
+    _futures_cache["default"] = (time.monotonic(), values, oldest)
+    return values, oldest
+
+
+async def _get_event_risk_overlay() -> tuple[dict[str, Any] | None, datetime | None]:
+    """Event-aware risk overlay, cached 60s, fail-open to `null`.
+
+    Same service call the `/api/v1/events/risk/overlay` route serves
+    (initializer included); a failure caches `None` so the ~2s stream cadence
+    does not hammer a broken event engine.
+    """
+    cached = _event_risk_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < EVENT_RISK_FRESH_TTL:
+        return cached[1], cached[2]
+
+    payload: dict[str, Any] | None = None
+    ts: datetime | None = None
+    try:
+        if not event_engine_service._initialized:
+            await event_engine_service.initialize()
+        result = event_engine_service.get_risk_overlay(underlying=EVENT_RISK_UNDERLYING)
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(mode="json")
+        if isinstance(result, dict):
+            payload = result
+            ts = _parse_time(payload.get("evaluated_at"))
+    except Exception as exc:
+        logger.warning("command_view_event_risk_failed", error=str(exc)[:150])
+
+    _event_risk_cache["default"] = (time.monotonic(), payload, ts)
+    return payload, ts
+
+
 async def _leg_market() -> _Leg:
     summary = await _get_summary()
     leg_errors = {
@@ -168,6 +273,7 @@ async def _leg_market() -> _Leg:
 
 async def _leg_regime() -> _Leg:
     summary = await _get_summary()
+    futures, futures_ts = await _get_futures_overviews()
     leg_errors = {
         key: summary.errors[key]
         for key in ("regime", "options")
@@ -177,12 +283,22 @@ async def _leg_regime() -> _Leg:
         leg_errors["regime"] = "Regime classification unavailable"
     if summary.options_analytics is None and "options" not in leg_errors:
         leg_errors["options"] = "Options analytics unavailable"
+    # Futures is an optional overlay: the engine self-describes as UNAVAILABLE
+    # until a broker feed is wired, and `value.futures` carries explicit nulls.
+    # Deliberately not section-degrading — a permanent degraded badge on the
+    # regime card for an optional leg would train operators to ignore
+    # degradation signals.
+    updated_at = _parse_time(summary.generated_at)
+    if futures_ts is not None and (updated_at is None or futures_ts < updated_at):
+        updated_at = futures_ts
+
     return _Leg(
         value={
             "regime_overview": summary.regime_overview,
             "options_analytics": summary.options_analytics,
+            "futures": futures,
         },
-        updated_at=_parse_time(summary.generated_at),
+        updated_at=updated_at,
         degraded=bool(leg_errors),
         error=_join_errors(leg_errors),
     )
@@ -203,12 +319,20 @@ async def _leg_ml() -> _Leg:
 
 async def _leg_risk_events() -> _Leg:
     summary = await _get_summary()
+    event_risk, event_ts = await _get_event_risk_overlay()
     leg_errors = {"fii_dii": summary.errors["fii_dii"]} if "fii_dii" in summary.errors else {}
     if summary.fii_dii is None and not leg_errors:
         leg_errors["fii_dii"] = "FII/DII data unavailable"
+    if event_risk is None:
+        leg_errors["event_risk"] = "Event risk overlay unavailable"
+
+    updated_at = _parse_time(summary.generated_at)
+    if event_ts is not None and (updated_at is None or event_ts < updated_at):
+        updated_at = event_ts
+
     return _Leg(
-        value={"fii_dii": summary.fii_dii},
-        updated_at=_parse_time(summary.generated_at),
+        value={"fii_dii": summary.fii_dii, "event_risk": event_risk},
+        updated_at=updated_at,
         degraded=bool(leg_errors),
         error=_join_errors(leg_errors),
     )
