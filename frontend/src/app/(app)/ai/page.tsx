@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { findInstrumentCard } from '@/lib/symbols';
 import { syncAISecretsFromBackend } from '@/lib/aiKeySync';
 import {
   AICopilotChat,
@@ -26,12 +27,7 @@ export default function AICopilotPage() {
   }, []);
 
   const cards = live?.cards && live.cards.length > 0 ? live.cards : market?.cards ?? [];
-  const currentCard = cards.find((c) => {
-    const sym = (c.symbol ?? '').replace(/^(NSE|BSE):/i, '').trim().toUpperCase();
-    if (instrument === 'BANKNIFTY') return sym.includes('BANKNIFTY');
-    if (instrument === 'SENSEX') return sym.includes('SENSEX');
-    return (sym === 'NIFTY 50' || sym === 'NIFTY') && !sym.includes('BANKNIFTY');
-  });
+  const currentCard = findInstrumentCard(cards, instrument);
   const spotPrice = currentCard?.ltp ?? null;
 
   return (

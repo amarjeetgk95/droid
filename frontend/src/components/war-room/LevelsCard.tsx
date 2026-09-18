@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { regimeFromSummary } from '@/lib/regime';
 import { TelemetryStrip, TelemetryItem, fmtNum } from '@/components/ui/desk';
 import type { KeyLevelsModel, MarketRegimeOverview, TechnicalIndicators, VixRegimeInfo } from '@/lib/types';
 
@@ -93,6 +95,11 @@ function levelRelText(value: number, anchors: NamedLevel[]): string | null {
  * requested instrument — never another symbol's pivots.
  */
 export function LevelsCard({ instrument, spot, target, stop, loading }: LevelsCardProps) {
+  // Summary regime leg is NIFTY-only; when it covers this instrument the 15s
+  // cycle reuses it instead of fetching /regime/{symbol}/overview again.
+  const market = useOptionalMarketDataContext();
+  const contextRegime = regimeFromSummary(market?.regimeOverview, instrument);
+  const contextRegimeRef = useRef<MarketRegimeOverview | null>(contextRegime);
   const [levels, setLevels] = useState<KeyLevelsModel | null>(null);
   const [fetching, setFetching] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
@@ -125,15 +132,28 @@ export function LevelsCard({ instrument, spot, target, stop, loading }: LevelsCa
     setFetching(true);
   }
 
+  // Ref keeps the latest shared regime without re-identifying fetchLevelsData
+  // (a new summary payload must not restart the 15s interval).
+  useEffect(() => {
+    contextRegimeRef.current = contextRegime;
+    if (contextRegime) {
+      setRegime(contextRegime);
+      setRegimeAt(null);
+    }
+  }, [contextRegime]);
+
   const fetchLevelsData = useCallback(async (isInitial = false) => {
     if (typeof document !== 'undefined' && document.hidden && !isInitial) return;
     if (isInitial) setFetching(true);
 
     try {
+      const sharedRegime = contextRegimeRef.current;
       const [levelsRes, vixRes, regimeRes, techRes] = await Promise.allSettled([
         api.getRegimeKeyLevels(instrument),
         api.getVixRegime(),
-        api.getRegimeOverview(instrument),
+        sharedRegime
+          ? Promise.resolve({ data: sharedRegime } as { data?: MarketRegimeOverview | null })
+          : api.getRegimeOverview(instrument),
         typeof api.getRegimeTechnicalIndicators === 'function'
           ? api.getRegimeTechnicalIndicators(instrument)
           : Promise.resolve(null),

@@ -13,7 +13,9 @@ import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { errorMessage as canonicalErrorMessage } from '@/lib/errors';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { usePolling } from '@/hooks/usePolling';
+import { regimeFromSummary } from '@/lib/regime';
 import { isUsableRegimeOverview } from '@/components/markets/truthful';
 import type { MarketRegimeOverview } from '@/lib/types';
 
@@ -364,6 +366,10 @@ const IntelHubContext = createContext<IntelHubValue | null>(null);
  */
 export const IntelHubProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { instrument } = useInstrument();
+  // Summary's regime leg covers NIFTY; reuse it rather than fetch the same
+  // diagnosis a second time on this route.
+  const market = useOptionalMarketDataContext();
+  const contextRegime = regimeFromSummary(market?.regimeOverview, instrument);
   const [miState, setMiState] = useState<TaggedState<MiFull> | null>(null);
   const [regimeState, setRegimeState] = useState<TaggedState<MarketRegimeOverview> | null>(null);
   const [regimeLoading, setRegimeLoading] = useState(true);
@@ -396,7 +402,10 @@ export const IntelHubProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const seq = ++regimeSeqRef.current;
     setRegimeLoading(true);
     try {
-      const res = await api.getRegimeOverview(instrument);
+      const shared = contextRegime;
+      const res = shared
+        ? { data: shared, error: null as string | null }
+        : await api.getRegimeOverview(instrument);
       if (seq !== regimeSeqRef.current) return;
       const overview = res?.data ?? null;
       const usable = isUsableRegimeOverview(overview, instrument) ? overview : null;
@@ -414,10 +423,26 @@ export const IntelHubProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } finally {
       if (seq === regimeSeqRef.current) setRegimeLoading(false);
     }
-  }, [instrument]);
+  }, [instrument, contextRegime]);
 
   usePolling(fetchMi, MI_POLL_MS);
-  usePolling(fetchRegime, REGIME_POLL_MS);
+  // The shared summary leg owns the NIFTY diagnosis; only poll the direct
+  // endpoint when the context cannot supply it.
+  usePolling(fetchRegime, REGIME_POLL_MS, !contextRegime);
+
+  // Adopt a fresh shared regime immediately (poll ticks would lag up to 15s).
+  useEffect(() => {
+    if (!contextRegime) return;
+    regimeSeqRef.current += 1; // drop any in-flight direct response
+    const usable = isUsableRegimeOverview(contextRegime, instrument) ? contextRegime : null;
+    setRegimeState({
+      instrument,
+      data: usable,
+      error: usable ? null : `No usable regime diagnosis returned for ${instrument}`,
+      at: Date.now(),
+    });
+    setRegimeLoading(false);
+  }, [contextRegime, instrument]);
 
   const prevInstrumentRef = useRef(instrument);
   useEffect(() => {

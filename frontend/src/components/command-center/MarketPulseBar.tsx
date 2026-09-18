@@ -1,18 +1,16 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useMemo } from 'react';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
-import { api } from '@/lib/api';
+import { useMarketDataContext } from '@/context/MarketDataContext';
 import { PriceDisplay } from '@/components/ui/price-display';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { EmptyNote } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import type { DataStatus, IndexCard } from '@/lib/types';
 
-interface DashboardSummaryData {
-  cards: IndexCard[];
+interface DashboardSummaryMeta {
   errors: Record<string, string>;
   degraded: boolean;
   generated_at: string;
@@ -38,15 +36,13 @@ function statusVariant(status: DataStatus | undefined): BadgeVariant {
   }
 }
 
-function readSummary(payload: unknown): DashboardSummaryData {
+function readSummaryMeta(payload: unknown): DashboardSummaryMeta {
   const raw = (payload ?? {}) as Record<string, unknown>;
-  const cards = Array.isArray(raw.cards) ? (raw.cards as IndexCard[]) : [];
   const errors =
     raw.errors && typeof raw.errors === 'object'
       ? (raw.errors as Record<string, string>)
       : {};
   return {
-    cards: cards.filter((c) => c && typeof c === 'object'),
     errors,
     degraded: raw.degraded === true,
     generated_at: typeof raw.generated_at === 'string' ? raw.generated_at : '',
@@ -68,39 +64,16 @@ function resolvePrice(card: IndexCard): { price: number | null; change: number |
 export const MarketPulseBar: React.FC = () => {
   const { instrument, setInstrument } = useInstrument();
   const { isOpen } = useMarketSession();
-  const [summary, setSummary] = useState<DashboardSummaryData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadedRef = useRef(false);
-  const hasDataRef = useRef(false);
+  // MarketDataContext is the single /dashboard/summary owner (adaptive 5–25s
+  // poll). This bar renders the shared snapshot; it never opens its own poll.
+  const { cards, summaryData, errors: sectionErrors, loading, lastFetch } = useMarketDataContext();
 
-  const load = useCallback(async () => {
-    const initial = !loadedRef.current;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    try {
-      const res = await api.getDashboardSummary();
-      if (res?.data) {
-        setSummary(readSummary(res.data));
-        hasDataRef.current = true;
-      }
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Dashboard summary unavailable');
-    } finally {
-      loadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const summary = useMemo<DashboardSummaryMeta | null>(
+    () => (summaryData || cards.length > 0 ? readSummaryMeta(summaryData) : null),
+    [summaryData, cards.length],
+  );
 
-  usePolling(() => {
-    if (!isOpen && hasDataRef.current) return;
-    return load();
-  }, 8000);
-
-  const cards = summary?.cards ?? [];
+  const error = sectionErrors.cards;
   const errors = summary ? Object.entries(summary.errors) : [];
 
   return (
@@ -199,8 +172,7 @@ export const MarketPulseBar: React.FC = () => {
                 : ''}
         </span>
         <FreshnessClock
-          lastAt={summary?.generated_at || null}
-          fetching={refreshing}
+          lastAt={summary?.generated_at || lastFetch || null}
           marketClosed={!isOpen}
           dataQuality={summary?.degraded ? 'DEGRADED' : null}
           sourceLabel="REST · summary"

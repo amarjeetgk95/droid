@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Power } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useSignalsStatus } from '@/hooks/useSignalsStatus';
 import { useToast } from '@/components/ui/toast';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useStreamHealth } from '@/context/LiveMarketContext';
@@ -25,32 +26,6 @@ interface SidebarProps {
   onCloseMobile?: () => void;
 }
 
-/** Real active-signal count used for the Signals badge (60s poll). */
-function useSignalsBadge(): number | null {
-  const [count, setCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      try {
-        const res = await api.getSignalsStatus();
-        if (mounted) setCount(typeof res.active_count === 'number' ? res.active_count : null);
-      } catch {
-        // Endpoint unavailable: show no badge rather than claiming zero active.
-        if (mounted) setCount(null);
-      }
-    };
-    void load();
-    const id = setInterval(load, 60000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  return count;
-}
-
 export const Sidebar: React.FC<SidebarProps> = ({
   collapsed = false,
   onToggleCollapse,
@@ -61,7 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const toast = useToast();
   const market = useOptionalMarketDataContext();
   const { streamState } = useStreamHealth();
-  const signalsCount = useSignalsBadge();
+  // Shared app-wide /signals/status snapshot (single 30s owner + SSE refresh).
+  const signalsCount = useSignalsStatus().active;
 
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [isKilling, setIsKilling] = useState(false);

@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type { ApiMeta, MarketRegimeOverview } from '@/lib/types';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { regimeFromSummary } from '@/lib/regime';
 import {
   RegimeBanner,
   type RegimeBannerStatus,
@@ -69,6 +71,22 @@ export function MarketsPane({ symbol }: { symbol: SymbolId }) {
   const [now, setNow] = useState<number>(() => Date.now());
 
   const { phase, isOpen, sessionTimeIST, nextSessionChange } = useMarketSession();
+  // The summary's regime leg is the NIFTY diagnosis. When it covers the
+  // selected symbol, that shared owner is the only fetch on this route.
+  const market = useOptionalMarketDataContext();
+  const sharedRegime = regimeFromSummary(market?.regimeOverview, symbol);
+  const contextOverview = sharedRegime && isUsableRegimeOverview(sharedRegime, symbol) ? sharedRegime : null;
+  const contextFetchedAt = market?.lastFetch ?? null;
+
+  useEffect(() => {
+    if (!contextOverview) return;
+    setOverview(contextOverview);
+    setMeta(null);
+    setError(null);
+    setLastUpdated(contextFetchedAt ?? new Date());
+    setFetching(false);
+    setLoading(false);
+  }, [contextOverview, contextFetchedAt]);
 
   const fetchRegime = useCallback(async () => {
     setFetching(true);
@@ -98,7 +116,9 @@ export function MarketsPane({ symbol }: { symbol: SymbolId }) {
     }
   }, [symbol]);
 
-  usePolling(fetchRegime, POLL_MS);
+  // One owner per route: the shared summary leg when it covers the symbol,
+  // otherwise this panel's direct poll.
+  usePolling(fetchRegime, POLL_MS, !contextOverview);
 
   const usable = isUsableRegimeOverview(overview, symbol);
   const status: RegimeBannerStatus = usable

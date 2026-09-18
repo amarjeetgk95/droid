@@ -12,6 +12,7 @@ import {
 } from 'react';
 import type { StreamConnectionState, TimestampedTick } from '@/hooks/useMarketStream';
 import { useOptionalMarketDataContext, useMarketTicks } from './MarketDataContext';
+import { isCryptoCard } from '@/lib/symbols';
 import type { IndexCard, DataStatus } from '@/lib/types';
 
 type LiveMarketContextType = {
@@ -39,12 +40,6 @@ const StreamHealthContext = createContext<StreamHealth>({ streamState: 'CONNECTI
 const TICK_BATCH_MS = 100;
 
 const EMPTY_CARDS: IndexCard[] = [];
-
-function isCryptoCard(c: Pick<IndexCard, 'symbol' | 'provider'>): boolean {
-  const sym = (c.symbol || '').toUpperCase();
-  const prov = (c.provider || '').toLowerCase();
-  return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
-}
 
 function applyClosedStatus(list: IndexCard[], isMarketClosed: boolean): IndexCard[] {
   if (!isMarketClosed) return list;

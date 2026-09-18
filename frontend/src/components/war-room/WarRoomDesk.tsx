@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { findInstrumentCard } from '@/lib/symbols';
 import type { HourForecast } from '@/lib/types';
 import { VerdictPanel } from './VerdictPanel';
 import { AlgoSafetyStrip } from './AlgoSafetyStrip';
@@ -93,7 +94,6 @@ export function WarRoomDesk() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summaryData, setSummaryData] = useState<DashboardSummaryData | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [optionsDrawerOpen, setOptionsDrawerOpen] = useState(false);
   const [dossierSignal, setDossierSignal] = useState<WarRoomSignal | null>(null);
@@ -121,12 +121,10 @@ export function WarRoomDesk() {
     }
   }, [instrument]);
 
-  // Summary presence is read via ref: a context summary arriving must not
-  // re-identify `loadData` and re-trigger the initial load effect.
-  const summaryRef = useRef(market?.summaryData ?? null);
-  useEffect(() => {
-    summaryRef.current = market?.summaryData ?? null;
-  }, [market?.summaryData]);
+  // MarketDataContext owns the dashboard summary on this route; the summary
+  // is consumed below, never re-fetched here. A manual refresh nudges the
+  // shared owner instead of opening a second request path.
+  const refetchSummary = market?.refetch;
 
   // Monotonic sequence: a late response for a previous instrument/timeframe
   // must never overwrite the current one.
@@ -138,24 +136,18 @@ export function WarRoomDesk() {
     if (typeof document !== 'undefined' && document.hidden && !isManual) return;
     const seq = ++requestSeqRef.current;
     if (isInitial) setInitialLoading(true);
-    else if (isManual) setRefreshing(true);
+    else if (isManual) {
+      setRefreshing(true);
+      void refetchSummary?.();
+    }
     if (isInitial || isManual) setError(null);
 
     try {
-      // Avoid duplicate summary fetch: MarketDataContext already fetches /summary.
-      // Only fetch summary explicitly if context has none or user clicked manual refresh.
-      const shouldFetchSummary = isManual || !summaryRef.current;
-      const promises: [Promise<any>, Promise<any>?] = [
+      const results = await Promise.allSettled([
         api.getTacticalBias(instrument, timeframe, true),
-      ];
-      if (shouldFetchSummary) {
-        promises.push(api.getDashboardSummary());
-      }
-
-      const results = await Promise.allSettled(promises);
+      ]);
       if (seq !== requestSeqRef.current) return;
       const biasRes = results[0];
-      const sumRes = results[1];
 
       if (biasRes.status === 'fulfilled') {
         setForecast(biasRes.value as HourForecast);
@@ -167,10 +159,6 @@ export function WarRoomDesk() {
         const reason = biasRes.reason;
         setError(reason instanceof Error ? reason.message : 'tactical bias unavailable');
       }
-
-      if (sumRes && sumRes.status === 'fulfilled' && sumRes.value?.data) {
-        setSummaryData(sumRes.value.data);
-      }
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
       setError(err instanceof Error ? err.message : 'Error loading War Room data');
@@ -178,7 +166,7 @@ export function WarRoomDesk() {
       if (isInitial) setInitialLoading(false);
       else if (isManual) setRefreshing(false);
     }
-  }, [instrument, timeframe]);
+  }, [instrument, timeframe, refetchSummary]);
 
   useEffect(() => {
     void loadData({ initial: true });
@@ -270,12 +258,7 @@ export function WarRoomDesk() {
   }, [loadData, optionsDrawerOpen, dossierOpen]);
 
   const cards = live?.cards && live.cards.length > 0 ? live.cards : market?.cards ?? [];
-  const currentCard = cards.find((c) => {
-    const s = (c.symbol ?? '').replace(/^(NSE|BSE):/i, '').trim().toUpperCase();
-    if (instrument === 'BANKNIFTY') return s.includes('BANKNIFTY');
-    if (instrument === 'SENSEX') return s.includes('SENSEX');
-    return (s === 'NIFTY 50' || s === 'NIFTY') && !s.includes('BANKNIFTY');
-  });
+  const currentCard = findInstrumentCard(cards, instrument);
   const liveSpot = currentCard?.ltp ?? null;
 
   const marketStatus = market?.marketStatus ?? null;
@@ -283,7 +266,7 @@ export function WarRoomDesk() {
   const ticksFresh = live?.ticksFresh ?? market?.ticksFresh ?? false;
   const isMarketClosed = marketStatus?.session === 'CLOSED' || marketStatus?.is_trading_day === false;
 
-  const effectiveSummary = summaryData ?? market?.summaryData ?? null;
+  const effectiveSummary: DashboardSummaryData | null = market?.summaryData ?? null;
   const fiiDii = effectiveSummary?.fii_dii ?? null;
   const regimeOverview = effectiveSummary?.regime_overview ?? null;
   const optionsAnalytics =

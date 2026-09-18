@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useEffect, useState, useCallback } from 'react';
+import { memo, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Activity,
@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
+import { useSignalsStatus } from '@/hooks/useSignalsStatus';
 import { cn, safeNum } from '@/lib/utils';
 
 const AUDIO_ALERTS_KEY = 'droid:audio:alerts';
@@ -61,7 +62,8 @@ function getStoredSound(): boolean {
 }
 
 export function HeaderNotifications() {
-  const [signalCount, setSignalCount] = useState<number>(0);
+  // Shared app-wide /signals/status snapshot (no private poll here).
+  const signalCount = useSignalsStatus().active ?? 0;
   const [recentSignals, setRecentSignals] = useState<RecentSignalItem[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(getStoredSound);
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -76,28 +78,6 @@ export function HeaderNotifications() {
       }
       return next;
     });
-  }, []);
-
-  // Fetch signal count periodically
-  useEffect(() => {
-    let mounted = true;
-    const fetchStatus = async () => {
-      try {
-        const res = await api.getSignalsStatus();
-        if (mounted) {
-          setSignalCount(res.active_count ?? 0);
-        }
-      } catch {
-        if (mounted) setSignalCount(0);
-      }
-    };
-
-    void fetchStatus();
-    const intervalId = setInterval(fetchStatus, 30000); // 30s poll
-    return () => {
-      mounted = false;
-      clearInterval(intervalId);
-    };
   }, []);
 
   // Fetch recent signal audit items

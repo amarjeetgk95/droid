@@ -3,10 +3,11 @@
 import { memo, useMemo, useEffect, useRef, useState, useCallback } from 'react';
 import { IndexCard } from '@/lib/types';
 import { safeInt } from '@/lib/utils';
+import { toNumber } from '@/lib/coerce';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
-import { resolveCardSymbol } from '@/lib/symbols';
+import { isCryptoCard, resolveCardSymbol } from '@/lib/symbols';
 
 export interface MarketTickerProps {
   cards?: IndexCard[];
@@ -31,20 +32,22 @@ const FALLBACK_BENCHMARKS: Array<Pick<IndexCard, 'symbol' | 'display_name' | 'lt
   { symbol: 'INDIA VIX', display_name: 'INDIA VIX', ltp: 0, change: 0, change_percent: 0 },
 ];
 
-/** Robust number parser */
-function safeNum(val: unknown, fallback = 0): number {
-  if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
+/**
+ * Broker cards may carry grouped digits ("23,259.30"); `toNumber` is strict
+ * about those, so strip separators first and delegate all finite-number
+ * coercion to the shared helper.
+ */
+function cardNumber(val: unknown): number | null {
   if (typeof val === 'string') {
-    const parsed = parseFloat(val.replace(/,/g, ''));
-    return Number.isFinite(parsed) ? parsed : fallback;
+    return toNumber(val.replace(/,/g, ''), { rejectBlankString: true });
   }
-  return fallback;
+  return toNumber(val);
 }
 
 /** Formats price using Indian Numbering System (e.g. 23,259.30) */
 export function formatIndianPrice(val: number | null | undefined): string {
-  const n = safeNum(val, NaN);
-  if (Number.isNaN(n) || n <= 0) return '—';
+  const n = cardNumber(val);
+  if (n === null || n <= 0) return '—';
   return n.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -53,8 +56,8 @@ export function formatIndianPrice(val: number | null | undefined): string {
 
 /** Formats signed points change (e.g. +142.50 or -218.50) */
 export function formatPointsChange(change: number | null | undefined): string {
-  const n = safeNum(change, NaN);
-  if (Number.isNaN(n)) return '—';
+  const n = cardNumber(change);
+  if (n === null) return '—';
   if (Math.abs(n) < 0.001) return '0.00';
   const prefix = n > 0 ? '+' : '-';
   return `${prefix}${Math.abs(n).toLocaleString('en-IN', {
@@ -115,12 +118,6 @@ export function matchBenchmarkAlias(card: IndexCard, wanted: string): boolean {
   return false;
 }
 
-function isCryptoCard(card: Pick<IndexCard, 'symbol' | 'provider'>): boolean {
-  const sym = (card.symbol || '').toUpperCase();
-  const prov = (card.provider || '').toLowerCase();
-  return prov.includes('binance') || sym.endsWith('USDT') || sym.endsWith('BTC');
-}
-
 /** Single Interactive Index Card Item */
 function IndexCardItem({
   card,
@@ -129,12 +126,12 @@ function IndexCardItem({
   card: IndexCard;
   onSelect?: (symbol: string) => void;
 }) {
-  const ltp = safeNum(card.ltp, 0);
-  const prevClose = safeNum(card.previous_close, 0);
+  const ltp = cardNumber(card.ltp) ?? 0;
+  const prevClose = cardNumber(card.previous_close) ?? 0;
 
   // Defensive calculation: compute change & pct if missing or inconsistent
-  let change = safeNum(card.change, NaN);
-  let changePct = safeNum(card.change_percent, NaN);
+  let change = cardNumber(card.change) ?? NaN;
+  let changePct = cardNumber(card.change_percent) ?? NaN;
 
   if (Number.isNaN(change) && ltp > 0 && prevClose > 0) {
     change = Number((ltp - prevClose).toFixed(2));

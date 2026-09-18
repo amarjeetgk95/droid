@@ -5,6 +5,8 @@ import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
+import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
+import { regimeFromSummary } from '@/lib/regime';
 import { EmptyNote, TelemetryItem, TelemetryStrip, fmtINR, fmtNum } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 
@@ -32,6 +34,10 @@ function finiteOrNull(v: unknown): number | null {
 
 export function WhyStrip({ instrument }: { instrument: string }) {
   const { isOpen } = useMarketSession();
+  // The summary's regime leg is always NIFTY; when it covers this instrument
+  // the strip reuses it instead of fetching /regime/NIFTY/overview again.
+  const market = useOptionalMarketDataContext();
+  const contextRegime = regimeFromSummary(market?.regimeOverview, instrument);
   const [ctx, setCtx] = useState<MarketCtx | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +51,9 @@ export function WhyStrip({ instrument }: { instrument: string }) {
     try {
       const regimeSymbol = toRegimeSymbol(instrument);
       const [regimeRes, optRes] = await Promise.allSettled([
-        api.getRegimeOverview(regimeSymbol),
+        contextRegime
+          ? Promise.resolve({ data: contextRegime } as { data?: unknown })
+          : api.getRegimeOverview(regimeSymbol),
         api.getResearchOptionsContext(instrument),
       ]);
 
@@ -113,7 +121,7 @@ export function WhyStrip({ instrument }: { instrument: string }) {
       loadedRef.current = true;
       setLoading(false);
     }
-  }, [instrument]);
+  }, [instrument, contextRegime]);
 
   usePolling(() => {
     if (!isOpen && hasDataRef.current) return;

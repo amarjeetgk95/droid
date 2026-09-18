@@ -1,19 +1,21 @@
 'use client';
 
-/* Data layer for the signals desk: one hook owns every fetch (status probes,
-   market session, active list, performance, audit, engines), the 15s poll,
-   the SSE-driven refresh and the row actions. Desk components stay pure UI. */
+/* Data layer for the signals desk: one hook owns every desk fetch (market
+   session, active list, performance, audit, engines), the 15s poll, the
+   SSE-driven refresh and the row actions. The /signals/status count is owned
+   app-wide by useSignalsStatus() and only consumed here. Desk components stay
+   pure UI. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useSignalStream } from '@/hooks/useSignalStream';
+import { useSignalsStatus } from '@/hooks/useSignalsStatus';
 import type { SignalsStreamEvent } from '@/hooks/useSignalsStream';
 import { useToast } from '@/components/ui/toast';
 import {
   type ActiveRow,
   type LedgerRow,
   type LedgerSummary,
-  asNum,
   asStr,
   getObj,
   isHiddenTab,
@@ -87,7 +89,6 @@ export type FeedHealthTelemetry = {
   timestamp?: string;
 };
 
-const EMPTY_KPIS: SignalsKpis = { active: null, confirmed: null, armed: null };
 export function useSignalsData(opts?: {
   /** URL-driven initial filters (Phase 5 deep links). */
   initialDeskFilter?: DeskFilter;
@@ -95,15 +96,23 @@ export function useSignalsData(opts?: {
   initialStatusFilter?: StatusFilter;
 }) {
   const toast = useToast();
+  /* status probe — shared app-wide owner, never a desk-local poll */
+  const signalsStatus = useSignalsStatus();
+  const refreshSignalsStatus = signalsStatus.refresh;
+  const statusError = signalsStatus.error;
+  const kpis = useMemo<SignalsKpis>(
+    () => ({
+      active: signalsStatus.active,
+      confirmed: signalsStatus.confirmed,
+      armed: signalsStatus.armed,
+    }),
+    [signalsStatus.active, signalsStatus.confirmed, signalsStatus.armed],
+  );
   /* filters */
   const [deskFilter, setDeskFilter] = useState<DeskFilter>(opts?.initialDeskFilter ?? 'ALL');
   const [instrumentFilter, setInstrumentFilter] = useState<InstrumentFilter>(opts?.initialInstrumentFilter ?? 'ALL');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(opts?.initialStatusFilter ?? 'ACTIVE');
   const [now, setNow] = useState(() => Date.now());
-
-  /* status probe */
-  const [kpis, setKpis] = useState<SignalsKpis>(EMPTY_KPIS);
-  const [statusError, setStatusError] = useState<string | null>(null);
 
   /* market session (best-effort; execute stays enabled unless known closed) */
   const [marketClosed, setMarketClosed] = useState(false);
@@ -159,20 +168,6 @@ export function useSignalsData(opts?: {
 
   const filtersRef = useRef({ deskFilter, instrumentFilter, statusFilter });
   filtersRef.current = { deskFilter, instrumentFilter, statusFilter };  /* ----- loaders ----- */
-
-  const loadStatus = useCallback(async () => {
-    if (isHiddenTab()) return;
-    setStatusError(null);
-    try {
-      const res = (await api.getSignalsStatus()) as unknown as Record<string, unknown>;
-      const active = asNum(res?.active_count);
-      const confirmed = asNum(res?.confirmed_count ?? res?.confirmed);
-      const armed = asNum(res?.armed_count ?? res?.armed);
-      setKpis({ active, confirmed, armed });
-    } catch (e) {
-      setStatusError(e instanceof Error ? e.message : 'status unavailable');
-    }
-  }, []);
 
   const loadMarket = useCallback(async () => {
     if (isHiddenTab()) return;
@@ -359,19 +354,18 @@ export function useSignalsData(opts?: {
   }, [toast, loadActive]);
 
   const refreshAll = useCallback(() => {
-    void loadStatus();
+    void refreshSignalsStatus();
     void loadMarket();
     void loadActive();
     void loadPerf();
     void loadAudit();
     void loadEngines();
     void loadScanner();
-  }, [loadStatus, loadMarket, loadActive, loadPerf, loadAudit, loadEngines, loadScanner]);
+  }, [refreshSignalsStatus, loadMarket, loadActive, loadPerf, loadAudit, loadEngines, loadScanner]);
 
   /* ----- effects ----- */
 
   useEffect(() => {
-    void loadStatus();
     void loadMarket();
     void loadActive();
     void loadPerf();
@@ -385,7 +379,8 @@ export function useSignalsData(opts?: {
   }, [deskFilter, instrumentFilter, statusFilter, loadActive]);
 
   // Coordinated polling (no triple-fetch):
-  // - 15s: active list + status probe (single-flight, always).
+  // - 15s: active list (single-flight, always). The shared /signals/status
+  //   owner polls separately and refreshes on lifecycle SSE events.
   // - 5s: audit ledger ONLY when SSE is offline (otherwise SSE deltas +
   //   throttled refetch own the ledger and a 15s audit poll would double it).
   // - 1s clock keeps the ledger strip age ("LIVE · Ns AGO") and TTLs ticking.
@@ -394,7 +389,6 @@ export function useSignalsData(opts?: {
     const poll = setInterval(() => {
       if (isHiddenTab()) return;
       void loadActive();
-      void loadStatus();
     }, 15000);
     const fastLedgerPoll = setInterval(() => {
       if (isHiddenTab() || connectedRef.current) return;
@@ -406,10 +400,11 @@ export function useSignalsData(opts?: {
       clearInterval(fastLedgerPoll);
       clearInterval(clock);
     };
-  }, [loadActive, loadStatus, loadAudit]);
+  }, [loadActive, loadAudit]);
 
   // SSE-driven active refresh, debounced to 1s so a burst of P0 lifecycle
-  // events (confirm + staged exit + outcome) collapses to one fetch.
+  // events (confirm + staged exit + outcome) collapses to one fetch. Status
+  // counts refresh through the shared owner's own event subscription.
   const sseRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sseRefresh = useCallback(() => {
     if (isHiddenTab()) return;
@@ -418,9 +413,8 @@ export function useSignalsData(opts?: {
       sseRefreshTimer.current = null;
       if (isHiddenTab()) return;
       void loadActive();
-      void loadStatus();
     }, 1000);
-  }, [loadActive, loadStatus]);
+  }, [loadActive]);
 
   const handleStreamEvent = useCallback(
     (evt: string, data: unknown) => {
@@ -532,7 +526,7 @@ export function useSignalsData(opts?: {
         await api.deleteSignal(row.id);
         toast.info(`Signal deleted — ${row.symbol} ${row.strategy}`, 'Removed from the active desk.');
         void loadActive();
-        void loadStatus();
+        void refreshSignalsStatus();
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'delete failed';
         setOrderNote((prev) => ({ ...prev, [row.id]: msg }));
@@ -541,7 +535,7 @@ export function useSignalsData(opts?: {
         setDeletingId(null);
       }
     },
-    [loadActive, loadStatus, toast],
+    [loadActive, refreshSignalsStatus, toast],
   );
 
   const sanitizeAudit = useCallback(async () => {
@@ -567,8 +561,8 @@ export function useSignalsData(opts?: {
   /** Called by the create dialog after a signal is generated. */
   const afterCreate = useCallback(() => {
     void loadActive();
-    void loadStatus();
-  }, [loadActive, loadStatus]);
+    void refreshSignalsStatus();
+  }, [loadActive, refreshSignalsStatus]);
 
   return {
     // filters

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeDashboardSymbol, resolveCardSymbol } from './symbols';
+import {
+  findInstrumentCard,
+  isCryptoCard,
+  isNiftySymbol,
+  normalizeDashboardSymbol,
+  resolveCardSymbol,
+} from './symbols';
 
 describe('dashboard symbol mapping', () => {
   it('normalizes aliases explicitly', () => {
@@ -29,5 +35,35 @@ describe('dashboard symbol mapping', () => {
     expect(resolveCardSymbol('NIFTY BANK')).toBe('BANKNIFTY');
     expect(resolveCardSymbol('BSE:SENSEX')).toBe('SENSEX');
     expect(resolveCardSymbol('NSE:NIFTY50-INDEX')).toBe('NIFTY');
+  });
+});
+
+describe('shared card helpers', () => {
+  it('flags crypto cards by provider or symbol suffix', () => {
+    expect(isCryptoCard({ symbol: 'BTCUSDT', provider: 'binance' })).toBe(true);
+    expect(isCryptoCard({ symbol: 'ETHUSDT', provider: 'fyers' })).toBe(true);
+    expect(isCryptoCard({ symbol: 'NSE:NIFTY50-INDEX', provider: 'fyers' })).toBe(false);
+  });
+
+  it('finds the card for both display and dashboard tokens', () => {
+    const cards = [
+      { symbol: 'NSE:BANKNIFTY-INDEX' },
+      { symbol: 'NIFTY 50' },
+      { symbol: 'BSE:SENSEX-INDEX' },
+    ];
+    expect(findInstrumentCard(cards, 'NIFTY 50')?.symbol).toBe('NIFTY 50');
+    expect(findInstrumentCard(cards, 'NIFTY')?.symbol).toBe('NIFTY 50');
+    expect(findInstrumentCard(cards, 'BANKNIFTY')?.symbol).toBe('NSE:BANKNIFTY-INDEX');
+    expect(findInstrumentCard(cards, 'SENSEX')?.symbol).toBe('BSE:SENSEX-INDEX');
+    expect(findInstrumentCard([], 'NIFTY')).toBeUndefined();
+  });
+
+  it('matches only the NIFTY regime family', () => {
+    expect(isNiftySymbol('NIFTY')).toBe(true);
+    expect(isNiftySymbol('NIFTY 50')).toBe(true);
+    expect(isNiftySymbol('NSE:NIFTY50-INDEX')).toBe(true);
+    expect(isNiftySymbol('BANKNIFTY')).toBe(false);
+    expect(isNiftySymbol('SENSEX')).toBe(false);
+    expect(isNiftySymbol(undefined)).toBe(false);
   });
 });
