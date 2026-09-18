@@ -1,0 +1,204 @@
+{
+  "view": "command",
+  "view_version": 1,
+  "generated_at": "2026-09-18T07:22:01.412306+00:00",
+  "degraded": true,
+  "sections": {
+    "market": {
+      "value": {
+        "cards": [
+          {
+            "symbol": "NIFTY 50",
+            "display_name": "NIFTY 50",
+            "ltp": 25318.65,
+            "change": 92.4,
+            "change_percent": 0.37,
+            "open": 25234.8,
+            "high": 25361.2,
+            "low": 25198.05,
+            "previous_close": 25226.25,
+            "volume": 0,
+            "open_interest": null,
+            "sparkline": [],
+            "status": "LIVE",
+            "timestamp": "2026-09-18T07:22:00+00:00",
+            "provider": "fyers"
+          },
+          {
+            "symbol": "BANKNIFTY",
+            "display_name": "NIFTY BANK",
+            "ltp": 51742.9,
+            "change": -118.35,
+            "change_percent": -0.23,
+            "open": 51861.5,
+            "high": 51904.2,
+            "low": 51690.75,
+            "previous_close": 51861.25,
+            "volume": 0,
+            "open_interest": null,
+            "sparkline": [],
+            "status": "LIVE",
+            "timestamp": "2026-09-18T07:22:00+00:00",
+            "provider": "fyers"
+          }
+        ],
+        "breadth": {
+          "advancing": 34,
+          "declining": 14,
+          "unchanged": 2,
+          "advance_decline_ratio": 2.43,
+          "sectors": [],
+          "sentiment": "BULLISH",
+          "sentiment_score": 68.5,
+          "status": "LIVE",
+          "timestamp": "2026-09-18T07:21:55+00:00"
+        },
+        "market_status": {
+          "status": "OPEN",
+          "is_open": true,
+          "session": "REGULAR",
+          "timestamp": "2026-09-18T07:22:00+00:00"
+        }
+      },
+      "updated_at": "2026-09-18T07:22:01.412306+00:00",
+      "freshness_s": 0,
+      "degraded": false,
+      "version": 41
+    },
+    "regime": {
+      "value": {
+        "regime_overview": {
+          "symbol": "NIFTY 50",
+          "spot_price": 25318.65,
+          "regime_state": "TRENDING_BULLISH",
+          "confidence_score": 0.72,
+          "summary_headline": "Trend continuation with supportive breadth",
+          "institutional_rationale": "Higher highs on expanding participation; VIX contained.",
+          "indicators": {},
+          "key_levels": {},
+          "vix_regime": {}
+        },
+        "options_analytics": {
+          "pcr": 1.12,
+          "max_pain": 25300,
+          "atm_iv": 13.85,
+          "expiry": "2026-09-24"
+        },
+        "futures": {
+          "NIFTY": null,
+          "BANKNIFTY": null
+        }
+      },
+      "updated_at": "2026-09-18T07:21:16.048912+00:00",
+      "freshness_s": 45,
+      "degraded": false,
+      "version": 7
+    },
+    "signals": {
+      "value": {
+        "signals": [
+          {
+            "id": "SIG-20260918-0007",
+            "underlying": "NIFTY",
+            "strategy": "ORB_BREAKOUT",
+            "direction": "BULLISH",
+            "fsm_state": "CONFIRMED",
+            "trigger": 25320.0,
+            "stop_loss": 25280.0,
+            "target_1": 25380.0,
+            "target_2": 25430.0,
+            "confidence_score": 82.5,
+            "is_scalp": false,
+            "distance_to_trigger_pts": 1.35,
+            "distance_to_trigger_pct": 0.01,
+            "ttl_remaining_seconds": 3312,
+            "data_quality": "LIVE",
+            "created_at_utc": "2026-09-18T06:58:11+00:00"
+          }
+        ],
+        "count": 1,
+        "data_quality": "LIVE",
+        "degraded_underlyings": [],
+        "errors": {},
+        "timestamp_ms": 1789716120000
+      },
+      "updated_at": "2026-09-18T07:22:00+00:00",
+      "freshness_s": 1,
+      "degraded": false,
+      "version": 902
+    },
+    "feed_health": {
+      "value": {
+        "status": "ok",
+        "elements": {
+          "server": true,
+          "central_feed": true,
+          "signal_worker": true,
+          "morning_briefing": true,
+          "forecast_scheduler": true,
+          "flow_scheduler": false,
+          "broker_configured": true,
+          "token_present": true,
+          "telegram_configured": false
+        },
+        "timestamp": "2026-09-18T07:22:01.100000+00:00"
+      },
+      "updated_at": "2026-09-18T07:22:01.100000+00:00",
+      "freshness_s": 0,
+      "degraded": false,
+      "version": 12
+    },
+    "kill_switch": {
+      "value": {
+        "active": false,
+        "reason": null,
+        "activated_at_ms": null,
+        "activated_by": null,
+        "activated_monotonic_ns": null
+      },
+      "updated_at": "2026-09-18T07:22:01.412306+00:00",
+      "freshness_s": 0,
+      "degraded": false,
+      "version": 2
+    },
+    "ml": {
+      "value": {
+        "ml_prediction": {
+          "symbol": "NIFTY 50",
+          "direction": "BULLISH",
+          "confidence": 0.68,
+          "horizon_minutes": 60,
+          "target_spec_version": "v2",
+          "generated_at": "2026-09-18T07:21:46.900000+00:00"
+        }
+      },
+      "updated_at": "2026-09-18T07:21:46.900000+00:00",
+      "freshness_s": 15,
+      "degraded": false,
+      "version": 31
+    },
+    "risk_events": {
+      "value": {
+        "fii_dii": null,
+        "event_risk": {
+          "underlying": "BANKNIFTY",
+          "proximity_state": "NORMAL",
+          "can_enter": true,
+          "sizing_multiplier": 1.0,
+          "max_loss_dampener": 1.0,
+          "prohibit_naked_options": false,
+          "minutes_to_event": null,
+          "evaluated_at": "2026-09-18T07:21:45+00:00"
+        }
+      },
+      "updated_at": "2026-09-18T07:22:01.412306+00:00",
+      "freshness_s": 0,
+      "degraded": true,
+      "version": 3
+    }
+  },
+  "hints": [],
+  "errors": {
+    "risk_events": "FII/DII data unavailable"
+  }
+}

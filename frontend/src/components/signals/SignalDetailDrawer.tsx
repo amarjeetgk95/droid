@@ -20,7 +20,9 @@
 
 import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
-import { fmtINR, fmtNum, TelemetryStrip, TelemetryItem, normalizeDirection } from '@/components/ui/desk';
+import { fmtINR, fmtNum, fmtPct01, fmtSigned, TelemetryStrip, TelemetryItem, normalizeDirection } from '@/components/ui/desk';
+import { parseCalibration, type CalibrationSummaryRow } from '@/components/research-lab/contracts';
+import type { ExpectedMoveData } from '@/components/options/ExpectedMoveCard';
 import { fmtTimeMs, fmtDateTimeMs, type ActiveRow } from './signalsNormalize';
 import type { StandardActiveSignal } from '@/hooks/useActiveSignals';
 import { X, RefreshCw, ExternalLink } from 'lucide-react';
@@ -230,11 +232,21 @@ export const SignalDetailDrawer = memo(function SignalDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Lazy model & risk context (ML calibration + options-intelligence expected move)
+  const [mlContext, setMlContext] = useState<CalibrationSummaryRow | null>(null);
+  const [mlContextLoading, setMlContextLoading] = useState(false);
+  const [mlContextError, setMlContextError] = useState<string | null>(null);
+  const [moveContext, setMoveContext] = useState<ExpectedMoveData | null>(null);
+  const [moveContextLoading, setMoveContextLoading] = useState(false);
+  const [moveContextError, setMoveContextError] = useState<string | null>(null);
+
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const requestIdRef = useRef(0);
   const validationReqRef = useRef(0);
   const insightReqRef = useRef(0);
+  const mlContextReqRef = useRef(0);
+  const moveContextReqRef = useRef(0);
 
   // On-demand AI validation state
   const [validating, setValidating] = useState(false);
@@ -456,6 +468,75 @@ export const SignalDetailDrawer = memo(function SignalDetailDrawer({
     }
   }, [symbol]);
 
+  const loadModelContext = useCallback(async () => {
+    if (!effectiveId || !symbol || symbol === '—') return;
+    const requestId = ++mlContextReqRef.current;
+    setMlContextLoading(true);
+    setMlContext(null);
+    setMlContextError(null);
+    try {
+      const res = await api.getMLCalibration(symbol);
+      if (mlContextReqRef.current !== requestId) return;
+      const parsed = parseCalibration(asObj((res as Record<string, unknown> | null)?.data));
+      if (!parsed) {
+        setMlContext(null);
+        setMlContextError('calibration summary not published');
+        return;
+      }
+      setMlContext(parsed);
+    } catch (e) {
+      if (mlContextReqRef.current !== requestId) return;
+      setMlContext(null);
+      setMlContextError(e instanceof Error ? e.message : 'calibration unavailable');
+    } finally {
+      if (mlContextReqRef.current === requestId) setMlContextLoading(false);
+    }
+  }, [effectiveId, symbol]);
+
+  const loadExpectedMove = useCallback(
+    async (spot: number) => {
+      if (!effectiveId || !symbol || symbol === '—') return;
+      const requestId = ++moveContextReqRef.current;
+      setMoveContextLoading(true);
+      setMoveContext(null);
+      setMoveContextError(null);
+      try {
+        const res = await api.projectExpectedMove({
+          underlying: symbol,
+          spot,
+          direction,
+          horizon: 'INTRADAY',
+          ...(target1 !== null ? { structural_target: target1 } : {}),
+        });
+        if (moveContextReqRef.current !== requestId) return;
+        const envelope = asObj(res);
+        const rec = asObj(envelope?.['data']) ?? envelope;
+        const spotPrice = asNum(rec?.['spot_price']);
+        if (spotPrice === null || spotPrice <= 0) {
+          setMoveContext(null);
+          setMoveContextError('projection returned no spot price');
+          return;
+        }
+        setMoveContext(rec as unknown as ExpectedMoveData);
+      } catch (e) {
+        if (moveContextReqRef.current !== requestId) return;
+        setMoveContext(null);
+        setMoveContextError(e instanceof Error ? e.message : 'expected move unavailable');
+      } finally {
+        if (moveContextReqRef.current === requestId) setMoveContextLoading(false);
+      }
+    },
+    [effectiveId, symbol, direction, target1],
+  );
+
+  // Expected move anchors only on a published live mark (dossier/audit), never on a guess.
+  useEffect(() => {
+    if (!isDrawerOpen || !effectiveId) return;
+    const spot = asNum(dive?.current_market_price) ?? asNum(audit?.current_price);
+    if (spot === null || spot <= 0) return;
+    void loadExpectedMove(spot);
+  }, [isDrawerOpen, effectiveId, dive, audit, loadExpectedMove]);
+
   // Open / signal change: reset and load once
   useEffect(() => {
     if (!isDrawerOpen || !effectiveId) return;
@@ -474,8 +555,17 @@ export const SignalDetailDrawer = memo(function SignalDetailDrawer({
     setDeepInsightData(null);
     setDeepInsightError(null);
     setDeepInsightLoading(false);
+    mlContextReqRef.current += 1;
+    moveContextReqRef.current += 1;
+    setMlContext(null);
+    setMlContextError(null);
+    setMlContextLoading(false);
+    setMoveContext(null);
+    setMoveContextError(null);
+    setMoveContextLoading(false);
     void loadDossier();
-  }, [isDrawerOpen, effectiveId, loadDossier]);
+    void loadModelContext();
+  }, [isDrawerOpen, effectiveId, loadDossier, loadModelContext]);
 
   // Handle Esc key to close & Tab focus trap
   useEffect(() => {
@@ -589,6 +679,42 @@ export const SignalDetailDrawer = memo(function SignalDetailDrawer({
     }));
 
   const markPrice = asNum(dive?.current_market_price) ?? asNum(audit?.current_price);
+
+  // Model & risk context — every number comes from a published payload, never a guess.
+  const mlOverall = mlContext?.overall ?? null;
+  const mlHitRate = asNum(mlOverall?.hit_rate);
+  const mlValue =
+    mlOverall !== null && mlOverall.n > 0 && mlHitRate !== null
+      ? `${fmtPct01(mlHitRate)} · n=${mlOverall.n}`
+      : '—';
+  const mlNote = mlContextError
+    ? mlContextError
+    : mlContext !== null && (mlContext.cells.length === 0 || mlOverall === null || mlOverall.n === 0)
+      ? `no settled ML predictions for ${symbol} yet`
+      : mlOverall !== null && mlOverall.n < 30
+        ? 'n<30 — hit rate is statistical noise'
+        : null;
+
+  const movePoints = asNum(moveContext?.expected_move_points);
+  const moveValue = movePoints !== null ? `±${fmtNum(movePoints, 1)} pts` : '—';
+  const moveParts: string[] = [];
+  if (moveContext) {
+    const t1Pts = asNum(moveContext.conservative_move_points);
+    const t2Pts = asNum(moveContext.aggressive_move_points);
+    const velocity = asNum(moveContext.expected_velocity_pts_per_hour);
+    if (t1Pts !== null) moveParts.push(`T1 ${fmtNum(t1Pts, 1)} pts`);
+    if (t2Pts !== null) moveParts.push(`T2 ${fmtNum(t2Pts, 1)} pts`);
+    if (velocity !== null) moveParts.push(`${fmtSigned(velocity, 1)} pts/h`);
+  }
+  const moveNote = moveContextError
+    ? moveContextError
+    : moveContext === null && !moveContextLoading
+      ? markPrice === null
+        ? 'live mark unavailable — projection not attempted'
+        : 'projection unavailable'
+      : moveContext !== null && movePoints === null
+        ? 'projection published no move magnitude'
+        : null;
 
   // Execution & P&L audit fields (if executed)
   const fillPrice = asNum(audit?.actual_fill_price ?? audit?.fill_price);
@@ -787,6 +913,46 @@ export const SignalDetailDrawer = memo(function SignalDetailDrawer({
                     ) : (
                       <span>{marginNote ?? 'margin preview unavailable'}</span>
                     )}
+                  </div>
+                </div>
+              </section>
+
+              {/* Model & risk context */}
+              <section className="card" aria-label="Model and risk context">
+                <div className="card-hd">
+                  <h3 className="card-title">Model &amp; risk context</h3>
+                  <span className="card-meta">{symbol}</span>
+                </div>
+                <div className="card-bd" style={{ padding: 0 }}>
+                  <div className="tbl-wrap" style={{ border: 0 }}>
+                    <table className="tbl tbl-dense">
+                      <tbody>
+                        <tr>
+                          <td style={{ color: 'var(--ds-text-secondary)' }}>ML calibration</td>
+                          <td className="r num">{mlValue}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ color: 'var(--ds-text-secondary)' }}>Expected move · 1h</td>
+                          <td className="r num">{moveValue}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderTop: '1px solid var(--ds-border-subtle)',
+                      fontSize: 11.5,
+                      color: 'var(--ds-text-secondary)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    {mlContextLoading || moveContextLoading ? <span>loading model context…</span> : null}
+                    {!mlContextLoading && mlNote ? <span>ML calibration — {mlNote}</span> : null}
+                    {!moveContextLoading && moveNote ? <span>Expected move — {moveNote}</span> : null}
+                    {moveParts.length > 0 ? <span className="num">{moveParts.join(' · ')}</span> : null}
                   </div>
                 </div>
               </section>
