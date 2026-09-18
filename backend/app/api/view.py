@@ -11,6 +11,11 @@ One failing leg can never fail the endpoint.
 Per-section envelope (exactly): `value`, `updated_at` (ISO-8601 UTC),
 `freshness_s` (age of the section value in whole seconds), `degraded`,
 `version` (content hash-gated, increments only when the value changes).
+
+P3 additive sections (`paper`, `forecast`, `algo`) extend the same envelope for
+state the frontend used to poll. `SECTION_KEYS` keeps the original seven names
+and order and appends the new three, so existing consumers' snapshots stay
+stable.
 """
 from __future__ import annotations
 
@@ -19,19 +24,30 @@ import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import structlog
 from fastapi import APIRouter
+from pydantic import BaseModel
 
+from app.algo.algo_service import (
+    algo_account_service,
+    algo_order_service,
+    algo_signals_service,
+)
 from app.api import dashboard as dashboard_api
 from app.api import futures as futures_api
 from app.api import health as health_api
 from app.api import signals as signals_api
 from app.api.dashboard import DashboardSummary, SUMMARY_FRESH_TTL
+from app.core import database as database_module
+from app.core.security import SIGNAL_BOOK_USER_ID
 from app.event_engine.service import event_engine_service
+from app.services.paper_service import paper_service
+from app.signals.portfolio_greeks import portfolio_greeks_ledger
 from app.signals.safety.kill_switch import kill_switch
 
 logger = structlog.get_logger(__name__)
@@ -42,6 +58,8 @@ VIEW_NAME = "command"
 VIEW_VERSION = 1
 
 #: Frozen section set for CommandView v1 — the contract snapshot.
+#: P3: the original seven names/order are untouched; `paper`, `forecast` and
+#: `algo` are appended so the stream can replace their remaining REST pollers.
 SECTION_KEYS: tuple[str, ...] = (
     "market",
     "regime",
@@ -50,6 +68,9 @@ SECTION_KEYS: tuple[str, ...] = (
     "kill_switch",
     "ml",
     "risk_events",
+    "paper",
+    "forecast",
+    "algo",
 )
 
 #: Short TTL for the active-signals leg: it fans out live quote requests and is
@@ -66,6 +87,32 @@ FUTURES_SYMBOLS: tuple[str, ...] = ("NIFTY", "BANKNIFTY")
 EVENT_RISK_UNDERLYING = "BANKNIFTY"
 _futures_cache: dict[str, tuple[float, dict[str, Any], datetime | None]] = {}
 _event_risk_cache: dict[str, tuple[float, dict[str, Any] | None, datetime | None]] = {}
+
+#: P3 additive-section TTLs, tuned to each source's existing poll cadence:
+#: paper MTM ~4s, research forecast ~60s (heavy multi-timeframe compute), algo
+#: account/exposure/orders ~5s. The unified stream composes every ~2s; these
+#: caches are what keep that cadence off the underlying services.
+PAPER_FRESH_TTL = 4.0
+FORECAST_FRESH_TTL = 60.0
+ALGO_FRESH_TTL = 5.0
+
+#: The stream composes one global view for every subscriber (no request
+#: identity), so the forecast section pins NIFTY at the 1h horizon — the same
+#: instrument/horizon the Command track record renders.
+FORECAST_INSTRUMENT = "NIFTY 50"
+FORECAST_HORIZON = "1h"
+FORECAST_PREDICTIONS_LIMIT = 50
+
+#: Account-scoped algo legs resolve against the reserved system identity rather
+#: than an arbitrary caller: this section is shared by all subscribers, so no
+#: user's private account belongs in it. Same owner the anonymous paper shard
+#: persists under.
+ALGO_COMPOSE_USER_ID = SIGNAL_BOOK_USER_ID
+ALGO_ORDERS_LIMIT = 50
+
+_paper_cache: dict[str, tuple[float, _Leg]] = {}
+_forecast_cache: dict[str, tuple[float, _Leg]] = {}
+_algo_cache: dict[str, tuple[float, _Leg]] = {}
 
 #: section -> (sha256(value), version). Single-process asyncio: this map is only
 #: touched synchronously (no await between read and update), so no locks needed.
@@ -107,6 +154,36 @@ def _join_errors(errors: dict[str, str]) -> str | None:
     if not errors:
         return None
     return "; ".join(f"{k}: {v}" for k, v in errors.items())
+
+
+def _short_error(exc: BaseException) -> str:
+    """One-line, bounded failure label for a degraded leg error string."""
+    return f"{type(exc).__name__}: {str(exc)[:150]}"
+
+
+def _as_json(value: Any) -> Any:
+    """JSON-able view of a service payload (pydantic model/list or plain data)."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, (list, tuple)):
+        return [_as_json(item) for item in value]
+    return value
+
+
+@asynccontextmanager
+async def _db_session():
+    """Session for non-request composition; None when no DB is configured.
+
+    Mirrors the ``get_db_session`` dependency without a request scope (the
+    stream's section loop is not request-bound). Resolved through the module
+    attribute so test isolation patches still apply.
+    """
+    factory = database_module.get_async_session_factory()
+    if factory is None:
+        yield None
+        return
+    async with factory() as session:
+        yield session
 
 
 def _section_version(section: str, value: Any) -> int:
@@ -362,6 +439,165 @@ async def _leg_kill_switch() -> _Leg:
     return _Leg(value=kill_switch.status(), updated_at=_now())
 
 
+async def _leg_paper() -> _Leg:
+    """Paper portfolio + positions, cached ~4s, fail-open per leg.
+
+    Reuses ``paper_service`` directly — the same service behind
+    ``GET /api/v1/paper/portfolio`` and ``GET /api/v1/paper/positions``. The
+    composer has no request identity, so it reads the anonymous shard exactly
+    as those endpoints do for ``parse_user_uuid(None)``. A leg that raises
+    becomes ``null``; the other leg's real payload is still surfaced.
+    """
+    cached = _paper_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < PAPER_FRESH_TTL:
+        return cached[1]
+
+    values: dict[str, Any] = {"portfolio": None, "positions": None}
+    leg_errors: dict[str, str] = {}
+    async with _db_session() as session:
+        try:
+            summary = await paper_service.get_portfolio_summary(session, None)
+            values["portfolio"] = _as_json(summary)
+        except Exception as exc:
+            leg_errors["portfolio"] = _short_error(exc)
+            logger.warning("command_view_paper_portfolio_failed", error=str(exc)[:150])
+        try:
+            positions = await paper_service.get_positions(session, None)
+            values["positions"] = _as_json(positions)
+        except Exception as exc:
+            leg_errors["positions"] = _short_error(exc)
+            logger.warning("command_view_paper_positions_failed", error=str(exc)[:150])
+
+    leg = _Leg(
+        value=values,
+        updated_at=_now(),
+        degraded=bool(leg_errors),
+        error=_join_errors(leg_errors),
+    )
+    _paper_cache["default"] = (time.monotonic(), leg)
+    return leg
+
+
+async def _leg_forecast() -> _Leg:
+    """NIFTY research forecast + prediction track record, cached ~60s.
+
+    Reuses ``trend_forecaster`` (the engine behind
+    ``GET /api/v1/research/forecast/{horizon}``) and
+    ``PredictionService.list_predictions`` (behind
+    ``GET /api/v1/research/predictions``, the track-record source). The section
+    is composed with ``record=False``: minting an immutable prediction on every
+    stream refresh would be noise, not research. A failing leg is an honest
+    ``null``; the other stays populated.
+    """
+    cached = _forecast_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < FORECAST_FRESH_TTL:
+        return cached[1]
+
+    from app.research.predictions import PredictionService
+    from app.research.trend_forecast import trend_forecaster
+
+    values: dict[str, Any] = {"forecast": None, "predictions": None}
+    leg_errors: dict[str, str] = {}
+    async with _db_session() as session:
+        try:
+            forecast = await trend_forecaster.forecast(
+                instrument=FORECAST_INSTRUMENT,
+                horizon=FORECAST_HORIZON,
+                record=False,
+                session=session,
+                include_layers=False,
+                include_explain=True,
+            )
+            values["forecast"] = _as_json(forecast)
+        except Exception as exc:
+            leg_errors["forecast"] = _short_error(exc)
+            logger.warning("command_view_forecast_failed", error=str(exc)[:150])
+        try:
+            predictions = await PredictionService.list_predictions(
+                instrument=FORECAST_INSTRUMENT,
+                limit=FORECAST_PREDICTIONS_LIMIT,
+                session=session,
+            )
+            values["predictions"] = _as_json(predictions)
+        except Exception as exc:
+            leg_errors["predictions"] = _short_error(exc)
+            logger.warning("command_view_forecast_predictions_failed", error=str(exc)[:150])
+
+    leg = _Leg(
+        value=values,
+        updated_at=_now(),
+        degraded=bool(leg_errors),
+        error=_join_errors(leg_errors),
+    )
+    _forecast_cache["default"] = (time.monotonic(), leg)
+    return leg
+
+
+async def _leg_algo() -> _Leg:
+    """Algo account/mode, exposure, orders and portfolio greeks, cached ~5s.
+
+    Reuses the same services behind ``GET /api/v1/algo/account``,
+    ``/api/v1/algo/exposure``, ``/api/v1/algo/orders`` and
+    ``GET /api/v1/options-intelligence/portfolio-greeks/summary``. Each of the
+    four legs is independently nullable: one failure degrades the section
+    without taking down its siblings or the view.
+    """
+    cached = _algo_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < ALGO_FRESH_TTL:
+        return cached[1]
+
+    values: dict[str, Any] = {
+        "account": None,
+        "exposure": None,
+        "orders": None,
+        "portfolio_greeks": None,
+    }
+    leg_errors: dict[str, str] = {}
+    async with _db_session() as session:
+        try:
+            account = await algo_account_service.get_account_detail(
+                session, ALGO_COMPOSE_USER_ID
+            )
+            values["account"] = _as_json(account)
+        except Exception as exc:
+            leg_errors["account"] = _short_error(exc)
+            logger.warning("command_view_algo_account_failed", error=str(exc)[:150])
+        try:
+            exposure = await algo_signals_service.get_exposure(
+                session, ALGO_COMPOSE_USER_ID
+            )
+            values["exposure"] = _as_json(exposure)
+        except Exception as exc:
+            leg_errors["exposure"] = _short_error(exc)
+            logger.warning("command_view_algo_exposure_failed", error=str(exc)[:150])
+        try:
+            orders = await algo_order_service.list_orders(
+                session, ALGO_COMPOSE_USER_ID, limit=ALGO_ORDERS_LIMIT
+            )
+            values["orders"] = _as_json(orders)
+        except Exception as exc:
+            leg_errors["orders"] = _short_error(exc)
+            logger.warning("command_view_algo_orders_failed", error=str(exc)[:150])
+        try:
+            greeks = portfolio_greeks_ledger.get_summary()
+            values["portfolio_greeks"] = _as_json(greeks)
+        except Exception as exc:
+            leg_errors["portfolio_greeks"] = _short_error(exc)
+            logger.warning("command_view_algo_greeks_failed", error=str(exc)[:150])
+
+    leg = _Leg(
+        value=values,
+        updated_at=_now(),
+        degraded=bool(leg_errors),
+        error=_join_errors(leg_errors),
+    )
+    _algo_cache["default"] = (time.monotonic(), leg)
+    return leg
+
+
 _LEGS: dict[str, Callable[[], Awaitable[_Leg]]] = {
     "market": _leg_market,
     "regime": _leg_regime,
@@ -370,6 +606,9 @@ _LEGS: dict[str, Callable[[], Awaitable[_Leg]]] = {
     "kill_switch": _leg_kill_switch,
     "ml": _leg_ml,
     "risk_events": _leg_risk_events,
+    "paper": _leg_paper,
+    "forecast": _leg_forecast,
+    "algo": _leg_algo,
 }
 
 

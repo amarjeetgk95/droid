@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app.algo.algo_service import (
+    algo_account_service,
+    algo_order_service,
+    algo_signals_service,
+)
 from app.api import dashboard as dashboard_api
 from app.api import futures as futures_api
 from app.api import health as health_api
@@ -20,6 +25,13 @@ from app.api.dashboard import DashboardSummary
 from app.event_engine.risk_overlay import EventRiskParameters
 from app.event_engine.service import event_engine_service
 from app.main import app
+from app.models.paper import PortfolioSummary, VirtualPosition
+from app.research.enums import Direction, ForecastHorizon
+from app.research.models import ResearchPrediction
+from app.research.predictions import PredictionService
+from app.research.trend_forecast import trend_forecaster
+from app.services.paper_service import paper_service
+from app.signals.portfolio_greeks import PortfolioGreeksSummary, portfolio_greeks_ledger
 
 client = TestClient(app)
 
@@ -32,6 +44,9 @@ EXPECTED_SECTIONS = {
     "kill_switch",
     "ml",
     "risk_events",
+    "paper",
+    "forecast",
+    "algo",
 }
 ENVELOPE_KEYS = {"value", "updated_at", "freshness_s", "degraded", "version"}
 
@@ -80,6 +95,119 @@ FIXED_FUTURES_OVERVIEW = {
         "contracts": [{"symbol": "FUT-1", "ltp": 24951.0, "basis": 81.0}],
     },
 }
+
+# ── P3 additive sections: paper / forecast / algo ────────────────────────
+FIXED_PAPER_PORTFOLIO = {
+    "virtual_capital": 1000000.0,
+    "available_margin": 890000.0,
+    "used_margin": 110000.0,
+    "margin_utilization_pct": 11.0,
+    "total_realized_pnl": 4200.0,
+    "total_unrealized_pnl": -1150.0,
+    "total_portfolio_pnl": 3050.0,
+    "open_positions_count": 1,
+}
+FIXED_PAPER_POSITION = {
+    "position_id": "pos-1",
+    "symbol": "NIFTY24DEC24000CE",
+    "underlying": "NIFTY",
+    "instrument_type": "OPTION",
+    "side": "BUY",
+    "product": "INTRADAY",
+    "quantity": 75,
+    "average_price": 120.5,
+    "ltp": 105.25,
+    "unrealized_pnl": -1143.75,
+    "realized_pnl": 0.0,
+    "used_margin": 9037.5,
+    "is_open": True,
+}
+
+FIXED_PREDICTION_TS = "2026-09-18T07:20:00+00:00"
+FIXED_FORECAST_PAYLOAD = {
+    "instrument": "NIFTY 50",
+    "timeframe": "1h",
+    "forecast_horizon": "1h",
+    "direction": "BULLISH",
+    "score": 42.0,
+    "confidence": 0.7,
+    "status": "RESEARCH",
+    "current_price": 24710.0,
+    "data_quality": "HEALTHY",
+}
+
+FIXED_ALGO_ACCOUNT = {
+    "account_id": "00000000-0000-0000-0000-0000000000a1",
+    "mode": "PAPER",
+    "is_active": True,
+    "display_name": "Signal Book",
+    "capital": {
+        "investment_limit": "3000.00",
+        "available": "3000.00",
+        "reserved": "0.00",
+        "deployed": "0.00",
+        "daily_loss": "0.00",
+        "daily_loss_limit": "500.00",
+        "is_breached": False,
+    },
+    "kill_switch": {"is_killed": False, "kill_level": "NONE"},
+    "consent": {"acknowledged": True, "disclosure_version": "v1.0-2026-08-31"},
+}
+FIXED_ALGO_EXPOSURE = {
+    "gross_exposure": "110000.00",
+    "net_exposure": "110000.00",
+    "long_exposure": "110000.00",
+    "short_exposure": "0.00",
+    "portfolio_delta": "75.5",
+    "portfolio_gamma": "0.4",
+    "portfolio_theta": "-850.0",
+    "portfolio_vega": "2100.0",
+    "by_underlying": {"NIFTY": "110000.00"},
+    "by_strategy": {"unknown": "110000.00"},
+}
+FIXED_ALGO_ORDER = {
+    "client_order_id": "0f6b8f8e-0000-4000-8000-000000000001",
+    "symbol": "NIFTY24DEC24000CE",
+    "side": "BUY",
+    "quantity": 75,
+    "price": "120.50",
+    "order_type": "LIMIT",
+    "status": "PENDING",
+    "fill_price": None,
+    "fill_quantity": 0,
+    "broker_order_id": None,
+    "is_paper": True,
+    "rejection_reason": None,
+    "created_at": FIXED_PREDICTION_TS,
+}
+FIXED_PORTFOLIO_GREEKS = {
+    "total_delta": 75.5,
+    "total_gamma": 0.4,
+    "total_theta_day": -850.0,
+    "total_vega": 2100.0,
+    "gross_delta": 75.5,
+    "gross_gamma": 0.4,
+    "gross_theta_day": 850.0,
+    "gross_vega": 2100.0,
+    "total_open_positions": 1,
+}
+
+
+def _fixed_prediction() -> ResearchPrediction:
+    return ResearchPrediction(
+        prediction_id="pred-1",
+        indicator_id="trend_forecast_1h",
+        indicator_version="v1",
+        instrument="NIFTY 50",
+        timeframe="1h",
+        timestamp=datetime.fromisoformat(FIXED_PREDICTION_TS),
+        current_price=24710.0,
+        direction=Direction.BULLISH,
+        score=42.0,
+        confidence=0.7,
+        forecast_horizon=ForecastHorizon.HORIZON_1H,
+        horizon_candles=1,
+    )
 
 
 def _expected_futures(symbol: str) -> dict:
@@ -154,12 +282,18 @@ def _clear_view_state():
     view_api._signals_cache.clear()
     view_api._futures_cache.clear()
     view_api._event_risk_cache.clear()
+    view_api._paper_cache.clear()
+    view_api._forecast_cache.clear()
+    view_api._algo_cache.clear()
     view_api._section_versions.clear()
     yield
     dashboard_api._summary_cache.clear()
     view_api._signals_cache.clear()
     view_api._futures_cache.clear()
     view_api._event_risk_cache.clear()
+    view_api._paper_cache.clear()
+    view_api._forecast_cache.clear()
+    view_api._algo_cache.clear()
     view_api._section_versions.clear()
 
 
@@ -193,12 +327,44 @@ def _stable_legs(monkeypatch):
     async def _health():
         return dict(FIXED_HEALTH_PAYLOAD)
 
+    async def _paper_portfolio(session=None, user_id=None):
+        return PortfolioSummary(**FIXED_PAPER_PORTFOLIO)
+
+    async def _paper_positions(session=None, user_id=None):
+        return [VirtualPosition(**FIXED_PAPER_POSITION)]
+
+    async def _forecast(**kwargs):
+        return dict(FIXED_FORECAST_PAYLOAD)
+
+    async def _predictions(indicator_id=None, instrument=None, limit=50, session=None):
+        return [_fixed_prediction()]
+
+    async def _account(session=None, user_id=None):
+        return dict(FIXED_ALGO_ACCOUNT)
+
+    async def _exposure(session=None, user_id=None):
+        return dict(FIXED_ALGO_EXPOSURE)
+
+    async def _orders(session=None, user_id=None, status=None, symbol=None, limit=50):
+        return [dict(FIXED_ALGO_ORDER)]
+
+    def _greeks():
+        return PortfolioGreeksSummary(**FIXED_PORTFOLIO_GREEKS)
+
     monkeypatch.setattr(dashboard_api, "_compute_summary", _summary)
     monkeypatch.setattr(signals_api, "build_active_signals_payload", _signals)
     monkeypatch.setattr(health_api, "health_subsystems", _health)
     monkeypatch.setattr(futures_api, "build_futures_overview", _live_futures_overview)
     monkeypatch.setattr(event_engine_service, "get_risk_overlay", _fixed_event_risk)
     monkeypatch.setattr(event_engine_service, "_initialized", True)
+    monkeypatch.setattr(paper_service, "get_portfolio_summary", _paper_portfolio)
+    monkeypatch.setattr(paper_service, "get_positions", _paper_positions)
+    monkeypatch.setattr(trend_forecaster, "forecast", _forecast)
+    monkeypatch.setattr(PredictionService, "list_predictions", _predictions)
+    monkeypatch.setattr(algo_account_service, "get_account_detail", _account)
+    monkeypatch.setattr(algo_signals_service, "get_exposure", _exposure)
+    monkeypatch.setattr(algo_order_service, "list_orders", _orders)
+    monkeypatch.setattr(portfolio_greeks_ledger, "get_summary", _greeks)
 
 
 def test_command_view_contract_snapshot(_stable_legs):
@@ -247,6 +413,22 @@ def test_command_view_contract_snapshot(_stable_legs):
     assert body["sections"]["feed_health"]["value"] == FIXED_HEALTH_PAYLOAD
     assert body["sections"]["kill_switch"]["value"]["active"] is False
     assert body["sections"]["ml"]["value"] == {"ml_prediction": FIXED_ML}
+
+    paper = body["sections"]["paper"]["value"]
+    assert paper["portfolio"] == FIXED_PAPER_PORTFOLIO
+    assert paper["positions"] == [FIXED_PAPER_POSITION]
+
+    forecast = body["sections"]["forecast"]["value"]
+    assert forecast["forecast"] == FIXED_FORECAST_PAYLOAD
+    assert forecast["predictions"] == [_fixed_prediction().model_dump(mode="json")]
+
+    algo = body["sections"]["algo"]["value"]
+    assert algo["account"] == FIXED_ALGO_ACCOUNT
+    assert algo["exposure"] == FIXED_ALGO_EXPOSURE
+    assert algo["orders"] == [FIXED_ALGO_ORDER]
+    assert algo["portfolio_greeks"] == PortfolioGreeksSummary(
+        **FIXED_PORTFOLIO_GREEKS
+    ).model_dump(mode="json")
 
     risk_events = body["sections"]["risk_events"]["value"]
     assert risk_events["fii_dii"] == FIXED_FII
@@ -451,3 +633,147 @@ def test_risk_events_event_overlay_failure_is_null_and_isolated(_stable_legs, mo
     assert body["sections"]["regime"]["degraded"] is False
     assert body["sections"]["regime"]["value"]["futures"]["NIFTY"] == _expected_futures("NIFTY")
     assert set(body["errors"]) == {"risk_events"}
+
+
+# ── P3 additive sections: paper / forecast / algo ────────────────────────
+
+
+def test_new_section_ttls_match_poll_cadence():
+    assert 0.0 < view_api.PAPER_FRESH_TTL <= 4.0
+    assert view_api.FORECAST_FRESH_TTL >= 60.0
+    assert 0.0 < view_api.ALGO_FRESH_TTL <= 5.0
+
+
+def test_new_sections_reuse_cached_sources_within_ttl(_stable_legs, monkeypatch):
+    calls: dict[str, int] = {}
+
+    def _count(name: str) -> None:
+        calls[name] = calls.get(name, 0) + 1
+
+    async def _paper_portfolio(session=None, user_id=None):
+        _count("paper_portfolio")
+        return PortfolioSummary(**FIXED_PAPER_PORTFOLIO)
+
+    async def _paper_positions(session=None, user_id=None):
+        _count("paper_positions")
+        return [VirtualPosition(**FIXED_PAPER_POSITION)]
+
+    async def _forecast(**kwargs):
+        _count("forecast")
+        return dict(FIXED_FORECAST_PAYLOAD)
+
+    async def _predictions(indicator_id=None, instrument=None, limit=50, session=None):
+        _count("predictions")
+        return [_fixed_prediction()]
+
+    async def _account(session=None, user_id=None):
+        _count("account")
+        return dict(FIXED_ALGO_ACCOUNT)
+
+    async def _exposure(session=None, user_id=None):
+        _count("exposure")
+        return dict(FIXED_ALGO_EXPOSURE)
+
+    async def _orders(session=None, user_id=None, status=None, symbol=None, limit=50):
+        _count("orders")
+        return [dict(FIXED_ALGO_ORDER)]
+
+    def _greeks():
+        _count("greeks")
+        return PortfolioGreeksSummary(**FIXED_PORTFOLIO_GREEKS)
+
+    monkeypatch.setattr(paper_service, "get_portfolio_summary", _paper_portfolio)
+    monkeypatch.setattr(paper_service, "get_positions", _paper_positions)
+    monkeypatch.setattr(trend_forecaster, "forecast", _forecast)
+    monkeypatch.setattr(PredictionService, "list_predictions", _predictions)
+    monkeypatch.setattr(algo_account_service, "get_account_detail", _account)
+    monkeypatch.setattr(algo_signals_service, "get_exposure", _exposure)
+    monkeypatch.setattr(algo_order_service, "list_orders", _orders)
+    monkeypatch.setattr(portfolio_greeks_ledger, "get_summary", _greeks)
+
+    first = client.get("/api/v1/view/command").json()
+    second = client.get("/api/v1/view/command").json()
+
+    # The ~2s stream cadence must hit each source once per TTL window, not once
+    # per compose.
+    assert calls == {
+        "paper_portfolio": 1,
+        "paper_positions": 1,
+        "forecast": 1,
+        "predictions": 1,
+        "account": 1,
+        "exposure": 1,
+        "orders": 1,
+        "greeks": 1,
+    }
+    for name in ("paper", "forecast", "algo"):
+        assert first["sections"][name]["value"] == second["sections"][name]["value"]
+
+
+def test_paper_section_degrades_leg_independently(_stable_legs, monkeypatch):
+    async def _boom(session=None, user_id=None):
+        raise RuntimeError("paper positions store unreachable")
+
+    monkeypatch.setattr(paper_service, "get_positions", _boom)
+    view_api._paper_cache.clear()
+
+    r = client.get("/api/v1/view/command")
+    assert r.status_code == 200
+    body = r.json()
+
+    paper = body["sections"]["paper"]
+    assert paper["value"]["portfolio"] == FIXED_PAPER_PORTFOLIO
+    assert paper["value"]["positions"] is None
+    assert paper["degraded"] is True
+    assert "paper positions store unreachable" in body["errors"]["paper"]
+
+    # No fabricated numbers where the source failed, and the other sections
+    # stay healthy.
+    assert body["sections"]["forecast"]["degraded"] is False
+    assert body["sections"]["algo"]["degraded"] is False
+
+
+def test_forecast_section_degrades_honestly(_stable_legs, monkeypatch):
+    async def _boom(**kwargs):
+        raise RuntimeError("forecast engine offline")
+
+    monkeypatch.setattr(trend_forecaster, "forecast", _boom)
+    view_api._forecast_cache.clear()
+
+    r = client.get("/api/v1/view/command")
+    assert r.status_code == 200
+    body = r.json()
+
+    forecast = body["sections"]["forecast"]
+    assert forecast["value"]["forecast"] is None
+    assert forecast["value"]["predictions"] == [_fixed_prediction().model_dump(mode="json")]
+    assert forecast["degraded"] is True
+    assert "forecast engine offline" in body["errors"]["forecast"]
+
+    assert body["sections"]["paper"]["degraded"] is False
+    assert body["sections"]["algo"]["degraded"] is False
+
+
+def test_algo_section_degrades_leg_independently(_stable_legs, monkeypatch):
+    async def _boom(session=None, user_id=None):
+        raise RuntimeError("exposure service unavailable")
+
+    monkeypatch.setattr(algo_signals_service, "get_exposure", _boom)
+    view_api._algo_cache.clear()
+
+    r = client.get("/api/v1/view/command")
+    assert r.status_code == 200
+    body = r.json()
+
+    algo = body["sections"]["algo"]
+    assert algo["value"]["account"] == FIXED_ALGO_ACCOUNT
+    assert algo["value"]["exposure"] is None
+    assert algo["value"]["orders"] == [FIXED_ALGO_ORDER]
+    assert algo["value"]["portfolio_greeks"] == PortfolioGreeksSummary(
+        **FIXED_PORTFOLIO_GREEKS
+    ).model_dump(mode="json")
+    assert algo["degraded"] is True
+    assert "exposure service unavailable" in body["errors"]["algo"]
+
+    assert body["sections"]["paper"]["degraded"] is False
+    assert body["sections"]["forecast"]["degraded"] is False
