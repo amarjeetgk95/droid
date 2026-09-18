@@ -1,9 +1,11 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { usePolling } from '@/hooks/usePolling';
+import { useAppStreamRefresh, useCommandSection } from '@/context/AppStreamContext';
+import { isNiftySymbol } from '@/lib/symbols';
 import { useMarketSession } from '@/hooks/useMarketSession';
+import { usePolling } from '@/hooks/usePolling';
 import { Card, DirectionBadge, EmptyNote, fmtClock, fmtNum, fmtSigned } from '@/components/ui/desk';
 import { DataTable, type Column } from '@/components/ui/data-table';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
@@ -31,6 +33,18 @@ function predictionHorizon(p: Record<string, unknown>): string {
   return typeof raw === 'string' ? raw : '';
 }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function asPredictionRows(v: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (row): row is Record<string, unknown> =>
+      Boolean(row) && typeof row === 'object' && !Array.isArray(row),
+  );
+}
+
 export function ForecastOutcomes({
   instrument,
   horizon = '1h',
@@ -39,23 +53,59 @@ export function ForecastOutcomes({
   horizon?: string;
 }) {
   const { isOpen } = useMarketSession();
-  const [predictions, setPredictions] = useState<Array<Record<string, unknown>>>([]);
-  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [measuringId, setMeasuringId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [lastAt, setLastAt] = useState<Date | null>(null);
-  const loadedRef = useRef(false);
-  const hasDataRef = useRef(false);
-  // P3-4: settleable-only toggle, default on (unsettled/late-session excluded).
-  const [settleableOnly, setSettleableOnly] = useState(true);
+  const refresh = useAppStreamRefresh();
+  // The unified stream's `forecast` slice pins NIFTY 50; only NIFTY-family
+  // requests may consume its prediction rows (the section is global). Other
+  // instruments keep the pre-conversion REST poll below (single owner,
+  // original 60s cadence).
+  const section = useCommandSection('forecast');
+  const streamCovered = isNiftySymbol(instrument);
 
-  const load = useCallback(async () => {
-    const initial = !loadedRef.current;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
+  const sectionValue = asRecord(section?.value);
+  const predictionsRaw = sectionValue?.predictions;
+  const rawPredictions = Array.isArray(predictionsRaw) ? (predictionsRaw as unknown[]) : null;
+
+  const streamPredictions = useMemo(() => {
+    if (!streamCovered || rawPredictions === null) return [];
+    return asPredictionRows(rawPredictions)
+      .filter((p) => predictionHorizon(p) === horizon)
+      .slice(0, 10);
+  }, [rawPredictions, horizon, streamCovered]);
+
+  const [lastStreamPredictions, setLastStreamPredictions] = useState<Array<Record<string, unknown>>>(
+    [],
+  );
+  useEffect(() => {
+    if (rawPredictions !== null) setLastStreamPredictions(streamPredictions);
+  }, [rawPredictions, streamPredictions]);
+
+  // Keep the last known stream rows visible while the section's predictions
+  // leg is degraded (same semantics as the old poller), never under a
+  // non-NIFTY label.
+  const streamRows = useMemo(
+    () =>
+      streamCovered
+        ? rawPredictions !== null
+          ? streamPredictions
+          : lastStreamPredictions
+        : [],
+    [streamCovered, rawPredictions, streamPredictions, lastStreamPredictions],
+  );
+
+  // Pre-conversion REST path: owned solely by this component for instruments
+  // the shared stream section does not cover.
+  const [restPredictions, setRestPredictions] = useState<Array<Record<string, unknown>>>([]);
+  const [restLoading, setRestLoading] = useState(true);
+  const [restRefreshing, setRestRefreshing] = useState(false);
+  const [restError, setRestError] = useState<string | null>(null);
+  const [restLastAt, setRestLastAt] = useState<Date | null>(null);
+  const restLoadedRef = useRef(false);
+  const restHasDataRef = useRef(false);
+
+  const loadRest = useCallback(async () => {
+    const initial = !restLoadedRef.current;
+    if (initial) setRestLoading(true);
+    else setRestRefreshing(true);
     try {
       const preds = (await api.listResearchPredictions({
         instrument,
@@ -64,42 +114,88 @@ export function ForecastOutcomes({
       const list = Array.isArray(preds)
         ? preds.filter((p) => predictionHorizon(p) === horizon).slice(0, 10)
         : [];
-      setPredictions(list);
-      setError(null);
-      setLastAt(new Date());
-      hasDataRef.current = true;
-      const outcomeMap: Record<string, Outcome> = {};
-      await Promise.allSettled(
-        list.map(async (p) => {
-          const pid = p.prediction_id as string | undefined;
-          if (!pid) return;
-          const out = (await api
-            .getResearchPredictionOutcome(pid)
-            .catch(() => null)) as (Outcome & { outcome_id?: string }) | null;
-          if (out && out.outcome_id) {
-            outcomeMap[pid] = out;
-          }
-        }),
-      );
-      if (Object.keys(outcomeMap).length > 0) {
-        setOutcomes((prev) => ({ ...prev, ...outcomeMap }));
-      }
+      setRestPredictions(list);
+      setRestError(null);
+      setRestLastAt(new Date());
+      restHasDataRef.current = true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Research predictions unavailable');
+      setRestError(err instanceof Error ? err.message : 'Research predictions unavailable');
     } finally {
-      loadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
+      restLoadedRef.current = true;
+      setRestLoading(false);
+      setRestRefreshing(false);
     }
   }, [instrument, horizon]);
 
-  usePolling(() => {
-    if (!isOpen && hasDataRef.current) return;
-    return load();
-  }, 60000);
+  usePolling(
+    () => {
+      if (streamCovered) return;
+      if (!isOpen && restHasDataRef.current) return;
+      return loadRest();
+    },
+    60000,
+    !streamCovered,
+  );
+
+  const rows = streamCovered ? streamRows : restPredictions;
+
+  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
+  const [measuringId, setMeasuringId] = useState<string | null>(null);
+  const [streamRefreshing, setStreamRefreshing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // P3-4: settleable-only toggle, default on (unsettled/late-session excluded).
+  const [settleableOnly, setSettleableOnly] = useState(true);
+
+  // Outcome enrichment: one bounded batch per fresh prediction list, never an
+  // interval. Measure stays a user-triggered mutation below.
+  const enrichmentSource = streamCovered ? streamPredictions : restPredictions;
+  useEffect(() => {
+    const ids = Array.from(
+      new Set(enrichmentSource.map((p) => String(p.prediction_id ?? '')).filter((id) => id.length > 0)),
+    );
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const results = await Promise.allSettled(
+        ids.map(async (pid) => {
+          const out = (await api.getResearchPredictionOutcome(pid).catch(() => null)) as Outcome;
+          return [pid, out] as const;
+        }),
+      );
+      if (cancelled) return;
+      const next: Record<string, Outcome> = {};
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value[1]?.outcome_id) {
+          next[result.value[0]] = result.value[1];
+        }
+      }
+      if (Object.keys(next).length > 0) {
+        setOutcomes((prev) => ({ ...prev, ...next }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enrichmentSource]);
+
+  const streamError =
+    streamCovered && section !== null && rawPredictions === null
+      ? 'research predictions section unavailable'
+      : null;
+
+  const error = streamCovered ? streamError : restError;
+  const loading = streamCovered ? section === null : restLoading;
+  const refreshing = streamCovered ? streamRefreshing : restRefreshing;
+
+  const lastAt = useMemo(() => {
+    if (!streamCovered) return restLastAt;
+    if (!section) return null;
+    const parsed = new Date(section.updated_at);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [streamCovered, restLastAt, section]);
 
   const stats = useMemo(() => {
-    const visible = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
+    const visible = settleableOnly ? rows.filter(isSettleablePred) : rows;
     const visibleIds = new Set(visible.map((p) => String(p.prediction_id ?? '')));
     const total = visible.length;
     const measuredEntries = Object.entries(outcomes)
@@ -117,7 +213,7 @@ export function ForecastOutcomes({
     const avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null;
     const avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null;
     return { total, measuredCount, correctCount, winRate, avgMfe, avgMae };
-  }, [predictions, outcomes, settleableOnly]);
+  }, [rows, outcomes, settleableOnly]);
 
   const handleMeasure = useCallback(async (predictionId: string) => {
     setMeasuringId(predictionId);
@@ -134,6 +230,19 @@ export function ForecastOutcomes({
     }
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    if (!streamCovered) {
+      await loadRest();
+      return;
+    }
+    setStreamRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setStreamRefreshing(false);
+    }
+  }, [refresh, streamCovered, loadRest]);
+
   const summary =
     stats.measuredCount > 0
       ? `${stats.correctCount}/${stats.measuredCount} correct · avg MFE ${
@@ -141,7 +250,7 @@ export function ForecastOutcomes({
         } · avg MAE ${stats.avgMae !== null ? fmtNum(stats.avgMae, 1) : '—'}`
       : 'No measured outcomes yet';
 
-  const visiblePredictions = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
+  const visiblePredictions = settleableOnly ? rows.filter(isSettleablePred) : rows;
 
   const columns = useMemo<Column<Record<string, unknown>>[]>(
     () => [
@@ -235,8 +344,8 @@ export function ForecastOutcomes({
         <button
           type="button"
           className="btn"
-          onClick={() => void load()}
-          disabled={refreshing || loading}
+          onClick={() => void handleRefresh()}
+          disabled={refreshing}
         >
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -273,7 +382,7 @@ export function ForecastOutcomes({
           }}
         >
           <span className="v-bear">Predictions unavailable — {error}</span>
-          {predictions.length > 0 ? <span className="muted"> Showing last known rows.</span> : null}
+          {rows.length > 0 ? <span className="muted"> Showing last known rows.</span> : null}
         </div>
       ) : null}
       {actionError ? (
@@ -283,7 +392,7 @@ export function ForecastOutcomes({
           </span>
         </div>
       ) : null}
-      {loading && predictions.length === 0 ? (
+      {loading && rows.length === 0 ? (
         <div style={{ display: 'grid', gap: 8 }}>
           <div className="skel" style={{ height: 14, width: '75%' }}>.</div>
           <div className="skel" style={{ height: 14, width: '60%' }}>.</div>
@@ -309,7 +418,7 @@ export function ForecastOutcomes({
           fetching={refreshing}
           marketClosed={!isOpen}
           dataQuality={error ? 'DEGRADED' : null}
-          sourceLabel="REST · 60s poll"
+          sourceLabel={streamCovered ? 'SSE · command stream' : 'REST · 60s poll'}
         />
       </div>
     </Card>

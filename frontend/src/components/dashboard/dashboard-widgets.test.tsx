@@ -4,7 +4,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act, cleanup } from '@testing-library/react';
 import type { VirtualPosition } from '@/lib/types';
 
-const { apiMock, sessionMock, polls } = vi.hoisted(() => {
+const { apiMock, sessionMock, polls, sectionMock, refreshMock } = vi.hoisted(() => {
   const apiMock: Record<string, ReturnType<typeof vi.fn>> = {
     listResearchPredictions: vi.fn(async () => []),
     getResearchPredictionOutcome: vi.fn(async () => {
@@ -16,7 +16,9 @@ const { apiMock, sessionMock, polls } = vi.hoisted(() => {
   };
   const sessionMock = { phase: 'OPEN', isOpen: true };
   const polls: Array<() => unknown> = [];
-  return { apiMock, sessionMock, polls };
+  const sectionMock: { current: unknown } = { current: null };
+  const refreshMock = vi.fn(async () => undefined);
+  return { apiMock, sessionMock, polls, sectionMock, refreshMock };
 });
 
 vi.mock('@/lib/api', () => ({ api: apiMock }));
@@ -28,6 +30,20 @@ vi.mock('@/hooks/usePolling', () => ({
     polls.push(cb);
   },
 }));
+vi.mock('@/context/AppStreamContext', () => ({
+  useCommandSection: (name: string) => (name === 'forecast' ? sectionMock.current : null),
+  useAppStreamRefresh: () => refreshMock,
+}));
+
+function sectionEnvelope(value: unknown, degraded = false) {
+  return {
+    value,
+    updated_at: '2026-09-18T07:22:01.000Z',
+    freshness_s: 1,
+    degraded,
+    version: 1,
+  };
+}
 
 import { ForecastOutcomes } from './ForecastOutcomes';
 import { PaperPnLWidget } from '@/components/command-center/PaperPnLWidget';
@@ -38,6 +54,8 @@ afterEach(() => {
   sessionMock.phase = 'OPEN';
   sessionMock.isOpen = true;
   polls.length = 0;
+  sectionMock.current = null;
+  apiMock.listResearchPredictions.mockResolvedValue([]);
 });
 
 async function flushPoll() {
@@ -48,40 +66,83 @@ async function flushPoll() {
   });
 }
 
-describe('ForecastOutcomes horizon filtering', () => {
-  it('filters on forecast_horizon, not the chart timeframe', async () => {
+describe('ForecastOutcomes stream consumption', () => {
+  it('filters the stream section on forecast_horizon, not the chart timeframe', async () => {
+    sectionMock.current = sectionEnvelope({
+      forecast: null,
+      predictions: [
+        {
+          prediction_id: 'p-1h',
+          forecast_horizon: '1h',
+          timeframe: '5m',
+          direction: 'BULLISH',
+          score: 42,
+          timestamp: '2026-09-17T10:00:00Z',
+        },
+        {
+          prediction_id: 'p-15m',
+          forecast_horizon: '15m',
+          timeframe: '1h',
+          direction: 'BEARISH',
+          score: -20,
+          timestamp: '2026-09-17T10:05:00Z',
+        },
+      ],
+    });
+    render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('NIFTY 50 · horizon 1h')).toBeTruthy();
+    expect(screen.getByText('BULLISH')).toBeTruthy();
+    expect(screen.queryByText('BEARISH')).toBeNull();
+    expect(apiMock.listResearchPredictions).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a degraded stream section instead of polling', async () => {
+    sectionMock.current = sectionEnvelope({ forecast: null, predictions: null }, true);
+    render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Predictions unavailable/)).toBeTruthy();
+    expect(apiMock.listResearchPredictions).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the REST fetch for non-NIFTY instruments instead of reusing stream rows', async () => {
+    sectionMock.current = sectionEnvelope({
+      forecast: null,
+      predictions: [
+        {
+          prediction_id: 'nifty-1h',
+          forecast_horizon: '1h',
+          direction: 'BULLISH',
+          score: 42,
+          timestamp: '2026-09-17T10:00:00Z',
+        },
+      ],
+    });
     apiMock.listResearchPredictions.mockResolvedValue([
       {
-        prediction_id: 'p-1h',
+        prediction_id: 'bnf-1h',
         forecast_horizon: '1h',
         timeframe: '5m',
-        direction: 'BULLISH',
-        score: 42,
-        timestamp: '2026-09-17T10:00:00Z',
-      },
-      {
-        prediction_id: 'p-15m',
-        forecast_horizon: '15m',
-        timeframe: '1h',
         direction: 'BEARISH',
         score: -20,
         timestamp: '2026-09-17T10:05:00Z',
       },
     ]);
-    render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
+    render(<ForecastOutcomes instrument="BANKNIFTY" horizon="1h" />);
     await flushPoll();
 
-    expect(screen.getByText('NIFTY 50 · horizon 1h')).toBeTruthy();
-    expect(screen.getByText('BULLISH')).toBeTruthy();
-    expect(screen.queryByText('BEARISH')).toBeNull();
-  });
-
-  it('surfaces fetch errors explicitly', async () => {
-    apiMock.listResearchPredictions.mockRejectedValue(new Error('research service down'));
-    render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
-    await flushPoll();
-
-    expect(screen.getByText(/Predictions unavailable/)).toBeTruthy();
+    expect(apiMock.listResearchPredictions).toHaveBeenCalledWith({
+      instrument: 'BANKNIFTY',
+      limit: 50,
+    });
+    expect(screen.getByText('BEARISH')).toBeTruthy();
+    expect(screen.queryByText('BULLISH')).toBeNull();
   });
 });
 

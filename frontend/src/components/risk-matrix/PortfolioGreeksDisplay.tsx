@@ -1,9 +1,7 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
-import { api } from '@/lib/api';
-import { errorMessage } from '@/lib/errors';
+import React from 'react';
+import { useAppStreamRefresh, useCommandSection } from '@/context/AppStreamContext';
 import { fmtNum } from '@/components/ui/desk';
 import { Card } from '@/components/ui/card';
 import { UNAVAILABLE, finiteNumber, signedINR, signedNumber, valueToneClass } from './riskUtils';
@@ -25,39 +23,34 @@ function gross(label: string, v: unknown, digits: number): string {
   return n === null ? `${label} ${UNAVAILABLE}` : `${label} ${fmtNum(n, digits)}`;
 }
 
+function readGreeks(value: unknown): { present: boolean; summary: GreeksSummary | null } {
+  if (!value || typeof value !== 'object') return { present: false, summary: null };
+  const record = value as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(record, 'portfolio_greeks')) {
+    return { present: false, summary: null };
+  }
+  const raw = record.portfolio_greeks;
+  return {
+    present: true,
+    summary: raw && typeof raw === 'object' ? (raw as GreeksSummary) : null,
+  };
+}
+
 /**
  * Portfolio greeks from the shared `PortfolioGreeksSummary` ledger
- * (`total_delta/total_gamma/total_theta_day/total_vega` + gross aggregates).
- * Sign is rendered from the value itself and the tone follows the sign, so a
- * negative theta is never painted green and a value never prints `+-`.
+ * (`total_delta/total_gamma/total_theta_day/total_vega` + gross aggregates)
+ * as pushed in the `algo` stream section. Sign is rendered from the value
+ * itself and the tone follows the sign, so a negative theta is never painted
+ * green and a value never prints `+-`.
  */
 export const PortfolioGreeksDisplay: React.FC = () => {
-  const [summary, setSummary] = useState<GreeksSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const requestSeqRef = useRef(0);
+  const section = useCommandSection('algo');
+  const requestStreamRefresh = useAppStreamRefresh();
+  const { present, summary } = readGreeks(section?.value);
 
-  const fetchGreeks = useCallback(async () => {
-    const seq = ++requestSeqRef.current;
-    try {
-      const res = await api.getPortfolioGreeksSummary();
-      if (seq !== requestSeqRef.current) return;
-      setSummary(res ?? null);
-      setError(null);
-      setUpdatedAt(Date.now());
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return;
-      setError(errorMessage(err, 'Portfolio greeks unavailable'));
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
-    }
-  }, []);
-
-  usePolling(fetchGreeks, 5000);
-
-  const initialLoading = loading && summary === null;
-  const unavailable = !!error && summary === null;
+  const initialLoading = section === null;
+  const unavailable = !initialLoading && present && summary === null;
+  const missing = !initialLoading && !present;
   const positions = summary ? finiteNumber(summary.total_open_positions) : null;
   const hasNoPositions = positions === 0;
 
@@ -107,13 +100,6 @@ export const PortfolioGreeksDisplay: React.FC = () => {
       }
     >
       <div className="space-y-3 font-mono text-xs">
-        {error && summary !== null && (
-          <div role="alert" className="p-2 rounded bg-warn-wash border border-warn-line text-warn-strong">
-            Refresh failed ({error}) — showing last known greeks
-            {updatedAt ? ` from ${new Date(updatedAt).toLocaleTimeString('en-IN')}` : ''}.
-          </div>
-        )}
-
         {initialLoading && (
           <p className="p-3 rounded border border-dashed border-border-strong text-ink-3">
             Loading portfolio greeks…
@@ -122,10 +108,13 @@ export const PortfolioGreeksDisplay: React.FC = () => {
 
         {unavailable && (
           <div className="p-3 rounded border border-down-line bg-down-wash text-down-strong space-y-2">
-            <p>Portfolio greeks unavailable — {error}.</p>
+            <p>
+              Portfolio greeks unavailable — the unified stream reported no greeks summary for the
+              algo section.
+            </p>
             <button
               type="button"
-              onClick={() => void fetchGreeks()}
+              onClick={() => void requestStreamRefresh()}
               className="px-2.5 py-1 rounded border border-down-line bg-surface hover:bg-down-wash font-semibold"
             >
               Retry
@@ -139,7 +128,7 @@ export const PortfolioGreeksDisplay: React.FC = () => {
           </p>
         )}
 
-        {!initialLoading && !unavailable && !summary && (
+        {missing && (
           <p className="p-3 rounded border border-dashed border-border-strong text-ink-3">
             No greeks summary returned by the backend — no aggregate exposure is available.
           </p>

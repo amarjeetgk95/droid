@@ -3,18 +3,54 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const apiMocks = vi.hoisted(() => ({
-  getSignalsAudit: vi.fn(),
-  getSignalsPerformance: vi.fn(),
-  getPortfolioGreeksSummary: vi.fn(),
-  evaluatePortfolioRisk: vi.fn(),
-  getSignalsStatus: vi.fn(),
-  bulkDeleteSignals: vi.fn(),
-  voidAuditTrades: vi.fn(),
-  sanitizeSignalsAudit: vi.fn(),
-}));
+const { apiMocks, streamStore, refreshMock } = vi.hoisted(() => {
+  const apiMocks = {
+    getSignalsAudit: vi.fn(),
+    getSignalsPerformance: vi.fn(),
+    evaluatePortfolioRisk: vi.fn(),
+    getSignalsStatus: vi.fn(),
+    bulkDeleteSignals: vi.fn(),
+    voidAuditTrades: vi.fn(),
+    sanitizeSignalsAudit: vi.fn(),
+  };
+  const sections = new Map<string, unknown>();
+  const listeners = new Set<() => void>();
+  const streamStore = {
+    sections,
+    listeners,
+    set(name: string, section: unknown) {
+      if (section === null) sections.delete(name);
+      else sections.set(name, section);
+      for (const listener of [...listeners]) listener();
+    },
+    reset() {
+      sections.clear();
+      listeners.clear();
+    },
+  };
+  const refreshMock = vi.fn(async () => {});
+  return { apiMocks, streamStore, refreshMock };
+});
 
 vi.mock('@/lib/api', () => ({ api: apiMocks }));
+
+vi.mock('@/context/AppStreamContext', async () => {
+  const React = await import('react');
+  return {
+    useCommandSection: (name: string) =>
+      React.useSyncExternalStore(
+        (onStoreChange: () => void) => {
+          streamStore.listeners.add(onStoreChange);
+          return () => {
+            streamStore.listeners.delete(onStoreChange);
+          };
+        },
+        () => streamStore.sections.get(name) ?? null,
+        () => null,
+      ),
+    useAppStreamRefresh: () => refreshMock,
+  };
+});
 
 import { AuditLedger } from './AuditLedger';
 import { BulkOperationsBar } from './BulkOperationsBar';
@@ -26,9 +62,21 @@ import { RiskDataProvider } from '@/context/RiskDataContext';
 
 beforeEach(() => {
   Object.values(apiMocks).forEach((m) => m.mockReset());
+  streamStore.reset();
+  refreshMock.mockClear();
 });
 
 afterEach(() => cleanup());
+
+function setAlgoSection(value: unknown, degraded = false) {
+  streamStore.set('algo', {
+    value,
+    updated_at: '2026-09-18T07:22:01.000Z',
+    freshness_s: 1,
+    degraded,
+    version: 1,
+  });
+}
 
 describe('AuditLedger', () => {
   it('renders real audit fields and never paints a missing P&L as profit', async () => {
@@ -92,16 +140,21 @@ describe('AuditLedger', () => {
 
 describe('PortfolioGreeksDisplay', () => {
   it('formats signs from the value and tones theta by sign', async () => {
-    apiMocks.getPortfolioGreeksSummary.mockResolvedValue({
-      total_delta: 42.5,
-      total_gamma: -0.05,
-      total_theta_day: -1420,
-      total_vega: 2150,
-      gross_delta: 700,
-      gross_gamma: 1.2,
-      gross_theta_day: 1420,
-      gross_vega: 2150,
-      total_open_positions: 3,
+    setAlgoSection({
+      account: null,
+      exposure: null,
+      orders: null,
+      portfolio_greeks: {
+        total_delta: 42.5,
+        total_gamma: -0.05,
+        total_theta_day: -1420,
+        total_vega: 2150,
+        gross_delta: 700,
+        gross_gamma: 1.2,
+        gross_theta_day: 1420,
+        gross_vega: 2150,
+        total_open_positions: 3,
+      },
     });
 
     render(<PortfolioGreeksDisplay />);
@@ -113,6 +166,16 @@ describe('PortfolioGreeksDisplay', () => {
     expect(theta.className).toContain('text-down-strong');
     expect(screen.getByText('+₹2,150')).toBeTruthy();
     expect(screen.getByText('3 open positions')).toBeTruthy();
+  });
+
+  it('shows the unavailable state instead of fabricated aggregates when the section carries no greeks', async () => {
+    setAlgoSection({ account: null, exposure: null, orders: null, portfolio_greeks: null });
+
+    render(<PortfolioGreeksDisplay />);
+
+    await waitFor(() => expect(screen.getByText(/Portfolio greeks unavailable/)).toBeTruthy());
+    expect(screen.queryByText('₹0')).toBeNull();
+    expect(screen.queryByText('+0.0')).toBeNull();
   });
 });
 
