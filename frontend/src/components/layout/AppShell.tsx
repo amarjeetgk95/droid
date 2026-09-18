@@ -17,6 +17,7 @@ import { MarketTicker } from './MarketTicker';
 import { RouteProgress } from './RouteProgress';
 import { FloatingAICopilot } from './FloatingAICopilot';
 import { loadTickerVisible, saveTickerVisible } from './Header/Header';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 /**
  * Shell z-index scale (agreed, ascending). Shell overlays NEVER sit above
@@ -65,6 +66,9 @@ function AppShellFrame({ children }: AppShellProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [tickerVisible, setTickerVisible] = useState(true);
+  // P2-5: the minimal shell folds market status into the Command ribbon, so
+  // the standalone marquee is not mounted. The component + its test remain.
+  const minimal = isMinimalUi();
 
   // Hydrate ticker visibility after mount so SSR and first client render match.
   useEffect(() => {
@@ -122,8 +126,8 @@ function AppShellFrame({ children }: AppShellProps) {
           onToggleTicker={toggleTicker}
         />
 
-        {/* Live index ribbon — real stream state, never placeholders-as-live */}
-        {tickerVisible && (
+        {/* Live index ribbon — legacy shell only (minimal folds it into the ribbon) */}
+        {!minimal && tickerVisible && (
           <div className="shrink-0">
             <MarketTicker onSelectSymbol={handleSelectTickerSymbol} />
           </div>

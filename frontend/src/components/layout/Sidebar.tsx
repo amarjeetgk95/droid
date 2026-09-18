@@ -15,7 +15,8 @@ import { SidebarHeader } from './Sidebar/SidebarHeader';
 import { SidebarNavItem } from './Sidebar/SidebarNavItem';
 import { SidebarFlyout } from './Sidebar/SidebarFlyout';
 import { SidebarStatusDock } from './Sidebar/SidebarStatusDock';
-import { BOTTOM_ITEMS, NAV_GROUPS, isActivePath, type NavItem } from './nav-config';
+import { BOTTOM_ITEMS, getNavGroups, isActivePath, type NavItem } from './nav-config';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 interface SidebarProps {
   /** Desktop rail collapse (lg+ only). */
@@ -44,6 +45,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const mobileDrawerRef = useRef<HTMLElement>(null);
 
   const provider = market?.health?.provider ?? market?.marketStatus?.provider ?? 'FYERS';
+
+  // P2-4: single nav source. Minimal mode renders 4 destinations; flag off
+  // keeps today's 5 legacy groups byte-for-byte.
+  const navGroups = useMemo(() => getNavGroups(isMinimalUi()), []);
 
   const telemetryBadges = useMemo<
     Record<string, { label: string; color: string; pulse?: boolean }> | undefined
@@ -143,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="flex-1 min-h-0 overflow-y-auto py-2 flex flex-col items-center gap-1"
           aria-label="Primary navigation"
         >
-          {NAV_GROUPS.map((group) => (
+          {navGroups.map((group) => (
             <SidebarFlyout
               key={group.id}
               group={group}
@@ -168,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     return (
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-2.5" aria-label="Primary navigation">
-        {NAV_GROUPS.map((group) => (
+        {navGroups.map((group) => (
           <section key={group.id} aria-label={group.label}>
             <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-4">
               {group.label}

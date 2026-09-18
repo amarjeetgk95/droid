@@ -5,10 +5,14 @@ import {
   ALL_NAV_HREFS,
   ALL_NAV_ITEMS,
   BOTTOM_ITEMS,
+  MINIMAL_NAV_GROUPS,
   NAV_GROUPS,
   STANDALONE_ITEMS,
   findNavItemByHref,
   findNavItemByShortcut,
+  getNavGroups,
+  getNavItems,
+  getNavShortcut,
   isActivePath,
 } from './nav-config';
 
@@ -113,5 +117,61 @@ describe('nav-config navigation layout', () => {
     expect(isActivePath('/forge', '/signals')).toBe(true);
     expect(isActivePath('/forge', '/swing')).toBe(false);
     expect(isActivePath('/settings', '/markets')).toBe(false);
+  });
+});
+
+describe('P2-4 minimal shell nav (flag on)', () => {
+  it('keeps the legacy 11-item grouped nav when the flag is off', () => {
+    expect(getNavGroups(false)).toBe(NAV_GROUPS);
+    expect(getNavGroups(false).flatMap((g) => g.items)).toHaveLength(11);
+  });
+
+  it('collapses the grouped nav to Command / Positions / Lab / Copilot', () => {
+    expect(getNavGroups(true)).toBe(MINIMAL_NAV_GROUPS);
+    const items = getNavGroups(true).flatMap((g) => g.items);
+    expect(items).toHaveLength(4);
+    expect(items.map((i) => i.href)).toEqual(['/', '/execute', '/lab', '/ai']);
+    expect(items.map((i) => i.label)).toEqual(['Command', 'Positions', 'Lab', 'Copilot']);
+    expect(items.map((i) => i.shortcut)).toEqual(['⌘1', '⌘2', '⌘3', '⌘4']);
+  });
+
+  it('binds minimal hotkeys to the 4 destinations and leaves legacy bindings intact', () => {
+    expect(findNavItemByShortcut('⌘1', true)?.href).toBe('/');
+    expect(findNavItemByShortcut('⌘2', true)?.href).toBe('/execute');
+    expect(findNavItemByShortcut('⌘3', true)?.href).toBe('/lab');
+    expect(findNavItemByShortcut('⌘4', true)?.href).toBe('/ai');
+    expect(findNavItemByShortcut('⌘0', true)).toBeUndefined();
+    expect(findNavItemByShortcut('⌘5', true)).toBeUndefined();
+
+    expect(findNavItemByShortcut('⌘0')).toBe(findNavItemByHref('/war-room'));
+    expect(findNavItemByShortcut('⌘1')?.href).toBe('/');
+    expect(findNavItemByShortcut('⌘2')?.href).toBe('/markets');
+    expect(findNavItemByShortcut('⌘3')?.href).toBe('/options');
+    expect(findNavItemByShortcut('⌘4')?.href).toBe('/ai');
+    expect(findNavItemByShortcut('⌘5')?.href).toBe('/swing');
+  });
+
+  it('keeps Settings and System reachable in minimal mode (footer dock + long tail)', () => {
+    expect(getNavItems(true).map((i) => i.href)).toEqual([
+      '/',
+      '/execute',
+      '/lab',
+      '/ai',
+      '/system',
+      '/settings',
+    ]);
+    expect(findNavItemByShortcut('⌘,', true)?.href).toBe('/settings');
+    expect(ALL_NAV_HREFS).toContain('/settings');
+    expect(ALL_NAV_HREFS).toContain('/system');
+    expect(ALL_NAV_ITEMS).toHaveLength(13);
+  });
+
+  it('advertises only the active shortcut binding per shell mode', () => {
+    expect(getNavShortcut('/', true)).toBe('⌘1');
+    expect(getNavShortcut('/execute', true)).toBe('⌘2');
+    expect(getNavShortcut('/markets', true)).toBeUndefined();
+    expect(getNavShortcut('/settings', true)).toBe('⌘,');
+    expect(getNavShortcut('/markets', false)).toBe('⌘2');
+    expect(getNavShortcut('/execute', false)).toBeUndefined();
   });
 });

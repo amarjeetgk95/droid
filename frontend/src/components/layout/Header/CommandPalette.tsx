@@ -11,9 +11,10 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import { ALL_NAV_ITEMS, NAV_GROUPS, STANDALONE_ITEMS, BOTTOM_ITEMS } from '../nav-config';
+import { ALL_NAV_ITEMS, STANDALONE_ITEMS, BOTTOM_ITEMS, getNavGroups, getNavShortcut } from '../nav-config';
 import { useOptionalLiveMarketContext } from '@/context/LiveMarketContext';
 import { safeNum, safeInt, cn } from '@/lib/utils';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 export type PaletteCategory = 'all' | 'symbols' | 'pages' | 'actions';
 
@@ -62,6 +63,9 @@ export function CommandPalette({
   const live = useOptionalLiveMarketContext();
   const cards = live?.cards ?? EMPTY_CARDS;
   const [shortcutKey] = useState<string>(getPlatformShortcutKey);
+  // P2-4: ⌘K is the long-tail navigation in both shells; only the section
+  // labels and the advertised shortcut bindings follow the active nav.
+  const minimal = isMinimalUi();
 
   // Autofocus input when dialog mounts/opens
   useEffect(() => {
@@ -85,7 +89,7 @@ export function CommandPalette({
 
     const groupOf = (href: string): string => {
       if (STANDALONE_ITEMS.some((i) => i.href === href)) return 'Overview';
-      for (const g of NAV_GROUPS) if (g.items.some((i) => i.href === href)) return g.label;
+      for (const g of getNavGroups(minimal)) if (g.items.some((i) => i.href === href)) return g.label;
       if (BOTTOM_ITEMS.some((i) => i.href === href)) return 'System';
       return 'Terminal Pages';
     };
@@ -95,14 +99,15 @@ export function CommandPalette({
       const hay = `${nav.label} ${nav.description ?? ''} ${(nav.keywords ?? []).join(' ')} ${nav.href} ${groupOf(nav.href)}`;
       if (match(hay)) {
         const NavIcon = nav.icon;
+        const shortcut = getNavShortcut(nav.href, minimal);
         out.push({
           key: `page:${nav.href}`,
           category: 'pages',
           section: groupOf(nav.href),
           label: nav.label,
-          sub: `${nav.description ?? nav.href}${nav.shortcut ? ` • ${nav.shortcut}` : ''}`,
+          sub: `${nav.description ?? nav.href}${shortcut ? ` • ${shortcut}` : ''}`,
           href: nav.href,
-          badge: nav.shortcut ?? nav.badge,
+          badge: shortcut ?? nav.badge,
           icon: <NavIcon className="w-3.5 h-3.5 text-primary" />,
         });
       }
@@ -173,7 +178,7 @@ export function CommandPalette({
     }
 
     return out;
-  }, [query, cards, onOpenDiagnostics, onToggleTicker, tickerVisible]);
+  }, [query, cards, onOpenDiagnostics, onToggleTicker, tickerVisible, minimal]);
 
   // Filter items by category tab
   const filteredItems = useMemo(() => {

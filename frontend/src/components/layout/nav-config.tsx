@@ -194,6 +194,83 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+/**
+ * Minimal shell navigation (P2-4): four destinations, one group per
+ * destination so the collapsed rail keeps one icon per screen. Legacy routes
+ * are NOT retired here — the palette long tail still reaches every page, and
+ * `NAV_GROUPS` stays untouched for flag-off mode.
+ */
+export const MINIMAL_NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'command',
+    label: 'Command',
+    icon: Gauge,
+    defaultOpen: true,
+    items: [
+      {
+        id: 'command',
+        href: '/',
+        label: 'Command',
+        icon: LayoutDashboard,
+        description: 'Bias, signals, market context & intel in one desk',
+        shortcut: '⌘1',
+        keywords: ['command', 'desk', 'home', 'overview', 'bias', 'signals'],
+      },
+    ],
+  },
+  {
+    id: 'positions',
+    label: 'Positions',
+    icon: Crosshair,
+    defaultOpen: true,
+    items: [
+      {
+        id: 'positions',
+        href: '/execute',
+        label: 'Positions',
+        icon: Crosshair,
+        description: 'Orders, algo state, capital, risk & swing positions',
+        shortcut: '⌘2',
+        keywords: ['positions', 'execute', 'orders', 'algo', 'capital', 'risk', 'swing'],
+      },
+    ],
+  },
+  {
+    id: 'lab',
+    label: 'Lab',
+    icon: Microscope,
+    defaultOpen: true,
+    items: [
+      {
+        id: 'lab',
+        href: '/lab',
+        label: 'Lab',
+        icon: Microscope,
+        description: 'Research, indicators, scanner & settings',
+        shortcut: '⌘3',
+        keywords: ['lab', 'research', 'indicator', 'experiment', 'scanner', 'settings'],
+      },
+    ],
+  },
+  {
+    id: 'copilot',
+    label: 'Copilot',
+    icon: Bot,
+    defaultOpen: true,
+    items: [
+      {
+        id: 'copilot',
+        href: '/ai',
+        label: 'Copilot',
+        icon: Bot,
+        description: 'Chat, analysis, strategy & trade audit',
+        shortcut: '⌘4',
+        keywords: ['copilot', 'ai', 'chat', 'analysis', 'strategy', 'briefing'],
+      },
+    ],
+  },
+];
+
 /** Items pinned above the groups (none today — kept for API compatibility). */
 export const STANDALONE_ITEMS: NavItem[] = [];
 
@@ -217,11 +294,32 @@ export const BOTTOM_ITEMS: NavItem[] = [
   },
 ];
 
-export const ALL_NAV_ITEMS: NavItem[] = [
-  ...STANDALONE_ITEMS,
-  ...NAV_GROUPS.flatMap((g) => g.items),
-  ...BOTTOM_ITEMS,
-];
+/**
+ * Active nav groups for the shell. `minimal` false → legacy `NAV_GROUPS`
+ * (flag off, behavior identical); true → the 4-item `MINIMAL_NAV_GROUPS`.
+ */
+export function getNavGroups(minimal: boolean): NavGroup[] {
+  return minimal ? MINIMAL_NAV_GROUPS : NAV_GROUPS;
+}
+
+/**
+ * Active nav items: standalone + active groups + the bottom dock (System,
+ * Settings). The bottom dock is intentionally mode-independent so Settings
+ * stays reachable in both shells.
+ */
+export function getNavItems(minimal: boolean): NavItem[] {
+  return [
+    ...STANDALONE_ITEMS,
+    ...getNavGroups(minimal).flatMap((g) => g.items),
+    ...BOTTOM_ITEMS,
+  ];
+}
+
+/**
+ * Full page catalog (long tail for ⌘K). This is every route regardless of
+ * shell mode; only the advertised shortcut label changes per mode.
+ */
+export const ALL_NAV_ITEMS: NavItem[] = getNavItems(false);
 
 export const ALL_NAV_HREFS = ALL_NAV_ITEMS.map((i) => i.href);
 
@@ -251,7 +349,17 @@ export function findNavItemByHref(href: string): NavItem | undefined {
   return undefined;
 }
 
-/** Resolve a shortcut label (e.g. `⌘2`) to its nav item, if one is bound. */
-export function findNavItemByShortcut(shortcut: string): NavItem | undefined {
-  return ALL_NAV_ITEMS.find((i) => i.shortcut === shortcut);
+/** Resolve a shortcut label (e.g. `⌘2`) to its active nav item, if one is bound. */
+export function findNavItemByShortcut(shortcut: string, minimal = false): NavItem | undefined {
+  return getNavItems(minimal).find((i) => i.shortcut === shortcut);
+}
+
+/**
+ * Shortcut label currently bound to `href` for the active shell, e.g. `⌘2`
+ * resolves to `/execute` in minimal mode and `/markets` in legacy mode.
+ * Returns undefined when the destination has no active binding (palette
+ * rows must never advertise a shortcut that navigates elsewhere).
+ */
+export function getNavShortcut(href: string, minimal: boolean): string | undefined {
+  return getNavItems(minimal).find((i) => i.href === href)?.shortcut;
 }

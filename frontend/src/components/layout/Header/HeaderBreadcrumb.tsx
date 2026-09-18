@@ -2,7 +2,8 @@
 
 import { usePathname } from 'next/navigation';
 import { ChevronRight, LayoutDashboard } from 'lucide-react';
-import { ALL_NAV_ITEMS, NAV_GROUPS, STANDALONE_ITEMS, NavItem } from '../nav-config';
+import { ALL_NAV_ITEMS, STANDALONE_ITEMS, getNavGroups, NavItem } from '../nav-config';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 interface BreadcrumbInfo {
   group: string | null;
@@ -10,7 +11,7 @@ interface BreadcrumbInfo {
   icon: typeof LayoutDashboard;
 }
 
-function resolveBreadcrumb(pathname: string): BreadcrumbInfo {
+function resolveBreadcrumb(pathname: string, minimal: boolean): BreadcrumbInfo {
   // 1. Check standalone items (e.g. dashboard)
   const standalone = STANDALONE_ITEMS.find(
     (item) => item.href === pathname || (item.href !== '/' && pathname.startsWith(item.href)),
@@ -23,8 +24,8 @@ function resolveBreadcrumb(pathname: string): BreadcrumbInfo {
     };
   }
 
-  // 2. Check grouped items
-  for (const group of NAV_GROUPS) {
+  // 2. Check grouped items (minimal mode resolves Command/Positions/Lab/Copilot)
+  for (const group of getNavGroups(minimal)) {
     const matchedItem = group.items.find(
       (item) => item.href === pathname || pathname.startsWith(item.href + '/'),
     );
@@ -64,7 +65,7 @@ function resolveBreadcrumb(pathname: string): BreadcrumbInfo {
 
 export function HeaderBreadcrumb() {
   const pathname = usePathname();
-  const breadcrumb = resolveBreadcrumb(pathname);
+  const breadcrumb = resolveBreadcrumb(pathname, isMinimalUi());
   const Icon = breadcrumb.icon;
 
   return (

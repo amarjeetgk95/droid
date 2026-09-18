@@ -9,11 +9,11 @@ import { HeaderBreadcrumb } from './HeaderBreadcrumb';
 import { CommandPalette } from './CommandPalette';
 import { HeaderMarketSession } from './HeaderMarketSession';
 import { HeaderBrokerGateway } from './HeaderBrokerGateway';
-import { HeaderNotifications } from './HeaderNotifications';
 import { HeaderQuickActions } from './HeaderQuickActions';
 import { HeaderUserProfile } from './HeaderUserProfile';
 import { MarketHealthModal } from '@/components/dashboard/MarketHealthModal';
 import { findNavItemByShortcut } from '../nav-config';
+import { isMinimalUi } from '@/lib/featureFlags';
 
 const TICKER_VISIBLE_KEY = 'droid:ticker:visible';
 
@@ -47,8 +47,14 @@ function HeaderInner({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHealthModal, setShowHealthModal] = useState(false);
 
+  // Minimal shell (P2-5): the ticker is hidden by AppShell, so its toggle and
+  // the ⌘T binding are disabled to keep the header at ≤6 interactive targets.
+  const minimal = isMinimalUi();
+  const toggleTicker = minimal ? undefined : onToggleTicker;
+
   // Global keyboard shortcuts. Every advertised shortcut is wired here:
-  // ⌘K palette · ⌘T ticker · ⌘B sidebar · ⌘0–⌘5 + ⌘, navigation.
+  // ⌘K palette · ⌘T ticker (legacy only) · ⌘B sidebar · ⌘0–⌘5 + ⌘, nav
+  // (minimal mode binds ⌘1–⌘4 to Command/Positions/Lab/Copilot).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -67,9 +73,9 @@ function HeaderInner({
       if (isInput) return;
 
       // Ticker Ribbon: Ctrl+T or ⌘T
-      if (key === 't' && onToggleTicker) {
+      if (key === 't' && toggleTicker) {
         e.preventDefault();
-        onToggleTicker();
+        toggleTicker();
         return;
       }
 
@@ -80,9 +86,10 @@ function HeaderInner({
         return;
       }
 
-      // Page jumps: Ctrl+0–5 / Ctrl+, or their ⌘ equivalents.
+      // Page jumps. Minimal mode rebinds ⌘1–⌘4 to the 4-item nav (P2-4);
+      // ⌘0/⌘5 are unbound there, while ⌘, still resolves via the bottom dock.
       if ((MODIFIER_SHORTCUT_KEYS as readonly string[]).includes(e.key)) {
-        const item = findNavItemByShortcut(`⌘${e.key}`);
+        const item = findNavItemByShortcut(`⌘${e.key}`, minimal);
         if (item) {
           e.preventDefault();
           router.push(item.href);
@@ -92,7 +99,7 @@ function HeaderInner({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onToggleTicker, onToggleSidebar, router]);
+  }, [toggleTicker, onToggleSidebar, router, minimal]);
 
   const openDiagnostics = useCallback(() => {
     setShowHealthModal(true);
@@ -122,7 +129,7 @@ function HeaderInner({
             <HeaderBreadcrumb />
           </div>
 
-          {contextSlot ? (
+          {contextSlot && !minimal ? (
             <div className="hidden md:flex items-center gap-2 min-w-0">{contextSlot}</div>
           ) : null}
         </div>
@@ -148,13 +155,12 @@ function HeaderInner({
             onOpenDiagnostics={openDiagnostics}
           />
 
-          {/* Unified Toolset Pod: Ticker Toggle, Refresh, Zen Mode, Signals Bell */}
+          {/* Unified Toolset Pod: Ticker Toggle (legacy only), Refresh, Zen Mode */}
           <div className="flex items-center gap-0.5 p-0.5 rounded-[4px] border border-border bg-card">
             <HeaderQuickActions
               tickerVisible={tickerVisible}
-              onToggleTicker={onToggleTicker}
+              onToggleTicker={toggleTicker}
             />
-            <HeaderNotifications />
           </div>
 
           {/* Clean Visual Divider */}
@@ -171,7 +177,7 @@ function HeaderInner({
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
           onOpenDiagnostics={openDiagnostics}
-          onToggleTicker={onToggleTicker}
+          onToggleTicker={toggleTicker}
           tickerVisible={tickerVisible}
         />
       )}
