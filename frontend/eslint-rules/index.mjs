@@ -7,6 +7,7 @@
 
 import noPaletteClass from './rules/no-palette-class.mjs';
 import noRawHex from './rules/no-raw-hex.mjs';
+import noComponentPolling from './rules/no-component-polling.mjs';
 
 export default {
   meta: {
@@ -16,5 +17,6 @@ export default {
   rules: {
     'no-palette-class': noPaletteClass,
     'no-raw-hex': noRawHex,
+    'no-component-polling': noComponentPolling,
   },
 };

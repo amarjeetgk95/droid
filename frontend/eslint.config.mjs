@@ -27,6 +27,7 @@ const eslintConfig = defineConfig([
       // Design-system gate — enforced by scripts/check-design-rules.mjs.
       "droid/no-palette-class": "error",
       "droid/no-raw-hex": "error",
+      "droid/no-component-polling": "error",
     },
   },
 ]);
