@@ -5,8 +5,8 @@ import { usePolling } from '@/hooks/usePolling';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { Badge } from '../shared/Badge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 type Mode = 'OFF' | 'PAPER' | 'LIVE';
 type ModeState = 'loading' | 'ready' | 'error';

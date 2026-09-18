@@ -2,10 +2,35 @@
  * Coercion helpers for loosely-typed API payloads. Pure functions only.
  */
 
-/** Finite number from a number | numeric string; `null` for anything else. */
-export function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+export interface ToNumberOptions {
+  /** Treat `''` as absent instead of `Number('') === 0`. */
+  rejectEmptyString?: boolean;
+  /** Treat whitespace-only strings as absent; implies `rejectEmptyString`. */
+  rejectBlankString?: boolean;
+  /** Parse non-string, non-number values with `Number()` (legacy strict coercers). */
+  coerceNonString?: boolean;
+}
+
+/**
+ * Finite number from a number | numeric string; `null` for anything else.
+ * Without options, `''` coerces to `0` exactly as before; the flags reproduce
+ * the legacy strict variants without changing the default.
+ */
+export function toNumber(value: unknown, options: ToNumberOptions = {}): number | null {
+  const { rejectEmptyString = false, rejectBlankString = false, coerceNonString = false } =
+    options;
+  if (typeof value === 'string') {
+    if (rejectBlankString && value.trim() === '') return null;
+    if (rejectEmptyString && value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (coerceNonString && value !== null && value !== undefined) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 /**

@@ -6,6 +6,7 @@
  * separately-signed R multiple. Keeping these pure makes the rule testable.
  */
 
+import { toNumber } from '@/lib/coerce';
 import { fmtINR, fmtNum } from '@/components/ui/desk';
 
 export const EXIT_REASONS = [
@@ -21,9 +22,7 @@ export const EXIT_REASONS = [
 ] as const;
 
 function toFinite(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null;
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v, { rejectEmptyString: true });
 }
 
 /** `+₹1,250.5` / `-₹1,250.5` / `₹0` / `—` for non-finite input. */

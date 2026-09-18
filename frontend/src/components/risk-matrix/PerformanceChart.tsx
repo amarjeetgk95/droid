@@ -4,7 +4,8 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
 import { linearScale, polylinePoints } from '@/lib/chartGeometry';
-import { Card } from '../shared/Card';
+import { errorMessage } from '@/lib/errors';
+import { Card } from '@/components/ui/card';
 import {
   type AuditTradeLike,
   buildEquityCurve,
@@ -16,10 +17,6 @@ import {
 const VIEW_W = 500;
 const VIEW_H = 100;
 const PAD_Y = 12;
-
-function messageOf(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 function fmtDay(ms: number): string {
   const d = new Date(ms);
@@ -49,7 +46,7 @@ export const PerformanceChart: React.FC = () => {
       setUpdatedAt(Date.now());
     } catch (err) {
       if (seq !== requestSeqRef.current) return;
-      setError(messageOf(err, 'Equity source unavailable'));
+      setError(errorMessage(err, 'Equity source unavailable'));
     } finally {
       if (seq === requestSeqRef.current) setLoading(false);
     }

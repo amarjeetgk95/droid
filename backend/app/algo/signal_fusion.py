@@ -6,38 +6,28 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 import structlog
 
 from app.algo.money import D
+from app.core.json_config import load_json_config
 
 logger = structlog.get_logger()
 
 # §26 default weights — single source of truth: backend/config/scoring_weights.json (v2).
 # Kept inline as fallback if config file is missing (tests, minimal installs).
+# required=False is intentional (fusion must stay non-fatal), but the shared
+# loader logs json_config_fallback_default at WARNING so the fallback is never silent.
 def _load_scoring_config() -> dict:
-    try:
-        import json
-        from pathlib import Path
-        for p in (
-            Path(__file__).resolve().parents[2] / "config" / "scoring_weights.json",
-            Path("backend/config/scoring_weights.json"),
-            Path("config/scoring_weights.json"),
-        ):
-            if p.exists():
-                with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f)
-    except Exception:
-        pass
-    return {}
+    return load_json_config("scoring_weights.json", required=False, default={})
 
 
 _SCORING_CONFIG = _load_scoring_config()
 
 
-def _load_scoring_weights_percent() -> dict:
-    w = (_SCORING_CONFIG.get("weights_percent", {}) or {})
+def _load_scoring_weights_percent(config: dict | None = None) -> dict:
+    w = ((config if config is not None else _SCORING_CONFIG).get("weights_percent", {}) or {})
     if w:
         try:
             return {k: Decimal(str(v)) for k, v in w.items() if k != "ml_max"}

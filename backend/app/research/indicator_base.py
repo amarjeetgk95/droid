@@ -1,10 +1,28 @@
 """Abstract base class for all indicators in the Research Laboratory (§46)."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 from app.research.enums import IndicatorCategory, IndicatorLifecycle
 from app.research.models import IndicatorContext, IndicatorDefinition, IndicatorOutput
+
+
+@dataclass(frozen=True)
+class IndicatorMetadata:
+    """Data-driven identity/classification declared once per indicator class.
+
+    Concrete indicators set a single class-level ``METADATA`` instance;
+    :class:`IndicatorBase` exposes the historical per-field read-only
+    properties (``indicator_id`` / ``name`` / ``version`` / ``category`` /
+    ``lifecycle``) so registry, API and tests keep the same surface.
+    """
+
+    indicator_id: str
+    name: str
+    version: str
+    category: IndicatorCategory
+    lifecycle: IndicatorLifecycle = IndicatorLifecycle.EXPERIMENTAL
 
 
 class IndicatorBase(ABC):
@@ -17,34 +35,43 @@ class IndicatorBase(ABC):
     4. Deterministic backtesting without future leakages
     """
 
+    METADATA: ClassVar[IndicatorMetadata]
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # The five metadata fields are declared exactly once via METADATA;
+        # concrete subclasses (those that implement calculate) must provide it.
+        if not getattr(cls.calculate, "__isabstractmethod__", False) and not isinstance(
+            cls.__dict__.get("METADATA"), IndicatorMetadata
+        ):
+            raise TypeError(
+                f"{cls.__name__} must declare class-level METADATA = IndicatorMetadata(...)"
+            )
+
     @property
-    @abstractmethod
     def indicator_id(self) -> str:
         """Unique machine-readable identifier (e.g., 'ompi', 'rsi', 'macd')."""
-        pass
+        return self.METADATA.indicator_id
 
     @property
-    @abstractmethod
     def name(self) -> str:
         """Human-readable display name."""
-        pass
+        return self.METADATA.name
 
     @property
-    @abstractmethod
     def version(self) -> str:
         """Semver string (e.g., '0.1.0')."""
-        pass
+        return self.METADATA.version
 
     @property
-    @abstractmethod
     def category(self) -> IndicatorCategory:
         """Indicator classification category."""
-        pass
+        return self.METADATA.category
 
     @property
     def lifecycle(self) -> IndicatorLifecycle:
         """Current maturity stage."""
-        return IndicatorLifecycle.EXPERIMENTAL
+        return self.METADATA.lifecycle
 
     @property
     def description(self) -> str:

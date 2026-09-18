@@ -3,7 +3,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 type PurgePreview = {
   auditedCount: number;

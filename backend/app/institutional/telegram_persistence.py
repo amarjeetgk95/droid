@@ -15,6 +15,8 @@ from typing import Any
 from uuid import UUID
 import structlog
 
+from app.core.atomic_json import atomic_write_json, read_json
+
 logger = structlog.get_logger()
 
 STATE_FILE = Path("telegram_state.json")
@@ -22,32 +24,33 @@ STATE_FILE = Path("telegram_state.json")
 
 def read_local_file() -> tuple[dict[str, dict], dict[str, dict]]:
     """Read bindings and preferences from local cache file."""
-    if not STATE_FILE.exists():
+    data = read_json(
+        STATE_FILE,
+        default={},
+        log_event="telegram_local_state_read_error",
+        log_level="warning",
+    )
+    if not isinstance(data, dict):
         return {}, {}
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            bindings = data.get("bindings", {})
-            preferences = data.get("preferences", {})
-            return bindings, preferences
-    except Exception as e:
-        logger.warning("telegram_local_state_read_error", error=str(e))
-        return {}, {}
+    bindings = data.get("bindings", {})
+    preferences = data.get("preferences", {})
+    return bindings or {}, preferences or {}
 
 
 def write_local_file(bindings: dict[str, dict], preferences: dict[str, dict] | None = None) -> None:
-    """Write bindings and preferences to local cache file."""
-    try:
-        payload: dict[str, Any] = {"bindings": bindings}
-        if preferences is not None:
-            payload["preferences"] = preferences
-        else:
-            _, existing_prefs = read_local_file()
-            payload["preferences"] = existing_prefs
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-    except Exception as e:
-        logger.warning("telegram_local_state_write_error", error=str(e))
+    """Write bindings and preferences to local cache file (atomic)."""
+    payload: dict[str, Any] = {"bindings": bindings}
+    if preferences is not None:
+        payload["preferences"] = preferences
+    else:
+        _, existing_prefs = read_local_file()
+        payload["preferences"] = existing_prefs
+    atomic_write_json(
+        STATE_FILE,
+        payload,
+        indent=2,
+        log_event="telegram_local_state_write_error",
+    )
 
 
 async def restore_telegram_state_from_db() -> tuple[dict[str, dict], dict[str, dict]]:

@@ -6,8 +6,8 @@ import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
 import { ageLabel } from '@/lib/feedState';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
 
 interface ExposureState {
   gross_exposure_pct: number | null;

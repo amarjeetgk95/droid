@@ -20,7 +20,7 @@ from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,
 )
-from app.research.indicators.base import BuiltinIndicator
+from app.research.indicators.base import BuiltinIndicator, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
@@ -37,25 +37,13 @@ class OMPIIndicator(BuiltinIndicator):
     Outputs a continuous pressure score in [-100.0, +100.0].
     """
 
-    @property
-    def indicator_id(self) -> str:
-        return "ompi"
-
-    @property
-    def name(self) -> str:
-        return "Option Market Pressure Index (OMPI)"
-
-    @property
-    def version(self) -> str:
-        return "0.1.0"
-
-    @property
-    def category(self) -> IndicatorCategory:
-        return IndicatorCategory.PROPRIETARY
-
-    @property
-    def lifecycle(self) -> IndicatorLifecycle:
-        return IndicatorLifecycle.EXPERIMENTAL
+    METADATA = IndicatorMetadata(
+        indicator_id="ompi",
+        name="Option Market Pressure Index (OMPI)",
+        version="0.1.0",
+        category=IndicatorCategory.PROPRIETARY,
+        lifecycle=IndicatorLifecycle.EXPERIMENTAL,
+    )
 
     @property
     def description(self) -> str:

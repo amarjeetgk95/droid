@@ -2,9 +2,9 @@
 
 import React, { useCallback, useState } from 'react';
 import { api } from '@/lib/api';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   PanelFreshness,
   PanelStateBanner,

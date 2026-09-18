@@ -10,6 +10,7 @@ import React, {
   useState,
 } from 'react';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 import { errorMessage as canonicalErrorMessage } from '@/lib/errors';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
 import { usePolling } from '@/hooks/usePolling';
@@ -33,8 +34,7 @@ export function asString(value: unknown): string | null {
 }
 
 export function asNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(value);
 }
 
 export function asBoolean(value: unknown): boolean | null {

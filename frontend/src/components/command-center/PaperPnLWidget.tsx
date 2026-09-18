@@ -4,9 +4,10 @@ import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { api } from '@/lib/api';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { Badge } from '../shared/Badge';
+import { toNumber } from '@/lib/coerce';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { Badge } from '@/components/ui/badge';
 import { EmptyNote, fmtINR } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import type { VirtualPosition } from '@/lib/types';
@@ -24,8 +25,7 @@ interface PortfolioView {
 }
 
 function finite(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 function parsePortfolio(payload: unknown): PortfolioView | null {

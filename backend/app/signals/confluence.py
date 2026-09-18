@@ -17,41 +17,36 @@ ARMED threshold raised to 78.0.
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
 from typing import Optional
 import structlog
 from pydantic import BaseModel, Field
 
+from app.core.json_config import load_json_config
 from app.signals.strategies.base import SignalCandidate
 
 logger = structlog.get_logger()
 
 
 def _load_confluence_config() -> dict:
-    try:
-        for p in (
-            Path(__file__).resolve().parents[2] / "config" / "scoring_weights.json",
-            Path("backend/config/scoring_weights.json"),
-            Path("config/scoring_weights.json"),
-        ):
-            if p.exists():
-                with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f)
-    except Exception as e:
-        logger.debug("confluence_config_load_failed", error=str(e)[:150])
-    return {}
+    # P0-2 FAIL-CLOSE: required=True — a missing file raises JSONConfigError
+    # instead of arming on a silent fallback.
+    return load_json_config("scoring_weights.json", required=True)
 
 
-_CONFIG = _load_confluence_config()
-# P0-2 FAIL-CLOSE: scoring config is load-bearing. A missing file or a
-# missing thresholds block means we cannot prove the ARMED bar — refuse to
-# start rather than arming on a silent 70.0 fallback.
-if not _CONFIG or "thresholds" not in _CONFIG or "armed" not in _CONFIG.get("thresholds", {}):
-    raise RuntimeError(
-        "scoring_weights.json missing thresholds.armed — fail-closed startup: "
-        "refusing to run confluence without an explicit ARMED bar"
-    )
+def _validate_confluence_config(config: dict) -> dict:
+    """P0-2 FAIL-CLOSE: scoring config is load-bearing. A missing thresholds
+    block means we cannot prove the ARMED bar — refuse to start rather than
+    arming on a silent 70.0 fallback.
+    """
+    if not config or "thresholds" not in config or "armed" not in config.get("thresholds", {}):
+        raise RuntimeError(
+            "scoring_weights.json missing thresholds.armed — fail-closed startup: "
+            "refusing to run confluence without an explicit ARMED bar"
+        )
+    return config
+
+
+_CONFIG = _validate_confluence_config(_load_confluence_config())
 _WF = _CONFIG.get("weights_fraction", {})
 _THRESH = _CONFIG.get("thresholds", {})
 _PEN = _CONFIG.get("penalties", {})

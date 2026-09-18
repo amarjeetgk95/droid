@@ -11,6 +11,7 @@ import {
   type AutoDetectCandidate,
   type SignalEngineStrategy,
 } from '@/lib/api/signals';
+import { toNumber } from '@/lib/coerce';
 
 export type LevelKey = 'trigger' | 'stopLoss' | 'target1' | 'target2';
 
@@ -25,9 +26,7 @@ export const EMPTY_LEVELS: LevelDraft = {
 
 /** Finite number from a number | numeric string | Decimal-as-string. */
 export function finiteNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) ? n : null;
+  return toNumber(value, { rejectEmptyString: true, coerceNonString: true });
 }
 
 export { errorMessage } from '@/lib/errors';

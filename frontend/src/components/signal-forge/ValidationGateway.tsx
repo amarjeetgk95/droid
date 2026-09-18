@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge } from '../shared/Badge';
+import { Badge } from '@/components/ui/badge';
 import { errorMessage, finiteNumber } from './forgeLogic';
 
 interface PerfView {

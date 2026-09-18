@@ -4,10 +4,10 @@ import React, { useEffect, useState } from 'react';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
 import { toNumber, pickFirst } from '@/lib/coerce';
-import type { BadgeVariant } from '../shared/Badge';
+import type { BadgeVariant } from '@/components/ui/badge';
 import { ageLabel } from '@/lib/feedState';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 interface ReconStatus {
   discrepancies: number | null;

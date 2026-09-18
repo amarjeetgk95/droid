@@ -1,3 +1,4 @@
+import { toNumber } from '@/lib/coerce';
 import { errorMessage as canonicalErrorMessage } from '@/lib/errors';
 
 export interface IndicatorDefinitionRow {
@@ -183,12 +184,7 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function asNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
+  return toNumber(value, { rejectBlankString: true });
 }
 
 export function asString(value: unknown): string | null {

@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.atomic_json import atomic_write_json
+
 FLAG = Path(__file__).resolve().parents[2] / "data" / "institutional_degraded.flag"
 
 
@@ -66,8 +68,15 @@ def check_drift() -> dict[str, Any]:
 
 def _write(out: dict[str, Any]) -> None:
     try:
-        FLAG.parent.mkdir(parents=True, exist_ok=True)
-        FLAG.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        atomic_write_json(
+            FLAG,
+            out,
+            indent=2,
+            create_parents=True,
+            log_event="drift_flag_write_failed",
+            log_level="debug",
+            max_error_chars=80,
+        )
     except Exception:
         pass
 

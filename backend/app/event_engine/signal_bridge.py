@@ -7,6 +7,7 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 import structlog
 
+from app.core.atomic_json import atomic_write_json
 from app.event_engine.models import CanonicalEvent
 
 logger = structlog.get_logger()
@@ -101,7 +102,6 @@ class EventSignalBridge:
 
     def _save_shadow_records(self) -> None:
         try:
-            import json
             from pathlib import Path
             now = datetime.now(timezone.utc).timestamp()
             live: dict[str, dict] = {}
@@ -117,7 +117,14 @@ class EventSignalBridge:
             for sid in list(self._shadow_records.keys()):
                 if sid not in live:
                     self._shadow_records.pop(sid, None)
-            Path(self._persist_file()).write_text(json.dumps(live, default=str), encoding="utf-8")
+            atomic_write_json(
+                Path(self._persist_file()),
+                live,
+                default=str,
+                log_event="shadow_records_persist_failed",
+                log_level="debug",
+                max_error_chars=150,
+            )
         except Exception as e:
             logger.debug("shadow_records_persist_failed", error=str(e)[:150])
 

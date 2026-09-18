@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { SwingSetupDTO } from '@/lib/api/swing';
 import { SwingAIThesisModal } from './SwingAIThesisModal';
-import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/toast';
 import { fmtINR, fmtNum } from '@/components/ui/desk';
 

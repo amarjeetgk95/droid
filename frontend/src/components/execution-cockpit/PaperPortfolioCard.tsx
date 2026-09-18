@@ -8,9 +8,9 @@ import { toNumber } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
 import type { PortfolioSummary } from '@/lib/types';
 import { ageLabel } from '@/lib/feedState';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 const money = (value: number | null): string =>
   value === null ? '—' : `₹${value.toLocaleString('en-IN')}`;

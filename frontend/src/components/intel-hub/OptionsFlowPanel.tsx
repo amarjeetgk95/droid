@@ -6,8 +6,8 @@ import { useInstrument, type SupportedInstrument } from '@/context/InstrumentCon
 import { api } from '@/lib/api';
 import { asNumber, asRecord, asString, errorMessage } from './IntelHubData';
 import { PanelNotice, formatStrike, sentimentBadgeVariant } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 const OPTIONS_FLOW_POLL_MS = 5_000;
 

@@ -3,11 +3,62 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { SettingSection, StatTile } from '../ui/SettingPrimitives';
+import { DataTable, type Column } from '@/components/ui/data-table';
+import type { TelegramAuditRecord } from '@/lib/types';
 import type { useTelegram } from './useTelegram';
 
 interface Props {
   tg: ReturnType<typeof useTelegram>;
 }
+
+const auditColumns: Column<TelegramAuditRecord>[] = [
+  {
+    key: 'created_at_utc',
+    header: 'Time',
+    className: 'font-mono',
+    render: (r) => (
+      <span className="text-[var(--ds-ink-3)] whitespace-nowrap">
+        {new Date(r.created_at_utc).toLocaleTimeString()}
+      </span>
+    ),
+  },
+  {
+    key: 'event_type',
+    header: 'Event',
+    className: 'font-mono',
+    render: (r) => (
+      <div className="truncate max-w-[160px]">
+        <span className="text-[var(--ds-ink)]">{r.event_type}</span>
+        <div className="text-[10px] text-[var(--ds-ink-3)] truncate">{r.signal_id}</div>
+      </div>
+    ),
+  },
+  {
+    key: 'delivery_status',
+    header: 'Status',
+    className: 'font-mono',
+    render: (r) => (
+      <span
+        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+          r.delivery_status === 'SENT'
+            ? 'bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
+            : r.delivery_status === 'FAILED'
+              ? 'bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
+              : 'bg-[var(--ds-inset)] text-[var(--ds-ink-3)]'
+        }`}
+      >
+        {r.delivery_status}
+      </span>
+    ),
+  },
+  {
+    key: 'attempt_count',
+    header: 'Attempts',
+    align: 'right',
+    className: 'font-mono',
+    render: (r) => <span className="text-[var(--ds-ink-3)]">{r.attempt_count}</span>,
+  },
+];
 
 /** Dispatcher queue health + recent delivery audit log. */
 export function TelegramTelemetryCard({ tg }: Props) {
@@ -75,43 +126,13 @@ export function TelegramTelemetryCard({ tg }: Props) {
 
         {tg.audit.length > 0 ? (
           <div className="rounded-lg border border-[var(--ds-border-subtle)] overflow-hidden">
-            <table className="w-full text-xs font-mono">
-              <thead className="bg-[var(--ds-inset)] border-b border-[var(--ds-border-subtle)] text-[var(--ds-ink-3)]">
-                <tr>
-                  <th className="text-left p-2.5 font-medium">Time</th>
-                  <th className="text-left p-2.5 font-medium">Event</th>
-                  <th className="text-left p-2.5 font-medium">Status</th>
-                  <th className="text-right p-2.5 font-medium">Attempts</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--ds-border-subtle)]">
-                {tg.audit.map((r) => (
-                  <tr key={r.notification_id} className="hover:bg-[var(--ds-hover)]">
-                    <td className="p-2.5 text-[var(--ds-ink-3)] whitespace-nowrap">
-                      {new Date(r.created_at_utc).toLocaleTimeString()}
-                    </td>
-                    <td className="p-2.5 truncate max-w-[160px]">
-                      <span className="text-[var(--ds-ink)]">{r.event_type}</span>
-                      <div className="text-[10px] text-[var(--ds-ink-3)] truncate">{r.signal_id}</div>
-                    </td>
-                    <td className="p-2.5">
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          r.delivery_status === 'SENT'
-                            ? 'bg-[var(--ds-bull-wash)] text-[var(--ds-bull-strong)]'
-                            : r.delivery_status === 'FAILED'
-                              ? 'bg-[var(--ds-bear-wash)] text-[var(--ds-bear-strong)]'
-                              : 'bg-[var(--ds-inset)] text-[var(--ds-ink-3)]'
-                        }`}
-                      >
-                        {r.delivery_status}
-                      </span>
-                    </td>
-                    <td className="p-2.5 text-right text-[var(--ds-ink-3)]">{r.attempt_count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              data={tg.audit}
+              columns={auditColumns}
+              keyExtractor={(r) => r.notification_id}
+              paginate={false}
+              emptyMessage="No delivery logs recorded yet. Send a test probe to verify."
+            />
           </div>
         ) : tg.auditError ? (
           <p className="text-xs text-[var(--ds-bear-strong)] text-center py-6 border border-[var(--ds-bear-line)] bg-[var(--ds-bear-wash)] rounded-lg">

@@ -3,9 +3,9 @@
 import React, { useCallback, useState } from 'react';
 import { api } from '@/lib/api';
 import type { BrokerTokenStatus } from '@/lib/api/tokens';
-import { Card } from '../shared/Card';
-import { Badge, type BadgeVariant } from '../shared/Badge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   PanelFreshness,
   PanelStateBanner,

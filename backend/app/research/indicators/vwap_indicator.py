@@ -7,7 +7,7 @@ from app.research.enums import (
     IndicatorLifecycle,
 )
 from app.research.features import calculate_intraday_vwap
-from app.research.indicators.base import BuiltinIndicator
+from app.research.indicators.base import BuiltinIndicator, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
@@ -18,25 +18,13 @@ class VWAPIndicator(BuiltinIndicator):
     Score = clamped((price - vwap) / vwap * 100 * scale_factor, -100, 100).
     """
 
-    @property
-    def indicator_id(self) -> str:
-        return "vwap"
-
-    @property
-    def name(self) -> str:
-        return "Volume Weighted Average Price (VWAP)"
-
-    @property
-    def version(self) -> str:
-        return "1.0.0"
-
-    @property
-    def category(self) -> IndicatorCategory:
-        return IndicatorCategory.STANDARD
-
-    @property
-    def lifecycle(self) -> IndicatorLifecycle:
-        return IndicatorLifecycle.PRODUCTION
+    METADATA = IndicatorMetadata(
+        indicator_id="vwap",
+        name="Volume Weighted Average Price (VWAP)",
+        version="1.0.0",
+        category=IndicatorCategory.STANDARD,
+        lifecycle=IndicatorLifecycle.PRODUCTION,
+    )
 
     @property
     def description(self) -> str:

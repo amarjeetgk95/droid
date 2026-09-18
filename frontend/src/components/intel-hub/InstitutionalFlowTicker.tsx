@@ -5,8 +5,8 @@ import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
 import { asBoolean, asNumber, asString, errorMessage } from './IntelHubData';
 import { PanelNotice, formatSigned } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import type { FIIDIIOverviewResponse } from '@/lib/types';
 
 const FII_DII_POLL_MS = 60_000;

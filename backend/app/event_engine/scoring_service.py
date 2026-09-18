@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 from typing import Optional, Any
 import structlog
 
+from app.core.json_config import load_json_config
 from app.event_engine.models import (
     CanonicalEvent,
     ImportanceScoreBreakdown,
@@ -16,6 +14,28 @@ from app.event_engine.models import (
 )
 
 logger = structlog.get_logger()
+
+
+# Fallback defaults used when event_scoring.json is missing/unreadable
+# (non-fatal posture; the loader logs json_config_fallback_default at warning).
+DEFAULT_EVENT_SCORING_CONFIG: dict[str, Any] = {
+    "version": "v3.0.0",
+    "importance_weights": {
+        "source_authority": 0.25,
+        "scope": 0.20,
+        "historical_significance": 0.20,
+        "policy_impact": 0.15,
+        "surprise_potential": 0.20,
+    },
+    "importance_factors": {
+        "source_authority": {"RBI_OFFICIAL": 100.0, "MANUAL_OPS": 80.0, "UNKNOWN": 50.0},
+        "scope": {"CENTRAL_BANK": 95.0, "MACRO": 90.0, "DEFAULT": 60.0},
+        "historical_significance": {"RBI_MONETARY_POLICY_RATE_DECISION": 95.0, "DEFAULT": 60.0},
+        "policy_impact": {"REPO_RATE_DECISION": 100.0, "DEFAULT": 50.0},
+        "surprise_potential": {"SCHEDULED_CONSENSUS_ALIGNED": 40.0, "UNSCHEDULED": 100.0, "DEFAULT": 50.0},
+    },
+    "hard_gates": ["MARKET_DATA_VALID", "LIQUIDITY_ACCEPTABLE", "SPREAD_ACCEPTABLE"],
+}
 
 
 class EventScoringService:
@@ -34,47 +54,14 @@ class EventScoringService:
         self._config = self._load_config(config_path)
 
     def _load_config(self, custom_path: Optional[str] = None) -> dict[str, Any]:
-        candidates: list[Path] = []
-        if custom_path:
-            candidates.append(Path(custom_path))
-
-        # Check standard project locations
-        here = Path(__file__).resolve()
-        candidates.extend([
-            here.parents[2] / "config" / "event_scoring.json",
-            here.parents[3] / "config" / "event_scoring.json",
-            Path("config/event_scoring.json"),
-            Path("backend/config/event_scoring.json"),
-        ])
-
-        for path in candidates:
-            if path.exists():
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        logger.info("event_scoring_config_loaded", path=str(path))
-                        return json.load(f)
-                except Exception as e:
-                    logger.warning("event_scoring_config_read_error", path=str(path), error=str(e))
-
-        logger.warning("event_scoring_config_fallback_defaults")
-        return {
-            "version": "v3.0.0",
-            "importance_weights": {
-                "source_authority": 0.25,
-                "scope": 0.20,
-                "historical_significance": 0.20,
-                "policy_impact": 0.15,
-                "surprise_potential": 0.20,
-            },
-            "importance_factors": {
-                "source_authority": {"RBI_OFFICIAL": 100.0, "MANUAL_OPS": 80.0, "UNKNOWN": 50.0},
-                "scope": {"CENTRAL_BANK": 95.0, "MACRO": 90.0, "DEFAULT": 60.0},
-                "historical_significance": {"RBI_MONETARY_POLICY_RATE_DECISION": 95.0, "DEFAULT": 60.0},
-                "policy_impact": {"REPO_RATE_DECISION": 100.0, "DEFAULT": 50.0},
-                "surprise_potential": {"SCHEDULED_CONSENSUS_ALIGNED": 40.0, "UNSCHEDULED": 100.0, "DEFAULT": 50.0},
-            },
-            "hard_gates": ["MARKET_DATA_VALID", "LIQUIDITY_ACCEPTABLE", "SPREAD_ACCEPTABLE"],
-        }
+        # Explicit override first (file path), then canonical config search.
+        search_paths = [custom_path] if custom_path else None
+        return load_json_config(
+            "event_scoring.json",
+            required=False,
+            search_paths=search_paths,
+            default=DEFAULT_EVENT_SCORING_CONFIG,
+        )
 
     def calculate_importance_score(self, event: CanonicalEvent) -> ImportanceScoreBreakdown:
         """Calculate Event Importance Score (§12, §13).

@@ -2,6 +2,7 @@
 
 import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 import { useSignalStream } from '@/context/SignalStreamContext';
 import type { SignalsStreamEvent } from '@/hooks/useSignalsStream';
 import { fmtNum } from '@/components/ui/desk';
@@ -133,16 +134,15 @@ export function parseAutoExecuted(s: any): boolean {
 /** Positive finite number from number|numeric-string; null otherwise. */
 function pickPositiveNum(...vals: unknown[]): number | null {
   for (const v of vals) {
-    const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : (v as number);
-    if (typeof n === 'number' && Number.isFinite(n) && n > 0) return n;
+    const n = toNumber(v, { rejectBlankString: true });
+    if (n !== null && n > 0) return n;
   }
   return null;
 }
 
 /** Fail-soft numeric coercion for feed-truth extras (distance/TTL). Never drops a row. */
 function toNullableNum(v: unknown): number | null {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v, { rejectBlankString: true });
 }
 
 /** Feed quality token, upper-cased for tone checks (null when the backend omits it). */

@@ -6,8 +6,8 @@ import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
 import type { AlgoCapitalConfig } from '@/lib/api/algo';
-import { Card } from '../shared/Card';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface LimitsDraft {
   investment_limit: number | null;

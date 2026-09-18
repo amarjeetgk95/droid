@@ -17,4 +17,16 @@ describe('errorMessage', () => {
     expect(errorMessage(undefined)).toBe('Unexpected error');
     expect(errorMessage(42)).toBe('Unexpected error');
   });
+
+  it('rejectBlankErrorMessage ignores whitespace-only Error messages', () => {
+    const options = { rejectBlankErrorMessage: true };
+    expect(errorMessage(new Error('   '), 'fallback', options)).toBe('fallback');
+    expect(errorMessage(new Error('boom'), 'fallback', options)).toBe('boom');
+  });
+
+  it('objectMessage accepts a message on a thrown plain object', () => {
+    expect(errorMessage({ message: 'plain' }, 'fallback', { objectMessage: true })).toBe('plain');
+    expect(errorMessage({ message: '' }, 'fallback', { objectMessage: true })).toBe('fallback');
+    expect(errorMessage({ message: 'plain' }, 'fallback')).toBe('fallback');
+  });
 });

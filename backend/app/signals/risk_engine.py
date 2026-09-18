@@ -10,15 +10,14 @@ Enforces:
 """
 from __future__ import annotations
 
-import json
 import math
-import os
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 import structlog
+
+from app.core.json_config import load_json_config
 
 logger = structlog.get_logger()
 
@@ -145,59 +144,50 @@ def _premium_stop_risk(
     return round(float(risk), 2)
 
 
+# Fallback defaults (lot sizes match the resolver: NIFTY 75 / BANK 30 / SENSEX 10)
+# used when risk_envelopes.json is missing/unreadable (non-fatal posture, loader
+# logs json_config_fallback_default at warning). Deep-copied by the loader per use.
+DEFAULT_RISK_CONFIG: dict = {
+    "version": 1,
+    "envelopes": {
+        "NIFTY": {
+            "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
+            "5m_intraday": {"min_risk_pts": 18.0, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+            "15m_intraday": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 110.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+            "1d_positional": {"min_risk_pts": 60.0, "max_risk_pts": 120.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 280.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
+        },
+        "BANKNIFTY": {
+            "1m_scalp": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 120.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
+            "5m_intraday": {"min_risk_pts": 50.0, "max_risk_pts": 95.0, "t1_ceiling_pts": 140.0, "t2_ceiling_pts": 220.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+            "15m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 190.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+            "1d_positional": {"min_risk_pts": 180.0, "max_risk_pts": 350.0, "t1_ceiling_pts": 520.0, "t2_ceiling_pts": 800.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
+        },
+        "SENSEX": {
+            "1m_scalp": {"min_risk_pts": 35.0, "max_risk_pts": 70.0, "t1_ceiling_pts": 100.0, "t2_ceiling_pts": 160.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
+            "5m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+            "15m_intraday": {"min_risk_pts": 95.0, "max_risk_pts": 180.0, "t1_ceiling_pts": 260.0, "t2_ceiling_pts": 420.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
+            "1d_positional": {"min_risk_pts": 250.0, "max_risk_pts": 480.0, "t1_ceiling_pts": 700.0, "t2_ceiling_pts": 1100.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
+        }
+    },
+    "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "FINNIFTY": 65, "MIDCPNIFTY": 120},
+    "options_scaling": {"default_atm_delta": 0.50, "expiry_day_time_stop_factor": 0.50}
+}
+
+
 class CentralRiskEngine:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file
         self._config = self._load_config()
 
     def _load_config(self) -> dict:
-        candidates = []
-        if self.config_file:
-            candidates.append(Path(self.config_file))
-        
-        # Look in common repo locations
-        candidates.extend([
-            Path(__file__).resolve().parents[2] / "config" / "risk_envelopes.json",
-            Path("backend/config/risk_envelopes.json"),
-            Path("config/risk_envelopes.json"),
-        ])
-
-        for p in candidates:
-            if p.exists():
-                try:
-                    with open(p, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        logger.info("risk_engine_config_loaded", path=str(p), version=data.get("version", 1))
-                        return data
-                except Exception as e:
-                    logger.warning("risk_engine_config_read_error", path=str(p), error=str(e))
-
-        # Fallback defaults (lot sizes match the resolver: NIFTY 75 / BANK 30 / SENSEX 10)
-        return {
-            "version": 1,
-            "envelopes": {
-                "NIFTY": {
-                    "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
-                    "5m_intraday": {"min_risk_pts": 18.0, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
-                    "15m_intraday": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 110.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
-                    "1d_positional": {"min_risk_pts": 60.0, "max_risk_pts": 120.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 280.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
-                },
-                "BANKNIFTY": {
-                    "1m_scalp": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 120.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
-                    "5m_intraday": {"min_risk_pts": 50.0, "max_risk_pts": 95.0, "t1_ceiling_pts": 140.0, "t2_ceiling_pts": 220.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
-                    "15m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 190.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
-                    "1d_positional": {"min_risk_pts": 180.0, "max_risk_pts": 350.0, "t1_ceiling_pts": 520.0, "t2_ceiling_pts": 800.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
-                },
-                "SENSEX": {
-                    "1m_scalp": {"min_risk_pts": 35.0, "max_risk_pts": 70.0, "t1_ceiling_pts": 100.0, "t2_ceiling_pts": 160.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
-                    "5m_intraday": {"min_risk_pts": 70.0, "max_risk_pts": 130.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 300.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
-                    "15m_intraday": {"min_risk_pts": 95.0, "max_risk_pts": 180.0, "t1_ceiling_pts": 260.0, "t2_ceiling_pts": 420.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
-                    "1d_positional": {"min_risk_pts": 250.0, "max_risk_pts": 480.0, "t1_ceiling_pts": 700.0, "t2_ceiling_pts": 1100.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
-                }
-            },
-            "lot_sizes": {"NIFTY": 75, "BANKNIFTY": 30, "SENSEX": 10, "FINNIFTY": 65, "MIDCPNIFTY": 120},
-            "options_scaling": {"default_atm_delta": 0.50, "expiry_day_time_stop_factor": 0.50}
-        }
+        # Explicit override first (file path), then canonical config search.
+        search_paths = [self.config_file] if self.config_file else None
+        return load_json_config(
+            "risk_envelopes.json",
+            required=False,
+            search_paths=search_paths,
+            default=DEFAULT_RISK_CONFIG,
+        )
 
     def _resolve_envelope(self, underlying: str, desk_key: str) -> Optional[dict]:
         env = self._config.get("envelopes", {}).get(underlying, {})

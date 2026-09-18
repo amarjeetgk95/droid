@@ -6,8 +6,8 @@ import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import type { AlgoKillSwitchStatus } from '@/lib/api/algo';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
-import { StatusDot } from '../shared/StatusDot';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { StatusDot } from '@/components/ui/status-dot';
 
 export const KillSwitchButton: React.FC = () => {
   const [halt, setHalt] = useState<AlgoKillSwitchStatus | null>(null);

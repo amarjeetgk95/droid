@@ -7,18 +7,31 @@ export interface Column<T> {
   header: React.ReactNode;
   render?: (row: T, index: number) => React.ReactNode;
   sortable?: boolean;
+  /** Derives the sort value when it is not a raw `row[key]` (formatted/derived columns). */
+  sortValue?: (row: T) => unknown;
   align?: 'left' | 'center' | 'right';
   className?: string;
 }
 
-interface DataTableProps<T> {
+export interface DataTableProps<T> {
   data: T[];
   columns: Column<T>[];
   keyExtractor: (row: T, index: number) => string;
   emptyMessage?: string;
   pageSize?: number;
+  /** Set false for small operational tables that must show every row. */
+  paginate?: boolean;
   onRowClick?: (row: T) => void;
   className?: string;
+}
+
+function compareValues(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  const as = String(a);
+  const bs = String(b);
+  if (as < bs) return -1;
+  if (as > bs) return 1;
+  return 0;
 }
 
 export function DataTable<T>({
@@ -27,6 +40,7 @@ export function DataTable<T>({
   keyExtractor,
   emptyMessage = 'No records found',
   pageSize = 10,
+  paginate = true,
   onRowClick,
   className = '',
 }: DataTableProps<T>) {
@@ -46,18 +60,20 @@ export function DataTable<T>({
 
   const sortedData = useMemo(() => {
     if (!sortKey) return data;
-    return [...data].sort((a: any, b: any) => {
-      const valA = a[sortKey];
-      const valB = b[sortKey];
+    const col = columns.find((c) => c.key === sortKey);
+    if (!col) return data;
+    return [...data].sort((a, b) => {
+      const valA = col.sortValue ? col.sortValue(a) : (a as unknown as Record<string, unknown>)[sortKey];
+      const valB = col.sortValue ? col.sortValue(b) : (b as unknown as Record<string, unknown>)[sortKey];
+      if (valA == null && valB == null) return 0;
       if (valA == null) return 1;
       if (valB == null) return -1;
-      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+      const result = compareValues(valA, valB);
+      return sortOrder === 'asc' ? result : -result;
     });
-  }, [data, sortKey, sortOrder]);
+  }, [data, sortKey, sortOrder, columns]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedData.length / pageSize));
+  const totalPages = paginate ? Math.max(1, Math.ceil(sortedData.length / pageSize)) : 1;
   // Clamp during render so a shrinking dataset never shows an empty page…
   const safePage = Math.min(page, totalPages);
   // …and keep the stored page in sync for subsequent interactions.
@@ -66,9 +82,10 @@ export function DataTable<T>({
   }, [totalPages]);
 
   const paginatedData = useMemo(() => {
+    if (!paginate) return sortedData;
     const start = (safePage - 1) * pageSize;
     return sortedData.slice(start, start + pageSize);
-  }, [sortedData, safePage, pageSize]);
+  }, [sortedData, safePage, pageSize, paginate]);
 
   return (
     <div className={`overflow-x-auto w-full ${className}`}>
@@ -155,7 +172,7 @@ export function DataTable<T>({
                           : 'text-left'
                     } ${col.className || ''}`}
                   >
-                    {col.render ? col.render(row, index) : String((row as any)[col.key] ?? '-')}
+                    {col.render ? col.render(row, index) : String((row as unknown as Record<string, unknown>)[col.key] ?? '-')}
                   </td>
                 ))}
               </tr>
@@ -164,8 +181,11 @@ export function DataTable<T>({
         </tbody>
       </table>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between px-3 py-2 border-t border-border bg-surface-subtle text-xs font-mono text-ink-3">
+      {paginate && totalPages > 1 && (
+        <nav
+          aria-label="Table pagination"
+          className="flex items-center justify-between px-3 py-2 border-t border-border bg-surface-subtle text-xs font-mono text-ink-3"
+        >
           <div>
             Showing {(safePage - 1) * pageSize + 1} to{' '}
             {Math.min(safePage * pageSize, sortedData.length)} of {sortedData.length}
@@ -189,7 +209,7 @@ export function DataTable<T>({
               Next
             </button>
           </div>
-        </div>
+        </nav>
       )}
     </div>
   );

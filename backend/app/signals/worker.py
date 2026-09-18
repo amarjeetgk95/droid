@@ -30,6 +30,9 @@ from app.models.market import DataStatus
 logger = structlog.get_logger()
 
 MAX_QUOTE_AGE_SECONDS: float = 15.0
+#: Resting PENDING paper orders (LIMIT/SL) are evaluated on the open-market
+#: risk-loop cadence, throttled to this interval.
+PENDING_ORDER_SWEEP_INTERVAL_SECONDS: float = 3.0
 
 
 class AutomatedSignalWorker:
@@ -59,6 +62,7 @@ class AutomatedSignalWorker:
         self._last_market_open: bool | None = None
         self._last_risk_closed_log_ts: float = 0.0
         self._last_scanner_closed_log_ts: float = 0.0
+        self._last_pending_sweep_ts: float = 0.0
         self._bg_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
@@ -184,6 +188,11 @@ class AutomatedSignalWorker:
 
                 self._last_market_open = True
 
+                # Quotes already fetched this tick, reused by the pending-order
+                # sweep so a resting order on a tracked underlying needs no
+                # extra broker round trip.
+                tick_quotes: dict[str, float] = {}
+
                 # Iterate approved instruments and manage open risk
                 for u in list(APPROVED_UNDERLYINGS):
                     try:
@@ -218,6 +227,7 @@ class AutomatedSignalWorker:
                             continue
 
                         curr_p = Decimal(str(ltp))
+                        tick_quotes[str(u).upper()] = ltp
                         # Process price updates (triggers, ratchets, staged exits, time stops)
                         await outcome_tracker.process_price_update_async(u, curr_p)
 
@@ -228,6 +238,11 @@ class AutomatedSignalWorker:
                         )
                     except Exception as pe:
                         logger.debug("worker_risk_tick_err", underlying=u, error=str(pe))
+
+                # Resting PENDING paper orders (LIMIT/SL) are evaluated on this
+                # open-market tick; throttled + fully self-contained so a bad
+                # order or quote can never take down the risk loop.
+                await self._evaluate_pending_paper_orders(tick_quotes)
 
             except asyncio.CancelledError:
                 break
@@ -248,6 +263,52 @@ class AutomatedSignalWorker:
                 await asyncio.sleep(sleep_sec)
             except asyncio.CancelledError:
                 break
+
+    async def _evaluate_pending_paper_orders(self, quotes: dict[str, float]) -> None:
+        """Fill resting PENDING paper orders (LIMIT/SL) while the market is open.
+
+        Runs on the open-market risk cadence behind a short throttle. Quotes
+        already fetched for the approved underlyings this tick are reused;
+        anything else (option contract symbols) is resolved through the paper
+        service's own chain-aware quote path. ``evaluate_pending_orders``
+        re-checks each order under the same per-user lock as ``place_order``,
+        so a concurrent placement/cancel can never be clobbered, and this sweep
+        is safe to run every tick. Fully bounded: one bad order or stale quote
+        never propagates into the risk loop.
+        """
+        now_wall = time.time()
+        if now_wall - self._last_pending_sweep_ts < PENDING_ORDER_SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_pending_sweep_ts = now_wall
+        try:
+            from app.services.paper_service import paper_service
+
+            pending = [o for o in paper_service.get_orders() if o.status == "PENDING"]
+        except Exception as se:
+            logger.warning("worker_pending_sweep_snapshot_failed", error=str(se)[:150])
+            return
+
+        for o in pending:
+            try:
+                ltp = quotes.get(str(o.symbol or "").upper())
+                if ltp is None:
+                    ltp = await paper_service.get_symbol_ltp(o.symbol, o.underlying)
+                if ltp is None or float(ltp) <= 0:
+                    continue
+                filled = await paper_service.evaluate_pending_orders(o.symbol, float(ltp))
+                if filled:
+                    logger.info(
+                        "worker_pending_orders_filled",
+                        symbol=o.symbol,
+                        order_ids=[f.order_id for f in filled],
+                    )
+            except Exception as pe:
+                logger.warning(
+                    "worker_pending_order_eval_failed",
+                    order_id=getattr(o, "order_id", None),
+                    symbol=getattr(o, "symbol", None),
+                    error=str(pe)[:150],
+                )
 
     async def _settle_eod_positions(self) -> None:
         """EOD session square-off: close open paper positions and settle the audit

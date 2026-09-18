@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { fmtINR } from '@/components/ui/desk';
-import { Card } from '../shared/Card';
-import { Badge, type BadgeVariant } from '../shared/Badge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { DataTable, type Column } from '@/components/ui/data-table';
 import {
   type AuditTradeLike,
   UNAVAILABLE,
@@ -122,6 +123,109 @@ export const AuditLedger: React.FC = () => {
   const initialLoading = loading && trades.length === 0;
   const unavailable = !!error && trades.length === 0;
 
+  const columns = useMemo<Column<AuditTradeLike>[]>(
+    () => [
+      {
+        key: 'signal_id',
+        header: 'Signal ID',
+        sortable: true,
+        sortValue: (t) => t.signal_id ?? null,
+        render: (t) => (
+          <div>
+            <div className="text-ink-2 font-semibold">{t.signal_id ?? UNAVAILABLE}</div>
+            <div className="text-[10px] text-ink-3">{t.created_at_str || UNAVAILABLE}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'contract',
+        header: 'Contract',
+        sortable: true,
+        sortValue: (t) => contractLabel(t),
+        render: (t) => <span className="font-bold text-ink">{contractLabel(t)}</span>,
+      },
+      {
+        key: 'strategy',
+        header: 'Strategy',
+        sortable: true,
+        sortValue: (t) => t.strategy ?? null,
+        render: (t) => <span className="text-ink-2">{t.strategy ?? UNAVAILABLE}</span>,
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        sortable: true,
+        sortValue: (t) => t.status ?? null,
+        render: (t) => (
+          <Badge variant={statusVariant(t.status)} size="xs">
+            {t.status ?? 'UNKNOWN'}
+          </Badge>
+        ),
+      },
+      {
+        key: 'actual_fill_price',
+        header: 'Fill',
+        sortable: true,
+        sortValue: (t) => ledgerEntryPrice(t),
+        render: (t) => {
+          const entry = ledgerEntryPrice(t);
+          return (
+            <span
+              className="text-ink-2"
+              title={entry === null ? 'No executed fill recorded' : undefined}
+            >
+              {entry === null ? UNAVAILABLE : fmtINR(entry)}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'exit_price',
+        header: 'Exit',
+        sortable: true,
+        sortValue: (t) => t.exit_price ?? null,
+        render: (t) => (
+          <span className="text-ink-2">
+            {t.exit_price === null || t.exit_price === undefined ? UNAVAILABLE : fmtINR(t.exit_price)}
+          </span>
+        ),
+      },
+      {
+        key: 'pnl',
+        header: 'Net P&L',
+        align: 'right',
+        sortable: true,
+        sortValue: (t) => ledgerPnl(t),
+        render: (t) =>
+          t.economics_unavailable ? (
+            <span
+              className="font-bold text-warn-strong"
+              title={t.outcome_label ?? 'Backend booked no P&L for this record'}
+            >
+              UNAVAILABLE
+            </span>
+          ) : (
+            <span className={`font-bold ${valueToneClass(ledgerPnl(t))}`}>{signedINR(ledgerPnl(t))}</span>
+          ),
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        align: 'right',
+        render: (t) => (
+          <button
+            onClick={() => setSelectedVoidId(t.signal_id ?? null)}
+            disabled={!t.signal_id}
+            className="px-2 py-0.5 rounded bg-down-wash hover:bg-down/20 border border-down-line text-down-strong text-[10px] font-semibold disabled:opacity-40"
+          >
+            Void
+          </button>
+        ),
+      },
+    ],
+    [setSelectedVoidId],
+  );
+
   return (
     <>
       <Card
@@ -192,71 +296,13 @@ export const AuditLedger: React.FC = () => {
           )}
 
           {trades.length > 0 && (
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-border bg-surface-subtle text-ink-3 text-[10px] uppercase">
-                    <th className="py-2.5 px-3">Signal ID</th>
-                    <th className="py-2.5 px-3">Contract</th>
-                    <th className="py-2.5 px-3">Strategy</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Fill</th>
-                    <th className="py-2.5 px-3">Exit</th>
-                    <th className="py-2.5 px-3 text-right">Net P&amp;L</th>
-                    <th className="py-2.5 px-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-subtle">
-                  {trades.map((t) => {
-                    const pnl = ledgerPnl(t);
-                    const entry = ledgerEntryPrice(t);
-                    const rowKey = t.signal_id ?? `${t.underlying}-${t.created_at_utc}`;
-                    return (
-                      <tr key={rowKey} className="hover:bg-muted transition-colors">
-                        <td className="py-2 px-3">
-                          <div className="text-ink-2 font-semibold">{t.signal_id ?? UNAVAILABLE}</div>
-                          <div className="text-[10px] text-ink-3">{t.created_at_str || UNAVAILABLE}</div>
-                        </td>
-                        <td className="py-2 px-3 font-bold text-ink">{contractLabel(t)}</td>
-                        <td className="py-2 px-3 text-ink-2">{t.strategy ?? UNAVAILABLE}</td>
-                        <td className="py-2 px-3">
-                          <Badge variant={statusVariant(t.status)} size="xs">
-                            {t.status ?? 'UNKNOWN'}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-3 text-ink-2" title={entry === null ? 'No executed fill recorded' : undefined}>
-                          {entry === null ? UNAVAILABLE : fmtINR(entry)}
-                        </td>
-                        <td className="py-2 px-3 text-ink-2">
-                          {t.exit_price === null || t.exit_price === undefined ? UNAVAILABLE : fmtINR(t.exit_price)}
-                        </td>
-                        <td className="py-2 px-3 text-right">
-                          {t.economics_unavailable ? (
-                            <span
-                              className="font-bold text-warn-strong"
-                              title={t.outcome_label ?? 'Backend booked no P&L for this record'}
-                            >
-                              UNAVAILABLE
-                            </span>
-                          ) : (
-                            <span className={`font-bold ${valueToneClass(pnl)}`}>{signedINR(pnl)}</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-right">
-                          <button
-                            onClick={() => setSelectedVoidId(t.signal_id ?? null)}
-                            disabled={!t.signal_id}
-                            className="px-2 py-0.5 rounded bg-down-wash hover:bg-down/20 border border-down-line text-down-strong text-[10px] font-semibold disabled:opacity-40"
-                          >
-                            Void
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              data={trades}
+              columns={columns}
+              keyExtractor={(t) => t.signal_id ?? `${t.underlying}-${t.created_at_utc}`}
+              pageSize={25}
+              emptyMessage="No audit records — no signal has been registered by the backend yet."
+            />
           )}
         </div>
       </Card>

@@ -3,9 +3,9 @@
 import React from 'react';
 import { api } from '@/lib/api';
 import type { MarketHealthStatus } from '@/lib/types';
-import { Card } from '../shared/Card';
-import { Badge, type BadgeVariant } from '../shared/Badge';
-import { StatusDot, type StatusDotState } from '../shared/StatusDot';
+import { Card } from '@/components/ui/card';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { StatusDot, type StatusDotState } from '@/components/ui/status-dot';
 import {
   PanelFreshness,
   PanelStateBanner,

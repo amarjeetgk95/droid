@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, type BadgeVariant } from '../shared/Badge';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import {
   errorMessage,
   finiteNumber,

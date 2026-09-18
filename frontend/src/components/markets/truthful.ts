@@ -1,9 +1,9 @@
 import type { KeyLevelsModel, MarketRegimeOverview, TechnicalIndicators, VixRegimeInfo } from '@/lib/types';
+import { toNumber } from '@/lib/coerce';
 import { DEFAULT_STALE_AFTER_MS } from '@/lib/feedState';
 
 export function finiteNum(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 export function posNum(v: unknown): number | null {

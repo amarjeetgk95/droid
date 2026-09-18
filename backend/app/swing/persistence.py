@@ -91,16 +91,21 @@ def load_swing_state() -> dict[str, Any]:
         version = data.get("schema_version")
         if version != SWING_STATE_SCHEMA_VERSION:
             logger.info("legacy_swing_state_detected_running_migration", current_version=version, target_version=SWING_STATE_SCHEMA_VERSION)
-            # Backup legacy state
+            # Backup legacy state (atomic; failure is logged and swallowed so
+            # the reset below still proceeds, matching the previous behavior).
             backup_file = Path(f"swing_state_legacy_backup_{int(time.time())}.json")
-            try:
-                with open(backup_file, "w", encoding="utf-8") as bf:
-                    json.dump(data, bf, indent=2)
+            if atomic_write_json(
+                backup_file,
+                data,
+                indent=2,
+                log_event="failed_to_backup_legacy_swing_state",
+                max_error_chars=200,
+            ):
                 logger.info("legacy_swing_state_archived", backup_file=str(backup_file))
-            except Exception as be:
-                logger.warning("failed_to_backup_legacy_swing_state", error=str(be)[:200])
 
-            # Reset to clean v2 options state
+            # Reset to clean v2 options state. atomic_write_json never raises;
+            # re-raise so the outer handler keeps returning the legacy-safe
+            # fallback (and logs load_swing_state_failed) exactly as before.
             empty_state = {
                 "schema_version": SWING_STATE_SCHEMA_VERSION,
                 "setups": [],
@@ -109,8 +114,15 @@ def load_swing_state() -> dict[str, Any]:
                 "regime": None,
                 "updated_at_utc": int(time.time() * 1000),
             }
-            with open(SWING_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(empty_state, f, indent=2)
+            if not atomic_write_json(
+                SWING_STATE_FILE,
+                empty_state,
+                indent=2,
+                log_event="load_swing_state_failed",
+                log_level="debug",
+                max_error_chars=200,
+            ):
+                raise OSError("legacy swing state reset write failed")
 
             return empty_state
 

@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { SwingPositionDTO } from '@/lib/api/swing';
-import { Modal } from '@/components/shared/Modal';
+import { Modal } from '@/components/ui/modal';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { useToast } from '@/components/ui/toast';
 import { fmtINR, fmtNum } from '@/components/ui/desk';

@@ -26,6 +26,7 @@ const { apiMock } = vi.hoisted(() => {
 
 vi.mock('@/lib/api', () => ({ api: apiMock }));
 
+import { asNumber, toErrorMessage } from './PanelState';
 import { SystemMetricsPanel } from './SystemMetricsPanel';
 import { BrokerConnectionPanel } from './BrokerConnectionPanel';
 import { TelegramIntegration } from './TelegramIntegration';
@@ -464,5 +465,23 @@ describe('system-nerve source guards', () => {
         expect(source.includes(token), `${file} must not contain "${token}"`).toBe(false);
       }
     }
+  });
+});
+
+describe('PanelState helpers', () => {
+  it('asNumber rejects empty and whitespace-only strings, never coercing them to 0', () => {
+    expect(asNumber('12.5')).toBe(12.5);
+    expect(asNumber(0)).toBe(0);
+    expect(asNumber('')).toBeNull();
+    expect(asNumber('   ')).toBeNull();
+    expect(asNumber('abc')).toBeNull();
+    expect(asNumber(true)).toBeNull();
+  });
+
+  it('toErrorMessage keeps the module fallback for blank errors', () => {
+    expect(toErrorMessage(new Error('boom'))).toBe('boom');
+    expect(toErrorMessage('direct')).toBe('direct');
+    expect(toErrorMessage(new Error('   '))).toBe('Request failed with no error detail.');
+    expect(toErrorMessage(undefined)).toBe('Request failed with no error detail.');
   });
 });

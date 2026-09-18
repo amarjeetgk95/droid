@@ -9,9 +9,9 @@ import { errorMessage } from '@/lib/errors';
 import type { AlgoPosition } from '@/lib/api/algo';
 import type { VirtualPosition } from '@/lib/types';
 import { ageLabel } from '@/lib/feedState';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 type Desk = 'PAPER' | 'ALGO';
 

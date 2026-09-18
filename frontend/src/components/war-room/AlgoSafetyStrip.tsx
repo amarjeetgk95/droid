@@ -10,6 +10,7 @@
 
 import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 import { fmtINR } from '@/components/ui/desk';
 import { executeEmergencyKill } from './AlgoControlWidget';
 import { ShieldAlert, Power } from 'lucide-react';
@@ -23,8 +24,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Capital limits arrive as decimal strings ("3000"); render as INR, never raw. */
 function fmtCapitalLimit(v: unknown): string {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : (v as number);
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  const n = toNumber(v, { rejectBlankString: true });
+  if (n === null) return '—';
   return fmtINR(n);
 }
 

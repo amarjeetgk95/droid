@@ -6,11 +6,11 @@ import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import type { AlgoOrder } from '@/lib/api/algo';
-import type { BadgeVariant } from '../shared/Badge';
+import type { BadgeVariant } from '@/components/ui/badge';
 import { ageLabel } from '@/lib/feedState';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 const CANCELLABLE_STATUSES = new Set(['PENDING', 'OPEN', 'PARTIALLY_FILLED', 'PARTIAL', 'TRIGGER_PENDING']);
 

@@ -7,7 +7,7 @@ from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,
 )
-from app.research.indicators.base import BuiltinIndicator
+from app.research.indicators.base import BuiltinIndicator, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
@@ -18,25 +18,13 @@ class RSIIndicator(BuiltinIndicator):
     Score = (RSI - 50) * 2.
     """
 
-    @property
-    def indicator_id(self) -> str:
-        return "rsi"
-
-    @property
-    def name(self) -> str:
-        return "Relative Strength Index (RSI)"
-
-    @property
-    def version(self) -> str:
-        return "1.0.0"
-
-    @property
-    def category(self) -> IndicatorCategory:
-        return IndicatorCategory.STANDARD
-
-    @property
-    def lifecycle(self) -> IndicatorLifecycle:
-        return IndicatorLifecycle.PRODUCTION
+    METADATA = IndicatorMetadata(
+        indicator_id="rsi",
+        name="Relative Strength Index (RSI)",
+        version="1.0.0",
+        category=IndicatorCategory.STANDARD,
+        lifecycle=IndicatorLifecycle.PRODUCTION,
+    )
 
     @property
     def description(self) -> str:

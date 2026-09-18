@@ -7,7 +7,7 @@ from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,
 )
-from app.research.indicators.base import BuiltinIndicator
+from app.research.indicators.base import BuiltinIndicator, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
@@ -17,25 +17,13 @@ class MACDIndicator(BuiltinIndicator):
     Computes standard 12/26/9 MACD and normalizes the histogram against volatility.
     """
 
-    @property
-    def indicator_id(self) -> str:
-        return "macd"
-
-    @property
-    def name(self) -> str:
-        return "Moving Average Convergence Divergence (MACD)"
-
-    @property
-    def version(self) -> str:
-        return "1.0.0"
-
-    @property
-    def category(self) -> IndicatorCategory:
-        return IndicatorCategory.STANDARD
-
-    @property
-    def lifecycle(self) -> IndicatorLifecycle:
-        return IndicatorLifecycle.PRODUCTION
+    METADATA = IndicatorMetadata(
+        indicator_id="macd",
+        name="Moving Average Convergence Divergence (MACD)",
+        version="1.0.0",
+        category=IndicatorCategory.STANDARD,
+        lifecycle=IndicatorLifecycle.PRODUCTION,
+    )
 
     @property
     def description(self) -> str:

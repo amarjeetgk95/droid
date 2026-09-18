@@ -2,6 +2,8 @@
 
 import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
+import { toNumber } from '@/lib/coerce';
+import { errorMessage } from '@/lib/errors';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import type { FeedState } from '@/lib/feedState';
 
@@ -31,14 +33,13 @@ export interface PanelResource<T> {
 }
 
 export function toErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  if (typeof error === 'string' && error.trim()) return error;
-  return 'Request failed with no error detail.';
+  return errorMessage(error, 'Request failed with no error detail.', {
+    rejectBlankErrorMessage: true,
+  });
 }
 
 export function asNumber(value: unknown): number | null {
-  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(value, { rejectBlankString: true });
 }
 
 export function asString(value: unknown): string | null {

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode, useRef } from 'react';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import type { IndexCard, MarketBreadthData, MarketHealthStatus, MarketStatusResponse, MarketRegimeOverview } from '@/lib/types';
 import { useMarketStream, type StreamConnectionState, type TimestampedTick } from '@/hooks/useMarketStream';
 
@@ -66,7 +67,7 @@ const HEALTH_RESCHEDULE_DEBOUNCE_MS = 1200;
 
 const EMPTY_ERRORS: SectionErrors = { cards: null, breadth: null, health: null, marketStatus: null };
 
-const errMessage = (err: unknown) => (err instanceof Error ? err.message : 'Failed to fetch market data');
+const errMessage = (err: unknown) => errorMessage(err, 'Failed to fetch market data');
 
 export function MarketDataProvider({ children, refreshInterval = DEFAULT_REFRESH_MS, useSummaryEndpoint = true }: { children: ReactNode; refreshInterval?: number; useSummaryEndpoint?: boolean }) {
   const [cards, setCards] = useState<IndexCard[]>([]);

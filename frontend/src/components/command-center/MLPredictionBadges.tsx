@@ -5,8 +5,9 @@ import { usePolling } from '@/hooks/usePolling';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { api } from '@/lib/api';
-import { Card } from '../shared/Card';
-import { Badge, type BadgeVariant } from '../shared/Badge';
+import { toNumber } from '@/lib/coerce';
+import { Card } from '@/components/ui/card';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { EmptyNote, StackedProbabilityBar, fmtSigned } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 
@@ -26,8 +27,7 @@ interface PredictionModel {
 }
 
 function finite(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 function str(v: unknown): string | null {

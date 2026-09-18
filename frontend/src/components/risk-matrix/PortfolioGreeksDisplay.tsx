@@ -5,7 +5,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { fmtNum } from '@/components/ui/desk';
-import { Card } from '../shared/Card';
+import { Card } from '@/components/ui/card';
 import { UNAVAILABLE, finiteNumber, signedINR, signedNumber, valueToneClass } from './riskUtils';
 
 type GreeksSummary = {

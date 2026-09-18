@@ -6,32 +6,20 @@ from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,
 )
-from app.research.indicators.base import BuiltinIndicator
+from app.research.indicators.base import BuiltinIndicator, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
 
 
 class MomentumIndicator(BuiltinIndicator):
     """Multi-Period Rate-of-Change (ROC) and Momentum Composite indicator."""
 
-    @property
-    def indicator_id(self) -> str:
-        return "momentum"
-
-    @property
-    def name(self) -> str:
-        return "Multi-Period Momentum Composite"
-
-    @property
-    def version(self) -> str:
-        return "1.0.0"
-
-    @property
-    def category(self) -> IndicatorCategory:
-        return IndicatorCategory.STANDARD
-
-    @property
-    def lifecycle(self) -> IndicatorLifecycle:
-        return IndicatorLifecycle.PRODUCTION
+    METADATA = IndicatorMetadata(
+        indicator_id="momentum",
+        name="Multi-Period Momentum Composite",
+        version="1.0.0",
+        category=IndicatorCategory.STANDARD,
+        lifecycle=IndicatorLifecycle.PRODUCTION,
+    )
 
     @property
     def description(self) -> str:

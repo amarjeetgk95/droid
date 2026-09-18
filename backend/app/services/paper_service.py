@@ -350,6 +350,18 @@ class PaperTradingService:
         except Exception:
             return None
 
+    async def get_symbol_ltp(self, symbol: str, underlying: str = "") -> float | None:
+        """Live LTP for an arbitrary order symbol (option-chain aware).
+
+        Public, fail-soft wrapper used by the pending-order sweep: returns None
+        when no broker quote is available so callers skip the order instead of
+        evaluating it against a fabricated price.
+        """
+        try:
+            return await self._resolve_live_for_symbol(symbol, underlying)
+        except Exception:
+            return None
+
     @staticmethod
     def _db_to_order(db_ord: PaperOrderDB) -> VirtualOrder:
         return VirtualOrder(

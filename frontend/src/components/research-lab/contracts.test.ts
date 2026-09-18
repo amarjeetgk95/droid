@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  asNumber,
   clampInt,
   computePayoffStats,
   flattenRecord,
@@ -16,6 +17,18 @@ import {
   parseTemplateStrategy,
   splitPayoffBySign,
 } from './contracts';
+
+describe('asNumber', () => {
+  it('parses finite numbers and numeric strings, rejecting blanks and non-numbers', () => {
+    expect(asNumber(12.5)).toBe(12.5);
+    expect(asNumber('12.5')).toBe(12.5);
+    expect(asNumber('')).toBeNull();
+    expect(asNumber('   ')).toBeNull();
+    expect(asNumber('abc')).toBeNull();
+    expect(asNumber(true)).toBeNull();
+    expect(asNumber(null)).toBeNull();
+  });
+});
 
 describe('flattenRecord', () => {
   it('flattens nested objects with dot keys', () => {

@@ -29,6 +29,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 import { TelemetryStrip, TelemetryItem } from '@/components/ui/desk';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 
@@ -54,8 +55,7 @@ function asArray(res: unknown): Array<Record<string, unknown>> {
 }
 
 function num(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 function fmtInt(v: number | null): string {

@@ -15,8 +15,10 @@ from typing import Any
 
 from app.quant.indicators import calculate_atr
 from app.research.enums import DataQualityStatus, Direction, ForecastHorizon
-from app.research.indicator_base import IndicatorBase
+from app.research.indicator_base import IndicatorBase, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
+
+__all__ = ["BuiltinIndicator", "IndicatorMetadata"]
 
 
 class BuiltinIndicator(IndicatorBase):

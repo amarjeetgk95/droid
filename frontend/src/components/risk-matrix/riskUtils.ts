@@ -13,12 +13,12 @@
  * scope (see report).
  */
 
+import { toNumber } from '@/lib/coerce';
+
 export const UNAVAILABLE = '—';
 
 function toFinite(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null;
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v, { rejectEmptyString: true });
 }
 
 /** Strict finite-number coercion; strings from Decimal-serialized payloads are accepted. */

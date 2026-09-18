@@ -4,9 +4,9 @@ import React from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useIntelHub } from './IntelHubData';
 import { PanelNotice } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
-import { Gauge } from '../shared/Gauge';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Gauge } from '@/components/ui/gauge';
 import { confidencePct, isUsableRegimeOverview } from '@/components/markets/truthful';
 
 function mtfBadgeVariant(bias: string): 'bull' | 'bear' | 'neutral' {

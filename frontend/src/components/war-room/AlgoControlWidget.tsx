@@ -2,6 +2,7 @@
 
 import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { fmtINR } from '@/components/ui/desk';
 import { playScalpAudio } from '@/components/scalp/scalpAudio';
 import { ShieldAlert, Bot, Power } from 'lucide-react';
@@ -41,10 +42,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getErrorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  if (typeof err === 'string' && err.length > 0) return err;
-  if (isRecord(err) && typeof err.message === 'string' && err.message.length > 0) return err.message;
-  return 'Unknown error';
+  return errorMessage(err, 'Unknown error', { objectMessage: true });
 }
 
 /**

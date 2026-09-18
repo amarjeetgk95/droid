@@ -7,7 +7,7 @@ import { useSignalStream } from '@/context/SignalStreamContext';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useStreamHealth } from '@/context/LiveMarketContext';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
-import { StatusDot } from '../shared/StatusDot';
+import { StatusDot } from '@/components/ui/status-dot';
 import { cn } from '@/lib/utils';
 import { Header } from './Header/Header';
 

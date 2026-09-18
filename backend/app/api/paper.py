@@ -1,10 +1,10 @@
 from typing import Optional
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import parse_user_uuid
 from app.api.envelope import envelope
 from app.core.database import get_db_session
 from app.core.security import AuthUser, get_current_user
@@ -17,22 +17,13 @@ router = APIRouter(prefix="/api/v1/paper", tags=["paper"])
 _PROVIDER = "paper_trading_engine"
 
 
-def _parse_user_uuid(user: Optional[AuthUser]) -> Optional[UUID]:
-    if not user or not user.user_id:
-        return None
-    try:
-        return UUID(user.user_id)
-    except Exception:
-        return None
-
-
 @router.get("/portfolio")
 async def get_portfolio_summary(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Retrieve virtual portfolio balance, MTM, and margin usage."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     summary = await paper_service.get_portfolio_summary(session, user_uuid)
     return envelope(summary, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
@@ -43,7 +34,7 @@ async def get_positions(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Retrieve active and closed virtual trading positions."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     positions = await paper_service.get_positions(session, user_uuid)
     return envelope(positions, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
@@ -60,7 +51,7 @@ async def get_orders(
 
     Query params: ``limit`` (1-500), ``offset``, ``status`` (PENDING/FILLED/...).
     """
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     orders = await paper_service.get_orders_async(session, user_uuid, limit=limit, offset=offset)
     if status:
         s = status.upper()
@@ -75,7 +66,7 @@ async def place_virtual_order(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Place and execute a single virtual order."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     order = await paper_service.place_order(payload, session, user_uuid)
     return envelope(order, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
@@ -87,7 +78,7 @@ async def place_strategy_basket(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Execute a multi-leg strategy basket."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     orders = await paper_service.place_basket(payload, session, user_uuid)
     return envelope(orders, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
@@ -100,7 +91,7 @@ async def square_off_single_position(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Close an open position at current market price."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     try:
         closed = await paper_service.square_off_position(
             position_id, session, user_uuid, allow_closed_market=allow_closed_market
@@ -118,7 +109,7 @@ async def cancel_pending_order(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Cancel a resting PENDING (LIMIT/SL) order."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     try:
         cancelled = await paper_service.cancel_order(order_id, session, user_uuid)
     except ValueError as ve:
@@ -133,7 +124,7 @@ async def square_off_all_positions(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Emergency square off of all active positions."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     closed = await paper_service.square_off_all(session, user_uuid)
     return envelope(closed, provider=_PROVIDER, status=DataStatus.OFFLINE)
 
@@ -172,7 +163,7 @@ async def preview_margin(
         quantity=payload.quantity,
         is_hedged=False,
     )
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     portfolio = await paper_service.get_portfolio_summary(session, user_uuid)
     premium = round(payload.price * payload.quantity, 2) if is_opt and payload.side.upper() == "BUY" else 0.0
     return envelope(
@@ -194,7 +185,7 @@ async def set_paper_wallet_capital(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Set custom virtual capital for the paper trading wallet."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     try:
         summary = await paper_service.set_initial_capital_async(payload.capital, session, user_uuid)
     except ValueError as ve:
@@ -209,7 +200,7 @@ async def reset_paper_trading_account(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Reset virtual account to baseline or custom capital."""
-    user_uuid = _parse_user_uuid(user)
+    user_uuid = parse_user_uuid(user)
     cap = payload.capital if payload else None
     summary = await paper_service.reset_portfolio_async(session, user_uuid, capital=cap)
     return envelope(summary, provider=_PROVIDER, status=DataStatus.OFFLINE)

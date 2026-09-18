@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { Card, DirectionBadge, EmptyNote, fmtClock, fmtINR, fmtNum, fmtPct01, fmtSigned } from '@/components/ui/desk';
 import { Button } from '@/components/ui/button';
+import { DataTable, type Column } from '@/components/ui/data-table';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { useInstrument } from '@/context/InstrumentContext';
 import { ErrorNote, ExportButtons } from './controls';
@@ -112,6 +113,98 @@ export const PredictionTracker: React.FC = () => {
     exportRowsAsCsv(`research-predictions-${instrument}-${timestampSlug()}.csv`, exportRows);
   };
 
+  const columns: Column<ResearchPredictionRow>[] = [
+    {
+      key: 'prediction_id',
+      header: 'Prediction',
+      sortable: true,
+      render: (p) => (
+        <span className="mono" title={p.prediction_id}>
+          {shortId(p.prediction_id)}
+        </span>
+      ),
+    },
+    {
+      key: 'indicator_id',
+      header: 'Indicator',
+      sortable: true,
+      sortValue: (p) => p.indicator_id ?? null,
+      render: (p) => (
+        <div>
+          <div>{p.indicator_id ?? '—'}</div>
+          <div className="faint text-[10px]">
+            {p.timeframe ?? '—'} · {p.forecast_horizon ?? `${p.horizon_candles ?? '—'} candles`}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'direction',
+      header: 'Bias',
+      render: (p) => <DirectionBadge direction={p.direction} />,
+    },
+    {
+      key: 'score',
+      header: 'Score',
+      align: 'right',
+      sortable: true,
+      render: (p) => (p.score === null ? '—' : fmtSigned(p.score, 1)),
+    },
+    {
+      key: 'confidence',
+      header: 'Confidence',
+      align: 'right',
+      sortable: true,
+      render: (p) => (p.confidence === null ? '—' : fmtPct01(p.confidence)),
+    },
+    {
+      key: 'target_price',
+      header: 'Target',
+      align: 'right',
+      sortable: true,
+      render: (p) => (p.target_price === null ? '—' : fmtINR(p.target_price)),
+    },
+    {
+      key: 'timestamp',
+      header: 'Recorded',
+      sortable: true,
+      className: 'num',
+      render: (p) => fmtClock(p.timestamp),
+    },
+    {
+      key: 'outcome',
+      header: 'Outcome',
+      render: (p) => {
+        const outcome = outcomes[p.prediction_id];
+        return outcome ? (
+          <span className={`badge ${outcome.is_correct ? 'b-bull' : 'b-bear'}`}>
+            {outcome.is_correct ? 'CORRECT' : 'WRONG'}
+            {outcome.actual_pct_move === null ? '' : ` · ${fmtNum(outcome.actual_pct_move, 2)}%`}
+          </span>
+        ) : (
+          <span className="badge b-neut">UNMEASURED</span>
+        );
+      },
+    },
+    {
+      key: 'action',
+      header: 'Action',
+      align: 'right',
+      render: (p) =>
+        outcomes[p.prediction_id] ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() => void handleMeasure(p.prediction_id)}
+            disabled={measuringId !== null}
+          >
+            {measuringId === p.prediction_id ? 'Measuring…' : 'Measure'}
+          </Button>
+        ),
+    },
+  ];
+
   return (
     <Card
       title="PREDICTION OUTCOME TRACKER"
@@ -140,73 +233,13 @@ export const PredictionTracker: React.FC = () => {
         ) : null}
 
         {predictions.length > 0 ? (
-          <div className="overflow-x-auto w-full">
-            <table className="tbl tbl--dense w-full text-left">
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left' }}>Prediction</th>
-                  <th style={{ textAlign: 'left' }}>Indicator</th>
-                  <th style={{ textAlign: 'left' }}>Bias</th>
-                  <th style={{ textAlign: 'right' }}>Score</th>
-                  <th style={{ textAlign: 'right' }}>Confidence</th>
-                  <th style={{ textAlign: 'right' }}>Target</th>
-                  <th style={{ textAlign: 'left' }}>Recorded</th>
-                  <th style={{ textAlign: 'left' }}>Outcome</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {predictions.map((p) => {
-                  const outcome = outcomes[p.prediction_id];
-                  return (
-                    <tr key={p.prediction_id}>
-                      <td className="mono" title={p.prediction_id}>{shortId(p.prediction_id)}</td>
-                      <td>
-                        <div>{p.indicator_id ?? '—'}</div>
-                        <div className="faint text-[10px]">
-                          {p.timeframe ?? '—'} · {p.forecast_horizon ?? `${p.horizon_candles ?? '—'} candles`}
-                        </div>
-                      </td>
-                      <td><DirectionBadge direction={p.direction} /></td>
-                      <td style={{ textAlign: 'right' }} className="num">
-                        {p.score === null ? '—' : fmtSigned(p.score, 1)}
-                      </td>
-                      <td style={{ textAlign: 'right' }} className="num">
-                        {p.confidence === null ? '—' : fmtPct01(p.confidence)}
-                      </td>
-                      <td style={{ textAlign: 'right' }} className="num">
-                        {p.target_price === null ? '—' : fmtINR(p.target_price)}
-                      </td>
-                      <td className="num">{fmtClock(p.timestamp)}</td>
-                      <td>
-                        {outcome ? (
-                          <span className={`badge ${outcome.is_correct ? 'b-bull' : 'b-bear'}`}>
-                            {outcome.is_correct ? 'CORRECT' : 'WRONG'}
-                            {outcome.actual_pct_move === null ? '' : ` · ${fmtNum(outcome.actual_pct_move, 2)}%`}
-                          </span>
-                        ) : (
-                          <span className="badge b-neut">UNMEASURED</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        {!outcome ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="xs"
-                            onClick={() => void handleMeasure(p.prediction_id)}
-                            disabled={measuringId !== null}
-                          >
-                            {measuringId === p.prediction_id ? 'Measuring…' : 'Measure'}
-                          </Button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            data={predictions}
+            columns={columns}
+            keyExtractor={(p) => p.prediction_id}
+            pageSize={25}
+            emptyMessage={`No predictions recorded for ${instrument}.`}
+          />
         ) : null}
 
         <div className="flex items-center justify-between gap-2 pt-1">

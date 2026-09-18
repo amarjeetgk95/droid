@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { EmptyNote, TelemetryItem, TelemetryStrip, fmtINR, fmtNum } from '@/components/ui/desk';
@@ -26,8 +27,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 }
 
 function finiteOrNull(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 export function WhyStrip({ instrument }: { instrument: string }) {

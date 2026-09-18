@@ -2,9 +2,10 @@
 
 import React, { useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { Badge } from '../shared/Badge';
+import { toNumber } from '@/lib/coerce';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { Badge } from '@/components/ui/badge';
 import { valueToneClass } from './riskUtils';
 
 type RiskCheck = { name: string; passed: boolean; reason: string | null };
@@ -46,9 +47,8 @@ const INITIAL_FORM: FormState = {
 const INSTRUMENTS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BTCUSD'];
 
 function parsePositive(raw: string): number | null {
-  if (raw.trim() === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const n = toNumber(raw, { rejectBlankString: true });
+  return n !== null && n > 0 ? n : null;
 }
 
 function amount(v: string): string {

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Badge } from '../shared/Badge';
+import { Badge } from '@/components/ui/badge';
 import { finiteNumber } from './forgeLogic';
 import type { AutoDetectCandidate } from '@/lib/api/signals';
 

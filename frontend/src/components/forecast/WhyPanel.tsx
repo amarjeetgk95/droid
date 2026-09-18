@@ -10,6 +10,7 @@ import {
   normalizeDirection,
   toneFor,
 } from '@/components/ui/desk';
+import { toNumber } from '@/lib/coerce';
 
 export type WhyPanelProps = {
   explain?: unknown | null;
@@ -71,8 +72,7 @@ const DOMAIN_SHORT: Record<string, string> = {
 const EVIDENCE_KEYS = ['spot', 'vwap', 'rsi', 'adx', 'pcr', 'volume'] as const;
 
 function asNum(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 function asStr(v: unknown): string | null {

@@ -4,8 +4,8 @@ import React from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useIntelHub, type MiEvidenceItem } from './IntelHubData';
 import { PanelNotice } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 function EvidenceRow({
   item,

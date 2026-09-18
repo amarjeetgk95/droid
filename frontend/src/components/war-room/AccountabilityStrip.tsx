@@ -29,6 +29,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { toNumber } from '@/lib/coerce';
 
 const POLL_MS = 120_000;
 const OUTCOME_LOOKBACK = 10;
@@ -38,8 +39,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function num(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 interface AccountabilitySnap {

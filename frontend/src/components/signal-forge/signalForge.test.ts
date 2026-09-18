@@ -7,6 +7,7 @@ import {
 import {
   candidateToLevelDrafts,
   collectPathScenarios,
+  finiteNumber,
   meanScenarioPnl,
   normalizeStrategyOptions,
   parseAIConfirmation,
@@ -14,6 +15,23 @@ import {
   validateForgeLevels,
   validateLots,
 } from './forgeLogic';
+
+describe('finiteNumber', () => {
+  it('parses numbers and Decimal-serialized strings, rejecting the exact empty string', () => {
+    expect(finiteNumber(125.5)).toBe(125.5);
+    expect(finiteNumber('125.5')).toBe(125.5);
+    expect(finiteNumber('')).toBeNull();
+    expect(finiteNumber(null)).toBeNull();
+    expect(finiteNumber(undefined)).toBeNull();
+    expect(finiteNumber('abc')).toBeNull();
+    expect(finiteNumber(NaN)).toBeNull();
+  });
+
+  it('keeps legacy non-string coercion and exact-empty (not blank) rejection', () => {
+    expect(finiteNumber(true)).toBe(1);
+    expect(finiteNumber('   ')).toBe(0);
+  });
+});
 
 describe('direction classification + level coherence', () => {
   it('classifies LONG_PUT as PUT (regression: the LONG prefix must not win)', () => {

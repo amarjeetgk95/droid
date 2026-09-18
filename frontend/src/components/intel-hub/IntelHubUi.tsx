@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { BadgeVariant } from '../shared/Badge';
+import type { BadgeVariant } from '@/components/ui/badge';
 
 /* ─────────────────────────── status dot ──────────────────────────────── */
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional, Any
 import structlog
-from pydantic import BaseModel
 
 from app.signals.contract_resolver import (
     calculate_position_sizing,
@@ -19,41 +18,21 @@ from app.signals.contract_resolver import (
     validate_underlying,
 )
 from app.signals.fsm import signal_fsm
+from app.signals.paper_fill_guards import rollback_off_domain_fill
+from app.signals.paper_replay import replay_filled_intent
+from app.signals.paper_results import (
+    MAX_FILL_DEVIATION_FROM_CHAIN_MARK as MAX_FILL_DEVIATION_FROM_CHAIN_MARK,
+    OFF_DOMAIN_BAND_PCT,
+    OFF_DOMAIN_SPOT_THRESHOLD,
+    PENDING_INTENT_TTL_MS,
+    SignalPaperExecutionResult,
+    exit_not_filled_result,
+)
+from app.signals.paper_sizing import premium_stop_for
 from app.services.paper_service import paper_service, apply_friction
 from app.models.paper import OrderPayload
 
 logger = structlog.get_logger()
-
-#: Price-domain OFF_DOMAIN: option premiums live <5000; index spot >5000.
-#: A premium leg filled at spot scale (or vice versa) is the wrong instrument.
-#: Same-domain fills must sit inside a 3% band of the chain mark.
-OFF_DOMAIN_SPOT_THRESHOLD = 5000.0
-OFF_DOMAIN_BAND_PCT = 0.03
-#: Legacy alias (kept for compat; tightened from 10% to 3% band).
-MAX_FILL_DEVIATION_FROM_CHAIN_MARK = 0.03
-
-#: Intent TTL for PENDING orders (ms): stale PENDING auto-cancels to EXPIRED.
-PENDING_INTENT_TTL_MS = 30_000
-
-
-class SignalPaperExecutionResult(BaseModel):
-    success: bool
-    signal_id: str
-    underlying: str
-    strategy: str
-    side: str
-    quantity: int
-    lots: int
-    fill_price: float
-    stop_loss: float
-    target_1: float
-    target_2: float
-    order_id: str
-    status: str
-    message: str
-    # P1 provenance: where the fill came from + chain mark at fill time.
-    fill_source: str = "CHAIN"
-    chain_mark_at_fill: float | None = None
 
 
 class SignalPaperEngine:
@@ -318,6 +297,48 @@ class SignalPaperEngine:
                 message="INVALID_PRICE: Fill price is non-positive",
             )
 
+        # ── PRE-fill domain guard: never let the service book the wrong instrument ──
+        # Same fail-closed check the post-fill sanity gate applies, but run on
+        # the engine's own (chain mark, estimate) pair BEFORE dispatch. An
+        # option premium that is index-scale (e.g. an underlying spot leaked
+        # into the mark registry) must not reach paper_service at all, otherwise
+        # the service books a mispriced position the post-fill gate would have
+        # to roll back.
+        if sig.option_contract and base_price > 0:
+            _pre_off_domain = fill_price > OFF_DOMAIN_SPOT_THRESHOLD
+            _pre_dev = abs(fill_price - base_price) / base_price if base_price else 0.0
+            if _pre_off_domain or _pre_dev > OFF_DOMAIN_BAND_PCT:
+                logger.error(
+                    "paper_prefill_rejected_off_domain",
+                    signal_id=signal_id,
+                    broker_symbol=broker_sym,
+                    chain_mark=base_price,
+                    fill_estimate=fill_price,
+                    deviation_pct=round(_pre_dev * 100.0, 1),
+                    off_domain=_pre_off_domain,
+                )
+                return SignalPaperExecutionResult(
+                    success=False,
+                    signal_id=signal_id,
+                    underlying=u,
+                    strategy=sig.strategy,
+                    side=f"BUY_{direction_label}",
+                    quantity=final_qty,
+                    lots=final_lots,
+                    fill_price=0.0,
+                    stop_loss=float(sig.stop_loss),
+                    target_1=float(sig.target_1),
+                    target_2=float(sig.target_2),
+                    order_id="",
+                    status="REJECTED",
+                    message=(
+                        f"OFF_DOMAIN_FILL: chain mark ₹{base_price:,.2f} for {broker_sym} is not "
+                        f"premium-domain (estimate ₹{fill_price:,.2f}) — trade skipped before order dispatch."
+                    ),
+                    fill_source="CHAIN",
+                    chain_mark_at_fill=float(base_price),
+                )
+
         # ── Wallet limit: confine trade to available balance, auto-downsize to 1 lot ──
         # No per-trade % cap (full wallet usable), but required margin must fit live
         # available_margin. If requested lots don't fit, step down to the largest
@@ -534,6 +555,24 @@ class SignalPaperEngine:
         paper_order = await paper_service.place_order(order_payload, allow_closed_market=False)
 
         if paper_order.status == "PENDING":
+            # A resting signal order is a ghost: the engine reports failure
+            # below, so nothing would ever manage this order (no stop, no
+            # ratchet, no exit) and it could fill later behind the signal's
+            # back. Cancel it — a signal order fills now or not at all.
+            try:
+                await paper_service.cancel_order(paper_order.order_id)
+                logger.info(
+                    "paper_order_pending_cancelled",
+                    signal_id=signal_id,
+                    order_id=paper_order.order_id,
+                )
+            except Exception as ce:
+                logger.warning(
+                    "paper_order_pending_cancel_failed",
+                    signal_id=signal_id,
+                    order_id=paper_order.order_id,
+                    error=str(ce)[:150],
+                )
             # Intent TTL/cancel for PENDING: stale PENDING auto-expires.
             import time as _t
             _age_ms = 0
@@ -544,6 +583,11 @@ class SignalPaperEngine:
             if _age_ms > PENDING_INTENT_TTL_MS:
                 try:
                     current_intent.transition_to(IntentState.EXPIRED, reason="PENDING_TTL_EXCEEDED")
+                except Exception:
+                    pass
+            else:
+                try:
+                    current_intent.transition_to(IntentState.REJECTED, reason="PENDING_ORDER_CANCELLED")
                 except Exception:
                     pass
             logger.warning("paper_order_unexpected_pending", signal_id=signal_id, order_id=paper_order.order_id)
@@ -609,6 +653,22 @@ class SignalPaperEngine:
                     deviation_pct=round(_dev * 100.0, 1),
                     off_domain=_off_domain,
                 )
+                # The service already booked this (mispriced) fill against its
+                # own position. Leaving it open would strand the wrong
+                # instrument on the book; square it off so the round trip nets
+                # ~friction only and no fabricated P&L survives.
+                await self._rollback_off_domain_fill(
+                    broker_sym,
+                    order_payload.product,
+                    final_qty,
+                    signal_id,
+                )
+                try:
+                    current_intent.transition_to(
+                        IntentState.REJECTED, reason="OFF_DOMAIN_FILL_ROLLED_BACK"
+                    )
+                except Exception:
+                    pass
                 return SignalPaperExecutionResult(
                     success=False,
                     signal_id=signal_id,
@@ -666,11 +726,12 @@ class SignalPaperEngine:
         position_registry.register(new_pos)
         sig.position_id = new_pos.position_id
 
-        # Register in Option Fill Reconciler
+        # Register in Option Fill Reconciler with the same contract lot size
+        # that sized this fill (non-default contracts split staged exits off
+        # lot boundaries when a hardcoded underlying default is used).
         try:
             from app.signals.fill_reconciler import option_fill_reconciler
-            lot_sz = 75 if u == "NIFTY" else (30 if u == "BANKNIFTY" else 10)
-            option_fill_reconciler.reconcile_entry(sig, actual_fill, final_qty, lot_sz)
+            option_fill_reconciler.reconcile_entry(sig, actual_fill, final_qty, lot_size)
         except Exception as re_err:
             logger.warning("reconcile_entry_init_failed", signal_id=signal_id, error=str(re_err))
 
@@ -750,146 +811,11 @@ class SignalPaperEngine:
             chain_mark_at_fill=float(base_price),
         )
 
-    @staticmethod
-    def _premium_stop_for(sig: Any, entry_premium: float) -> Optional[float]:
-        """Project a signal's stop into premium terms for option-buyer sizing.
+    _rollback_off_domain_fill = staticmethod(rollback_off_domain_fill)
 
-        Uses the canonical ``resolve_premium_risk_points`` (explicit premium
-        stop > delta-gamma projection off the spot stop > conservative
-        fallback). Returns None when no positive premium stop can be derived so
-        the option-buyer resolver applies its own 35%-of-premium default.
-        """
-        try:
-            from app.signals.transaction_costs import resolve_premium_risk_points
+    _premium_stop_for = staticmethod(premium_stop_for)
 
-            try:
-                spot_risk = abs(float(sig.trigger) - float(sig.stop_loss))
-            except Exception:
-                spot_risk = 0.0
-            risk_pts = float(resolve_premium_risk_points(sig, float(entry_premium), spot_risk))
-            if 0.0 < risk_pts < float(entry_premium):
-                return round(float(entry_premium) - risk_pts, 4)
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _replay_filled_intent(
-        existing_intent: Any,
-        sig: Any,
-        underlying: str,
-        direction_label: str,
-        lot_size: int,
-    ) -> Optional[SignalPaperExecutionResult]:
-        """Rebuild the original success result for an already-FILLED intent.
-
-        Source preference: the paper service order (live state), then the
-        persisted intent ledger record, then the signal's own ``paper_order`` /
-        registered Position. Returns None when no filled state can be proven,
-        in which case the caller keeps the historical duplicate rejection.
-        """
-        fill_price = 0.0
-        quantity = 0
-        order_id = ""
-        # The engine's success results label every fill CHAIN (the mark that
-        # priced it); replay must return the same provenance as the original.
-        fill_source = "CHAIN"
-        chain_mark = None
-
-        # 1. Paper service: the authoritative order record for this client id.
-        try:
-            client_id = str(existing_intent.broker_client_order_id or "")
-            broker_id = str(existing_intent.broker_order_id or "")
-            for order in paper_service.get_orders():
-                if str(getattr(order, "status", "")) != "FILLED":
-                    continue
-                matched = client_id and str(getattr(order, "client_order_id", "") or "") == client_id
-                matched = matched or (broker_id and str(getattr(order, "order_id", "") or "") == broker_id)
-                if matched:
-                    fill_price = float(order.fill_price or 0.0)
-                    quantity = int(order.quantity or 0)
-                    order_id = str(order.order_id or "")
-                    break
-        except Exception:
-            pass
-
-        # 2. The persisted intent record (survives a service restart).
-        if fill_price <= 0:
-            try:
-                fill_price = float(existing_intent.actual_fill_price or 0.0)
-            except Exception:
-                fill_price = 0.0
-        if quantity <= 0:
-            try:
-                quantity = int(existing_intent.filled_quantity or 0)
-            except Exception:
-                quantity = 0
-        if not order_id:
-            order_id = str(existing_intent.broker_order_id or "")
-
-        # 3. FSM paper_order / registered Position.
-        po = sig.paper_order if isinstance(getattr(sig, "paper_order", None), dict) else None
-        if po:
-            if fill_price <= 0:
-                try:
-                    fill_price = float(po.get("fill_price") or 0.0)
-                except Exception:
-                    fill_price = 0.0
-            if quantity <= 0:
-                try:
-                    quantity = int(po.get("quantity") or 0)
-                except Exception:
-                    quantity = 0
-            if not order_id:
-                order_id = str(po.get("order_id") or "")
-            if chain_mark is None:
-                try:
-                    _cm = po.get("chain_mark_at_fill")
-                    chain_mark = float(_cm) if _cm is not None else None
-                except Exception:
-                    chain_mark = None
-        if fill_price <= 0 or quantity <= 0 or not order_id:
-            try:
-                from app.signals.position import position_registry
-
-                pos = position_registry.get_by_signal(sig.signal_id)
-                if pos is not None:
-                    if fill_price <= 0:
-                        fill_price = float(pos.entry_price or 0.0)
-                    if quantity <= 0:
-                        quantity = int(pos.entry_quantity or 0)
-                    if not order_id:
-                        order_id = str(pos.broker_order_id or "")
-            except Exception:
-                pass
-
-        if fill_price <= 0 or quantity <= 0 or not order_id:
-            return None
-
-        lots = quantity // lot_size if lot_size > 0 else 0
-        if lots < 1:
-            lots = max(1, int(getattr(sig, "lots", 0) or 0))
-        return SignalPaperExecutionResult(
-            success=True,
-            signal_id=sig.signal_id,
-            underlying=underlying,
-            strategy=sig.strategy,
-            side=f"BUY_{direction_label}",
-            quantity=quantity,
-            lots=lots,
-            fill_price=fill_price,
-            stop_loss=float(sig.stop_loss),
-            target_1=float(sig.target_1),
-            target_2=float(sig.target_2),
-            order_id=order_id,
-            status="FILLED",
-            message=(
-                f"DUPLICATE_REPLAY: intent {existing_intent.execution_intent_id} already filled "
-                f"as {order_id} ({lots} Lots / {quantity} Qty @ ₹{fill_price:,.2f})"
-            ),
-            fill_source=fill_source or "CHAIN",
-            chain_mark_at_fill=chain_mark,
-        )
+    _replay_filled_intent = staticmethod(replay_filled_intent)
 
     async def close_signal_position(
         self,
@@ -1050,37 +976,7 @@ class SignalPaperEngine:
                 logger.warning("position_registry_close_failed", signal_id=signal_id, error=str(pe))
         return rec
 
-    def _exit_not_filled_result(self, sig: Any, order: Any) -> SignalPaperExecutionResult:
-        """Explicit failure for a close whose exit order did not fill.
-
-        Preserves the service's own status/rejection vocabulary so callers can
-        surface the exact boundary rejection while the virtual position, the
-        audit record and the signal FSM remain exactly as they were.
-        """
-        qty = int(getattr(order, "quantity", 0) or 0)
-        lots = int(getattr(sig, "lots", 0) or 0)
-        if lots <= 0:
-            lot_size = int((sig.option_contract or {}).get("lot_size", 0) or 0)
-            lots = max(1, qty // lot_size) if lot_size > 0 else 0
-        status = str(getattr(order, "status", "REJECTED") or "REJECTED")
-        return SignalPaperExecutionResult(
-            success=False,
-            signal_id=sig.signal_id,
-            underlying=sig.underlying,
-            strategy=sig.strategy,
-            side=str(getattr(order, "side", "SELL") or "SELL"),
-            quantity=qty,
-            lots=lots,
-            fill_price=0.0,
-            stop_loss=float(sig.stop_loss),
-            target_1=float(sig.target_1),
-            target_2=float(sig.target_2),
-            order_id=str(getattr(order, "order_id", "") or ""),
-            status=status,
-            message=getattr(order, "rejection_reason", None) or f"EXIT_NOT_FILLED: {status}",
-            fill_source="NONE",
-            chain_mark_at_fill=None,
-        )
+    _exit_not_filled_result = staticmethod(exit_not_filled_result)
 
 
 signal_paper_engine = SignalPaperEngine()

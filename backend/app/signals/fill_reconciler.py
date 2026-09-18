@@ -76,6 +76,34 @@ class FillReconciliationRecord(BaseModel):
     reconciliation_notes: Optional[str] = None
 
 
+def resolve_signal_lot_size(sig: SignalInstance) -> int:
+    """Authoritative lot size for a signal's option contract.
+
+    Prefers the contract's own ``lot_size`` (chain/resolver truth, the same
+    value that sized the traded quantity). The legacy underlying defaults
+    (75/30/10) remain only as a last-resort fallback for rows that predate
+    contract metadata — using them for a non-default contract silently splits
+    staged exits into non-lot quantities.
+    """
+    contract = getattr(sig, "option_contract", None)
+    contract_lot = 0
+    try:
+        if isinstance(contract, dict):
+            contract_lot = int(contract.get("lot_size") or 0)
+        else:
+            contract_lot = int(getattr(contract, "lot_size", 0) or 0)
+    except Exception:
+        contract_lot = 0
+    if contract_lot > 0:
+        return contract_lot
+    underlying = str(getattr(sig, "underlying", "") or "").upper()
+    if underlying == "NIFTY":
+        return 75
+    if underlying == "BANKNIFTY":
+        return 30
+    return 10
+
+
 class OptionFillReconciler:
     """
     Reconciles execution domain option fills with underlying signal domain.
@@ -121,14 +149,19 @@ class OptionFillReconciler:
         sig: SignalInstance,
         fill_price: float | None,
         quantity: int,
-        lot_size: int = 75,
+        lot_size: int | None = None,
     ) -> FillReconciliationRecord | None:
         """
         Registers actual entry fill, sets initial position and pre-computes 50% staged exit qty.
         Corrupted entries (None/non-positive/off-domain) return None + quarantine
         (RECONCILIATION_REQUIRED) — never fabricate a premium.
         Idempotent on (signal, stage=ENTRY, fill_ts bucket).
+
+        ``lot_size`` defaults to the signal contract's own lot size (falling back
+        to the legacy underlying default) so staged-exit quantities always land
+        on real lot boundaries.
         """
+        lot_size = int(lot_size or 0) or resolve_signal_lot_size(sig)
         # Guard: an option fill can NEVER be an index spot price (>5000 pts).
         # FAIL CLOSED: do not repair it with a Black-76 estimate — that would
         # manufacture the very premium we are trying to verify. Record the raw
@@ -261,7 +294,7 @@ class OptionFillReconciler:
         rec = existing
         if not rec:
             # Create synthetic record if entry wasn't explicitly registered
-            lot_sz = 75 if sig.underlying == "NIFTY" else (30 if sig.underlying == "BANKNIFTY" else 10)
+            lot_sz = resolve_signal_lot_size(sig)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
             if rec is None:
@@ -333,7 +366,7 @@ class OptionFillReconciler:
         now_ms = exit_time_ms or int(time.time() * 1000)
         rec = self._records.get(sig.signal_id)
         if not rec:
-            lot_sz = 75 if sig.underlying == "NIFTY" else (30 if sig.underlying == "BANKNIFTY" else 10)
+            lot_sz = resolve_signal_lot_size(sig)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
             if rec is None:

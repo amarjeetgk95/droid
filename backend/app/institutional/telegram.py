@@ -78,30 +78,22 @@ class TelegramRateLimiter:
 telegram_rate_limiter = TelegramRateLimiter()
 
 
-# ── Outbound Queue ───────────────────────────────────────────────────
-@dataclass
-class TelegramOutbound:
-    chat_id: str
-    text: str
-    parse_mode: str = "Markdown"  # empty string → send as plain text
-    reply_markup: dict | None = None
-    attempt: int = 0
-    created_at: float = field(default_factory=time.time)
-    # Optional delivery callback — used by the notification queue to track
-    # SENT / FAILED status (§32). Never blocks the central send loop.
-    on_complete: Any = None  # async callable(success: bool, error: str | None)
+# ── Shared queue-worker lifecycle ────────────────────────────────────
+class TelegramWorkerBase:
+    """Single implementation of the Telegram worker lifecycle.
 
+    All Telegram queues (outbound transport, webhook updates, signal
+    notifications) share one start / ensure_started / stop contract: one
+    worker per process, idempotent starts, safe repeated stops, and a
+    supervisor that never drops queued items when a worker is replaced.
+    """
 
-class TelegramOutboundQueue:
-    def __init__(self, rate_limiter: TelegramRateLimiter | None = None):
-        self._q: asyncio.Queue[TelegramOutbound] = asyncio.Queue()
-        self._rl = rate_limiter or telegram_rate_limiter
+    _started_log_event = "telegram_worker_running"
+
+    def __init__(self) -> None:
+        self._q: asyncio.Queue = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._running = False
-
-    async def enqueue(self, msg: TelegramOutbound) -> None:
-        await self._q.put(msg)
-        logger.debug("telegram_enqueued", chat_id=msg.chat_id)
 
     def _ensure_queue(self) -> None:
         try:
@@ -120,37 +112,72 @@ class TelegramOutboundQueue:
             if self._q is None:
                 self._q = asyncio.Queue()
 
+    def _worker_alive(self) -> bool:
+        return bool(self._running and self._worker_task and not self._worker_task.done())
+
     async def start(self) -> None:
         # Backend-lifecycle start: preserve already-queued messages across
         # restarts (never drop), single worker per process.
         self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
+        if self._worker_alive():
             return
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
 
     async def ensure_started(self) -> None:
-        """Auto-recovery: restart the worker if it died, keep queued messages.
+        """Auto-recovery: restart the worker if it died, keep queued items.
 
         Called at backend startup and safe to call from a watchdog — never
         tied to any browser session.
         """
         self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
+        if self._worker_alive():
             return
         self._running = True
         self._worker_task = asyncio.create_task(self._loop())
-        logger.info("telegram_outbound_worker_running")
+        logger.info(self._started_log_event)
 
     async def stop(self) -> None:
         self._running = False
-        if self._worker_task:
-            self._worker_task.cancel()
+        task = self._worker_task
+        if task is not None:
+            task.cancel()
             try:
-                await self._worker_task
-            except (asyncio.CancelledError, Exception):
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             self._worker_task = None
+
+    async def _loop(self) -> None:  # pragma: no cover - implemented by subclasses
+        raise NotImplementedError
+
+
+# ── Outbound Queue ───────────────────────────────────────────────────
+@dataclass
+class TelegramOutbound:
+    chat_id: str
+    text: str
+    parse_mode: str = "Markdown"  # empty string → send as plain text
+    reply_markup: dict | None = None
+    attempt: int = 0
+    created_at: float = field(default_factory=time.time)
+    # Optional delivery callback — used by the notification queue to track
+    # SENT / FAILED status (§32). Never blocks the central send loop.
+    on_complete: Any = None  # async callable(success: bool, error: str | None)
+
+
+class TelegramOutboundQueue(TelegramWorkerBase):
+    _started_log_event = "telegram_outbound_worker_running"
+
+    def __init__(self, rate_limiter: TelegramRateLimiter | None = None):
+        super().__init__()
+        self._rl = rate_limiter or telegram_rate_limiter
+
+    async def enqueue(self, msg: TelegramOutbound) -> None:
+        await self._q.put(msg)
+        logger.debug("telegram_enqueued", chat_id=msg.chat_id)
 
     async def _loop(self) -> None:
         # Supervisor loop: any unexpected error on a single message must never
@@ -527,66 +554,18 @@ def webhook_secret() -> str:
 
 
 # ── Webhook update worker (§5/§7/§8) ────────────────────────────────
-class TelegramUpdateQueue:
+class TelegramUpdateQueue(TelegramWorkerBase):
     """
     Webhook only: receive → authenticate → validate → deduplicate → enqueue → 200.
     This worker performs the actual (fast, non-trading) update handling:
     /start <token> account linking and read-only command replies (§27).
     AI requests, broker calls and heavy analysis are never executed here.
     """
-    def __init__(self) -> None:
-        self._q: asyncio.Queue[dict] = asyncio.Queue()
-        self._worker_task: asyncio.Task | None = None
-        self._running = False
+
+    _started_log_event = "telegram_update_worker_running"
 
     async def enqueue(self, update: dict) -> None:
         await self._q.put(update)
-
-    def _ensure_queue(self) -> None:
-        try:
-            curr_loop = asyncio.get_running_loop()
-            q_loop = getattr(self._q, "_loop", None)
-            if self._q is None or (q_loop is not None and q_loop is not curr_loop):
-                old_q = self._q
-                self._q = asyncio.Queue()
-                if old_q is not None:
-                    while not old_q.empty():
-                        try:
-                            self._q.put_nowait(old_q.get_nowait())
-                        except Exception:
-                            break
-        except Exception:
-            if self._q is None:
-                self._q = asyncio.Queue()
-
-    async def start(self) -> None:
-        # Backend-lifecycle start: preserve queued updates, single worker.
-        self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
-            return
-        self._running = True
-        self._worker_task = asyncio.create_task(self._loop())
-
-    async def ensure_started(self) -> None:
-        """Auto-recovery: restart the worker if it died, keep queued updates."""
-        self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
-            return
-        self._running = True
-        self._worker_task = asyncio.create_task(self._loop())
-        logger.info("telegram_update_worker_running")
-
-    async def stop(self) -> None:
-        self._running = False
-        if self._worker_task:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-            self._worker_task = None
 
     async def _loop(self) -> None:
         # Supervisor loop: per-update errors never kill the worker.
@@ -616,6 +595,7 @@ class TelegramUpdateQueue:
         from app.institutional.telegram_templates import (
             format_link_success, format_link_failure, format_status_reply,
         )
+        from app.institutional.telegram_notifications import telegram_notification_queue
         from app.core.config import settings
         bot_username = settings.telegram_bot_username or "your_bot"
         environment = settings.app_env
@@ -632,24 +612,23 @@ class TelegramUpdateQueue:
                 logger.info("telegram_account_linked", chat_id=chat_id)
             else:
                 reply = format_link_failure(info)
-            await telegram_outbound_queue.enqueue(TelegramOutbound(chat_id=chat_id, text=reply, parse_mode=""))
+            await telegram_notification_queue.enqueue_text(chat_id=chat_id, text=reply)
             return
         if command == "/start":
-            await telegram_outbound_queue.enqueue(TelegramOutbound(
-                chat_id=chat_id, text=format_link_failure("no link token provided"), parse_mode=""))
+            await telegram_notification_queue.enqueue_text(
+                chat_id=chat_id, text=format_link_failure("no link token provided"))
             return
 
         # ── §37 — every other command requires a linked, authorized chat ──
         authorized, user_id = telegram_link_manager.is_authorized(chat_id)
         if not authorized:
-            await telegram_outbound_queue.enqueue(TelegramOutbound(
+            await telegram_notification_queue.enqueue_text(
                 chat_id=chat_id,
-                text=format_link_failure("this chat is not linked to a web-app account"),
-                parse_mode=""))
+                text=format_link_failure("this chat is not linked to a web-app account"))
             return
         if not telegram_link_manager.check_command_permission(chat_id, command):
-            await telegram_outbound_queue.enqueue(TelegramOutbound(
-                chat_id=chat_id, text="⛔ Not authorized for this command.", parse_mode=""))
+            await telegram_notification_queue.enqueue_text(
+                chat_id=chat_id, text="⛔ Not authorized for this command.")
             return
 
         # ── /briefing or /morning — on-demand morning briefing ──
@@ -678,8 +657,8 @@ class TelegramUpdateQueue:
                     [{"text": f"🚀 1-Click Authorize {provider_name.upper()}", "url": login_url}]
                 ]
             }
-            await telegram_outbound_queue.enqueue(
-                TelegramOutbound(chat_id=chat_id, text=auth_text, parse_mode="Markdown", reply_markup=markup)
+            await telegram_notification_queue.enqueue_text(
+                chat_id=chat_id, text=auth_text, parse_mode="Markdown", reply_markup=markup
             )
             return
 
@@ -696,7 +675,7 @@ class TelegramUpdateQueue:
         }
         reply = replies.get(command)
         if reply:
-            await telegram_outbound_queue.enqueue(TelegramOutbound(chat_id=chat_id, text=reply, parse_mode=""))
+            await telegram_notification_queue.enqueue_text(chat_id=chat_id, text=reply)
 
 
 telegram_update_queue = TelegramUpdateQueue()

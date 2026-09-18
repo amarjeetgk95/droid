@@ -6,6 +6,7 @@ import { StreamConnectionState } from '@/hooks/useMarketStream';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { api } from '@/lib/api';
 import { Activity, Server, Radio, ShieldCheck, Zap, Database, RefreshCw, KeyRound, ExternalLink } from 'lucide-react';
+import { toNumber } from '@/lib/coerce';
 import { safeStr } from '@/lib/utils';
 import { getStoredSettings } from '@/lib/settings';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
@@ -35,8 +36,7 @@ interface TokenStatusInfo {
 }
 
 function numOrNull(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 export function MarketHealthModal({

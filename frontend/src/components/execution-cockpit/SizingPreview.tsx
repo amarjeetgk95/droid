@@ -5,7 +5,7 @@ import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { api } from '@/lib/api';
 import { toNumber, pickFirst } from '@/lib/coerce';
 import { lotSizeFor } from '@/lib/paperLots';
-import { Card } from '../shared/Card';
+import { Card } from '@/components/ui/card';
 
 interface SizingResult {
   lots: number;

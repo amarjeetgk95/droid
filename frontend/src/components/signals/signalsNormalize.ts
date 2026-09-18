@@ -2,6 +2,8 @@
    Backend payloads vary across deploy versions; every field is coerced
    to a safe shape so the UI never crashes on partial data. */
 
+import { toNumber } from '@/lib/coerce';
+
 export function asStr(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
@@ -9,8 +11,7 @@ export function asStr(v: unknown): string | null {
 }
 
 export function asNum(v: unknown): number | null {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v, { rejectBlankString: true });
 }
 
 export function getObj(v: unknown): Record<string, unknown> | null {

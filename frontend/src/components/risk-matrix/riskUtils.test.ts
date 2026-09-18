@@ -42,6 +42,9 @@ describe('sign-aware formatting', () => {
     expect(finiteNumber('125.5')).toBe(125.5);
     expect(finiteNumber('')).toBeNull();
     expect(finiteNumber('abc')).toBeNull();
+    // Exact-empty rejection only: whitespace still parses, non-strings do not.
+    expect(finiteNumber('   ')).toBe(0);
+    expect(finiteNumber(true)).toBeNull();
   });
 });
 

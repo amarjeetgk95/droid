@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Bot, Copy, Check, ShieldAlert, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { SwingSetupDTO } from '@/lib/api/swing';
-import { Modal } from '@/components/shared/Modal';
+import { Modal } from '@/components/ui/modal';
 import { fmtINR, fmtNum } from '@/components/ui/desk';
 
 export type SwingAIThesisModalProps = {

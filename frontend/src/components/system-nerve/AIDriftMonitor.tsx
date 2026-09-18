@@ -2,9 +2,9 @@
 
 import React from 'react';
 import { api } from '@/lib/api';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { Badge, type BadgeVariant } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import {
   PanelFreshness,
   PanelStateBanner,

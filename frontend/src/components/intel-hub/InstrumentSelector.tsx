@@ -4,7 +4,7 @@ import React from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useIntelHub } from './IntelHubData';
 import { PanelNotice, PulseDot, feedTone } from './IntelHubUi';
-import { Badge } from '../shared/Badge';
+import { Badge } from '@/components/ui/badge';
 
 export const InstrumentSelector: React.FC = () => {
   const { instrument, setInstrument, allInstruments } = useInstrument();

@@ -1,3 +1,4 @@
+import { toNumber } from '@/lib/coerce';
 import type { ApiCore } from './client';
 
 /* Client-side level coherence (trigger vs SL vs target per direction).
@@ -35,11 +36,8 @@ export function checkLevelCoherence(input: LevelCoherenceInput): {
   coherent: boolean;
   reason: string | null;
 } {
-  const num = (v: unknown): number | null => {
-    if (v === null || v === undefined || v === '') return null;
-    const n = typeof v === 'number' ? v : Number(v);
-    return typeof n === 'number' && Number.isFinite(n) ? n : null;
-  };
+  const num = (v: unknown): number | null =>
+    toNumber(v, { rejectEmptyString: true, coerceNonString: true });
   const trigger = num(input.trigger);
   const sl = num(input.stopLoss);
   const t1 = num(input.target1);

@@ -4,8 +4,9 @@ import React, { useCallback, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { api } from '@/lib/api';
-import { StatusDot, type StatusDotState } from '../shared/StatusDot';
-import { Badge, type BadgeVariant } from '../shared/Badge';
+import { toNumber } from '@/lib/coerce';
+import { StatusDot, type StatusDotState } from '@/components/ui/status-dot';
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 
 interface FeedCircuit {
@@ -27,8 +28,7 @@ interface BrokerTokenState {
 }
 
 function num(v: unknown): number | null {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  return toNumber(v);
 }
 
 function str(v: unknown): string | null {

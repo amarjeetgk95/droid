@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 import structlog
 
+from app.institutional.telegram import TelegramWorkerBase
+
 logger = structlog.get_logger()
 
 NotificationStatus = Literal["PENDING", "SENT", "FAILED", "RETRYING", "DEDUPED", "SKIPPED"]
@@ -217,8 +219,13 @@ class NotificationJob(BaseModel):
     event_type: str
     user_id: str
     telegram_chat_id: str
-    message_type: str = "signal_alert"  # signal_alert / test / link_confirmation
+    message_type: str = "signal_alert"  # signal_alert / test / text
     event_payload: dict[str, Any] = Field(default_factory=dict)
+    # Canonical sender fields — when set, the job sends this exact text
+    # instead of rendering an event template.
+    text: str | None = None
+    parse_mode: str = ""
+    reply_markup: dict[str, Any] | None = None
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
     priority: int = 5  # lower = higher priority
     attempt_count: int = 0
@@ -240,19 +247,23 @@ class NotificationAuditRecord(BaseModel):
     error: str | None = None
 
 
-class TelegramNotificationQueue:
+class TelegramNotificationQueue(TelegramWorkerBase):
     """
-    Signal Event → Notification Policy → Telegram Queue → Telegram Worker
-    (worker then sends ONLY via the central rate-limited telegram_outbound_queue).
+    Canonical Telegram sender: Signal Event → Notification Policy → Telegram
+    Queue → Telegram Worker (worker then sends ONLY via the central
+    rate-limited telegram_outbound_queue transport).
+
+    Plain text sends (command replies, ad-hoc messages) enter through
+    ``enqueue_text`` and share the exact same retry/audit/delivery pipeline.
     """
     MAX_AUDIT = 2000
     MAX_DEDUP = 10000
     MAX_DEAD_LETTER = 500
 
+    _started_log_event = "telegram_notification_worker_running"
+
     def __init__(self) -> None:
-        self._q: asyncio.Queue[NotificationJob] = asyncio.Queue()
-        self._worker_task: asyncio.Task | None = None
-        self._running = False
+        super().__init__()
         self._audit: list[NotificationAuditRecord] = []
         self._dedup_keys: dict[str, str] = {}  # dedup_key -> notification_id (§33)
         self._dead_letter: list[NotificationJob] = []
@@ -329,51 +340,41 @@ class TelegramNotificationQueue:
             logger.warning("telegram_test_enqueue_failed", error=str(e))
             return None
 
+    async def enqueue_text(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        parse_mode: str = "",
+        reply_markup: dict[str, Any] | None = None,
+        user_id: str = "",
+        signal_id: str = "message",
+        event_type: str = "MESSAGE",
+        message_type: str = "text",
+    ) -> str | None:
+        """Canonical entry point for plain text sends (command replies etc.).
 
-    def _ensure_queue(self) -> None:
+        Runs through the same audit + retry + rate-limited transport pipeline
+        as signal notifications. Never raises; returns the notification id.
+        """
         try:
-            curr_loop = asyncio.get_running_loop()
-            q_loop = getattr(self._q, "_loop", None)
-            if self._q is None or (q_loop is not None and q_loop is not curr_loop):
-                old_q = self._q
-                self._q = asyncio.Queue()
-                if old_q is not None:
-                    while not old_q.empty():
-                        try:
-                            self._q.put_nowait(old_q.get_nowait())
-                        except Exception:
-                            break
-        except Exception:
-            if self._q is None:
-                self._q = asyncio.Queue()
-
-    async def start(self) -> None:
-        # Backend-lifecycle start: preserve queued jobs across restarts
-        # (never drop), single worker per process.
-        self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
-            return
-        self._running = True
-        self._worker_task = asyncio.create_task(self._loop())
-
-    async def ensure_started(self) -> None:
-        """Auto-recovery: restart the worker if it died, keep queued jobs."""
-        self._ensure_queue()
-        if self._running and self._worker_task and not self._worker_task.done():
-            return
-        self._running = True
-        self._worker_task = asyncio.create_task(self._loop())
-        logger.info("telegram_notification_worker_running")
-
-    async def stop(self) -> None:
-        self._running = False
-        if self._worker_task:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._worker_task = None
+            job = NotificationJob(
+                signal_id=signal_id, event_type=event_type,
+                user_id=user_id, telegram_chat_id=str(chat_id),
+                message_type=message_type, text=text,
+                parse_mode=parse_mode, reply_markup=reply_markup,
+            )
+            self._record(NotificationAuditRecord(
+                notification_id=job.notification_id, signal_id=job.signal_id,
+                user_id=job.user_id, telegram_chat_id=job.telegram_chat_id,
+                event_type=job.event_type, message_type=job.message_type,
+                created_at_utc=job.created_at_utc, delivery_status="PENDING",
+            ))
+            await self._q.put(job)
+            return job.notification_id
+        except Exception as e:
+            logger.warning("telegram_text_enqueue_failed", error=str(e))
+            return None
 
     async def _loop(self) -> None:
         while self._running:
@@ -402,7 +403,9 @@ class TelegramNotificationQueue:
         except Exception:
             environment = "development"
 
-        if job.message_type == "test":
+        if job.text is not None:
+            text = job.text
+        elif job.message_type == "test":
             text = format_test_message(environment)
         else:
             event = SignalEvent(**job.event_payload)
@@ -417,8 +420,8 @@ class TelegramNotificationQueue:
             done.set()
 
         msg = TelegramOutbound(
-            chat_id=job.telegram_chat_id, text=text, parse_mode="",
-            on_complete=on_complete,
+            chat_id=job.telegram_chat_id, text=text, parse_mode=job.parse_mode,
+            reply_markup=job.reply_markup, on_complete=on_complete,
         )
         await telegram_outbound_queue.enqueue(msg)
         try:

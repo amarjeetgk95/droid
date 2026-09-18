@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { usePolling } from '@/hooks/usePolling';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { Card, DirectionBadge, EmptyNote, fmtClock, fmtNum, fmtSigned } from '@/components/ui/desk';
+import { DataTable, type Column } from '@/components/ui/data-table';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 
 type Outcome = {
@@ -142,6 +143,90 @@ export function ForecastOutcomes({
 
   const visiblePredictions = settleableOnly ? predictions.filter(isSettleablePred) : predictions;
 
+  const columns = useMemo<Column<Record<string, unknown>>[]>(
+    () => [
+      {
+        key: 'timestamp',
+        header: 'Time',
+        sortable: true,
+        className: 'num',
+        render: (p) => fmtClock(p.timestamp),
+      },
+      {
+        key: 'direction',
+        header: 'Dir',
+        render: (p) => <DirectionBadge direction={p.direction} />,
+      },
+      {
+        key: 'score',
+        header: 'Score',
+        align: 'right',
+        sortable: true,
+        render: (p) => fmtSigned(p.score, 0),
+      },
+      {
+        key: 'result',
+        header: 'Result',
+        render: (p) => {
+          const outcome = outcomes[String(p.prediction_id ?? '')] ?? null;
+          const result =
+            outcome?.is_correct === true
+              ? { label: 'Correct', cls: 'v-bull' }
+              : outcome?.is_correct === false
+                ? { label: 'Wrong', cls: 'v-bear' }
+                : { label: 'Pending', cls: 'faint' };
+          return (
+            <span className={result.cls} style={{ fontWeight: 600 }}>
+              {result.label}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'mfe',
+        header: 'Mfe',
+        align: 'right',
+        sortable: true,
+        sortValue: (p) => outcomes[String(p.prediction_id ?? '')]?.mfe ?? null,
+        render: (p) => {
+          const mfe = outcomes[String(p.prediction_id ?? '')]?.mfe;
+          return mfe != null ? fmtNum(mfe, 1) : '—';
+        },
+      },
+      {
+        key: 'mae',
+        header: 'Mae',
+        align: 'right',
+        sortable: true,
+        sortValue: (p) => outcomes[String(p.prediction_id ?? '')]?.mae ?? null,
+        render: (p) => {
+          const mae = outcomes[String(p.prediction_id ?? '')]?.mae;
+          return mae != null ? fmtNum(mae, 1) : '—';
+        },
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        render: (p) => {
+          const pid = String(p.prediction_id ?? '');
+          const outcome = pid ? outcomes[pid] : null;
+          const busy = measuringId === pid;
+          return (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => pid && void handleMeasure(pid)}
+              disabled={busy || !pid}
+            >
+              {busy ? 'Measuring…' : outcome ? 'Re-measure' : 'Measure'}
+            </button>
+          );
+        },
+      },
+    ],
+    [outcomes, measuringId, handleMeasure],
+  );
+
   return (
     <Card
       title="Track record"
@@ -211,60 +296,12 @@ export function ForecastOutcomes({
             : `No predictions recorded for ${instrument} at horizon ${horizon}.`}
         </EmptyNote>
       ) : (
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Dir</th>
-                <th className="r">Score</th>
-                <th>Result</th>
-                <th className="r">Mfe</th>
-                <th className="r">Mae</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visiblePredictions.map((p, idx) => {
-                const pid = String(p.prediction_id ?? '');
-                const outcome = pid ? outcomes[pid] : null;
-                const busy = measuringId === pid;
-                const result =
-                  outcome?.is_correct === true
-                    ? { label: 'Correct', cls: 'v-bull' }
-                    : outcome?.is_correct === false
-                      ? { label: 'Wrong', cls: 'v-bear' }
-                      : { label: 'Pending', cls: 'faint' };
-                return (
-                  <tr key={pid || `${p.timestamp ?? 'pred'}-${idx}`}>
-                    <td className="num">{fmtClock(p.timestamp)}</td>
-                    <td>
-                      <DirectionBadge direction={p.direction} />
-                    </td>
-                    <td className="r num">{fmtSigned(p.score, 0)}</td>
-                    <td>
-                      <span className={result.cls} style={{ fontWeight: 600 }}>
-                        {result.label}
-                      </span>
-                    </td>
-                    <td className="r num">{outcome?.mfe != null ? fmtNum(outcome.mfe, 1) : '—'}</td>
-                    <td className="r num">{outcome?.mae != null ? fmtNum(outcome.mae, 1) : '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => pid && void handleMeasure(pid)}
-                        disabled={busy || !pid}
-                      >
-                        {busy ? 'Measuring…' : outcome ? 'Re-measure' : 'Measure'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          data={visiblePredictions}
+          columns={columns}
+          keyExtractor={(p, idx) => String(p.prediction_id ?? `${p.timestamp ?? 'pred'}-${idx}`)}
+          emptyMessage="No prediction rows available."
+        />
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
         <FreshnessClock

@@ -18,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.security import get_current_user, AuthUser
+from app.api.dependencies import (
+    get_capital_config,
+    get_or_create_account,
+    parse_user_uuid,
+    require_user_uuid,
+)
 from app.models.market import ApiMeta, DataStatus
 from app.algo.clock import clock_authority
 from app.algo.audit import alert_deduper, audit_trail, AuditRecord
@@ -57,13 +63,8 @@ def _meta() -> ApiMeta:
     )
 
 
-def _uid(user: Optional[AuthUser]) -> UUID | None:
-    if not user or not user.user_id:
-        return None
-    try:
-        return UUID(user.user_id)
-    except Exception:
-        return None
+# Backward-compatible alias; canonical implementation lives in app.api.dependencies.
+_uid = parse_user_uuid
 
 
 # Module-level aliases for backward compatibility
@@ -221,16 +222,13 @@ async def get_account(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    uid = require_user_uuid(user)
+    acct = await get_or_create_account(session, uid)
     capital = None
     kill = None
     consent_ok = False
     if session is not None:
-        res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
-        cfg = res.scalar_one_or_none()
+        cfg = await get_capital_config(session, acct.id)
         capital = {
             "investment_limit": str(cfg.investment_limit) if cfg else "3000",
             "max_capital_per_trade": str(cfg.max_capital_per_trade) if cfg else "1000",
@@ -268,15 +266,13 @@ async def set_mode(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     mode = payload.mode.upper()
     if mode not in ("OFF", "PAPER", "LIVE"):
         raise HTTPException(status_code=400, detail="mode must be OFF, PAPER, or LIVE")
     if session is None:
         return {"data": {"mode": mode, "note": "no DB — synthetic"}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     if mode == "LIVE":
         res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id, AlgoConsent.disclosure_version == DISCLOSURE_VERSION, AlgoConsent.is_revoked == False))
         consent = res.scalar_one_or_none()
@@ -300,9 +296,7 @@ async def get_consent(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     disclosure = {
         "version": DISCLOSURE_VERSION,
         "content": "ALGO TRADING RISK DISCLOSURE: Algorithmic trading involves substantial risk. AI-assisted signals are advisory only. Capital protection is prioritized but losses can exceed expectations. You acknowledge regulatory, AI advisory, and capital-at-risk disclosures.",
@@ -311,7 +305,7 @@ async def get_consent(
     }
     if session is None:
         return {"data": {"disclosure": disclosure, "consents": []}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id).order_by(AlgoConsent.created_at.desc()))
     consents = res.scalars().all()
     return {
@@ -332,16 +326,14 @@ async def post_consent(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if payload.disclosure_version != DISCLOSURE_VERSION:
         raise HTTPException(status_code=400, detail=f"disclosure_version must be {DISCLOSURE_VERSION}")
     if not payload.acknowledged:
         raise HTTPException(status_code=400, detail="acknowledged must be true — pre-checked consent not allowed (§4)")
     if session is None:
         return {"data": {"acknowledged": True, "version": DISCLOSURE_VERSION}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
     consent = AlgoConsent(account_id=acct.id, user_id=uid, disclosure_version=DISCLOSURE_VERSION, ip_address=ip, user_agent=ua)
@@ -357,12 +349,10 @@ async def revoke_consent(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         return {"data": {"revoked": True}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     res = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id, AlgoConsent.is_revoked == False))
     for c in res.scalars().all():
         c.is_revoked = True
@@ -380,16 +370,13 @@ async def get_capital(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         return {"data": {"limit": "3000", "deployed": "0", "reserved": "0", "available": "3000", "utilization_pct": "0", "config": {"investment_limit": "3000", "max_capital_per_trade": "1000", "max_daily_loss": "500", "max_loss_per_trade": "200", "max_open_positions": 5, "max_trades_per_day": 20, "max_position_quantity": 500, "max_slippage_pct": "0.3", "max_spread_pct": "0.5"}}, "error": None, "meta": _meta().model_dump()}
     try:
-        acct = await algo_account_service.get_or_create_account(session, uid)
+        acct = await get_or_create_account(session, uid)
         snap = await capital_engine.get_snapshot(session, acct.id)
-        res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
-        cfg = res.scalar_one_or_none()
+        cfg = await get_capital_config(session, acct.id)
     except Exception as e:
         logger.warning("capital_fallback_due_to_db_error", error=str(e))
         try:
@@ -429,20 +416,16 @@ async def update_capital(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         return {"data": {"updated": False, "reason": "no DB"}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     is_critical_change = payload.investment_limit is not None
     if is_critical_change and not payload.confirm:
-        res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
-        cfg = res.scalar_one_or_none()
+        cfg = await get_capital_config(session, acct.id)
         current = str(cfg.investment_limit) if cfg else "3000"
         raise HTTPException(status_code=428, detail={"message": f"Confirm change: Current Algo Limit: ₹{current} → New Algo Limit: ₹{payload.investment_limit}. This increases capital available to live algorithmic trading. Send confirm:true to proceed.", "current": current, "new": str(payload.investment_limit)})
-    res = await session.execute(select(AlgoCapitalConfig).where(AlgoCapitalConfig.account_id == acct.id))
-    cfg = res.scalar_one_or_none()
+    cfg = await get_capital_config(session, acct.id)
     if not cfg:
         cfg = AlgoCapitalConfig(account_id=acct.id)
         session.add(cfg)
@@ -473,9 +456,7 @@ async def list_strategies(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_governance_service.list_strategies(session, uid, active_only=active_only)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -486,9 +467,7 @@ async def upsert_strategy(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_governance_service.upsert_strategy(session, uid, payload)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -500,9 +479,7 @@ async def promote_strategy(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_governance_service.promote_strategy(session, uid, strategy_id, stage.upper())
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -554,10 +531,8 @@ async def post_ai_decision(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    acct = await algo_account_service.get_or_create_account(session, uid) if session else algo_account_service.create_synthetic_account(uid)
+    uid = require_user_uuid(user)
+    acct = await get_or_create_account(session, uid) if session else algo_account_service.create_synthetic_account(uid)
     dec = AIDecision(provider=payload.provider, model_id=payload.model_id, model_version=payload.model_version, prompt_version=payload.prompt_version, market_snapshot_id=payload.market_snapshot_id, output=payload.output, confidence=D(payload.confidence) if payload.confidence is not None else None, latency_ms=payload.latency_ms, schema_valid=bool(payload.schema_valid))
     ai_governance.record_decision(dec)
     audit_trail.append(AuditRecord(account_id=acct.id, event_type="AI_DECISION", ai_result=payload.output, model_id=payload.model_id, model_version=payload.model_version, details={"confidence": payload.confidence}))
@@ -572,9 +547,7 @@ async def create_signal(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_signals_service.create_signal(session, uid, payload)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -588,9 +561,7 @@ async def list_signals(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_signals_service.list_signals(session, uid, symbol, direction, status, limit)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -629,9 +600,7 @@ async def get_exposure(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_signals_service.get_exposure(session, uid)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -644,9 +613,7 @@ async def create_order(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.create_order(session, uid, payload)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -659,9 +626,7 @@ async def list_orders(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.list_orders(session, uid, status=status, symbol=symbol, limit=limit)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -672,9 +637,7 @@ async def reconcile_order(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.reconcile_single_order(session, uid, client_order_id)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -686,9 +649,7 @@ async def cancel_order(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.cancel_order(session, uid, client_order_id, reason=reason)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -701,9 +662,7 @@ async def create_basket(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    require_user_uuid(user)
     spread_id = UUID(payload.spread_id) if payload.spread_id else uuid.uuid4()
     if payload.execution_mode not in ("ATOMIC","SEQUENTIAL_LEGGED"):
         raise HTTPException(status_code=400, detail="execution_mode must be ATOMIC or SEQUENTIAL_LEGGED")
@@ -739,9 +698,7 @@ async def list_positions(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.list_positions(session, uid, is_open=is_open)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -753,9 +710,7 @@ async def exit_position(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.exit_position(session, uid, position_id, trigger=trigger)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -765,9 +720,7 @@ async def exit_all_positions(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_order_service.exit_all_positions(session, uid)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -780,9 +733,7 @@ async def set_kill_switch(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_governance_service.set_kill_switch(session, uid, payload.kill_level, payload.reason)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -792,9 +743,7 @@ async def get_kill_switch(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     data = await algo_governance_service.get_kill_switch(session, uid)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
@@ -869,14 +818,12 @@ async def get_audit(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         acct_id = uuid.uuid4()
         records = audit_trail.query(acct_id, limit=limit, event_type=event_type)
         return {"data": [r.to_dict() for r in records], "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     q = select(AlgoAuditLog).where(AlgoAuditLog.account_id == acct.id).order_by(AlgoAuditLog.timestamp.desc()).limit(limit)
     if event_type:
         q = q.where(AlgoAuditLog.event_type == event_type)
@@ -899,12 +846,10 @@ async def run_reconciliation(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         return {"data": {"status": "MATCHED", "note": "no DB"}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     ores = await session.execute(select(AlgoOrderDB).where(AlgoOrderDB.account_id == acct.id))
     internal_orders = [{"client_order_id": str(o.client_order_id), "broker_order_id": o.broker_order_id, "status": o.status, "quantity": o.quantity, "symbol": o.symbol} for o in ores.scalars().all()]
     pres = await session.execute(select(AlgoPositionDB).where(AlgoPositionDB.account_id == acct.id))
@@ -931,12 +876,10 @@ async def restart_recovery(
     user: Optional[AuthUser] = Depends(get_current_user),
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    uid = _uid(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = require_user_uuid(user)
     if session is None:
         return {"data": {"recovered": True, "note": "no DB — nothing to recover"}, "error": None, "meta": _meta().model_dump()}
-    acct = await algo_account_service.get_or_create_account(session, uid)
+    acct = await get_or_create_account(session, uid)
     rec = await run_reconciliation(user, session)
     health = rec["data"]["health"]
     can_resume = health != "BLOCKED"

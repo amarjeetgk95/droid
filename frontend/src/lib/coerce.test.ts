@@ -15,6 +15,32 @@ describe('toNumber', () => {
     expect(toNumber(undefined)).toBeNull();
     expect(toNumber({})).toBeNull();
   });
+
+  it('keeps the default Number("") === 0 coercion', () => {
+    expect(toNumber('')).toBe(0);
+    expect(toNumber('   ')).toBe(0);
+  });
+
+  it('rejectEmptyString rejects only the exact empty string', () => {
+    expect(toNumber('', { rejectEmptyString: true })).toBeNull();
+    expect(toNumber('   ', { rejectEmptyString: true })).toBe(0);
+    expect(toNumber('42', { rejectEmptyString: true })).toBe(42);
+  });
+
+  it('rejectBlankString rejects empty and whitespace-only strings', () => {
+    expect(toNumber('', { rejectBlankString: true })).toBeNull();
+    expect(toNumber('   ', { rejectBlankString: true })).toBeNull();
+    expect(toNumber('42', { rejectBlankString: true })).toBe(42);
+  });
+
+  it('coerceNonString parses non-string, non-number values with Number()', () => {
+    expect(toNumber(true, { coerceNonString: true })).toBe(1);
+    expect(toNumber([], { coerceNonString: true })).toBe(0);
+    expect(toNumber({}, { coerceNonString: true })).toBeNull();
+    expect(toNumber(null, { coerceNonString: true })).toBeNull();
+    expect(toNumber(undefined, { coerceNonString: true })).toBeNull();
+    expect(toNumber(true)).toBeNull();
+  });
 });
 
 describe('pickFirst', () => {

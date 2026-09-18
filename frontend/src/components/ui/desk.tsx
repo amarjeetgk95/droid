@@ -5,33 +5,34 @@
    instead of re-declaring inline CARD/TH/TD style objects. */
 
 import type { CSSProperties, ReactNode } from 'react';
+import { toNumber } from '@/lib/coerce';
 
 export type Direction = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
 /* ---------------- formatting ---------------- */
 
 export function fmtINR(v: unknown): string {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  const n = toNumber(v);
+  if (n === null) return '—';
   return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 export function fmtNum(v: unknown, digits = 2): string {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  const n = toNumber(v);
+  if (n === null) return '—';
   return n.toFixed(digits);
 }
 
 export function fmtSigned(v: unknown, digits = 1): string {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  const n = toNumber(v);
+  if (n === null) return '—';
   const sign = n > 0 ? '+' : '';
   return `${sign}${n.toFixed(digits)}`;
 }
 
 export function fmtPct01(v: unknown): string {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  const n = toNumber(v);
+  if (n === null) return '—';
   return `${Math.round(n * 100)}%`;
 }
 
@@ -97,8 +98,8 @@ export function DirectionBadge({ direction, big }: { direction: unknown; big?: b
 
 /** Confidence / probability bar (0..1). */
 export function Meter({ value, label = 'Meter' }: { value: unknown; label?: string }) {
-  const n = typeof value === 'string' ? Number(value) : (value as number);
-  const pct = typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) * 100 : 0;
+  const n = toNumber(value);
+  const pct = n !== null ? Math.max(0, Math.min(1, n)) * 100 : 0;
   return (
     <div
       className="meter"
@@ -122,8 +123,8 @@ export function DivergingBar({
   value: unknown;
   label?: string;
 }) {
-  const n = typeof value === 'string' ? Number(value) : (value as number);
-  const v = typeof n === 'number' && Number.isFinite(n) ? Math.max(-100, Math.min(100, n)) : 0;
+  const n = toNumber(value);
+  const v = n !== null ? Math.max(-100, Math.min(100, n)) : 0;
   const w = Math.abs(v) / 2; // half-track scale
   const style: CSSProperties =
     v >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` };

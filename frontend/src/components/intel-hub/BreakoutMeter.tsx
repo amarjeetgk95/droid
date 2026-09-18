@@ -8,9 +8,9 @@ import {
   directionBadgeVariant,
   stateBadgeVariant,
 } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Gauge } from '../shared/Gauge';
-import { Badge } from '../shared/Badge';
+import { Card } from '@/components/ui/card';
+import { Gauge } from '@/components/ui/gauge';
+import { Badge } from '@/components/ui/badge';
 
 function formatLevel(level: string | null): string | null {
   if (level === null) return null;

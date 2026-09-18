@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
 import { asNumber, asRecord, asString, errorMessage } from './IntelHubData';
 import { PanelNotice, formatAge, formatIstTime } from './IntelHubUi';
-import { Card } from '../shared/Card';
-import { Badge } from '../shared/Badge';
-import { StatusDot, type StatusDotState } from '../shared/StatusDot';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { StatusDot, type StatusDotState } from '@/components/ui/status-dot';
+import { DataTable, type Column } from '@/components/ui/data-table';
 
 const DATA_HEALTH_POLL_MS = 15_000;
 const FRESHNESS_STALE_MS = 30_000;
@@ -111,6 +112,61 @@ export const DataHealthMatrix: React.FC = () => {
   const age = formatAge(generatedAtMs, snapshot?.fetchedAt ?? 0);
   const ist = formatIstTime(generatedAtMs);
 
+  const columns = useMemo<Column<HealthRow>[]>(
+    () => [
+      {
+        key: 'id',
+        header: 'Instrument',
+        sortable: true,
+        render: (row) => <span className="font-bold text-ink">{row.id}</span>,
+      },
+      {
+        key: 'status',
+        header: 'Data Status',
+        sortable: true,
+        sortValue: (row) => row.status ?? null,
+        render: (row) => (
+          <Badge variant={statusBadgeVariant(row.status, row.feed)} size="xs">
+            {row.status ?? 'UNKNOWN'}
+          </Badge>
+        ),
+      },
+      {
+        key: 'feed',
+        header: 'Feed Circuit',
+        sortable: true,
+        sortValue: (row) => row.feed ?? null,
+        render: (row) => <span className="text-ink-2">{row.feed ?? '—'}</span>,
+      },
+      {
+        key: 'actions',
+        header: 'Actions',
+        align: 'right',
+        render: (row) => (
+          <span className="inline-flex gap-2">
+            <button
+              type="button"
+              onClick={() => void runAction(row.id, () => api.tripFeedCircuit(row.id))}
+              disabled={pendingId === row.id}
+              className="rounded border border-down-line bg-down-wash px-2 py-0.5 text-[10px] font-semibold text-down-strong hover:opacity-80 disabled:opacity-50"
+            >
+              Trip circuit
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAction(row.id, () => api.resyncFeedCircuit(row.id))}
+              disabled={pendingId === row.id}
+              className="rounded border border-up-line bg-up-wash px-2 py-0.5 text-[10px] font-semibold text-up-strong hover:opacity-80 disabled:opacity-50"
+            >
+              Resync
+            </button>
+          </span>
+        ),
+      },
+    ],
+    [pendingId, runAction],
+  );
+
   return (
     <Card
       title="DATA INTEGRITY & FEED CIRCUIT MATRIX"
@@ -160,52 +216,13 @@ export const DataHealthMatrix: React.FC = () => {
             {snapshot.data.rows.length === 0 ? (
               <PanelNotice>No instrument data-health rows were returned.</PanelNotice>
             ) : (
-              <div className="w-full overflow-x-auto">
-                <table className="w-full border-collapse text-left">
-                  <thead>
-                    <tr className="border-b border-border bg-surface-subtle text-[10px] font-semibold uppercase text-ink-2">
-                      <th className="px-3 py-2.5">Instrument</th>
-                      <th className="px-3 py-2.5">Data Status</th>
-                      <th className="px-3 py-2.5">Feed Circuit</th>
-                      <th className="px-3 py-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border-subtle">
-                    {snapshot.data.rows.map((row) => (
-                      <tr key={row.id} className="transition-colors hover:bg-muted">
-                        <td className="px-3 py-2 font-bold text-ink">{row.id}</td>
-                        <td className="px-3 py-2">
-                          <Badge
-                            variant={statusBadgeVariant(row.status, row.feed)}
-                            size="xs"
-                          >
-                            {row.status ?? 'UNKNOWN'}
-                          </Badge>
-                        </td>
-                        <td className="px-3 py-2 text-ink-2">{row.feed ?? '—'}</td>
-                        <td className="space-x-2 px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() => void runAction(row.id, () => api.tripFeedCircuit(row.id))}
-                            disabled={pendingId === row.id}
-                            className="rounded border border-down-line bg-down-wash px-2 py-0.5 text-[10px] font-semibold text-down-strong hover:opacity-80 disabled:opacity-50"
-                          >
-                            Trip circuit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void runAction(row.id, () => api.resyncFeedCircuit(row.id))}
-                            disabled={pendingId === row.id}
-                            className="rounded border border-up-line bg-up-wash px-2 py-0.5 text-[10px] font-semibold text-up-strong hover:opacity-80 disabled:opacity-50"
-                          >
-                            Resync
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                data={snapshot.data.rows}
+                columns={columns}
+                keyExtractor={(row) => row.id}
+                paginate={false}
+                emptyMessage="No instrument data-health rows were returned."
+              />
             )}
           </>
         ) : null}

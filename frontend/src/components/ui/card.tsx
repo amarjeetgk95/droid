@@ -2,7 +2,79 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+type CardGlow = "cyan" | "emerald" | "indigo" | "rose" | "amber" | "none"
+
+/* Legacy `glow` tones (prop-based API) map onto the semantic families —
+   border emphasis only, the design system has no coloured shadows. */
+const glowStyles: Record<CardGlow, string> = {
+  none: "",
+  cyan: "border-primary",
+  emerald: "border-up-line",
+  indigo: "border-accent-line",
+  rose: "border-down-line",
+  amber: "border-warn-line",
+}
+
+type CardProps = Omit<React.ComponentProps<"div">, "title"> & {
+  /** Prop-based API (legacy shared kit) — renders a titled panel. */
+  title?: React.ReactNode
+  subtitle?: React.ReactNode
+  headerAction?: React.ReactNode
+  footer?: React.ReactNode
+  noPadding?: boolean
+  glow?: CardGlow
+}
+
+function Card({
+  className,
+  title,
+  subtitle,
+  headerAction,
+  footer,
+  noPadding,
+  glow,
+  children,
+  ...props
+}: CardProps) {
+  // Presence of any prop-based prop selects the legacy panel rendering;
+  // otherwise the compound API (CardHeader/CardContent/... below) is used.
+  const propMode =
+    title !== undefined ||
+    subtitle !== undefined ||
+    headerAction !== undefined ||
+    footer !== undefined ||
+    noPadding !== undefined ||
+    glow !== undefined
+
+  if (propMode) {
+    return (
+      <div
+        className={cn(
+          "relative rounded-lg border border-border bg-card text-foreground transition-all duration-200",
+          glowStyles[glow ?? "none"],
+          className
+        )}
+        {...props}
+      >
+        {(title || subtitle || headerAction) && (
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle bg-surface-subtle">
+            <div>
+              {title && <div className="text-sm font-semibold tracking-wide text-foreground">{title}</div>}
+              {subtitle && <div className="text-xs text-ink-3 mt-0.5">{subtitle}</div>}
+            </div>
+            {headerAction && <div className="flex items-center gap-2">{headerAction}</div>}
+          </div>
+        )}
+        <div className={noPadding ? "" : "p-4"}>{children}</div>
+        {footer && (
+          <div className="px-4 py-2.5 border-t border-border-subtle bg-surface-subtle text-xs text-ink-3">
+            {footer}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div
       data-slot="card"
@@ -11,7 +83,9 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
         className
       )}
       {...props}
-    />
+    >
+      {children}
+    </div>
   )
 }
 
@@ -90,3 +164,5 @@ export {
   CardDescription,
   CardContent,
 }
+
+export type { CardProps, CardGlow }

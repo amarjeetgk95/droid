@@ -7,8 +7,8 @@ import { useExecutionGuard } from '@/hooks/useExecutionGuard';
 import { api } from '@/lib/api';
 import { toNumber, pickFirst } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
-import { Card } from '../shared/Card';
-import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { Card } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 type Side = 'BUY' | 'SELL';
 type ExecutionMode = 'ATOMIC' | 'SEQUENTIAL_LEGGED';

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { api } from '@/lib/api';
-import { Badge } from '../shared/Badge';
+import { Badge } from '@/components/ui/badge';
 import { errorMessage, parseMLShadowGate, type MLShadowGate } from './forgeLogic';
 
 type GateState =
