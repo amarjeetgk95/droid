@@ -405,10 +405,6 @@ export function createSignalsApi(core: ApiCore) {
       return core.request<{ signals: any[]; count: number; timestamp_ms: number }>(`/api/v1/signals/active${q}`);
     },
 
-    async getActiveSignals(params?: { instrument?: string; status?: string; strategy?: string; desk?: string; is_scalp?: boolean }) {
-      return this.getSignalsActive(params);
-    },
-
     async getSignalsAudit(params?: { underlying?: string; strategy?: string; status?: string; limit?: number }) {
       const qs = new URLSearchParams();
       if (params?.underlying) qs.set('underlying', params.underlying);

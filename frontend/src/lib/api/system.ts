@@ -30,10 +30,6 @@ export function createSystemApi(core: ApiCore) {
     return core.request<{ data: Record<string, unknown>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/circuit-breaker/status');
   },
 
-    async getDashboard(symbol: string = 'NIFTY') {
-    return core.request<any>(`/api/v1/dashboard/${encodeURIComponent(symbol)}`);
-  },
-
     async getDashboardSummary() {
     return core.request<{
       data: {
@@ -52,10 +48,6 @@ export function createSystemApi(core: ApiCore) {
       error: string | null;
       meta: import('../types').ApiMeta;
     }>('/api/v1/dashboard/summary');
-  },
-
-    async getHistoricalTimeSeries(symbol: string, timeframe: string = '5m', limit: number = 500) {
-    return core.request<{ data: import('../types').NormalizedCandle[]; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/timeseries/${encodeURIComponent(symbol)}/history?timeframe=${timeframe}&limit=${limit}`);
   },
 
     async getPipelineStats() {
@@ -118,42 +110,6 @@ export function createSystemApi(core: ApiCore) {
       error?: string;
       timestamp: string;
     }>('/api/v1/monitoring/forecast-config');
-  },
-
-    async getMLModelInfo() {
-    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/model-info');
-  },
-
-    async getMLTargets() {
-    return core.request<{ data: { target_spec_version: string; supported_horizons: number[]; default_horizon_minutes: number; specs: any[] }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/targets');
-  },
-
-    async getMLCalibration(symbol: string, horizonMinutes?: number) {
-    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
-    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/calibration/${encodeURIComponent(symbol)}${qs}`);
-  },
-
-    async getMLChallengerInfo() {
-    return core.request<{ data: { challenger_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/challenger-info');
-  },
-
-    async getMLChampionInfo() {
-    return core.request<{ data: { champion_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/champion-info');
-  },
-
-    async runMLSettlement(symbol?: string, limit: number = 100) {
-    const qs = new URLSearchParams({ limit: String(limit) });
-    if (symbol) qs.set('symbol', symbol);
-    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/settle/run?${qs.toString()}`, { method: 'POST' });
-  },
-
-    async getMLPrediction(symbol: string, horizonMinutes?: number) {
-    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
-    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}${qs}`);
-  },
-
-    async getMLCurrentRegime(symbol: string = 'NIFTY') {
-    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/current-regime?symbol=${encodeURIComponent(symbol)}`);
   },
   };
 }

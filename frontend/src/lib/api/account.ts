@@ -30,14 +30,6 @@ export function createAccountApi(core: ApiCore) {
     );
   },
 
-    async getFullProfile() {
-    return core.request<import('../types').ProfileResponse>('/api/v1/auth/profile/full');
-  },
-
-    async getProfile() {
-    return core.request<{ user_id: string; email: string | null; role: string }>('/api/v1/auth/profile');
-  },
-
     async getSettings() {
     return core.request<import('../types').UserSettingsResponse>('/api/v1/settings');
   },
@@ -101,13 +93,6 @@ export function createAccountApi(core: ApiCore) {
     async sendTelegramTestMessage() {
     return core.request<{ status: string; notification_id: string }>('/api/v1/telegram/test', {
       method: 'POST',
-    });
-  },
-
-    async updateProfile(display_name: string | null) {
-    return core.request<import('../types').ProfileResponse>('/api/v1/auth/profile', {
-      method: 'PATCH',
-      body: JSON.stringify({ display_name }),
     });
   },
 

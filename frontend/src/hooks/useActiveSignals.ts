@@ -398,8 +398,7 @@ export function useActiveSignals(opts: UseActiveSignalsOptions = {}) {
         if (desk) queryParams.desk = desk;
         if (isScalp !== undefined) queryParams.is_scalp = isScalp;
 
-        const getFn = (api as any).getActiveSignals ?? (api as any).getSignalsActive;
-        const res = await getFn.call(api, queryParams);
+        const res = await api.getSignalsActive(queryParams);
 
         if (seq !== requestSeqRef.current) return;
         const rows = Array.isArray(res?.signals) ? res.signals : [];

@@ -28,7 +28,15 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/auth/AuthProvider', () => ({ useAuth: () => authState }));
 
 import LoginPage from '@/app/login/page';
-import { setTestUrl } from './setTestUrl';
+
+// happy-dom exposes setURL at runtime but not in the standard Window type.
+function setTestUrl(url: string): void {
+  const w = window as unknown as { happyDOM?: { setURL: (value: string) => void } };
+  if (!w.happyDOM) {
+    throw new Error('happy-dom setURL is unavailable in this test environment');
+  }
+  w.happyDOM.setURL(url);
+}
 
 function fillCredentials(email = 'trader@droid.term', password = 'correct horse') {
   fireEvent.change(screen.getByLabelText('User ID / Email'), { target: { value: email } });

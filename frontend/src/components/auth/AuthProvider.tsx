@@ -4,7 +4,6 @@ import { createContext, useContext, useEffect, useRef, useState, ReactNode } fro
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
-import { deskCache } from '@/lib/useDeskCache';
 import {
   SESSION_EXPIRED_REASON,
   getAuthErrorMessage,
@@ -79,17 +78,12 @@ function toAuthUser(user: SupabaseUserLike): AuthUser {
 
 /**
  * Drop every locally cached artifact of the ending session: the API bearer
- * token, the in-memory desk/market cache, and the broker-auth markers. There is
- * no broker revoke endpoint on the backend (see report), so stale local state
- * must not survive into the next sign-in.
+ * token and the broker-auth markers. There is no broker revoke endpoint on the
+ * backend (see report), so stale local state must not survive into the next
+ * sign-in.
  */
 function clearSessionLocalState(): void {
   api.setToken(null);
-  try {
-    deskCache.clear();
-  } catch {
-    // Cache is best-effort; never block a sign-out on it.
-  }
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem('droid_last_auth_time');

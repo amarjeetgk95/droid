@@ -25,24 +25,6 @@ export function createIntelligenceApi(core: ApiCore) {
     });
   },
 
-    async createResearchAnnotation(annotation: any) {
-    return core.request<any>('/api/v1/research/annotations', {
-      method: 'POST',
-      body: JSON.stringify(annotation),
-    });
-  },
-
-    async createResearchSnapshot(snapshot: any) {
-    return core.request<any>('/api/v1/research/snapshots', {
-      method: 'POST',
-      body: JSON.stringify(snapshot),
-    });
-  },
-
-    async getFinancialResearch(underlying: string, horizon = 'INTRADAY', direction = 'BULLISH') {
-    return core.request<any>(`/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?horizon=${encodeURIComponent(horizon)}&direction=${encodeURIComponent(direction)}`);
-  },
-
     async getTacticalBias(instrument: string, horizon: string = '1h', record = true, includeExplain = true): Promise<HourForecastV2> {
     try {
       return await core.request<HourForecastV2>(
@@ -65,20 +47,6 @@ export function createIntelligenceApi(core: ApiCore) {
     );
   },
 
-    /** Explain bundle only (no prediction recorded). The bundle is what WhyPanel
-     *  renders, so the polling call keeps `include_explain=true` (the default);
-     *  pass `includeExplain=false` to `getForecast`/`getTacticalBias` for lighter
-     *  polls and use this to fetch it on demand. */
-    async getForecastExplain(instrument: string, horizon: string = '1h'): Promise<HourForecastV2> {
-    return core.request<HourForecastV2>(
-      `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=false&include_explain=true`,
-    );
-  },
-
-    async getHourForecast(instrument: string, record = true): Promise<HourForecastV2> {
-    return core.request<HourForecastV2>(`/api/v1/research/forecast/1h?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}`);
-  },
-
     /**
      * Consolidated portfolio Greeks ledger across horizons. The endpoint
      * returns `PortfolioGreeksSummary` directly (no envelope); the optional
@@ -89,18 +57,6 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<PortfolioGreeksSummary & { data?: never }>(
       '/api/v1/options-intelligence/portfolio-greeks/summary',
     );
-  },
-
-    async getResearchChartState(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
-    return core.request<any>(`/api/v1/research/chart/state?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`);
-  },
-
-    async getResearchFeatures(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
-    return core.request<any>(`/api/v1/research/chart/features?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`);
-  },
-
-    async getResearchIndicator(id: string) {
-    return core.request<any>(`/api/v1/research/indicators/${id}`);
   },
 
     async getResearchIndicators(category?: string, lifecycle?: string) {
@@ -119,11 +75,6 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}/outcome`);
   },
 
-    async listResearchAnnotations(instrument?: string) {
-    const qs = instrument ? `?instrument=${encodeURIComponent(instrument)}` : '';
-    return core.request<any[]>(`/api/v1/research/annotations${qs}`);
-  },
-
     async listResearchPredictions(params?: { indicator_id?: string; instrument?: string; limit?: number }) {
     const q = new URLSearchParams();
     if (params?.indicator_id) q.set('indicator_id', params.indicator_id);
@@ -131,11 +82,6 @@ export function createIntelligenceApi(core: ApiCore) {
     if (params?.limit) q.set('limit', String(params.limit));
     const qs = q.toString() ? `?${q.toString()}` : '';
     return core.request<any[]>(`/api/v1/research/predictions${qs}`);
-  },
-
-    async listResearchSnapshots(instrument?: string) {
-    const qs = instrument ? `?instrument=${encodeURIComponent(instrument)}` : '';
-    return core.request<any[]>(`/api/v1/research/snapshots${qs}`);
   },
 
     async measureResearchPrediction(predictionId: string, forwardCandles?: any[]) {
@@ -149,13 +95,6 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>('/api/v1/options-intelligence/expected-move', {
       method: 'POST',
       body: JSON.stringify(params),
-    });
-  },
-
-    async recordResearchPrediction(prediction: any) {
-    return core.request<any>('/api/v1/research/predictions', {
-      method: 'POST',
-      body: JSON.stringify(prediction),
     });
   },
 
@@ -182,13 +121,6 @@ export function createIntelligenceApi(core: ApiCore) {
 
     async solveIV(params: { market_price: number; spot: number; strike: number; dte_days: number; option_type: 'CE' | 'PE' }) {
     return core.request<any>('/api/v1/options-intelligence/solve-iv', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-  },
-
-    async synthesizeFinancialResearch(params: { underlying: string; horizon?: string; direction?: string }) {
-    return core.request<any>('/api/v1/options-intelligence/financial-research/synthesize', {
       method: 'POST',
       body: JSON.stringify(params),
     });

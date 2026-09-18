@@ -27,7 +27,15 @@ vi.mock('next/navigation', () => ({
 vi.mock('./AuthProvider', () => ({ useAuth: () => authState }));
 
 import { AuthGuard } from './AuthGuard';
-import { setTestUrl } from './setTestUrl';
+
+// happy-dom exposes setURL at runtime but not in the standard Window type.
+function setTestUrl(url: string): void {
+  const w = window as unknown as { happyDOM?: { setURL: (value: string) => void } };
+  if (!w.happyDOM) {
+    throw new Error('happy-dom setURL is unavailable in this test environment');
+  }
+  w.happyDOM.setURL(url);
+}
 
 describe('AuthGuard', () => {
   beforeEach(() => {

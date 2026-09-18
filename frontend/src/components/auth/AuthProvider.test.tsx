@@ -35,10 +35,17 @@ vi.mock('next/navigation', () => ({
 
 import { AuthProvider, useAuth, type AuthContextType } from './AuthProvider';
 import { readAuthNotice } from './authMessages';
-import { deskCache } from '@/lib/useDeskCache';
-import { setTestUrl } from './setTestUrl';
 
 const APP_ORIGIN = 'http://localhost:3000';
+
+// happy-dom exposes setURL at runtime but not in the standard Window type.
+function setTestUrl(url: string): void {
+  const w = window as unknown as { happyDOM?: { setURL: (value: string) => void } };
+  if (!w.happyDOM) {
+    throw new Error('happy-dom setURL is unavailable in this test environment');
+  }
+  w.happyDOM.setURL(url);
+}
 
 let ctx: AuthContextType | null = null;
 
@@ -76,7 +83,6 @@ describe('AuthProvider session lifecycle', () => {
     localStorage.clear();
     sessionStorage.clear();
     authListeners.length = 0;
-    deskCache.clear();
 
     supabaseMock.auth.getSession.mockReset().mockResolvedValue({ data: { session: null }, error: null });
     supabaseMock.auth.onAuthStateChange.mockClear();
@@ -200,11 +206,10 @@ describe('AuthProvider session lifecycle', () => {
     window.removeEventListener('broker:session-expired', brokerExpired);
   });
 
-  it('sign-out revokes the provider session and clears token, desk cache and broker markers', async () => {
+  it('sign-out revokes the provider session and clears token and broker markers', async () => {
     renderAuthProvider();
     await waitForContext();
 
-    deskCache.set('options:private', { v: 1 }, 60_000);
     localStorage.setItem('droid_last_auth_time', '123');
     localStorage.setItem('droid_last_auth_provider', 'fyers');
 
@@ -214,7 +219,6 @@ describe('AuthProvider session lifecycle', () => {
 
     expect(supabaseMock.auth.signOut).toHaveBeenCalledTimes(1);
     expect(apiMock.setToken).toHaveBeenCalledWith(null);
-    expect(deskCache.get('options:private')).toBeNull();
     expect(localStorage.getItem('droid_last_auth_time')).toBeNull();
     expect(localStorage.getItem('droid_last_auth_provider')).toBeNull();
     expect(ctxValue().user).toBeNull();

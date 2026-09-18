@@ -16,14 +16,6 @@ export function createPaperApi(core: ApiCore) {
     return core.request<{ data: import('../types').FIIDIIOverviewResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/overview');
   },
 
-    async getFiiDiiActivity() {
-    return core.request<{ data: import('../types').FIIDIIOverviewResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/overview');
-  },
-
-    async getFiiDiiData() {
-    return core.request<{ data: import('../types').FIIDIIOverviewResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/overview');
-  },
-
     async getFlowSnapshot() {
     return core.request<{ data: { live: boolean; pit_note: string; flow: { event_date: string | null; fii_cash_5d_z: number | null; dii_cash_5d_z: number | null; fii_lsr: number | null } | null; composite: { score: number | null; sentiment: string; status: string } | null; drift: { degraded: boolean; reason: string } | null; futures: { status: string } }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/fii-dii/flow');
   },

@@ -8,7 +8,7 @@ const {
   getRegimeOverviewMock,
   getCallsPutsFullMock,
   getInstitutionalDataHealthDashboardMock,
-  getFiiDiiActivityMock,
+  getFIIDIIOverviewMock,
   tripFeedCircuitMock,
   resyncFeedCircuitMock,
 } = vi.hoisted(() => ({
@@ -16,7 +16,7 @@ const {
   getRegimeOverviewMock: vi.fn(),
   getCallsPutsFullMock: vi.fn(),
   getInstitutionalDataHealthDashboardMock: vi.fn(),
-  getFiiDiiActivityMock: vi.fn(),
+  getFIIDIIOverviewMock: vi.fn(),
   tripFeedCircuitMock: vi.fn(),
   resyncFeedCircuitMock: vi.fn(),
 }));
@@ -27,8 +27,7 @@ vi.mock('@/lib/api', () => ({
     getRegimeOverview: getRegimeOverviewMock,
     getCallsPutsFull: getCallsPutsFullMock,
     getInstitutionalDataHealthDashboard: getInstitutionalDataHealthDashboardMock,
-    getFiiDiiActivity: getFiiDiiActivityMock,
-    getFiiDiiData: getFiiDiiActivityMock,
+    getFIIDIIOverview: getFIIDIIOverviewMock,
     tripFeedCircuit: tripFeedCircuitMock,
     resyncFeedCircuit: resyncFeedCircuitMock,
   },
@@ -228,7 +227,7 @@ beforeEach(() => {
   getRegimeOverviewMock.mockReset();
   getCallsPutsFullMock.mockReset();
   getInstitutionalDataHealthDashboardMock.mockReset();
-  getFiiDiiActivityMock.mockReset();
+  getFIIDIIOverviewMock.mockReset();
   tripFeedCircuitMock.mockReset();
   resyncFeedCircuitMock.mockReset();
 
@@ -236,7 +235,7 @@ beforeEach(() => {
   getRegimeOverviewMock.mockImplementation(async (symbol: string) => regimePayload(symbol));
   getCallsPutsFullMock.mockImplementation(async () => optionsPayload());
   getInstitutionalDataHealthDashboardMock.mockImplementation(async () => healthPayload());
-  getFiiDiiActivityMock.mockImplementation(async () => fiiPayload());
+  getFIIDIIOverviewMock.mockImplementation(async () => fiiPayload());
   tripFeedCircuitMock.mockImplementation(async () => ({ status: 'TRIPPED' }));
   resyncFeedCircuitMock.mockImplementation(async () => ({ status: 'RESYNC' }));
 });
@@ -510,7 +509,7 @@ describe('InstitutionalFlowTicker', () => {
   });
 
   it('surfaces fetch errors', async () => {
-    getFiiDiiActivityMock.mockImplementation(async () => {
+    getFIIDIIOverviewMock.mockImplementation(async () => {
       throw new Error('fii feed down');
     });
 

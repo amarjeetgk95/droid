@@ -101,7 +101,7 @@ export function MarketHealthModal({
         const [cRes, pRes, tRes] = await Promise.all([
           api.getCacheStats(),
           api.getPipelineStats(),
-          api.getTokenStatus(),
+          api.getBrokerTokenStatus(),
         ]);
         if (!isMounted || ctrl.signal.aborted) return;
         setCacheStats(cRes.data as unknown as CacheStatsInfo);
@@ -149,7 +149,7 @@ export function MarketHealthModal({
       const [cRes, pRes, tRes] = await Promise.all([
         api.getCacheStats(),
         api.getPipelineStats(),
-        api.getTokenStatus(),
+        api.getBrokerTokenStatus(),
       ]);
       setCacheStats(cRes.data as unknown as CacheStatsInfo);
       setPipelineStats(pRes.data as unknown as PipelineStatsInfo);

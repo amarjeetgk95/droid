@@ -43,8 +43,8 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
   const fetchTokenStatus = async () => {
     setLoadingToken(true);
     try {
-      const res = await api.getTokenStatus();
-      setTokenStatus(res.data as Record<string, unknown>);
+      const res = await api.getBrokerTokenStatus();
+      setTokenStatus(res.data as unknown as Record<string, unknown>);
       setTokenError(null);
     } catch (err: unknown) {
       // Never invent a token state — show that telemetry itself is down.
@@ -64,7 +64,7 @@ export function TelemetryCard({ settings, fullSettings: propFullSettings }: Prop
     setTokenMsg(null);
     try {
       const payload = fullSettings ? { app_settings: fullSettings } : { app_settings: { broker: settings } };
-      const res = await api.refreshToken(payload as Record<string, unknown>);
+      const res = await api.refreshBrokerToken(payload as Record<string, unknown>);
       if ((res.data as unknown as { refreshed: boolean }).refreshed) {
         setTokenMsg({
           type: 'success',

@@ -208,23 +208,6 @@ export function createSwingApi(core: ApiCore) {
     });
 
   return {
-    async getSwingUniverse() {
-      return core.request<
-        Envelope<{
-          total_count: number;
-          sectors: string[];
-          instruments: Array<{
-            symbol: string;
-            display_name: string;
-            exchange: string;
-            lot_size: number;
-            strike_interval: number;
-            tick_size: number;
-          }>;
-        }>
-      >('/api/v1/swing/universe');
-    },
-
     async getSwingRegime() {
       return core.request<
         Envelope<{
@@ -281,8 +264,6 @@ export function createSwingApi(core: ApiCore) {
     },
 
     triggerSwingScan,
-
-    scanSwingSetups: triggerSwingScan,
 
     async getSwingPositions() {
       return core.request<

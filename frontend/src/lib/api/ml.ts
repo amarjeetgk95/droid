@@ -11,27 +11,37 @@ export function createMlApi(core: ApiCore) {
       return core.request<{ data: Record<string, unknown> }>(`/api/v1/ml/shadow-gate-eval${qs}`);
     },
 
-    trainMLModel: (payload: {
-      features: number[][];
-      labels: number[];
-      horizon_minutes?: number;
-      target_spec_version?: string;
-    }) =>
-      core.request<{ data: Record<string, unknown> }>('/api/v1/ml/train', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+    async getMLModelInfo() {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/model-info');
+  },
 
-    settleMLOutcome: (payload: {
-      prediction_id: string;
-      outcome_spot: number;
-      atr_at_t: number;
-      spot_at_t: number;
-    }) =>
-      core.request<{ data: Record<string, unknown> }>('/api/v1/ml/outcomes/settle', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+    async getMLTargets() {
+    return core.request<{ data: { target_spec_version: string; supported_horizons: number[]; default_horizon_minutes: number; specs: any[] }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/targets');
+  },
+
+    async getMLCalibration(symbol: string, horizonMinutes?: number) {
+    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/calibration/${encodeURIComponent(symbol)}${qs}`);
+  },
+
+    async getMLChallengerInfo() {
+    return core.request<{ data: { challenger_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/challenger-info');
+  },
+
+    async getMLChampionInfo() {
+    return core.request<{ data: { champion_models: Record<string, any> }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/champion-info');
+  },
+
+    async runMLSettlement(symbol?: string, limit: number = 100) {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (symbol) qs.set('symbol', symbol);
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/settle/run?${qs.toString()}`, { method: 'POST' });
+  },
+
+    async getMLPrediction(symbol: string, horizonMinutes?: number) {
+    const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}${qs}`);
+  },
   };
 }
 

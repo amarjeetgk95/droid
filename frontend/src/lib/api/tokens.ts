@@ -33,9 +33,10 @@ export function createTokensApi(core: ApiCore) {
     getBrokerTokenStatus: () =>
       core.request<{ data: BrokerTokenStatus; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/tokens/status'),
 
-    refreshBrokerToken: () =>
+    refreshBrokerToken: (payload?: Record<string, unknown>) =>
       core.request<{ data: BrokerTokenRefresh; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/tokens/refresh', {
         method: 'POST',
+        body: payload ? JSON.stringify(payload) : undefined,
       }),
 
     runTokenDiagnostics: () =>

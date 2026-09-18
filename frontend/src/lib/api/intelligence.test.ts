@@ -90,12 +90,4 @@ describe('explain param is honoured end to end', () => {
       '/api/v1/research/forecast/5m?instrument=NIFTY%2050&record=false&include_explain=false',
     );
   });
-
-  it('getForecastExplain fetches the bundle without recording a prediction', async () => {
-    const { core, calls } = makeCore({ '/api/v1/research/forecast/': async () => ({}) });
-    await createIntelligenceApi(core).getForecastExplain('BANKNIFTY', '1h');
-    expect(calls[0]).toBe(
-      '/api/v1/research/forecast/1h?instrument=BANKNIFTY&record=false&include_explain=true',
-    );
-  });
 });

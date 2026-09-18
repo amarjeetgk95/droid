@@ -60,7 +60,7 @@ export const InstitutionalFlowTicker: React.FC = () => {
   const load = useCallback(async () => {
     const seq = ++seqRef.current;
     try {
-      const res = await (typeof api.getFiiDiiData === 'function' ? api.getFiiDiiData() : api.getFiiDiiActivity());
+      const res = await api.getFIIDIIOverview();
       if (seq !== seqRef.current) return;
       setSnapshot(parseFiiDii(res?.data ?? null));
       setError(res?.error ?? null);
