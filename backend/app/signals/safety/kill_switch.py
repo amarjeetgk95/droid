@@ -191,5 +191,24 @@ class GlobalKillSwitch:
             logger.warning("kill_auto_activate_failed", error=str(e)[:150])
         return None
 
+    def auto_recover_from_monitor(self, monitor_status: str) -> dict | None:
+        """Auto-clear a FEED-MONITOR kill once the feed is LIVE again.
+
+        Only the feed monitor's own transient auto-kill is released (a feed
+        blip at open otherwise halts signal registration until an operator
+        notices). Operator / risk_engine / system kills stay latched until
+        explicitly released. Returns new status when recovery fires, else None.
+        """
+        try:
+            if str(monitor_status or "").upper() != "LIVE":
+                return None
+            with self._lock:
+                should_recover = self._active and self._activated_by == "feed_monitor"
+            if should_recover:
+                return self.deactivate(by="feed_monitor")
+        except Exception as e:
+            logger.warning("kill_auto_recover_failed", error=str(e)[:150])
+        return None
+
 
 kill_switch = GlobalKillSwitch()

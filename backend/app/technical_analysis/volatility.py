@@ -23,6 +23,38 @@ def bollinger(prices,period=20,num_std=2):
     bw=(upper-lower)/mid*100 if mid>0 else 0
     return upper,mid,lower,bw
 
+def atr_series(highs,lows,closes,period=14):
+    if len(closes)<2: return []
+    trs=[]
+    for i in range(1,len(closes)):
+        trs.append(max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])))
+    if len(trs)<period: return []
+    a=sum(trs[:period])/period
+    series=[a]
+    for i in range(period,len(trs)):
+        a=(a*(period-1)+trs[i])/period
+        series.append(a)
+    return series
+
+def bb_width_series(prices,period=20,num_std=2):
+    if len(prices)<period: return []
+    out=[]
+    for i in range(period-1,len(prices)):
+        subset=prices[i-period+1:i+1]
+        mid=sum(subset)/period
+        var=sum((x-mid)**2 for x in subset)/period
+        std=math.sqrt(var)
+        out.append((num_std*2*std)/mid*100 if mid>0 else 0.0)
+    return out
+
+def percentile_rank(value,history,min_samples=10):
+    if value is None or not history or len(history)<min_samples: return None
+    try:
+        below=sum(1 for x in history if x<=value)
+        return round(below/len(history)*100.0,1)
+    except (TypeError, ValueError):
+        return None
+
 def analyze_volatility(candles: list[dict], vix: float|None=None, fno_iv: float|None=None) -> dict:
     closes=[c["close"] for c in candles]
     highs=[c["high"] for c in candles]
@@ -72,9 +104,16 @@ def analyze_volatility(candles: list[dict], vix: float|None=None, fno_iv: float|
     if fno_iv is not None:
         iv_skew=0.0
 
+    atr_pctile=percentile_rank(a, atr_series(highs,lows,closes,14))
+    bbw_pctile=percentile_rank(bw, bb_width_series(closes,20,2)) if bw is not None else None
+
     return {
         "atr": round(a,2),
         "atr_pct": round(atr_pct,3),
+        "atr_percentile": atr_pctile,
+        "bb_width_pctile": bbw_pctile,
+        "bollinger_bandwidth_percentile": bbw_pctile,
+        "bandwidth_percentile": bbw_pctile,
         "rolling_volatility": round(rolling_vol,3),
         "std_dev": round(rolling_vol,3),
         "bollinger_upper": round(upper,2) if upper else None,

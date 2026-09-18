@@ -204,6 +204,30 @@ def test_guard_level1_kill_switch():
     assert res.level == 1
 
 
+def test_feed_monitor_kill_auto_recovers_on_live_feed():
+    """A transient feed blip must not halt signal registration for the session."""
+    kill_switch.deactivate(by="test")
+    kill_switch.auto_activate_from_monitor("DOWN", None)
+    assert kill_switch.is_active() is True
+    assert kill_switch.status()["activated_by"] == "feed_monitor"
+
+    kill_switch.auto_recover_from_monitor("STALE")
+    assert kill_switch.is_active() is True
+
+    recovered = kill_switch.auto_recover_from_monitor("LIVE")
+    assert recovered is not None
+    assert kill_switch.is_active() is False
+
+
+def test_operator_kill_stays_latched_on_live_feed():
+    """Operator/risk kills are never auto-cleared by feed recovery."""
+    kill_switch.deactivate(by="test")
+    kill_switch.activate("Operator panic stop", by="operator")
+
+    assert kill_switch.auto_recover_from_monitor("LIVE") is None
+    assert kill_switch.is_active() is True
+
+
 def test_guard_level1_ttl_expired():
     sig = _make_dummy_signal(expired=True)
     res = final_execution_guard(
@@ -315,6 +339,9 @@ def test_guard_level3_clock_drift():
         order_quantity=75,
         clock_drift_ms=2500.0,
         max_clock_drift_ms=2000.0,
+        # Isolation: pin feed health so the intended check (11) is exercised
+        # regardless of the live feed-monitor state.
+        feed_health="HEALTHY",
         allow_closed_market=True,
     )
     assert not res.passed
@@ -331,6 +358,7 @@ def test_guard_level3_duplicate_order():
         has_duplicate_order=True,
         # Fail-closed defaults: pass the earlier levels explicitly so the
         # intended check (14) is the one exercised.
+        feed_health="HEALTHY",
         risk_approved=True,
         allow_closed_market=True,
     )
@@ -347,6 +375,7 @@ def test_guard_level4_persistence_unavailable():
         order_quantity=75,
         # Fail-closed defaults: pass the earlier levels explicitly so the
         # intended check (15) is the one exercised.
+        feed_health="HEALTHY",
         risk_approved=True,
         audit_available=False,
         allow_closed_market=True,

@@ -114,6 +114,61 @@ def test_detect_market_regime():
     assert detect_market_regime(ta_compression) == "COMPRESSION_SQUEEZE"
 
 
+def _synthetic_candles(n: int) -> list[dict]:
+    import math
+
+    candles = []
+    price = 25000.0
+    for i in range(n):
+        move = math.sin(i / 7.0) * 40.0 + i * 0.5
+        o = price
+        c = price + move * 0.2
+        h = max(o, c) + 15.0
+        l = min(o, c) - 15.0
+        candles.append(
+            {
+                "timestamp": 1700000000000 + i * 300000,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": 10000 + i * 100,
+            }
+        )
+        price = c
+    return candles
+
+
+def test_analyze_timeframe_supplies_regime_percentiles():
+    """Regression: TA must emit the percentile inputs detect_market_regime reads.
+
+    Without atr_percentile/bb_width_pctile every production scan failed closed
+    with ta_unavailable_regime_unknown and zero strategies ever ran.
+    """
+    from app.technical_analysis.analyzer import analyze_timeframe
+
+    ta = analyze_timeframe(_synthetic_candles(120), symbol="NIFTY", timeframe="5M")
+    vol = ta["volatility"]
+    assert vol["atr_percentile"] is not None
+    assert vol["bb_width_pctile"] is not None
+    assert 0.0 <= vol["atr_percentile"] <= 100.0
+    assert 0.0 <= vol["bb_width_pctile"] <= 100.0
+    assert vol["bollinger_bandwidth_percentile"] == vol["bb_width_pctile"]
+    assert vol["bandwidth_percentile"] == vol["bb_width_pctile"]
+    assert detect_market_regime(ta) != "UNKNOWN"
+
+
+def test_regime_percentiles_fail_closed_on_thin_history():
+    """Thin history must stay honest: no percentile, no fabricated regime."""
+    from app.technical_analysis.analyzer import analyze_timeframe
+
+    ta = analyze_timeframe(_synthetic_candles(15), symbol="NIFTY", timeframe="5M")
+    vol = ta["volatility"]
+    assert vol["atr_percentile"] is None
+    assert vol["bb_width_pctile"] is None
+    assert detect_market_regime(ta) == "UNKNOWN"
+
+
 def test_gate_chain_evaluation_passes_valid_candidate():
     cand = _sample_candidate()
     chain = GateChain([

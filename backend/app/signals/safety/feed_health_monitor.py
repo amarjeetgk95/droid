@@ -83,6 +83,7 @@ class FeedHealthMonitor:
             except Exception:
                 age = None
             kill_switch.auto_activate_from_monitor(st, age)
+            kill_switch.auto_recover_from_monitor(st)
         except Exception:
             pass
         return payload
