@@ -74,6 +74,14 @@ FIXED_HEALTH_PAYLOAD = {
     "elements": {"server": True, "central_feed": True},
     "timestamp": FIXED_GENERATED_AT,
 }
+FIXED_FEED_CIRCUITS = {
+    "status": "LIVE",
+    "is_healthy_for_trading": True,
+    "states": {
+        "NIFTY": {"instrument_id": "NIFTY", "health": "HEALTHY"},
+        "BANKNIFTY": {"instrument_id": "BANKNIFTY", "health": "HEALTHY"},
+    },
+}
 
 FIXED_FUTURES_BUILDUP = {
     "buildup_type": "LONG_BUILDUP",
@@ -285,6 +293,7 @@ def _clear_view_state():
     view_api._paper_cache.clear()
     view_api._forecast_cache.clear()
     view_api._algo_cache.clear()
+    view_api._feed_circuits_cache.clear()
     view_api._section_versions.clear()
     yield
     dashboard_api._summary_cache.clear()
@@ -294,6 +303,7 @@ def _clear_view_state():
     view_api._paper_cache.clear()
     view_api._forecast_cache.clear()
     view_api._algo_cache.clear()
+    view_api._feed_circuits_cache.clear()
     view_api._section_versions.clear()
 
 
@@ -327,6 +337,9 @@ def _stable_legs(monkeypatch):
     async def _health():
         return dict(FIXED_HEALTH_PAYLOAD)
 
+    def _feed_circuits():
+        return dict(FIXED_FEED_CIRCUITS)
+
     async def _paper_portfolio(session=None, user_id=None):
         return PortfolioSummary(**FIXED_PAPER_PORTFOLIO)
 
@@ -354,6 +367,7 @@ def _stable_legs(monkeypatch):
     monkeypatch.setattr(dashboard_api, "_compute_summary", _summary)
     monkeypatch.setattr(signals_api, "build_active_signals_payload", _signals)
     monkeypatch.setattr(health_api, "health_subsystems", _health)
+    monkeypatch.setattr(signals_api, "get_feed_health", _feed_circuits)
     monkeypatch.setattr(futures_api, "build_futures_overview", _live_futures_overview)
     monkeypatch.setattr(event_engine_service, "get_risk_overlay", _fixed_event_risk)
     monkeypatch.setattr(event_engine_service, "_initialized", True)
@@ -410,7 +424,9 @@ def test_command_view_contract_snapshot(_stable_legs):
     }
 
     assert body["sections"]["signals"]["value"] == FIXED_SIGNALS_PAYLOAD
-    assert body["sections"]["feed_health"]["value"] == FIXED_HEALTH_PAYLOAD
+    feed_health = body["sections"]["feed_health"]["value"]
+    assert feed_health["subsystems"] == FIXED_HEALTH_PAYLOAD
+    assert feed_health["feed_circuits"] == FIXED_FEED_CIRCUITS
     assert body["sections"]["kill_switch"]["value"]["active"] is False
     assert body["sections"]["ml"]["value"] == {"ml_prediction": FIXED_ML}
 
@@ -499,6 +515,28 @@ def test_command_view_degraded_leg_isolated_and_honest(_stable_legs, monkeypatch
     assert body["sections"]["feed_health"]["degraded"] is False
     assert body["sections"]["kill_switch"]["degraded"] is False
     assert set(body["errors"].keys()) == {"signals"}
+
+
+def test_feed_health_circuits_failure_is_null_and_honest(_stable_legs, monkeypatch):
+    def _boom():
+        raise RuntimeError("feed circuit monitor unreachable")
+
+    monkeypatch.setattr(signals_api, "get_feed_health", _boom)
+    view_api._feed_circuits_cache.clear()
+
+    r = client.get("/api/v1/view/command")
+    assert r.status_code == 200
+    body = r.json()
+
+    section = body["sections"]["feed_health"]
+    assert section["value"]["subsystems"] == FIXED_HEALTH_PAYLOAD
+    assert section["value"]["feed_circuits"] is None
+    assert section["degraded"] is True
+    assert "feed circuit" in body["errors"]["feed_health"].lower()
+
+    # No fabricated circuit states, and the failure is contained to the section.
+    assert body["sections"]["market"]["degraded"] is False
+    assert set(body["errors"]) == {"feed_health"}
 
 
 def test_command_view_partial_summary_failure_maps_to_own_section(_stable_legs, monkeypatch):

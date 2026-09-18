@@ -88,6 +88,12 @@ EVENT_RISK_UNDERLYING = "BANKNIFTY"
 _futures_cache: dict[str, tuple[float, dict[str, Any], datetime | None]] = {}
 _event_risk_cache: dict[str, tuple[float, dict[str, Any] | None, datetime | None]] = {}
 
+#: Per-instrument feed circuits: the same `/api/v1/signals/feed-health` payload
+#: the REST surface serves. A 5s TTL absorbs the stream's ~2s compose cadence
+#: while a circuit trip still surfaces within one window.
+FEED_CIRCUITS_FRESH_TTL = 5.0
+_feed_circuits_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
 #: P3 additive-section TTLs, tuned to each source's existing poll cadence:
 #: paper MTM ~4s, research forecast ~60s (heavy multi-timeframe compute), algo
 #: account/exposure/orders ~5s. The unified stream composes every ~2s; these
@@ -429,9 +435,41 @@ async def _leg_signals() -> _Leg:
     )
 
 
+def _get_feed_circuits() -> dict[str, Any] | None:
+    """Per-instrument feed circuits, cached ~5s, fail-open to `null`.
+
+    Reuses the `/api/v1/signals/feed-health` payload verbatim so circuit states
+    cannot drift from the REST surface. A genuine failure is logged and cached
+    as `None` for the TTL — never fabricated states.
+    """
+    cached = _feed_circuits_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < FEED_CIRCUITS_FRESH_TTL:
+        return cached[1]
+
+    payload: dict[str, Any] | None = None
+    try:
+        payload = signals_api.get_feed_health()
+    except Exception as exc:
+        logger.warning("command_view_feed_circuits_failed", error=str(exc)[:150])
+
+    _feed_circuits_cache["default"] = (time.monotonic(), payload)
+    return payload
+
+
 async def _leg_feed_health() -> _Leg:
-    payload = await health_api.health_subsystems()
-    return _Leg(value=payload, updated_at=_parse_time(payload.get("timestamp")))
+    subsystems = await health_api.health_subsystems()
+    feed_circuits = _get_feed_circuits()
+    leg_errors = (
+        {} if feed_circuits is not None
+        else {"feed_circuits": "Feed circuit states unavailable"}
+    )
+    return _Leg(
+        value={"subsystems": subsystems, "feed_circuits": feed_circuits},
+        updated_at=_parse_time(subsystems.get("timestamp")),
+        degraded=bool(leg_errors),
+        error=_join_errors(leg_errors),
+    )
 
 
 async def _leg_kill_switch() -> _Leg:
