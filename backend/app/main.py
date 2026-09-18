@@ -172,6 +172,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("signals_persistence_init_failed", error=str(e))
 
+    # Hydrate the anonymous signal paper book from persisted paper_* rows (owned
+    # by the reserved system user) so open signal positions survive a restart.
+    # Bounded so a stalled DB cannot hold readiness hostage — the book runs
+    # memory-only and retries hydration on the next read if this times out.
+    try:
+        from app.services.paper_service import paper_service
+
+        try:
+            hydrated = await asyncio.wait_for(paper_service.hydrate_anon(), timeout=10.0)
+            logger.info("signal_paper_book_hydrated", positions=hydrated)
+        except asyncio.TimeoutError:
+            logger.warning("signal_paper_book_hydrate_timeout", hint="DB slow — continuing with empty signal paper book")
+    except Exception as e:
+        logger.warning("signal_paper_book_hydrate_failed", error=str(e))
+
     # Start Automated Signal Engine & Outcome Worker (real-time signals, auto paper execution, telegram dispatch)
     try:
         from app.signals.worker import automated_signal_worker

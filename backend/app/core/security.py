@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import time
+from uuid import UUID
 
 import httpx
 from fastapi import Depends, HTTPException, status, Request
@@ -13,6 +14,15 @@ import structlog
 
 logger = structlog.get_logger()
 security_scheme = HTTPBearer(auto_error=False)
+
+#: Reserved identity that owns the anonymous signal paper book in the DB.
+#: Deliberately NOT the dev identity (`...0001`): the dev user's per-user shard
+#: must stay separate from the system-owned signal book. Paper rows are
+#: FK-bound to auth.users/profiles, so persistence is best-effort and degrades
+#: to memory-only (with an actionable warning) until this identity is
+#: provisioned in the database.
+SIGNAL_BOOK_USER_ID: UUID = UUID("00000000-0000-0000-0000-0000000000A1")
+SIGNAL_BOOK_LABEL = "signal-book@system.local"
 
 #: How long a fetched JWKS is trusted before it is re-fetched.
 _JWKS_TTL_SECONDS = 600

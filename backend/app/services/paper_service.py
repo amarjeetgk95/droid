@@ -35,10 +35,12 @@ import asyncio
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.security import SIGNAL_BOOK_LABEL, SIGNAL_BOOK_USER_ID
 from app.models.paper import (
     OrderPayload, BasketOrderPayload, VirtualOrder,
     VirtualPosition, PortfolioSummary
@@ -52,6 +54,14 @@ import structlog
 logger = structlog.get_logger()
 
 ANON_KEY = "__anon__"
+
+#: Remediation text attached to persistence warnings for the signal book.
+SIGNAL_BOOK_PERSIST_HINT = (
+    f"signal paper rows persist under reserved system user {SIGNAL_BOOK_USER_ID} "
+    f"({SIGNAL_BOOK_LABEL}); no reserved-identity migration is shipped — if that "
+    "auth.users/profiles row does not exist, provision it (Supabase auth admin) "
+    "or this write stays memory-only"
+)
 
 # Execution friction (bps). 5 bps spread ~= the old 0.05% hardcoded spread.
 SPREAD_BPS = 5.0
@@ -119,6 +129,61 @@ class PaperTradingService:
     @staticmethod
     def _user_key(user_id: Optional[UUID]) -> str:
         return str(user_id) if user_id is not None else ANON_KEY
+
+    # ── persistence boundary ──────────────────────────────────────
+    @staticmethod
+    def _persist_owner(user_id: Optional[UUID]) -> UUID:
+        """DB owner of a shard: the real user, or the reserved signal-book user.
+
+        The signal engine trades the anonymous memory shard; its rows persist
+        under ``SIGNAL_BOOK_USER_ID`` so positions survive restarts without
+        leaking into the dev user's per-user shard.
+        """
+        return user_id if user_id is not None else SIGNAL_BOOK_USER_ID
+
+    @staticmethod
+    def _persist_hint(user_id: Optional[UUID]) -> str | None:
+        """Actionable remediation text, only for signal-book (anon) writes."""
+        return None if user_id is not None else SIGNAL_BOOK_PERSIST_HINT
+
+    @asynccontextmanager
+    async def _db_session(self, session: Optional[AsyncSession] = None):
+        """Yield a session for best-effort persistence.
+
+        Uses the caller's session when given (HTTP request scope); otherwise
+        opens a short-lived one. The factory is resolved at call time so a
+        test/runtime patch of ``app.core.database`` takes effect. Yields
+        ``None`` when the DB is unconfigured or the session cannot be opened —
+        callers degrade to memory-only rather than failing the fill.
+        """
+        if session is not None:
+            yield session
+            return
+        factory = None
+        try:
+            from app.core.database import get_async_session_factory
+
+            factory = get_async_session_factory()
+        except Exception:
+            factory = None
+        if factory is None:
+            yield None
+            return
+        owned = None
+        try:
+            owned = factory()
+            entered = await owned.__aenter__()
+        except Exception as e:
+            logger.warning("paper_db_session_open_failed", error=str(e)[:200])
+            yield None
+            return
+        try:
+            yield entered
+        finally:
+            try:
+                await owned.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     def _lock_for(self, user_id: Optional[UUID]) -> asyncio.Lock:
         key = self._user_key(user_id)
@@ -353,11 +418,15 @@ class PaperTradingService:
             client_order_id=payload.client_order_id,
         )
         orders.insert(0, rejected)
-        if session is not None and user_id is not None:
-            try:
-                await PaperTradingRepository.save_order(session, user_id, rejected)
-            except Exception as e:
-                logger.warning("failed_to_save_rejected_order_db", error=str(e))
+        async with self._db_session(session) as db:
+            if db is not None:
+                try:
+                    await PaperTradingRepository.save_order(db, self._persist_owner(user_id), rejected)
+                except Exception as e:
+                    logger.warning(
+                        "failed_to_save_rejected_order_db", error=str(e),
+                        hint=self._persist_hint(user_id),
+                    )
         logger.warning("paper_order_rejected", symbol=payload.symbol, reason=reason)
         return rejected
 
@@ -369,27 +438,38 @@ class PaperTradingService:
         pos_obj: VirtualPosition,
         summary: PortfolioSummary,
     ) -> None:
-        if session is None or user_id is None:
-            return
-        try:
-            await PaperTradingRepository.save_order(session, user_id, order)
-        except Exception as e:
-            logger.warning("failed_to_save_paper_trade_db", error=str(e))
-            return  # order row is the critical audit record; skip the rest
-        try:
-            await PaperTradingRepository.upsert_position(session, user_id, pos_obj)
-        except Exception as e:
-            logger.warning("failed_to_save_paper_position_db", error=str(e))
-        try:
-            await PaperTradingRepository.update_portfolio(
-                session,
-                user_id,
-                available_margin=summary.available_margin,
-                used_margin=summary.used_margin,
-                realized_pnl=summary.total_realized_pnl,
-            )
-        except Exception as e:
-            logger.warning("failed_to_save_paper_portfolio_db", error=str(e))
+        async with self._db_session(session) as db:
+            if db is None:
+                return
+            owner = self._persist_owner(user_id)
+            try:
+                await PaperTradingRepository.save_order(db, owner, order)
+            except Exception as e:
+                logger.warning(
+                    "failed_to_save_paper_trade_db", error=str(e),
+                    hint=self._persist_hint(user_id),
+                )
+                return  # order row is the critical audit record; skip the rest
+            try:
+                await PaperTradingRepository.upsert_position(db, owner, pos_obj)
+            except Exception as e:
+                logger.warning(
+                    "failed_to_save_paper_position_db", error=str(e),
+                    hint=self._persist_hint(user_id),
+                )
+            try:
+                await PaperTradingRepository.update_portfolio(
+                    db,
+                    owner,
+                    available_margin=summary.available_margin,
+                    used_margin=summary.used_margin,
+                    realized_pnl=summary.total_realized_pnl,
+                )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_save_paper_portfolio_db", error=str(e),
+                    hint=self._persist_hint(user_id),
+                )
 
     def _summary_from_snapshot(
         self,
@@ -613,11 +693,15 @@ class PaperTradingService:
             orders.insert(0, pending)
             if payload.client_order_id:
                 self._idempotency.setdefault(self._user_key(user_id), {})[payload.client_order_id] = pending
-            if session is not None and user_id is not None:
-                try:
-                    await PaperTradingRepository.save_order(session, user_id, pending)
-                except Exception as e:
-                    logger.warning("failed_to_save_pending_order_db", error=str(e))
+            async with self._db_session(session) as db:
+                if db is not None:
+                    try:
+                        await PaperTradingRepository.save_order(db, self._persist_owner(user_id), pending)
+                    except Exception as e:
+                        logger.warning(
+                            "failed_to_save_pending_order_db", error=str(e),
+                            hint=self._persist_hint(user_id),
+                        )
             logger.info("paper_order_pending", order_id=order_id, symbol=payload.symbol, otype=payload.order_type)
             return pending
 
@@ -786,16 +870,19 @@ class PaperTradingService:
         if payload.client_order_id:
             self._idempotency.setdefault(self._user_key(user_id), {})[payload.client_order_id] = order
 
-        # Persist to Supabase if session and user_id available (best-effort;
-        # a DB outage must never fail the in-memory fill).
-        if session is not None and user_id is not None:
-            try:
-                updated = self._summary_from_snapshot(
-                    self._get_capital(user_id), self._get_realized(user_id), list(positions.values())
-                )
-                await self._persist_fill(session, user_id, order, pos_obj, updated)
-            except Exception as e:
-                logger.warning("failed_to_save_paper_trade_db", error=str(e))
+        # Persist to Supabase (best-effort; a DB outage must never fail the
+        # in-memory fill). Signal trades carry no user scope and persist under
+        # the reserved signal-book system user.
+        try:
+            updated = self._summary_from_snapshot(
+                self._get_capital(user_id), self._get_realized(user_id), list(positions.values())
+            )
+            await self._persist_fill(session, user_id, order, pos_obj, updated)
+        except Exception as e:
+            logger.warning(
+                "failed_to_save_paper_trade_db", error=str(e),
+                hint=self._persist_hint(user_id),
+            )
 
         logger.info(
             "paper_order_filled", order_id=order_id, symbol=payload.symbol,
@@ -835,11 +922,15 @@ class PaperTradingService:
                     if o.status != "PENDING":
                         raise ValueError(f"Only PENDING orders can be cancelled (got {o.status})")
                     o.status = "CANCELLED"
-                    if session is not None and user_id is not None:
-                        try:
-                            await PaperTradingRepository.save_order(session, user_id, o)
-                        except Exception as e:
-                            logger.warning("failed_to_persist_cancel_db", error=str(e))
+                    async with self._db_session(session) as db:
+                        if db is not None:
+                            try:
+                                await PaperTradingRepository.save_order(db, self._persist_owner(user_id), o)
+                            except Exception as e:
+                                logger.warning(
+                                    "failed_to_persist_cancel_db", error=str(e),
+                                    hint=self._persist_hint(user_id),
+                                )
                     logger.info("paper_order_cancelled", order_id=order_id)
                     return o
             raise ValueError(f"Order not found: {order_id}")
@@ -936,17 +1027,22 @@ class PaperTradingService:
         async with lock:
             self._set_capital(user_id, float(capital))
 
-            if session is not None and user_id is not None:
-                try:
-                    db_port = await PaperTradingRepository.get_or_create_portfolio(session, user_id)
-                    db_port.virtual_capital = self._get_capital(user_id)
-                    positions = self._pos_store(user_id)
-                    realized = self._get_realized(user_id)
-                    snap = self._summary_from_snapshot(self._get_capital(user_id), realized, list(positions.values()))
-                    db_port.available_margin = snap.available_margin
-                    await session.commit()
-                except Exception as e:
-                    logger.warning("failed_to_update_portfolio_capital_db", error=str(e))
+            async with self._db_session(session) as db:
+                if db is not None:
+                    owner = self._persist_owner(user_id)
+                    try:
+                        db_port = await PaperTradingRepository.get_or_create_portfolio(db, owner)
+                        db_port.virtual_capital = self._get_capital(user_id)
+                        positions = self._pos_store(user_id)
+                        realized = self._get_realized(user_id)
+                        snap = self._summary_from_snapshot(self._get_capital(user_id), realized, list(positions.values()))
+                        db_port.available_margin = snap.available_margin
+                        await db.commit()
+                    except Exception as e:
+                        logger.warning(
+                            "failed_to_update_portfolio_capital_db", error=str(e),
+                            hint=self._persist_hint(user_id),
+                        )
 
         return await self.get_portfolio_summary(session, user_id)
 
@@ -975,15 +1071,20 @@ class PaperTradingService:
             self._set_realized(user_id, 0.0)
             self._idempotency.pop(self._user_key(user_id), None)
 
-            if session is not None and user_id is not None:
-                try:
-                    await PaperTradingRepository.reset_portfolio(session, user_id)
-                    db_port = await PaperTradingRepository.get_or_create_portfolio(session, user_id)
-                    db_port.virtual_capital = target_cap
-                    db_port.available_margin = target_cap
-                    await session.commit()
-                except Exception as e:
-                    logger.warning("failed_to_reset_portfolio_db", error=str(e))
+            async with self._db_session(session) as db:
+                if db is not None:
+                    owner = self._persist_owner(user_id)
+                    try:
+                        await PaperTradingRepository.reset_portfolio(db, owner)
+                        db_port = await PaperTradingRepository.get_or_create_portfolio(db, owner)
+                        db_port.virtual_capital = target_cap
+                        db_port.available_margin = target_cap
+                        await db.commit()
+                    except Exception as e:
+                        logger.warning(
+                            "failed_to_reset_portfolio_db", error=str(e),
+                            hint=self._persist_hint(user_id),
+                        )
 
             return self._summary_from_snapshot(target_cap, 0.0, [])
 
@@ -1023,6 +1124,70 @@ class PaperTradingService:
         self._capitals.pop(key, None)
         self._idempotency.pop(key, None)
 
+    async def _hydrate_shard(self, db: AsyncSession, user_id: Optional[UUID]) -> int:
+        """Load persisted rows into a memory shard.
+
+        ``user_id`` is the *memory* scope. Rows are read for its persist owner
+        (the reserved system user for the anon signal book) but stored under
+        ``user_id`` — so signal trades hydrate ``_positions``/``_orders`` while
+        ``_set_realized``/``_set_capital`` keep targeting the same memory shard.
+        Returns the number of positions loaded.
+        """
+        owner = self._persist_owner(user_id)
+        store = self._pos_store(user_id)
+        loaded = 0
+        try:
+            db_positions = await PaperTradingRepository.get_positions(db, owner)
+            for db_pos in db_positions:
+                try:
+                    vp = self._db_to_position(db_pos)
+                    store[vp.position_id] = vp
+                    loaded += 1
+                except Exception:
+                    continue
+            try:
+                db_port = await PaperTradingRepository.get_or_create_portfolio(db, owner)
+                if db_port is not None and db_port.realized_pnl is not None:
+                    self._set_realized(user_id, float(db_port.realized_pnl or 0.0))
+                if db_port is not None and db_port.virtual_capital:
+                    self._set_capital(user_id, float(db_port.virtual_capital))
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(
+                "paper_positions_hydrate_failed", error=str(e),
+                hint=self._persist_hint(user_id),
+            )
+        return loaded
+
+    async def hydrate_anon(self, session: Optional[AsyncSession] = None) -> int:
+        """Restore the signal paper book from DB into the anonymous memory shard.
+
+        Positions and orders are read for the reserved system user (persist
+        owner of signal trades) but land in ``_positions``/``_orders``.
+        No-op when the shard already holds live state, so hydration can never
+        clobber in-memory fills.
+        """
+        lock = self._lock_for(None)
+        async with lock:
+            if self._positions or self._orders:
+                return 0
+            async with self._db_session(session) as db:
+                if db is None:
+                    return 0
+                loaded = await self._hydrate_shard(db, None)
+                try:
+                    db_orders = await PaperTradingRepository.get_orders(
+                        db, SIGNAL_BOOK_USER_ID, limit=500, offset=0
+                    )
+                    self._orders.extend(self._db_to_order(o) for o in db_orders)
+                except Exception as e:
+                    logger.warning(
+                        "paper_orders_hydrate_failed", error=str(e),
+                        hint=self._persist_hint(None),
+                    )
+                return loaded
+
     async def get_positions(
         self,
         session: Optional[AsyncSession] = None,
@@ -1042,25 +1207,10 @@ class PaperTradingService:
         # Hydrate from DB when the shard is empty (process restart / worker).
         async with lock:
             store = self._pos_store(user_id)
-            if session is not None and user_id is not None and not store:
-                try:
-                    db_positions = await PaperTradingRepository.get_positions(session, user_id)
-                    for db_pos in db_positions:
-                        try:
-                            vp = self._db_to_position(db_pos)
-                            store[vp.position_id] = vp
-                        except Exception:
-                            continue
-                    try:
-                        db_port = await PaperTradingRepository.get_or_create_portfolio(session, user_id)
-                        if db_port is not None and db_port.realized_pnl is not None:
-                            self._set_realized(user_id, float(db_port.realized_pnl or 0.0))
-                        if db_port is not None and db_port.virtual_capital:
-                            self._set_capital(user_id, float(db_port.virtual_capital))
-                    except Exception:
-                        pass
-                except Exception as e:
-                    logger.warning("paper_positions_hydrate_failed", error=str(e))
+            if not store:
+                async with self._db_session(session) as db:
+                    if db is not None:
+                        await self._hydrate_shard(db, user_id)
             snapshot = list(store.values())
 
         open_positions = [p for p in snapshot if p.is_open]
@@ -1094,20 +1244,26 @@ class PaperTradingService:
 
                 # Best-effort throttled persist so DB stays consistent without
                 # a write storm on every 4s poll.
-                if session is not None and user_id is not None:
-                    for pos in open_positions:
-                        cur = store.get(pos.position_id)
-                        if cur is None:
-                            continue
-                        cache_key = f"{self._user_key(user_id)}:{cur.position_id}"
-                        last = self._last_mtm_persist.get(cache_key)
-                        if last is not None and abs(cur.unrealized_pnl - last) < MTM_PERSIST_EPS:
-                            continue
-                        try:
-                            await PaperTradingRepository.upsert_position(session, user_id, cur)
-                            self._last_mtm_persist[cache_key] = cur.unrealized_pnl
-                        except Exception:
-                            break
+                pending_mtm: list[tuple[str, VirtualPosition]] = []
+                for pos in open_positions:
+                    cur = store.get(pos.position_id)
+                    if cur is None:
+                        continue
+                    cache_key = f"{self._user_key(user_id)}:{cur.position_id}"
+                    last = self._last_mtm_persist.get(cache_key)
+                    if last is not None and abs(cur.unrealized_pnl - last) < MTM_PERSIST_EPS:
+                        continue
+                    pending_mtm.append((cache_key, cur))
+                if pending_mtm:
+                    async with self._db_session(session) as db:
+                        if db is not None:
+                            owner = self._persist_owner(user_id)
+                            for cache_key, cur in pending_mtm:
+                                try:
+                                    await PaperTradingRepository.upsert_position(db, owner, cur)
+                                    self._last_mtm_persist[cache_key] = cur.unrealized_pnl
+                                except Exception:
+                                    break
 
         async with lock:
             return list(self._pos_store(user_id).values())
@@ -1137,13 +1293,19 @@ class PaperTradingService:
         """Retrieve order log from Supabase or memory (paginated)."""
         limit = max(1, min(limit, 500))
         offset = max(0, offset)
-        if session is not None and user_id is not None:
-            try:
-                db_orders = await PaperTradingRepository.get_orders(session, user_id, limit=limit, offset=offset)
-                if db_orders:
-                    return [self._db_to_order(o) for o in db_orders]
-            except Exception as e:
-                logger.warning("failed_to_get_orders_db", error=str(e))
+        async with self._db_session(session) as db:
+            if db is not None:
+                try:
+                    db_orders = await PaperTradingRepository.get_orders(
+                        db, self._persist_owner(user_id), limit=limit, offset=offset
+                    )
+                    if db_orders:
+                        return [self._db_to_order(o) for o in db_orders]
+                except Exception as e:
+                    logger.warning(
+                        "failed_to_get_orders_db", error=str(e),
+                        hint=self._persist_hint(user_id),
+                    )
 
         async with self._lock_for(user_id):
             mem = list(self._ord_store(user_id))
@@ -1231,11 +1393,12 @@ class PaperTradingService:
                     forced_fill=(float(o.fill_price or 0.0), "LIMIT"),
                 )
                 filled.append(o)
-                if session is not None and user_id is not None:
-                    try:
-                        await PaperTradingRepository.save_order(session, user_id, o)
-                    except Exception:
-                        pass
+                async with self._db_session(session) as db:
+                    if db is not None:
+                        try:
+                            await PaperTradingRepository.save_order(db, self._persist_owner(user_id), o)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.warning("pending_fill_failed", order_id=o.order_id, error=str(e))
         return filled

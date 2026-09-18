@@ -687,6 +687,9 @@ class SignalFSMManager:
 
                     # 2. Prior-day open positions (intraday MIS positions must never persist across days)
                     elif is_prior_day and sig.fsm_state in ("CONFIRMED", "TARGET_1_HIT"):
+                        # Open paper leg => retryable: only worker EOD settle closes.
+                        if bool(getattr(sig, "paper_order", None)) and (sig.remaining_qty or 0) > 0:
+                            continue
                         ok, _ = self.transition(sig.signal_id, "CLOSED", reason="EOD_SESSION_SQUARE_OFF")
                         if ok:
                             runner_stopped += 1

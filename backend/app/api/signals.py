@@ -1041,12 +1041,15 @@ async def set_signals_paper_wallet(
     user: AuthUser | None = Depends(get_current_user),
     session: AsyncSession | None = Depends(get_db_session),
 ):
-    """Set custom virtual capital for the paper trading wallet."""
-    from app.api.paper import _parse_user_uuid
+    """Set custom virtual capital for the paper trading wallet.
+
+    Always controls the anonymous signal paper book — the single shard the
+    automated signal engine trades on — never the authenticated per-user
+    dashboard wallet (that lives at /api/v1/paper/wallet).
+    """
     from app.services.paper_service import paper_service
     try:
-        user_uuid = _parse_user_uuid(user)
-        summary = await paper_service.set_initial_capital_async(req.capital, session, user_uuid)
+        summary = await paper_service.set_initial_capital_async(req.capital, session, None)
         return {
             "status": "success",
             "data": summary.model_dump(mode="json"),
