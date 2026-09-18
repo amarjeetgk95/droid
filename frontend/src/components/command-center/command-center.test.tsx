@@ -3,7 +3,7 @@ import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act, cleanup } from '@testing-library/react';
 
-const { apiMock, sessionMock, polls, sectionsMock, statusMock } = vi.hoisted(() => {
+const { apiMock, sessionMock, polls, sectionsMock, statusMock, instrumentRef, refreshMock } = vi.hoisted(() => {
   const apiMock: Record<string, ReturnType<typeof vi.fn>> = {
     getSignalsFeedHealth: vi.fn(async () => ({ states: {} })),
     getSignalsKillSwitch: vi.fn(async () => ({ active: false })),
@@ -15,10 +15,14 @@ const { apiMock, sessionMock, polls, sectionsMock, statusMock } = vi.hoisted(() 
   };
   const sessionMock = { phase: 'OPEN', isOpen: true };
   const polls: Array<() => unknown> = [];
-  const sectionsMock: { feed_health: unknown; kill_switch: unknown } = {
+  const sectionsMock: { feed_health: unknown; kill_switch: unknown; ml: unknown; signals: unknown } = {
     feed_health: null,
     kill_switch: null,
+    ml: null,
+    signals: null,
   };
+  const instrumentRef: { current: string } = { current: 'NIFTY' };
+  const refreshMock = vi.fn(async () => {});
   const statusMock: {
     connected: boolean;
     lastEventAt: number | null;
@@ -30,7 +34,7 @@ const { apiMock, sessionMock, polls, sectionsMock, statusMock } = vi.hoisted(() 
     reconnects: 0,
     source: 'sse',
   };
-  return { apiMock, sessionMock, polls, sectionsMock, statusMock };
+  return { apiMock, sessionMock, polls, sectionsMock, statusMock, instrumentRef, refreshMock };
 });
 
 vi.mock('@/lib/api', () => ({ api: apiMock }));
@@ -48,16 +52,21 @@ vi.mock('@/context/AppStreamContext', () => ({
       ? sectionsMock.feed_health
       : name === 'kill_switch'
         ? sectionsMock.kill_switch
-        : null,
+        : name === 'ml'
+          ? sectionsMock.ml
+          : name === 'signals'
+            ? sectionsMock.signals
+            : null,
   useStreamStatus: () => statusMock,
+  useAppStreamRefresh: () => refreshMock,
 }));
 vi.mock('@/context/InstrumentContext', () => ({
   useInstrument: () => ({
-    instrument: 'NIFTY',
+    instrument: instrumentRef.current,
     setInstrument: () => {},
     timeframe: '1h',
     setTimeframe: () => {},
-    allInstruments: ['NIFTY'],
+    allInstruments: ['NIFTY', 'BANKNIFTY', 'SENSEX'],
     allTimeframes: ['1h'],
   }),
 }));
@@ -74,6 +83,9 @@ afterEach(() => {
   polls.length = 0;
   sectionsMock.feed_health = null;
   sectionsMock.kill_switch = null;
+  sectionsMock.ml = null;
+  sectionsMock.signals = null;
+  instrumentRef.current = 'NIFTY';
   statusMock.connected = true;
   statusMock.lastEventAt = Date.parse('2026-09-18T07:22:01.000Z');
   statusMock.source = 'sse';
@@ -183,7 +195,7 @@ describe('SystemHealthStrip stream consumption', () => {
 
 describe('ActiveSignalsRibbon safety', () => {
   it('renders real signal fields and never invents confidence', async () => {
-    apiMock.getSignalsActive.mockResolvedValue({
+    sectionsMock.signals = sectionEnvelope({
       signals: [
         {
           signal_id: 'sig-1',
@@ -199,19 +211,26 @@ describe('ActiveSignalsRibbon safety', () => {
           data_quality: 'LIVE',
         },
       ],
+      count: 1,
+      data_quality: 'LIVE',
+      errors: {},
+      timestamp_ms: 1789716120000,
     });
-    render(<ActiveSignalsRibbon />);
-    await flushPoll();
+    await act(async () => {
+      render(<ActiveSignalsRibbon />);
+    });
 
     expect(screen.getByText('ORB_BREAKOUT')).toBeTruthy();
     expect(screen.getByText(/Conf 0%/)).toBeTruthy();
     expect(screen.queryByText(/84%/)).toBeNull();
+    expect(apiMock.getSignalsActive).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
   });
 
   it('blocks paper execution while the market is closed', async () => {
     sessionMock.phase = 'CLOSED';
     sessionMock.isOpen = false;
-    apiMock.getSignalsActive.mockResolvedValue({
+    sectionsMock.signals = sectionEnvelope({
       signals: [
         {
           signal_id: 'sig-2',
@@ -224,11 +243,17 @@ describe('ActiveSignalsRibbon safety', () => {
           target_1: 24300,
           target_2: 24200,
           confidence: 0.72,
+          data_quality: 'LIVE',
         },
       ],
+      count: 1,
+      data_quality: 'LIVE',
+      errors: {},
+      timestamp_ms: 1789716120000,
     });
-    render(<ActiveSignalsRibbon />);
-    await flushPoll();
+    await act(async () => {
+      render(<ActiveSignalsRibbon />);
+    });
 
     expect(screen.getByText(/paper execution is blocked/i)).toBeTruthy();
     const execButton = screen.getByRole('button', { name: /Paper Exec/i });
@@ -236,41 +261,82 @@ describe('ActiveSignalsRibbon safety', () => {
   });
 });
 
-describe('MLPredictionBadges payload handling', () => {
-  it('renders real probabilities and handles empty feature attribution', async () => {
-    apiMock.getMLPrediction.mockResolvedValue({
-      data: {
-        symbol: 'NIFTY',
-        timestamp: new Date().toISOString(),
-        spot_price: 24500,
-        bullish_pct: 55.5,
-        neutral_pct: 20,
-        bearish_pct: 24.5,
-        confidence_score: 61.5,
-        predicted_bias: 'BULLISH',
-        market_regime: 'TRENDING_BULLISH',
-        top_features: [],
-        model_version: 'ensemble_v3',
-      },
+describe('MLPredictionBadges stream consumption', () => {
+  const NIFTY_PREDICTION = {
+    symbol: 'NIFTY',
+    timestamp: '2026-09-18T07:21:00.000Z',
+    spot_price: 24500,
+    bullish_pct: 55.5,
+    neutral_pct: 20,
+    bearish_pct: 24.5,
+    confidence_score: 61.5,
+    predicted_bias: 'BULLISH',
+    market_regime: 'TRENDING_BULLISH',
+    top_features: [],
+    model_version: 'ensemble_v3',
+  };
+
+  it('renders the selected instrument from ml.value.by_symbol without polling', () => {
+    sectionsMock.ml = sectionEnvelope({
+      ml_prediction: null,
+      by_symbol: { NIFTY: NIFTY_PREDICTION, BANKNIFTY: null, SENSEX: null },
     });
     render(<MLPredictionBadges />);
-    await flushPoll();
 
     expect(screen.getByText('BULLISH')).toBeTruthy();
     expect(screen.getByText(/61.5%/)).toBeTruthy();
     expect(screen.getByText(/BULLISH 55.5%/)).toBeTruthy();
     expect(screen.getByText(/No feature attribution reported by the model./)).toBeTruthy();
     expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(apiMock.getMLPrediction).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
   });
 
-  it('says probabilities are unavailable when the payload omits them', async () => {
-    apiMock.getMLPrediction.mockResolvedValue({
-      data: { symbol: 'NIFTY', predicted_bias: 'NEUTRAL', confidence_score: 50 },
+  it('says probabilities are unavailable when the map entry omits them', () => {
+    sectionsMock.ml = sectionEnvelope({
+      by_symbol: {
+        NIFTY: { symbol: 'NIFTY', predicted_bias: 'NEUTRAL', confidence_score: 50 },
+        BANKNIFTY: null,
+        SENSEX: null,
+      },
     });
     render(<MLPredictionBadges />);
-    await flushPoll();
 
     expect(screen.getByText(/Probability distribution unavailable./)).toBeTruthy();
     expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(apiMock.getMLPrediction).not.toHaveBeenCalled();
+  });
+
+  it('never shows NIFTY values under another instrument label', () => {
+    instrumentRef.current = 'BANKNIFTY';
+    sectionsMock.ml = sectionEnvelope({
+      by_symbol: { NIFTY: NIFTY_PREDICTION, BANKNIFTY: null, SENSEX: null },
+    });
+    render(<MLPredictionBadges />);
+
+    expect(screen.getByText(/No ML prediction available./)).toBeTruthy();
+    expect(screen.queryByText('BULLISH')).toBeNull();
+
+    cleanup();
+    sectionsMock.ml = sectionEnvelope({
+      by_symbol: {
+        NIFTY: NIFTY_PREDICTION,
+        BANKNIFTY: {
+          ...NIFTY_PREDICTION,
+          symbol: 'BANKNIFTY',
+          bullish_pct: 18,
+          neutral_pct: 21,
+          bearish_pct: 61,
+          confidence_score: 66.1,
+          predicted_bias: 'BEARISH',
+        },
+        SENSEX: null,
+      },
+    });
+    render(<MLPredictionBadges />);
+
+    expect(screen.getByText('BEARISH')).toBeTruthy();
+    expect(screen.getByText(/66.1%/)).toBeTruthy();
+    expect(screen.queryByText('BULLISH')).toBeNull();
   });
 });

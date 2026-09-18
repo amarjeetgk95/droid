@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { MarketRegimeOverview } from '@/lib/types';
 import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { usePolling } from '@/hooks/usePolling';
@@ -9,13 +8,24 @@ import { useMarketSession } from '@/hooks/useMarketSession';
 import { useOptionalMarketDataContext } from '@/context/MarketDataContext';
 import { useCommandSection } from '@/context/AppStreamContext';
 import { regimeFromSummary } from '@/lib/regime';
-import { isNiftySymbol } from '@/lib/symbols';
 import { EmptyNote, TelemetryItem, TelemetryStrip, fmtINR, fmtNum } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 
+/**
+ * `regime.value.by_symbol` keys are the canonical broker symbols the backend
+ * composes (`INSTRUMENT_SYMBOLS`); the display spelling "NIFTY 50" maps to
+ * NIFTY. An unknown instrument resolves to itself and therefore reads no
+ * entry rather than another symbol's payload.
+ */
+const REGIME_SYMBOL_KEYS: Record<string, string> = {
+  NIFTY: 'NIFTY',
+  'NIFTY 50': 'NIFTY',
+  BANKNIFTY: 'BANKNIFTY',
+  SENSEX: 'SENSEX',
+};
+
 function toRegimeSymbol(instrument: string): string {
-  if (instrument === 'NIFTY 50') return 'NIFTY';
-  return instrument;
+  return REGIME_SYMBOL_KEYS[instrument.toUpperCase()] ?? instrument.toUpperCase();
 }
 
 type MarketCtx = {
@@ -34,6 +44,22 @@ type ContextView = {
   degraded: boolean;
 };
 
+type RestOptionsView = {
+  available: boolean;
+  pcr: number | null;
+  callWall: number | null;
+  putWall: number | null;
+  lastAt: Date | null;
+  error: string | null;
+};
+
+type OverviewView = {
+  regime: string | null;
+  support: number | null;
+  resistance: number | null;
+  at: string | null;
+};
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
@@ -42,200 +68,190 @@ function finiteOrNull(v: unknown): number | null {
   return toNumber(v);
 }
 
+function readOverview(raw: unknown): OverviewView {
+  const o = asRecord(raw);
+  let regime: string | null = null;
+  let support: number | null = null;
+  let resistance: number | null = null;
+  let at: string | null = null;
+  if (o) {
+    const state = o.regime_state;
+    if (typeof state === 'string' && state.length > 0 && state !== 'UNKNOWN') {
+      regime = state.replace(/_/g, ' ');
+    }
+    const levels = asRecord(o.key_levels);
+    if (levels) {
+      support = finiteOrNull(levels.nearest_support);
+      resistance = finiteOrNull(levels.nearest_resistance);
+    }
+    if (typeof o.timestamp === 'string') at = o.timestamp;
+  }
+  return { regime, support, resistance, at };
+}
+
+/**
+ * Market context telemetry for the selected index.
+ *
+ * Regime/support/resistance come from `regime.value.by_symbol[instrument]`
+ * for every supported instrument (the NIFTY-family MarketDataContext leg is
+ * kept only as a pre-stream warm-up fallback); the cross-instrument REST
+ * regime fetch is gone.
+ *
+ * The by_symbol `options_analytics` leg is the `/options/{symbol}/analytics`
+ * shape (OptionsAnalytics): it carries `pcr_oi` but has no availability flag
+ * and no `call_wall`/`put_wall` strikes, so PCR is read from the stream and
+ * the two wall rows stay on the REST `/research/options-context` fallback —
+ * still owned solely by this component at its original 60s cadence. Missing
+ * legs render as "—" with a degraded note; nothing is fabricated.
+ */
 export function WhyStrip({ instrument }: { instrument: string }) {
   const { isOpen } = useMarketSession();
-  // The unified stream's `regime` slice is pinned to the NIFTY family; it is
-  // preferred only when it actually carries usable data for this instrument.
-  // Non-NIFTY symbols (BANKNIFTY/SENSEX) and stream-miss cases keep the
-  // pre-conversion REST fetch below, owned solely by this component at its
-  // original 60s cadence.
   const section = useCommandSection('regime');
   const market = useOptionalMarketDataContext();
   const contextRegime = regimeFromSummary(market?.regimeOverview, instrument);
-  const niftyFamily = isNiftySymbol(instrument);
+  const symbol = toRegimeSymbol(instrument);
 
   const sectionValue = asRecord(section?.value);
-  const sectionRawOverview = asRecord(sectionValue?.regime_overview);
-  const sectionRegime = sectionRawOverview
-    ? regimeFromSummary(sectionRawOverview as unknown as MarketRegimeOverview, instrument)
-    : null;
-  const sectionOptions = asRecord(sectionValue?.options_analytics);
-  const sectionOptionsReady = niftyFamily && sectionOptions?.available === true;
-  const streamUsable = niftyFamily && (sectionRegime !== null || sectionOptionsReady);
+  const bySymbol = asRecord(sectionValue?.by_symbol);
+  const entry = bySymbol ? asRecord(bySymbol[symbol]) : null;
+  const streamOverview = entry?.regime_overview ?? null;
+  const streamOptions = asRecord(entry?.options_analytics);
+  const streamPcr = streamOptions ? finiteOrNull(streamOptions.pcr_oi) : null;
 
-  const streamView = useMemo<ContextView>(() => {
-    const overview = sectionRegime ?? contextRegime;
+  const overview = useMemo(() => {
+    if (streamOverview !== null) return readOverview(streamOverview);
+    return readOverview(contextRegime);
+  }, [streamOverview, contextRegime]);
 
-    let regime: string | null = null;
-    let support: number | null = null;
-    let resistance: number | null = null;
-    let regimeAt: string | null = null;
-    if (overview) {
-      const state = overview.regime_state;
-      if (typeof state === 'string' && state.length > 0 && state !== 'UNKNOWN') {
-        regime = state.replace(/_/g, ' ');
+  // The REST view is tagged with the instrument it was fetched for so a
+  // selection change can never surface the previous instrument's walls.
+  const [restState, setRestState] = useState<{ instrument: string; view: RestOptionsView } | null>(
+    null,
+  );
+  const hasDataRef = useRef<string | null>(null);
+
+  const loadRest = useCallback(async () => {
+    const requested = instrument;
+    try {
+      const opt = asRecord(await api.getResearchOptionsContext(requested));
+      if (opt && opt.available === true) {
+        const at = typeof opt.timestamp === 'string' ? new Date(opt.timestamp) : null;
+        setRestState({
+          instrument: requested,
+          view: {
+            available: true,
+            pcr: finiteOrNull(opt.pcr_oi),
+            callWall: finiteOrNull(opt.call_wall),
+            putWall: finiteOrNull(opt.put_wall),
+            lastAt: at && !Number.isNaN(at.getTime()) ? at : new Date(),
+            error: null,
+          },
+        });
+        hasDataRef.current = requested;
+      } else {
+        setRestState((prev) => ({
+          instrument: requested,
+          view: {
+            available: false,
+            pcr: null,
+            callWall: null,
+            putWall: null,
+            lastAt: prev?.instrument === requested ? prev.view.lastAt : null,
+            error: 'options chain unavailable',
+          },
+        }));
       }
-      const levels = asRecord(overview.key_levels);
-      if (levels) {
-        support = finiteOrNull(levels.nearest_support);
-        resistance = finiteOrNull(levels.nearest_resistance);
-      }
-      const at = (overview as MarketRegimeOverview & { timestamp?: unknown }).timestamp;
-      if (typeof at === 'string') regimeAt = at;
+    } catch (err) {
+      setRestState({
+        instrument: requested,
+        view: {
+          available: false,
+          pcr: null,
+          callWall: null,
+          putWall: null,
+          lastAt: null,
+          error: err instanceof Error ? err.message : 'options context unavailable',
+        },
+      });
     }
+  }, [instrument]);
 
-    const pcr = sectionOptionsReady ? finiteOrNull(sectionOptions?.pcr_oi) : null;
-    const callWall = sectionOptionsReady ? finiteOrNull(sectionOptions?.call_wall) : null;
-    const putWall = sectionOptionsReady ? finiteOrNull(sectionOptions?.put_wall) : null;
+  // Single REST owner: supplies the call/put wall rows the stream's
+  // `by_symbol.options_analytics` shape does not carry.
+  usePolling(
+    () => {
+      if (!isOpen && hasDataRef.current === instrument) return;
+      return loadRest();
+    },
+    60000,
+  );
 
+  const restView =
+    restState !== null && restState.instrument === instrument ? restState.view : null;
+
+  const view = useMemo<ContextView>(() => {
     const failures: string[] = [];
-    if (!niftyFamily) {
-      failures.push('context telemetry covers NIFTY only');
-    } else {
-      if (!overview) failures.push('regime classification unavailable');
-      if (!sectionOptionsReady) failures.push('options chain unavailable');
+    if (overview.regime === null) failures.push('regime classification unavailable');
+
+    if (restView !== null && !restView.available) {
+      failures.push(restView.error ?? 'options chain unavailable');
+    } else if (
+      restView !== null &&
+      (restView.callWall === null || restView.putWall === null)
+    ) {
+      failures.push('options walls unavailable');
     }
+
+    const pcr = streamPcr ?? (restView?.available ? restView.pcr : null);
+    const callWall = restView?.available ? restView.callWall : null;
+    const putWall = restView?.available ? restView.putWall : null;
 
     const ctx: MarketCtx | null =
-      regime !== null ||
-      support !== null ||
-      resistance !== null ||
+      overview.regime !== null ||
+      overview.support !== null ||
+      overview.resistance !== null ||
       pcr !== null ||
       callWall !== null ||
       putWall !== null
-        ? { regime, support, resistance, pcr, callWall, putWall }
+        ? {
+            regime: overview.regime,
+            support: overview.support,
+            resistance: overview.resistance,
+            pcr,
+            callWall,
+            putWall,
+          }
         : null;
 
     let lastAt: Date | null = null;
-    if (regimeAt) {
-      const parsed = new Date(regimeAt);
+    if (overview.at) {
+      const parsed = new Date(overview.at);
       if (!Number.isNaN(parsed.getTime())) lastAt = parsed;
     }
     if (!lastAt && section) {
       const parsed = new Date(section.updated_at);
       if (!Number.isNaN(parsed.getTime())) lastAt = parsed;
     }
+    if (!lastAt && restView?.lastAt) lastAt = restView.lastAt;
 
     return {
       ctx,
       error: failures.length > 0 ? failures.join(' · ') : null,
       lastAt,
-      degraded: section?.degraded ?? false,
+      degraded: section?.degraded === true || failures.length > 0,
     };
-  }, [section, sectionRegime, contextRegime, niftyFamily, sectionOptions, sectionOptionsReady]);
+  }, [overview, streamPcr, restView, section]);
 
-  const [restView, setRestView] = useState<ContextView | null>(null);
-  const [restLoading, setRestLoading] = useState(true);
-  const loadedRef = useRef(false);
-  const hasDataRef = useRef(false);
+  const loading = view.ctx === null && section === null && restState === null;
 
-  const loadRest = useCallback(async () => {
-    const initial = !loadedRef.current;
-    if (initial) setRestLoading(true);
-    try {
-      const regimeSymbol = toRegimeSymbol(instrument);
-      const [regimeRes, optRes] = await Promise.allSettled([
-        contextRegime
-          ? Promise.resolve({ data: contextRegime } as { data?: unknown })
-          : api.getRegimeOverview(regimeSymbol),
-        api.getResearchOptionsContext(instrument),
-      ]);
-
-      let regimeState: string | null = null;
-      let support: number | null = null;
-      let resistance: number | null = null;
-      let regimeAt: string | null = null;
-      const failures: string[] = [];
-
-      if (regimeRes.status === 'fulfilled') {
-        const payload = asRecord((regimeRes.value as { data?: unknown })?.data);
-        if (payload) {
-          const state = payload.regime_state;
-          if (typeof state === 'string' && state.length && state !== 'UNKNOWN') {
-            regimeState = state.replace(/_/g, ' ');
-          }
-          const kl = asRecord(payload.key_levels);
-          if (kl) {
-            support = finiteOrNull(kl.nearest_support);
-            resistance = finiteOrNull(kl.nearest_resistance);
-          }
-          const ts = payload.timestamp;
-          if (typeof ts === 'string') regimeAt = ts;
-        } else {
-          failures.push('regime payload unusable');
-        }
-      } else {
-        failures.push(
-          regimeRes.reason instanceof Error ? regimeRes.reason.message : 'regime unavailable',
-        );
-      }
-
-      let pcr: number | null = null;
-      let callWall: number | null = null;
-      let putWall: number | null = null;
-      if (optRes.status === 'fulfilled') {
-        const opt = asRecord(optRes.value);
-        if (opt && opt.available === true) {
-          pcr = finiteOrNull(opt.pcr_oi);
-          callWall = finiteOrNull(opt.call_wall);
-          putWall = finiteOrNull(opt.put_wall);
-        } else {
-          failures.push('options chain unavailable');
-        }
-      } else {
-        failures.push(
-          optRes.reason instanceof Error ? optRes.reason.message : 'options context unavailable',
-        );
-      }
-
-      const ctx: MarketCtx | null =
-        regimeState !== null ||
-        support !== null ||
-        resistance !== null ||
-        pcr !== null ||
-        callWall !== null ||
-        putWall !== null
-          ? { regime: regimeState, support, resistance, pcr, callWall, putWall }
-          : null;
-
-      const anyFulfilled = regimeRes.status === 'fulfilled' || optRes.status === 'fulfilled';
-      if (anyFulfilled) hasDataRef.current = true;
-      const lastAt =
-        regimeAt !== null && !Number.isNaN(new Date(regimeAt).getTime())
-          ? new Date(regimeAt)
-          : new Date();
-      setRestView((prev) => ({
-        ctx,
-        error: failures.length > 0 ? failures.join(' · ') : null,
-        lastAt: anyFulfilled ? lastAt : (prev?.lastAt ?? null),
-        degraded: failures.length > 0,
-      }));
-    } catch (err) {
-      setRestView({
-        ctx: null,
-        error: err instanceof Error ? err.message : 'Market context unavailable',
-        lastAt: null,
-        degraded: true,
-      });
-    } finally {
-      loadedRef.current = true;
-      setRestLoading(false);
-    }
-  }, [instrument, contextRegime]);
-
-  usePolling(
-    () => {
-      if (streamUsable) return;
-      if (!isOpen && hasDataRef.current) return;
-      return loadRest();
-    },
-    60000,
-    !streamUsable,
-  );
-
-  const usingRest = !streamUsable && restView !== null;
-  const view: ContextView = usingRest && restView ? restView : streamView;
-  const loading = !streamUsable && restView === null && restLoading && streamView.ctx === null;
+  const streamUsed = streamOverview !== null || streamPcr !== null;
+  const restUsed = restView?.available === true;
+  const sourceLabel =
+    streamUsed && restUsed
+      ? 'SSE + REST · 60s'
+      : streamUsed
+        ? 'SSE · command stream'
+        : 'REST · 60s poll';
 
   const header = (
     <div className="telemetry-item" style={{ background: 'var(--ds-surface-subtle)' }}>
@@ -303,7 +319,7 @@ export function WhyStrip({ instrument }: { instrument: string }) {
             lastAt={view.lastAt}
             marketClosed={!isOpen}
             dataQuality={view.error || view.degraded ? 'DEGRADED' : null}
-            sourceLabel={streamUsable ? 'SSE · command stream' : 'REST · 60s poll'}
+            sourceLabel={sourceLabel}
             note={view.error ? 'partial leg(s) missing' : undefined}
           />
         </div>

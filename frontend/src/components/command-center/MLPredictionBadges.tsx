@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useMemo } from 'react';
+import { useCommandSection } from '@/context/AppStreamContext';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
-import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { Card } from '@/components/ui/card';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
@@ -32,6 +31,10 @@ function finite(v: unknown): number | null {
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim().length > 0 ? v : null;
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
 function parsePrediction(payload: unknown): PredictionModel | null {
@@ -76,40 +79,54 @@ function biasVariant(bias: Bias | null): BadgeVariant {
   return 'neutral';
 }
 
+/**
+ * `ml.value.by_symbol` keys are the canonical broker symbols the backend
+ * composes (`INSTRUMENT_SYMBOLS`): NIFTY / BANKNIFTY / SENSEX. The selection
+ * surface already uses those spellings; the "NIFTY 50" alias is accepted
+ * defensively. An unknown instrument reads no entry — this lookup can never
+ * surface another instrument's prediction under the selected label.
+ */
+const ML_SYMBOL_KEYS: Record<string, string> = {
+  NIFTY: 'NIFTY',
+  'NIFTY 50': 'NIFTY',
+  BANKNIFTY: 'BANKNIFTY',
+  SENSEX: 'SENSEX',
+};
+
+function toMlSymbol(instrument: string): string {
+  return ML_SYMBOL_KEYS[instrument.toUpperCase()] ?? instrument.toUpperCase();
+}
+
+/**
+ * ML directional forecast — pure consumer of `ml.value.by_symbol`.
+ *
+ * The prediction for the selected instrument is read from the unified
+ * command stream; nothing here polls. A missing section, an absent map key or
+ * an explicit `null` entry all render the same honest unavailable state.
+ */
 export const MLPredictionBadges: React.FC = () => {
   const { instrument } = useInstrument();
   const { isOpen } = useMarketSession();
-  const [model, setModel] = useState<PredictionModel | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadedRef = useRef(false);
-  const hasDataRef = useRef(false);
+  const section = useCommandSection('ml');
 
-  const load = useCallback(async () => {
-    const initial = !loadedRef.current;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    try {
-      const res = await api.getMLPrediction(instrument);
-      const parsed = parsePrediction(res?.data);
-      setModel(parsed);
-      if (parsed !== null) hasDataRef.current = true;
-      setError(parsed === null ? 'ML service returned no usable prediction payload' : null);
-    } catch (err) {
-      setModel(null);
-      setError(err instanceof Error ? err.message : 'ML prediction unavailable');
-    } finally {
-      loadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
+  const sectionValue = asRecord(section?.value);
+  const bySymbol = asRecord(sectionValue?.by_symbol);
+  const symbol = toMlSymbol(instrument);
+  const model = bySymbol ? parsePrediction(bySymbol[symbol]) : null;
+
+  const loading = section === null;
+
+  const lastAt = useMemo(() => {
+    if (model?.timestamp) {
+      const parsed = new Date(model.timestamp);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
     }
-  }, [instrument]);
-
-  usePolling(() => {
-    if (!isOpen && hasDataRef.current) return;
-    return load();
-  }, 5000);
+    if (section?.updated_at) {
+      const parsed = new Date(section.updated_at);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return null;
+  }, [model?.timestamp, section?.updated_at]);
 
   const probabilitiesReady =
     model !== null && model.bullish !== null && model.neutral !== null && model.bearish !== null;
@@ -125,16 +142,14 @@ export const MLPredictionBadges: React.FC = () => {
       }
     >
       <div className="space-y-4 font-mono">
-        {loading && !model ? (
+        {loading ? (
           <div style={{ display: 'grid', gap: 10 }}>
             <div className="skel" style={{ height: 16, width: '55%' }}>.</div>
             <div className="skel" style={{ height: 14, width: '100%' }}>.</div>
             <div className="skel" style={{ height: 40, width: '100%' }}>.</div>
           </div>
         ) : model === null ? (
-          <EmptyNote>
-            {error ? `ML prediction unavailable — ${error}` : 'No ML prediction available.'}
-          </EmptyNote>
+          <EmptyNote>No ML prediction available.</EmptyNote>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-3">
@@ -206,10 +221,10 @@ export const MLPredictionBadges: React.FC = () => {
 
         <div className="flex justify-end">
           <FreshnessClock
-            lastAt={model?.timestamp ?? null}
-            fetching={refreshing}
+            lastAt={lastAt}
             marketClosed={!isOpen}
-            sourceLabel="REST · 5s poll"
+            dataQuality={section?.degraded === true ? 'DEGRADED' : null}
+            sourceLabel="SSE · command stream"
           />
         </div>
       </div>

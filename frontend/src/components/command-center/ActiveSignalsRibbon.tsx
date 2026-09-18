@@ -1,18 +1,30 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
+import {
+  useAppStreamRefresh,
+  useCommandSection,
+  useStreamStatus,
+} from '@/context/AppStreamContext';
 import { api } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { EmptyNote, fmtINR } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
-import { useActiveSignals, type StandardActiveSignal as ActiveSignal } from '@/hooks/useActiveSignals';
+import {
+  parseSignalList,
+  type StandardActiveSignal as ActiveSignal,
+} from '@/hooks/useActiveSignals';
 import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 
 export type { ActiveSignal };
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
 
 function confidencePct(confidence: number | null): string {
   if (confidence === null) return '—';
@@ -47,28 +59,52 @@ function directionIsCall(direction: string): boolean {
 export const ActiveSignalsRibbon: React.FC = () => {
   const { instrument } = useInstrument();
   const { phase, isOpen } = useMarketSession();
+  const streamStatus = useStreamStatus();
+  const refreshStream = useAppStreamRefresh();
+  const section = useCommandSection('signals');
   const [selectedSignal, setSelectedSignal] = useState<ActiveSignal | null>(null);
   const [pendingExec, setPendingExec] = useState<ActiveSignal | null>(null);
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const marketClosed = !isOpen;
 
-  const {
-    signals,
-    loading,
-    refreshing,
-    error,
-    lastAt,
-    refresh,
-  } = useActiveSignals({
-    instrument,
-    pollIntervalMs: 3000,
-    marketClosed,
-    requireContract: false,
-    requireTimestamp: false,
-  });
+  const sectionValue = asRecord(section?.value);
+  const rawSignals = Array.isArray(sectionValue?.signals)
+    ? (sectionValue?.signals as unknown[])
+    : null;
+
+  const signals = useMemo(() => {
+    if (rawSignals === null) return [];
+    const parsed = parseSignalList(rawSignals, instrument, {
+      requireContract: false,
+      requireTimestamp: false,
+    });
+    const scoped = instrument ? parsed.filter((s) => s.underlying === instrument) : parsed;
+    scoped.sort((a, b) => b.timestamp - a.timestamp);
+    return scoped;
+  }, [rawSignals, instrument]);
+
+  const loading = section === null;
+  const error = section !== null && rawSignals === null ? 'signals section unavailable' : null;
+  const degraded = section?.degraded === true;
+
+  const lastAt = useMemo(() => {
+    if (!section) return null;
+    const parsed = new Date(section.updated_at);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [section]);
+
+  const requestStreamRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshStream();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshStream]);
 
   const handleExecutePaper = useCallback(
     async (signal: ActiveSignal) => {
@@ -82,14 +118,14 @@ export const ActiveSignalsRibbon: React.FC = () => {
           `Paper order ${res?.order_id ?? '(no id)'} placed — ${signal.instrument} ${signal.strategy}${qty}`,
         );
         setPendingExec(null);
-        await refresh();
+        await requestStreamRefresh();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : 'Paper execution failed');
       } finally {
         setExecutingId(null);
       }
     },
-    [refresh],
+    [requestStreamRefresh],
   );
 
   const execIntentRows = (sig: ActiveSignal): ConfirmIntentRow[] => [
@@ -132,9 +168,9 @@ export const ActiveSignalsRibbon: React.FC = () => {
             Market session {phase} — paper execution is blocked until the session opens.
           </div>
         ) : null}
-        {error && signals.length > 0 ? (
+        {(error || degraded) && signals.length > 0 ? (
           <div className="mb-3 rounded-lg border border-warn-line bg-warn-wash px-3 py-2 text-[11px] font-mono text-warn-ink">
-            Signal feed degraded — showing last known list. {error}
+            Signal feed degraded — showing last known list.{error ? ` ${error}` : ''}
           </div>
         ) : null}
 
@@ -151,7 +187,12 @@ export const ActiveSignalsRibbon: React.FC = () => {
         ) : error && signals.length === 0 ? (
           <div className="text-center py-10 border border-dashed border-border rounded-lg">
             <EmptyNote>Active signals unavailable — {error}</EmptyNote>
-            <button type="button" className="btn mt-3" onClick={() => void refresh()} disabled={refreshing}>
+            <button
+              type="button"
+              className="btn mt-3"
+              onClick={() => void requestStreamRefresh()}
+              disabled={refreshing}
+            >
               {refreshing ? 'Retrying…' : 'Retry'}
             </button>
           </div>
@@ -249,8 +290,10 @@ export const ActiveSignalsRibbon: React.FC = () => {
             lastAt={lastAt}
             fetching={refreshing}
             marketClosed={marketClosed}
-            dataQuality={error ? 'DEGRADED' : null}
-            sourceLabel="REST · 3s poll"
+            dataQuality={error || degraded ? 'DEGRADED' : null}
+            sourceLabel={
+              streamStatus.source === 'sse' ? 'SSE · command stream' : 'REST · command view'
+            }
           />
         </div>
       </Card>

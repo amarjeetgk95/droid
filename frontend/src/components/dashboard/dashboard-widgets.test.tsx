@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, act, cleanup } from '@testing-library/react';
+import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
 import type { VirtualPosition } from '@/lib/types';
 
 const { apiMock, sessionMock, polls, sectionMock, refreshMock } = vi.hoisted(() => {
@@ -66,83 +66,123 @@ async function flushPoll() {
   });
 }
 
-describe('ForecastOutcomes stream consumption', () => {
-  it('filters the stream section on forecast_horizon, not the chart timeframe', async () => {
+async function flushEffects() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+describe('ForecastOutcomes by_instrument consumption', () => {
+  it('filters the selected instrument on forecast_horizon, not the chart timeframe', async () => {
     sectionMock.current = sectionEnvelope({
-      forecast: null,
-      predictions: [
-        {
-          prediction_id: 'p-1h',
-          forecast_horizon: '1h',
-          timeframe: '5m',
-          direction: 'BULLISH',
-          score: 42,
-          timestamp: '2026-09-17T10:00:00Z',
-        },
-        {
-          prediction_id: 'p-15m',
-          forecast_horizon: '15m',
-          timeframe: '1h',
-          direction: 'BEARISH',
-          score: -20,
-          timestamp: '2026-09-17T10:05:00Z',
-        },
-      ],
+      by_instrument: {
+        'NIFTY 50': [
+          {
+            prediction_id: 'p-1h',
+            forecast_horizon: '1h',
+            timeframe: '5m',
+            direction: 'BULLISH',
+            score: 42,
+            timestamp: '2026-09-17T10:00:00Z',
+          },
+          {
+            prediction_id: 'p-15m',
+            forecast_horizon: '15m',
+            timeframe: '1h',
+            direction: 'BEARISH',
+            score: -20,
+            timestamp: '2026-09-17T10:05:00Z',
+          },
+        ],
+        BANKNIFTY: null,
+        SENSEX: null,
+      },
     });
     render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushEffects();
 
     expect(screen.getByText('NIFTY 50 · horizon 1h')).toBeTruthy();
     expect(screen.getByText('BULLISH')).toBeTruthy();
     expect(screen.queryByText('BEARISH')).toBeNull();
     expect(apiMock.listResearchPredictions).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
   });
 
-  it('surfaces a degraded stream section instead of polling', async () => {
-    sectionMock.current = sectionEnvelope({ forecast: null, predictions: null }, true);
+  it('surfaces a degraded instrument entry instead of polling', async () => {
+    sectionMock.current = sectionEnvelope(
+      { by_instrument: { 'NIFTY 50': null, BANKNIFTY: null, SENSEX: null } },
+      true,
+    );
     render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushEffects();
 
     expect(screen.getByText(/Predictions unavailable/)).toBeTruthy();
     expect(apiMock.listResearchPredictions).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
   });
 
-  it('falls back to the REST fetch for non-NIFTY instruments instead of reusing stream rows', async () => {
+  it('renders BANKNIFTY rows from by_instrument without reusing NIFTY rows', async () => {
     sectionMock.current = sectionEnvelope({
-      forecast: null,
-      predictions: [
-        {
-          prediction_id: 'nifty-1h',
-          forecast_horizon: '1h',
-          direction: 'BULLISH',
-          score: 42,
-          timestamp: '2026-09-17T10:00:00Z',
-        },
-      ],
-    });
-    apiMock.listResearchPredictions.mockResolvedValue([
-      {
-        prediction_id: 'bnf-1h',
-        forecast_horizon: '1h',
-        timeframe: '5m',
-        direction: 'BEARISH',
-        score: -20,
-        timestamp: '2026-09-17T10:05:00Z',
+      by_instrument: {
+        'NIFTY 50': [
+          {
+            prediction_id: 'nifty-1h',
+            forecast_horizon: '1h',
+            direction: 'BULLISH',
+            score: 42,
+            timestamp: '2026-09-17T10:00:00Z',
+          },
+        ],
+        BANKNIFTY: [
+          {
+            prediction_id: 'bnf-1h',
+            forecast_horizon: '1h',
+            timeframe: '5m',
+            direction: 'BEARISH',
+            score: -20,
+            timestamp: '2026-09-17T10:05:00Z',
+          },
+        ],
+        SENSEX: null,
       },
-    ]);
-    render(<ForecastOutcomes instrument="BANKNIFTY" horizon="1h" />);
-    await flushPoll();
-
-    expect(apiMock.listResearchPredictions).toHaveBeenCalledWith({
-      instrument: 'BANKNIFTY',
-      limit: 50,
     });
+    render(<ForecastOutcomes instrument="BANKNIFTY" horizon="1h" />);
+    await flushEffects();
+
     expect(screen.getByText('BEARISH')).toBeTruthy();
     expect(screen.queryByText('BULLISH')).toBeNull();
+    expect(apiMock.listResearchPredictions).not.toHaveBeenCalled();
+    expect(polls.length).toBe(0);
+  });
+
+  it('keeps refresh and measure user-triggered: one stream refresh per click, one measured row', async () => {
+    sectionMock.current = sectionEnvelope({
+      by_instrument: {
+        'NIFTY 50': [
+          {
+            prediction_id: 'p-1',
+            forecast_horizon: '1h',
+            direction: 'BULLISH',
+            score: 10,
+            timestamp: '2026-09-17T10:00:00Z',
+          },
+        ],
+        BANKNIFTY: null,
+        SENSEX: null,
+      },
+    });
+    render(<ForecastOutcomes instrument="NIFTY 50" horizon="1h" />);
+    await flushEffects();
+
+    expect(refreshMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await flushEffects();
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Measure' }));
+    await flushEffects();
+    expect(apiMock.measureResearchPrediction).toHaveBeenCalledWith('p-1');
+    expect(apiMock.measureResearchPrediction).toHaveBeenCalledTimes(1);
   });
 });
 

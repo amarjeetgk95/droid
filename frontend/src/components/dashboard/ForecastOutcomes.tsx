@@ -1,11 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAppStreamRefresh, useCommandSection } from '@/context/AppStreamContext';
-import { isNiftySymbol } from '@/lib/symbols';
 import { useMarketSession } from '@/hooks/useMarketSession';
-import { usePolling } from '@/hooks/usePolling';
 import { Card, DirectionBadge, EmptyNote, fmtClock, fmtNum, fmtSigned } from '@/components/ui/desk';
 import { DataTable, type Column } from '@/components/ui/data-table';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
@@ -45,6 +43,32 @@ function asPredictionRows(v: unknown): Array<Record<string, unknown>> {
   );
 }
 
+/**
+ * `forecast.value.by_instrument` keys are the canonical prediction-store
+ * spellings the backend composes (`FORECAST_INSTRUMENTS`): "NIFTY 50" /
+ * BANKNIFTY / SENSEX. The dashboard token "NIFTY" maps to "NIFTY 50"; an
+ * unknown instrument resolves to itself and reads no entry — never another
+ * instrument's rows.
+ */
+const FORECAST_SYMBOL_KEYS: Record<string, string> = {
+  NIFTY: 'NIFTY 50',
+  'NIFTY 50': 'NIFTY 50',
+  BANKNIFTY: 'BANKNIFTY',
+  SENSEX: 'SENSEX',
+};
+
+function toForecastSymbol(instrument: string): string {
+  return FORECAST_SYMBOL_KEYS[instrument.toUpperCase()] ?? instrument;
+}
+
+/**
+ * Forecast track record — pure consumer of `forecast.value.by_instrument`.
+ *
+ * Prediction rows for the selected instrument come from the unified command
+ * stream; the per-instrument REST fallback poll is gone. Outcome enrichment
+ * stays a bounded one-shot batch per fresh row list and Measure stays a
+ * user-triggered mutation; Refresh asks the stream for a re-fetch once.
+ */
 export function ForecastOutcomes({
   instrument,
   horizon = '1h',
@@ -54,90 +78,38 @@ export function ForecastOutcomes({
 }) {
   const { isOpen } = useMarketSession();
   const refresh = useAppStreamRefresh();
-  // The unified stream's `forecast` slice pins NIFTY 50; only NIFTY-family
-  // requests may consume its prediction rows (the section is global). Other
-  // instruments keep the pre-conversion REST poll below (single owner,
-  // original 60s cadence).
   const section = useCommandSection('forecast');
-  const streamCovered = isNiftySymbol(instrument);
 
   const sectionValue = asRecord(section?.value);
-  const predictionsRaw = sectionValue?.predictions;
-  const rawPredictions = Array.isArray(predictionsRaw) ? (predictionsRaw as unknown[]) : null;
+  const byInstrument = asRecord(sectionValue?.by_instrument);
+  const symbol = toForecastSymbol(instrument);
+  const entry = byInstrument ? byInstrument[symbol] : undefined;
+  const rawPredictions = Array.isArray(entry) ? (entry as unknown[]) : null;
 
-  const streamPredictions = useMemo(() => {
-    if (!streamCovered || rawPredictions === null) return [];
+  const predictions = useMemo(() => {
+    if (rawPredictions === null) return [];
     return asPredictionRows(rawPredictions)
       .filter((p) => predictionHorizon(p) === horizon)
       .slice(0, 10);
-  }, [rawPredictions, horizon, streamCovered]);
+  }, [rawPredictions, horizon]);
 
-  const [lastStreamPredictions, setLastStreamPredictions] = useState<Array<Record<string, unknown>>>(
-    [],
-  );
+  // Keep the last known rows for the same instrument visible while its map
+  // entry is an explicit null (the backend caches a failed instrument as null
+  // for the TTL); rows are never carried across an instrument change.
+  const [lastRows, setLastRows] = useState<{
+    symbol: string;
+    rows: Array<Record<string, unknown>>;
+  }>({ symbol, rows: [] });
   useEffect(() => {
-    if (rawPredictions !== null) setLastStreamPredictions(streamPredictions);
-  }, [rawPredictions, streamPredictions]);
+    if (rawPredictions !== null) setLastRows({ symbol, rows: predictions });
+  }, [rawPredictions, predictions, symbol]);
 
-  // Keep the last known stream rows visible while the section's predictions
-  // leg is degraded (same semantics as the old poller), never under a
-  // non-NIFTY label.
-  const streamRows = useMemo(
-    () =>
-      streamCovered
-        ? rawPredictions !== null
-          ? streamPredictions
-          : lastStreamPredictions
-        : [],
-    [streamCovered, rawPredictions, streamPredictions, lastStreamPredictions],
-  );
-
-  // Pre-conversion REST path: owned solely by this component for instruments
-  // the shared stream section does not cover.
-  const [restPredictions, setRestPredictions] = useState<Array<Record<string, unknown>>>([]);
-  const [restLoading, setRestLoading] = useState(true);
-  const [restRefreshing, setRestRefreshing] = useState(false);
-  const [restError, setRestError] = useState<string | null>(null);
-  const [restLastAt, setRestLastAt] = useState<Date | null>(null);
-  const restLoadedRef = useRef(false);
-  const restHasDataRef = useRef(false);
-
-  const loadRest = useCallback(async () => {
-    const initial = !restLoadedRef.current;
-    if (initial) setRestLoading(true);
-    else setRestRefreshing(true);
-    try {
-      const preds = (await api.listResearchPredictions({
-        instrument,
-        limit: 50,
-      })) as Array<Record<string, unknown>>;
-      const list = Array.isArray(preds)
-        ? preds.filter((p) => predictionHorizon(p) === horizon).slice(0, 10)
+  const rows =
+    rawPredictions !== null
+      ? predictions
+      : lastRows.symbol === symbol
+        ? lastRows.rows
         : [];
-      setRestPredictions(list);
-      setRestError(null);
-      setRestLastAt(new Date());
-      restHasDataRef.current = true;
-    } catch (err) {
-      setRestError(err instanceof Error ? err.message : 'Research predictions unavailable');
-    } finally {
-      restLoadedRef.current = true;
-      setRestLoading(false);
-      setRestRefreshing(false);
-    }
-  }, [instrument, horizon]);
-
-  usePolling(
-    () => {
-      if (streamCovered) return;
-      if (!isOpen && restHasDataRef.current) return;
-      return loadRest();
-    },
-    60000,
-    !streamCovered,
-  );
-
-  const rows = streamCovered ? streamRows : restPredictions;
 
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [measuringId, setMeasuringId] = useState<string | null>(null);
@@ -148,10 +120,9 @@ export function ForecastOutcomes({
 
   // Outcome enrichment: one bounded batch per fresh prediction list, never an
   // interval. Measure stays a user-triggered mutation below.
-  const enrichmentSource = streamCovered ? streamPredictions : restPredictions;
   useEffect(() => {
     const ids = Array.from(
-      new Set(enrichmentSource.map((p) => String(p.prediction_id ?? '')).filter((id) => id.length > 0)),
+      new Set(predictions.map((p) => String(p.prediction_id ?? '')).filter((id) => id.length > 0)),
     );
     if (ids.length === 0) return;
     let cancelled = false;
@@ -176,23 +147,20 @@ export function ForecastOutcomes({
     return () => {
       cancelled = true;
     };
-  }, [enrichmentSource]);
+  }, [predictions]);
 
-  const streamError =
-    streamCovered && section !== null && rawPredictions === null
+  const error =
+    section !== null && rawPredictions === null
       ? 'research predictions section unavailable'
       : null;
-
-  const error = streamCovered ? streamError : restError;
-  const loading = streamCovered ? section === null : restLoading;
-  const refreshing = streamCovered ? streamRefreshing : restRefreshing;
+  const loading = section === null;
+  const refreshing = streamRefreshing;
 
   const lastAt = useMemo(() => {
-    if (!streamCovered) return restLastAt;
     if (!section) return null;
     const parsed = new Date(section.updated_at);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [streamCovered, restLastAt, section]);
+  }, [section]);
 
   const stats = useMemo(() => {
     const visible = settleableOnly ? rows.filter(isSettleablePred) : rows;
@@ -231,17 +199,13 @@ export function ForecastOutcomes({
   }, []);
 
   const handleRefresh = useCallback(async () => {
-    if (!streamCovered) {
-      await loadRest();
-      return;
-    }
     setStreamRefreshing(true);
     try {
       await refresh();
     } finally {
       setStreamRefreshing(false);
     }
-  }, [refresh, streamCovered, loadRest]);
+  }, [refresh]);
 
   const summary =
     stats.measuredCount > 0
@@ -418,7 +382,7 @@ export function ForecastOutcomes({
           fetching={refreshing}
           marketClosed={!isOpen}
           dataQuality={error ? 'DEGRADED' : null}
-          sourceLabel={streamCovered ? 'SSE · command stream' : 'REST · 60s poll'}
+          sourceLabel="SSE · command stream"
         />
       </div>
     </Card>

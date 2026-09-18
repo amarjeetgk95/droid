@@ -45,14 +45,33 @@ function sectionEnvelope(value: unknown, degraded = false) {
   };
 }
 
-const NIFTY_SECTION = sectionEnvelope({
-  regime_overview: {
-    symbol: 'NIFTY 50',
-    regime_state: 'TRENDING_BULLISH',
-    key_levels: { nearest_support: 25000, nearest_resistance: 25500 },
+const REGIME_SECTION = sectionEnvelope({
+  regime_overview: null,
+  options_analytics: null,
+  by_symbol: {
+    NIFTY: {
+      regime_overview: {
+        symbol: 'NIFTY 50',
+        regime_state: 'TRENDING_BULLISH',
+        key_levels: { nearest_support: 25000, nearest_resistance: 25500 },
+      },
+      options_analytics: {
+        symbol: 'NIFTY',
+        spot_price: 25000,
+        pcr_oi: 1.1,
+        max_pain_strike: 25100,
+      },
+    },
+    BANKNIFTY: {
+      regime_overview: {
+        symbol: 'BANKNIFTY',
+        regime_state: 'RANGEBOUND_VOLATILE',
+        key_levels: { nearest_support: 51000, nearest_resistance: 52000 },
+      },
+      options_analytics: { symbol: 'BANKNIFTY', spot_price: 51500, pcr_oi: 0.9 },
+    },
+    SENSEX: null,
   },
-  options_analytics: { available: true, pcr_oi: 1.1, call_wall: 25600, put_wall: 24900 },
-  futures: { NIFTY: null, BANKNIFTY: null },
 });
 
 afterEach(() => {
@@ -73,57 +92,77 @@ async function flushPoll() {
   });
 }
 
-describe('WhyStrip stream/REST context', () => {
-  it('renders the stream regime/options legs for NIFTY-family instruments', () => {
-    sectionMock.current = NIFTY_SECTION;
+describe('WhyStrip by_symbol consumption', () => {
+  it('renders regime/levels/PCR from by_symbol and only polls REST for the option walls', async () => {
+    sectionMock.current = REGIME_SECTION;
+    apiMock.getResearchOptionsContext.mockResolvedValue({
+      available: true,
+      pcr_oi: 0.5,
+      call_wall: 25600,
+      put_wall: 24900,
+      timestamp: '2026-09-18T07:20:00Z',
+    });
+
     render(<WhyStrip instrument="NIFTY 50" />);
 
+    // Stream rows are already usable; the wall rows cannot be fabricated.
     expect(screen.getByText('TRENDING BULLISH')).toBeTruthy();
     expect(screen.getByText('₹25,000')).toBeTruthy();
     expect(screen.getByText('₹25,500')).toBeTruthy();
     expect(screen.getByText('1.10')).toBeTruthy();
+    expect(screen.getAllByText('—').length).toBe(2); // Call wall / Put wall
+
+    await flushPoll();
+
+    // Stream PCR wins over the REST PCR; the walls come from the REST leg.
+    expect(screen.getByText('1.10')).toBeTruthy();
+    expect(screen.queryByText('0.50')).toBeNull();
     expect(screen.getByText('₹25,600')).toBeTruthy();
     expect(screen.getByText('₹24,900')).toBeTruthy();
     expect(apiMock.getRegimeOverview).not.toHaveBeenCalled();
+    expect(apiMock.getResearchOptionsContext).toHaveBeenCalledWith('NIFTY 50');
   });
 
-  it('falls back to the REST fetch for instruments outside the NIFTY section', async () => {
-    sectionMock.current = NIFTY_SECTION;
-    apiMock.getRegimeOverview.mockResolvedValue({
-      data: {
-        symbol: 'BANKNIFTY',
-        regime_state: 'RANGEBOUND_VOLATILE',
-        key_levels: { nearest_support: 51000, nearest_resistance: 52000 },
-        timestamp: '2026-09-18T07:20:00Z',
-      },
-    });
-    apiMock.getResearchOptionsContext.mockResolvedValue({
-      available: true,
-      pcr_oi: 0.9,
-      call_wall: 52100,
-      put_wall: 50900,
-    });
-
+  it('renders BANKNIFTY by_symbol values and never NIFTY values', async () => {
+    sectionMock.current = REGIME_SECTION;
     render(<WhyStrip instrument="BANKNIFTY" />);
     await flushPoll();
 
-    expect(apiMock.getRegimeOverview).toHaveBeenCalledWith('BANKNIFTY');
-    expect(apiMock.getResearchOptionsContext).toHaveBeenCalledWith('BANKNIFTY');
     expect(screen.getByText('RANGEBOUND VOLATILE')).toBeTruthy();
     expect(screen.getByText('₹51,000')).toBeTruthy();
+    expect(screen.getByText('₹52,000')).toBeTruthy();
     expect(screen.getByText('0.90')).toBeTruthy();
     expect(screen.queryByText('TRENDING BULLISH')).toBeNull();
     expect(screen.queryByText('₹25,000')).toBeNull();
+    expect(apiMock.getRegimeOverview).not.toHaveBeenCalled();
   });
 
-  it('shows honest unavailability when both the stream and REST have nothing', async () => {
-    apiMock.getRegimeOverview.mockRejectedValue(new Error('regime service down'));
+  it('shows the options walls as unavailable when the REST fallback fails', async () => {
+    sectionMock.current = REGIME_SECTION;
     apiMock.getResearchOptionsContext.mockRejectedValue(new Error('options service down'));
 
     render(<WhyStrip instrument="SENSEX" />);
     await flushPoll();
 
+    // SENSEX has no by_symbol entry and the REST wall leg failed.
     expect(screen.getByText(/Market context unavailable/)).toBeTruthy();
+    expect(apiMock.getRegimeOverview).not.toHaveBeenCalled();
+  });
+
+  it('marks the strip degraded when only the wall rows fall back', async () => {
+    sectionMock.current = REGIME_SECTION;
+    apiMock.getResearchOptionsContext.mockResolvedValue({
+      available: true,
+      pcr_oi: 1.1,
+      call_wall: null,
+      put_wall: null,
+    });
+
+    render(<WhyStrip instrument="NIFTY 50" />);
+    await flushPoll();
+
+    expect(screen.getByText('TRENDING BULLISH')).toBeTruthy();
+    expect(screen.getByText(/partial leg\(s\) missing/)).toBeTruthy();
   });
 
   it('keeps the NIFTY-family MarketDataContext fallback while the stream warms up', () => {
