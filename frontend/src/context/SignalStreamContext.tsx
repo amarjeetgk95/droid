@@ -10,7 +10,7 @@ interface SignalStreamContextType {
   clearEvents: () => void;
 }
 
-const SignalStreamContext = createContext<SignalStreamContextType | null>(null);
+export const SignalStreamContext = createContext<SignalStreamContextType | null>(null);
 
 /**
  * Single owner of the signals SSE subscription. `useSignalsStream` is itself a

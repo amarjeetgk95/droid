@@ -1,12 +1,8 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useState } from 'react';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
-import { api } from '@/lib/api';
-import { toNumber } from '@/lib/coerce';
-import { errorMessage } from '@/lib/errors';
-import type { PortfolioSummary } from '@/lib/types';
+import { usePaperTrading } from '@/hooks/usePaperTrading';
 import { ageLabel } from '@/lib/feedState';
 import { Card } from '@/components/ui/card';
 import { Gauge } from '@/components/ui/gauge';
@@ -16,9 +12,22 @@ const money = (value: number | null): string =>
   value === null ? '—' : `₹${value.toLocaleString('en-IN')}`;
 
 export const PaperPortfolioCard: React.FC = () => {
-  const [data, setData] = useState<Partial<PortfolioSummary> | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const {
+    portfolio: data,
+    virtualCapital: capital,
+    availableMargin,
+    unrealizedPnl,
+    realizedPnl,
+    openPositionsCount: openPositions,
+    marginUtilizationPct: marginPct,
+    usedMargin,
+    error: loadError,
+    lastUpdated: lastUpdatedDate,
+    refresh,
+    squareOffAll,
+  } = usePaperTrading({ pollIntervalMs: 4000 });
+
+  const lastUpdated = lastUpdatedDate ? lastUpdatedDate.getTime() : null;
   const [squareOffModal, setSquareOffModal] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -28,36 +37,6 @@ export const PaperPortfolioCard: React.FC = () => {
     busyMessage: 'A square-off is already in progress. Wait for it to finish.',
   });
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await api.getPaperPortfolio();
-      if (res?.error) throw new Error(res.error);
-      if (!res?.data) throw new Error('Backend returned no portfolio payload.');
-      setData(res.data);
-      setLastUpdated(Date.now());
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(errorMessage(err, 'Unknown portfolio error'));
-    }
-  }, []);
-
-  usePolling(refresh, 4000);
-
-  const capital = toNumber(data?.virtual_capital);
-  const availableMargin = toNumber(data?.available_margin);
-  const unrealizedPnl = toNumber(data?.total_unrealized_pnl);
-  const realizedPnl = toNumber(data?.total_realized_pnl);
-  const openPositions = toNumber(data?.open_positions_count);
-
-  const reportedMarginPct = toNumber(data?.margin_utilization_pct);
-  const derivedMarginPct =
-    capital !== null && capital > 0 && availableMargin !== null
-      ? Math.round(((capital - availableMargin) / capital) * 100)
-      : null;
-  const marginPct = reportedMarginPct ?? derivedMarginPct;
-  const usedMargin =
-    capital !== null && availableMargin !== null ? capital - availableMargin : null;
-
   const handleSquareOffAll = async () => {
     const openBefore = openPositions ?? 0;
     setActionError(null);
@@ -65,7 +44,7 @@ export const PaperPortfolioCard: React.FC = () => {
     setPartialWarning(null);
 
     const outcome = await action.run(async () => {
-      const res = await api.closeAllPaperPositions();
+      const res = (await squareOffAll()) as { data?: unknown; error?: string } | undefined;
       if (res?.error) throw new Error(res.error);
       const rows: unknown = res?.data;
       if (!Array.isArray(rows)) {

@@ -93,7 +93,7 @@ export const SidebarNavItem = memo(function SidebarNavItem({
       className={cn(
         'group relative flex items-center gap-2.5 text-[12.5px] font-medium transition-colors duration-120 select-none',
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
-        collapsed ? 'justify-center w-8 h-8 mx-auto rounded-[4px]' : 'w-full px-2.5 py-1.5 min-h-[34px] rounded-[4px]',
+        collapsed ? 'justify-center w-8 h-8 mx-auto rounded-[4px]' : 'w-full px-2.5 py-1 min-h-[30px] rounded-[4px]',
         active
           ? collapsed
             ? 'text-white bg-primary shadow-xs'

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { parseSignalTime, calcRiskReward, parseAutoExecuted, parseSignalList, toSignalStatus, shouldRefreshSignalsOnEvent, shouldRefreshVerdictOnSignalEvent } from './SignalFeedPanel';
 import { calcBiasDrift } from './VerdictPanel';
-import { executeEmergencyKill } from './AlgoControlWidget';
+import { executeEmergencyKill } from '@/lib/api/algo';
 import { api } from '@/lib/api';
 
 

@@ -1,18 +1,20 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useState } from 'react';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
+import { useKillSwitch } from '@/hooks/useKillSwitch';
 import { api } from '@/lib/api';
-import { errorMessage } from '@/lib/errors';
-import type { AlgoKillSwitchStatus } from '@/lib/api/algo';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { StatusDot } from '@/components/ui/status-dot';
 
 export const KillSwitchButton: React.FC = () => {
-  const [halt, setHalt] = useState<AlgoKillSwitchStatus | null>(null);
-  const [statusLoaded, setStatusLoaded] = useState(false);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const {
+    status: halt,
+    loaded: statusLoaded,
+    error: statusError,
+    triggerKill,
+  } = useKillSwitch();
+
   const [modalOpen, setModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -22,59 +24,22 @@ export const KillSwitchButton: React.FC = () => {
     busyMessage: 'A kill request is already in progress.',
   });
 
-  const readStatus = useCallback(async () => {
-    try {
-      const res = await api.getAlgoKillSwitch();
-      if (!res?.data) throw new Error('Kill-switch status payload missing.');
-      setHalt({
-        is_killed: res.data.is_killed === true,
-        kill_level: res.data.kill_level ?? 'UNKNOWN',
-        killed_at: res.data.killed_at,
-        reason: res.data.reason,
-      });
-      setStatusLoaded(true);
-      setStatusError(null);
-    } catch (err) {
-      setStatusError(errorMessage(err, 'Unknown kill-switch error'));
-    }
-  }, []);
-
-  usePolling(readStatus, 10000);
-
   const handleTriggerKill = async () => {
     setActionError(null);
     setActionNotice(null);
     setExitError(null);
 
     const killOutcome = await action.run(async () => {
-      const res = await api.triggerAlgoKillSwitch(
+      return triggerKill(
         'FULL_EXECUTION_STOP',
         'Emergency Kill Switch Triggered by Cockpit Operator',
       );
-      const data = res?.data;
-      if (!data || data.is_killed !== true) {
-        throw new Error(
-          `Kill switch was not confirmed by the backend (is_killed: ${String(
-            data?.is_killed,
-          )}). Engines may still be live.`,
-        );
-      }
-      return data;
     });
 
     if (!killOutcome.ok) {
       setActionError(killOutcome.message);
       throw new Error(killOutcome.message);
     }
-
-    setHalt({
-      is_killed: true,
-      kill_level: killOutcome.value.kill_level ?? 'FULL_EXECUTION_STOP',
-      killed_at: killOutcome.value.killed_at,
-      reason: killOutcome.value.reason,
-    });
-    setStatusLoaded(true);
-    setStatusError(null);
 
     let closedCount: number | null = null;
     const exitOutcome = await action.run(

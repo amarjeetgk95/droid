@@ -254,3 +254,5 @@ export function createAlgoApi(core: ApiCore) {
 }
 
 export type AlgoApi = ReturnType<typeof createAlgoApi>;
+
+export { executeEmergencyKill } from '../emergencyKill';

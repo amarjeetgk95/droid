@@ -1,16 +1,20 @@
 'use client';
 
-import { memo, useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { api } from '@/lib/api';
 import type {
-  InstitutionalFlowResponse,
   MaxPainResult,
   OptionChainResponse,
-  OptionChainStrikeRow,
 } from '@/lib/types';
 import { fmtINR, fmtNum } from '@/components/ui/desk';
-import { X, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { X, RefreshCw, ExternalLink } from 'lucide-react';
+import { OptionChainTable } from '@/components/options/OptionChainTable';
+import { PayoffChart } from '@/components/options/PayoffChart';
+import { IVSmileChart } from '@/components/options/IVSmileChart';
+import { ExpectedMoveCard, type ExpectedMoveData } from '@/components/options/ExpectedMoveCard';
+import { InstitutionalFlowTracker } from '@/components/options/InstitutionalFlowTracker';
+import { GreeksSummaryCard } from '@/components/options/GreeksSummaryCard';
 
 type DrawerDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 type DrawerTab = 'quotes' | 'flow' | 'picker' | 'whatif';
@@ -77,13 +81,6 @@ function asStr(v: unknown): string | null {
 function humanize(v: unknown): string {
   if (typeof v !== 'string' || v.length === 0) return '—';
   return v.toLowerCase().replace(/_/g, ' ');
-}
-
-function toneForFlow(v: unknown): 'chip--up' | 'chip--down' | 'chip--neut' {
-  const s = String(v ?? '').toUpperCase();
-  if (s.includes('BULLISH') || s === 'BULL') return 'chip--up';
-  if (s.includes('BEARISH') || s === 'BEAR') return 'chip--down';
-  return 'chip--neut';
 }
 
 interface PickerCandidate {
@@ -241,7 +238,8 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
   const [selectedExpiry, setSelectedExpiry] = useState<string>('');
   const [expiryNotice, setExpiryNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>('quotes');
-  const [expandedStrikes, setExpandedStrikes] = useState<Record<number, boolean>>({});
+  const [quotesViewMode, setQuotesViewMode] = useState<'standard' | 'greeks'>('standard');
+  const [chainAsOf, setChainAsOf] = useState<string | null>(null);
   const requestIdRef = useRef(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
   // Latest selected expiry for loadChain without re-creating it on each pick
@@ -251,11 +249,13 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
     selectedExpiryRef.current = selectedExpiry;
   }, [selectedExpiry]);
 
-  const [flow, setFlow] = useState<InstitutionalFlowResponse | null>(null);
-  const [flowLoading, setFlowLoading] = useState(false);
-  const [flowError, setFlowError] = useState<string | null>(null);
-  const [maxPain, setMaxPain] = useState<MaxPainResult | null>(null);
-  const flowReqRef = useRef(0);
+  // Max pain data for PayoffChart
+  const [maxPainData, setMaxPainData] = useState<MaxPainResult | null>(null);
+
+  // Expected move data for Flow tab
+  const [expectedMove, setExpectedMove] = useState<ExpectedMoveData | null>(null);
+  const [expectedMoveLoading, setExpectedMoveLoading] = useState(false);
+  const [expectedMoveError, setExpectedMoveError] = useState<string | null>(null);
 
   const [pickerDirection, setPickerDirection] = useState<DrawerDirection>(direction ?? 'NEUTRAL');
   const [pickerSpotText, setPickerSpotText] = useState('');
@@ -295,6 +295,20 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
     if (direction) setPickerDirection(direction);
   }, [direction]);
 
+  const loadMaxPain = useCallback(
+    async (expiryOverride?: string) => {
+      if (!instrument) return;
+      const exp = expiryOverride || selectedExpiryRef.current || undefined;
+      try {
+        const res = await api.getMaxPain(instrument, exp);
+        setMaxPainData(res?.data ?? null);
+      } catch {
+        setMaxPainData(null);
+      }
+    },
+    [instrument],
+  );
+
   const loadChain = useCallback(
     async (expiryOverride?: string) => {
       if (!instrument) return;
@@ -313,6 +327,7 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
           return;
         }
         setChain(res.data);
+        setChainAsOf(res.meta?.timestamp ?? null);
         // Reconcile a server-substituted expiry into the selector on every
         // load so the picker and the rendered table can never diverge; the
         // substitution is stated visibly rather than silently absorbed.
@@ -325,8 +340,10 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
               ? `Expiry ${requestedExpiry} unavailable — backend returned ${serverExpiry}.`
               : null,
           );
+          void loadMaxPain(serverExpiry);
         } else {
           setExpiryNotice(requestedExpiry ? `Expiry ${requestedExpiry} unavailable — backend returned no expiry.` : null);
+          void loadMaxPain();
         }
       } catch (e) {
         if (requestIdRef.current === requestId) {
@@ -336,40 +353,36 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
         if (requestIdRef.current === requestId) setLoading(false);
       }
     },
-    [instrument],
+    [instrument, loadMaxPain],
   );
 
-  const loadFlow = useCallback(async () => {
+  const loadExpectedMove = useCallback(async () => {
     if (!instrument) return;
-    const requestId = ++flowReqRef.current;
-    const expiryParam = selectedExpiry || chain?.expiry || undefined;
-    setFlowLoading(true);
-    setFlowError(null);
+    const spot = chain?.spot_price ?? chain?.analytics?.spot_price ?? 0;
+    if (spot <= 0) return;
+    const code = toUnderlyingCode(instrument) ?? instrument;
+    const atmIvPct = asNum(chain?.analytics?.atm_iv);
+    const iv = atmIvPct !== null && atmIvPct > 0 ? atmIvPct / 100 : undefined;
+    const dir = pickerDirection === 'NEUTRAL' ? 'BULLISH' : pickerDirection;
+
+    setExpectedMoveLoading(true);
+    setExpectedMoveError(null);
     try {
-      const res = await api.getInstitutionalFlow(instrument, expiryParam);
-      if (flowReqRef.current !== requestId) return;
-      if (res?.error) {
-        setFlow(null);
-        setFlowError(res.error);
-      } else {
-        setFlow(res?.data ?? null);
-      }
+      const res = await api.projectExpectedMove({
+        underlying: code,
+        spot,
+        direction: dir,
+        horizon: 'INTRADAY',
+        ...(iv !== undefined ? { current_iv: iv } : {}),
+      });
+      setExpectedMove(unwrapEnvelope<ExpectedMoveData>(res));
     } catch (e) {
-      if (flowReqRef.current === requestId) {
-        setFlow(null);
-        setFlowError(errMsg(e, 'Failed to load institutional flow'));
-      }
+      setExpectedMove(null);
+      setExpectedMoveError(errMsg(e, 'Expected move projection unavailable'));
     } finally {
-      if (flowReqRef.current === requestId) setFlowLoading(false);
+      setExpectedMoveLoading(false);
     }
-    // Payout curve is context only; its failure never blocks the flow view.
-    try {
-      const mp = await api.getMaxPain(instrument, expiryParam);
-      if (flowReqRef.current === requestId) setMaxPain(mp?.data ?? null);
-    } catch {
-      if (flowReqRef.current === requestId) setMaxPain(null);
-    }
-  }, [instrument, selectedExpiry, chain]);
+  }, [chain, instrument, pickerDirection]);
 
   const runPicker = useCallback(async () => {
     const chainSpot = chain?.spot_price ?? chain?.analytics?.spot_price ?? NaN;
@@ -550,11 +563,11 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
     void loadChain();
   }, [isOpen, instrument, loadChain]);
 
-  // Flow tab lazily loads walls/sentiment/build-ups for the active expiry.
+  // Flow tab lazily loads expected move forecast
   useEffect(() => {
     if (!isOpen || tab !== 'flow' || !instrument) return;
-    void loadFlow();
-  }, [isOpen, tab, instrument, loadFlow]);
+    void loadExpectedMove();
+  }, [isOpen, tab, instrument, loadExpectedMove]);
 
   // What-If tab loads portfolio greeks summary and populates spot/strike defaults
   const loadPortfolioGreeks = useCallback(async () => {
@@ -676,13 +689,10 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
 
   const handleRefresh = useCallback(() => {
     void loadChain(selectedExpiry);
-    if (tab === 'flow') void loadFlow();
+    void loadMaxPain(selectedExpiry);
+    if (tab === 'flow') void loadExpectedMove();
     if (tab === 'whatif') void loadPortfolioGreeks();
-  }, [loadChain, loadFlow, loadPortfolioGreeks, selectedExpiry, tab]);
-
-  const toggleStrike = useCallback((strike: number) => {
-    setExpandedStrikes((prev) => ({ ...prev, [strike]: !prev[strike] }));
-  }, []);
+  }, [loadChain, loadMaxPain, loadExpectedMove, loadPortfolioGreeks, selectedExpiry, tab]);
 
   const onTabKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
@@ -702,22 +712,7 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
   if (!isOpen) return null;
 
   const analytics = chain?.analytics;
-  const strikes: OptionChainStrikeRow[] = chain?.strikes ?? [];
   const spotPrice = chain?.spot_price ?? analytics?.spot_price ?? 0;
-
-  // Filter ~15 strikes centered around ATM for instant glance without lag
-  const atmIndex = strikes.findIndex((s) => s.is_atm);
-  const startIndex = atmIndex >= 0 ? Math.max(0, atmIndex - 8) : 0;
-  const visibleStrikes = strikes.slice(startIndex, startIndex + 17);
-
-  const flowFlows = flow?.strike_flows ?? [];
-  const flowAtm = flowFlows.findIndex((s) => s.is_atm);
-  const flowStart = flowAtm >= 0 ? Math.max(0, flowAtm - 8) : 0;
-  const visibleFlows = flowFlows.slice(flowStart, flowStart + 17);
-  const flowHasContent =
-    visibleFlows.length > 0 ||
-    asNum(flow?.call_wall_strike) !== null ||
-    asNum(flow?.put_floor_strike) !== null;
 
   const rankedCandidates = selection
     ? [...selection.candidates].sort((a, b) => (b.score ?? -1) - (a.score ?? -1)).slice(0, 5)
@@ -901,7 +896,7 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
         {/* Table Matrix */}
         <div className="flex-1 overflow-y-auto p-2">
           {tab === 'quotes' ? (
-            <div role="tabpanel" id="oc-panel-quotes" aria-labelledby="oc-tab-quotes">
+            <div role="tabpanel" id="oc-panel-quotes" aria-labelledby="oc-tab-quotes" className="space-y-2">
               {error ? (
                 <div
                   role="alert"
@@ -927,276 +922,53 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
                     <div key={i} className="h-8 rounded bg-muted animate-pulse" />
                   ))}
                 </div>
-              ) : strikes.length === 0 ? (
-
-                <div className="flex h-full items-center justify-center p-8 text-center text-sm text-ink-3">
-                  No options data available for {instrument}
-                  {selectedExpiry ? ` (${selectedExpiry})` : ''}. Try another expiry or refresh.
-                </div>
               ) : (
-              <table className="w-full text-xs font-mono border-collapse">
-                <thead className="sticky top-0 bg-card z-10 text-[11px]">
-                  <tr className="border-b border-border">
-                    <th colSpan={4} className="py-1.5 px-2 text-center text-up-strong bg-up-wash font-semibold uppercase border-r border-border">
-                      Calls · CE
-                    </th>
-                    <th className="py-1.5 px-3 text-center text-foreground bg-muted font-semibold uppercase border-r border-border">
-                      Strike
-                    </th>
-                    <th colSpan={4} className="py-1.5 px-2 text-center text-down-strong bg-down-wash font-semibold uppercase">
-                      Puts · PE
-                    </th>
-                  </tr>
-                  <tr className="border-b border-border text-[10px] text-ink-3 uppercase bg-surface-subtle">
-                    <th className="py-1 px-2 text-right">OI</th>
-                    <th className="py-1 px-2 text-right">Chg OI</th>
-                    <th className="py-1 px-2 text-right">IV%</th>
-                    <th className="py-1 px-2 text-right border-r border-border">LTP</th>
-                    <th className="py-1 px-3 text-center text-foreground border-r border-border">ATM</th>
-                    <th className="py-1 px-2 text-left">LTP</th>
-                    <th className="py-1 px-2 text-left">IV%</th>
-                    <th className="py-1 px-2 text-left">Chg OI</th>
-                    <th className="py-1 px-2 text-left">OI</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleStrikes.map((row) => {
-                    const call = row.call;
-                    const put = row.put;
-                    const isAtm = row.is_atm;
-                    const open = expandedStrikes[row.strike] === true;
-
-                    return (
-                      <Fragment key={row.strike}>
-                        <tr
-                          className={`border-b border-muted hover:bg-surface-subtle transition-colors ${
-                            isAtm ? 'bg-warn-wash' : ''
-                          }`}
-                        >
-                          {/* CE Side */}
-                          <td className="py-1.5 px-2 text-right text-ink-3">
-                            {call?.open_interest ? `${Math.round(call.open_interest / 1000)}k` : '—'}
-                          </td>
-                          <td
-                            className={`py-1.5 px-2 text-right num ${
-                              (call?.oi_change ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'
-                            }`}
-                          >
-                            {call?.oi_change ? `${(call.oi_change > 0 ? '+' : '')}${Math.round(call.oi_change / 1000)}k` : '—'}
-                          </td>
-                          <td className="py-1.5 px-2 text-right text-ink-3">
-                            {typeof call?.greeks?.iv === 'number' ? `${fmtNum(call.greeks.iv, 1)}%` : '—'}
-                          </td>
-                          <td className="py-1.5 px-2 text-right font-medium text-foreground num border-r border-border">
-                            {call?.ltp ? fmtNum(call.ltp, 1) : '—'}
-                          </td>
-
-                          {/* Strike */}
-                          <td
-                            className={`py-1.5 px-3 text-center num border-r border-border ${
-                              isAtm
-                                ? 'text-warn-ink bg-warn-line font-semibold'
-                                : 'text-foreground bg-surface-subtle'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleStrike(row.strike)}
-                              aria-expanded={open}
-                              aria-controls={`oc-greeks-${Math.round(row.strike)}`}
-                              aria-label={`Greeks for ${Math.round(row.strike)} strike`}
-                              title="Toggle Greeks"
-                              className="inline-flex items-center gap-1 cursor-pointer bg-transparent border-0 font-inherit text-inherit"
-                            >
-                              <span>{Math.round(row.strike)}</span>
-                              <ChevronDown className={`w-3 h-3 text-ink-3 transition-transform ${open ? 'rotate-180' : ''}`} />
-                            </button>
-                          </td>
-
-                          {/* PE Side */}
-                          <td className="py-1.5 px-2 text-left font-medium text-foreground num">
-                            {put?.ltp ? fmtNum(put.ltp, 1) : '—'}
-                          </td>
-                          <td className="py-1.5 px-2 text-left text-ink-3">
-                            {typeof put?.greeks?.iv === 'number' ? `${fmtNum(put.greeks.iv, 1)}%` : '—'}
-                          </td>
-                          <td
-                            className={`py-1.5 px-2 text-left num ${
-                              (put?.oi_change ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'
-                            }`}
-                          >
-                            {put?.oi_change ? `${(put.oi_change > 0 ? '+' : '')}${Math.round(put.oi_change / 1000)}k` : '—'}
-                          </td>
-                          <td className="py-1.5 px-2 text-left text-ink-3">
-                            {put?.open_interest ? `${Math.round(put.open_interest / 1000)}k` : '—'}
-                          </td>
-                        </tr>
-                        {open ? (
-                          <tr key={`${row.strike}-greeks`} id={`oc-greeks-${Math.round(row.strike)}`} className="border-b border-muted bg-surface-subtle/60">
-                            <td colSpan={9} className="py-2 px-3">
-                              <div className="grid grid-cols-2 gap-3 text-[11px]">
-                                <div>
-                                  <span className="micro-label block">Call Greeks · {Math.round(row.strike)} CE</span>
-                                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 num text-ink-3">
-                                    <span>Delta {call?.greeks ? fmtNum(call.greeks.delta, 3) : '—'}</span>
-                                    <span>Theta {call?.greeks ? fmtNum(call.greeks.theta, 2) : '—'}</span>
-                                    <span>Vega {call?.greeks ? fmtNum(call.greeks.vega, 2) : '—'}</span>
-                                  </div>
-                                </div>
-                                <div>
-                                  <span className="micro-label block">Put Greeks · {Math.round(row.strike)} PE</span>
-                                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 num text-ink-3">
-                                    <span>Delta {put?.greeks ? fmtNum(put.greeks.delta, 3) : '—'}</span>
-                                    <span>Theta {put?.greeks ? fmtNum(put.greeks.theta, 2) : '—'}</span>
-                                    <span>Vega {put?.greeks ? fmtNum(put.greeks.vega, 2) : '—'}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+                <div className="space-y-2">
+                  <div className="flex justify-end items-center px-1">
+                    <div className="seg" role="group" aria-label="Chain view mode">
+                      <button
+                        type="button"
+                        className="seg-btn"
+                        data-active={quotesViewMode === 'standard'}
+                        aria-pressed={quotesViewMode === 'standard'}
+                        onClick={() => setQuotesViewMode('standard')}
+                      >
+                        Standard
+                      </button>
+                      <button
+                        type="button"
+                        className="seg-btn"
+                        data-active={quotesViewMode === 'greeks'}
+                        aria-pressed={quotesViewMode === 'greeks'}
+                        onClick={() => setQuotesViewMode('greeks')}
+                      >
+                        Greeks
+                      </button>
+                    </div>
+                  </div>
+                  <OptionChainTable
+                    strikes={chain?.strikes ?? []}
+                    viewMode={quotesViewMode}
+                    spotPrice={spotPrice}
+                    asOf={chainAsOf}
+                    fetching={loading}
+                  />
+                </div>
               )}
             </div>
           ) : null}
 
           {tab === 'flow' ? (
-            <div role="tabpanel" id="oc-panel-flow" aria-labelledby="oc-tab-flow" className="p-1.5 space-y-3">
-              {flowError ? (
-                <div
-                  role="alert"
-                  className="p-3 rounded-md border border-down-line bg-down-wash flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-down-strong">Error loading institutional flow:</span>
-                    <span className="text-down">{flowError}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void loadFlow()}
-                    className="px-2.5 py-1 rounded bg-card border border-down-line font-semibold text-down-strong hover:bg-down-wash cursor-pointer"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : null}
-
-              {flowLoading && !flow ? (
-                <div className="space-y-2 p-2" aria-label="Loading institutional flow">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="h-8 rounded bg-muted animate-pulse" />
-                  ))}
-                </div>
-              ) : !flowHasContent && !flowLoading ? (
-                <div className="flex h-full items-center justify-center p-8 text-center text-sm text-ink-3">
-                  No institutional flow published for this expiry
-                  {selectedExpiry || chain?.expiry ? ` (${selectedExpiry || chain?.expiry})` : ''}.
-                </div>
-              ) : flow ? (
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
-                    <div className="p-2.5 rounded-md bg-card border border-border">
-                      <span className="micro-label block">Sentiment</span>
-                      <span className={`chip ${toneForFlow(flow.institutional_sentiment)} num`}>
-                        {humanize(flow.institutional_sentiment)}
-                      </span>
-                      <span className="block mt-1 text-[11px] text-ink-3 num">
-                        Score {fmtNum(flow.institutional_score, 0)}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded-md bg-card border border-border">
-                      <span className="micro-label block">Call wall</span>
-                      <span className="font-semibold text-sm text-foreground num">
-                        {flow.call_wall_strike ? Math.round(flow.call_wall_strike) : '—'}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded-md bg-card border border-border">
-                      <span className="micro-label block">Put floor</span>
-                      <span className="font-semibold text-sm text-foreground num">
-                        {flow.put_floor_strike ? Math.round(flow.put_floor_strike) : '—'}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded-md bg-card border border-border">
-                      <span className="micro-label block">Max pain</span>
-                      <span className="font-semibold text-sm text-accent-strong num">
-                        {flow.max_pain_strike ? Math.round(flow.max_pain_strike) : '—'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {visibleFlows.length > 0 ? (
-                    <div className="tbl-wrap">
-                      <table className="tbl num">
-                        <thead>
-                          <tr>
-                            <th className="c">Strike</th>
-                            <th>Call build-up</th>
-                            <th>Put build-up</th>
-                            <th>Net flow</th>
-                            <th className="r">CE chg OI</th>
-                            <th className="r">PE chg OI</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {visibleFlows.map((s) => (
-                            <tr key={s.strike} className={s.is_atm ? 'bg-warn-wash' : undefined}>
-                              <td className="c">{Math.round(s.strike)}</td>
-                              <td>{humanize(s.call_buildup)}</td>
-                              <td>{humanize(s.put_buildup)}</td>
-                              <td>
-                                <span className={`chip ${toneForFlow(s.net_flow)}`}>{humanize(s.net_flow)}</span>
-                              </td>
-                              <td className="r">
-                                {s.call_oi_change
-                                  ? `${s.call_oi_change > 0 ? '+' : ''}${Math.round(s.call_oi_change / 1000)}k`
-                                  : '—'}
-                              </td>
-                              <td className="r">
-                                {s.put_oi_change
-                                  ? `${s.put_oi_change > 0 ? '+' : ''}${Math.round(s.put_oi_change / 1000)}k`
-                                  : '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
-
-                  {maxPain && maxPain.strikes.length > 0 ? (
-                    <details className="rounded-md border border-border bg-card p-2.5 text-xs">
-                      <summary className="cursor-pointer font-semibold text-foreground">
-                        Payout curve · max pain {Math.round(maxPain.max_pain_strike)}
-                      </summary>
-                      <div className="tbl-wrap mt-2">
-                        <table className="tbl num">
-                          <thead>
-                            <tr>
-                              <th className="r">Strike</th>
-                              <th className="r">Total payout</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {maxPain.strikes.map((strike, i) => (
-                              <tr
-                                key={strike}
-                                className={strike === maxPain.max_pain_strike ? 'bg-warn-wash' : undefined}
-                              >
-                                <td className="r">{Math.round(strike)}</td>
-                                <td className="r">{fmtNum(maxPain.payouts[i], 0)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </details>
-                  ) : null}
-                </>
-              ) : null}
+            <div role="tabpanel" id="oc-panel-flow" aria-labelledby="oc-tab-flow" className="p-2 space-y-4">
+              <InstitutionalFlowTracker
+                symbol={instrument}
+                expiry={selectedExpiry || chain?.expiry || undefined}
+              />
+              <ExpectedMoveCard
+                data={expectedMove}
+                loading={expectedMoveLoading}
+                error={expectedMoveError}
+              />
             </div>
           ) : null}
 
@@ -1413,53 +1185,28 @@ export const OptionsChainDrawer = memo(function OptionsChainDrawer({
           ) : null}
 
           {tab === 'whatif' ? (
-            <div className="space-y-4 p-4 font-mono text-xs">
-              {/* Portfolio Greeks Overview */}
-              <div className="rounded-md border border-border bg-card p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="micro-label">Portfolio Greeks Exposure</span>
-                  {portfolioGreeksLoading ? <span className="text-ink-3">updating…</span> : null}
-                </div>
-                {portfolioGreeks ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 num">
-                    <div className="p-2 rounded bg-surface-subtle border border-border">
-                      <span className="micro-label block">Total Delta</span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {typeof portfolioGreeks.total_delta === 'number' ? fmtNum(portfolioGreeks.total_delta, 2) : '—'}
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-surface-subtle border border-border">
-                      <span className="micro-label block">Total Gamma</span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {typeof portfolioGreeks.total_gamma === 'number' ? fmtNum(portfolioGreeks.total_gamma, 4) : '—'}
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-surface-subtle border border-border">
-                      <span className="micro-label block">Total Theta (/day)</span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {typeof portfolioGreeks.total_theta_day === 'number' ? fmtINR(portfolioGreeks.total_theta_day) : '—'}
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-surface-subtle border border-border">
-                      <span className="micro-label block">Total Vega (/1% IV)</span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {typeof portfolioGreeks.total_vega === 'number' ? fmtINR(portfolioGreeks.total_vega) : '—'}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <p
-                    className={`m-0 text-xs ${portfolioGreeksError ? 'text-down-strong' : 'text-ink-3'}`}
-                    role={portfolioGreeksError ? 'alert' : undefined}
-                  >
-                    {portfolioGreeksLoading
-                      ? 'Loading portfolio Greeks…'
-                      : portfolioGreeksError
-                        ? `Portfolio Greeks unavailable — ${portfolioGreeksError}`
-                        : 'No open options positions to calculate portfolio Greeks.'}
-                  </p>
-                )}
+            <div role="tabpanel" id="oc-panel-whatif" aria-labelledby="oc-tab-whatif" className="space-y-4 p-4 font-mono text-xs">
+              {/* Payoff & IV Smile Charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <PayoffChart data={maxPainData} spotPrice={spotPrice} />
+                <IVSmileChart
+                  strikes={chain?.strikes ?? []}
+                  atmStrike={chain?.analytics?.atm_strike ?? 0}
+                />
               </div>
+
+              {/* Portfolio Greeks Overview */}
+              {portfolioGreeksLoading ? (
+                <div className="rounded-md border border-border bg-card p-3.5 text-xs text-ink-3">
+                  Loading portfolio Greeks…
+                </div>
+              ) : portfolioGreeksError ? (
+                <div role="alert" className="rounded-md border border-border bg-card p-3.5 text-xs text-down-strong">
+                  Portfolio Greeks unavailable — {portfolioGreeksError}
+                </div>
+              ) : (
+                <GreeksSummaryCard summary={portfolioGreeks} />
+              )}
 
               {/* Interactive Greeks Calculator & IV Solver Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

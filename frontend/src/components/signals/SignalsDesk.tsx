@@ -241,6 +241,17 @@ export function SignalsDesk({
     [setTab, loadScanner, loadEngines],
   );
 
+  useEffect(() => {
+    if (initialTab && initialTab !== tab) {
+      setTabInternal(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (tab === 'scanner') void loadScanner();
+    else if (tab === 'engines') void loadEngines();
+  }, [tab, loadScanner, loadEngines]);
+
   /* Zero-row empty states must always offer a way back to a populated view. */
   const filtersDirty = deskFilter !== 'ALL' || instrumentFilter !== 'ALL' || statusFilter !== 'ACTIVE';
   const resetFilters = useCallback(() => {

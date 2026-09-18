@@ -191,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-4" aria-label="Primary navigation">
+      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-2.5" aria-label="Primary navigation">
         {NAV_GROUPS.map((group) => (
           <section key={group.id} aria-label={group.label}>
             <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-4">
@@ -230,7 +230,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const renderKillSwitch = (railCollapsed: boolean) => (
-    <div className={cn('shrink-0 border-t border-border', railCollapsed ? 'p-2' : 'p-3')}>
+    <div className={cn('shrink-0 border-t border-border', railCollapsed ? 'p-1.5' : 'p-2.5')}>
       {railCollapsed ? (
         <button
           type="button"
@@ -239,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-busy={isKilling}
           aria-label="Emergency kill switch"
           title="Emergency kill switch — halt all engines"
-          className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-down-line bg-down-wash text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="mx-auto flex h-9 w-9 items-center justify-center rounded-lg border border-down-line bg-down-wash text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Power className="h-4 w-4" aria-hidden />
         </button>
@@ -249,7 +249,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => setKillModalOpen(true)}
           disabled={isKilling}
           aria-busy={isKilling}
-          className="group flex w-full items-center justify-center gap-2 rounded-lg border border-down-line bg-down-wash px-3 py-2 font-mono text-xs font-semibold tracking-wider text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="group flex w-full items-center justify-center gap-2 rounded-lg border border-down-line bg-down-wash px-3 py-1.5 font-mono text-xs font-semibold tracking-wider text-down-strong transition-colors hover:bg-down/15 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <StatusDot status="error" pulse={false} />
           <span>{isKilling ? 'HALTING…' : 'KILL SWITCH'}</span>

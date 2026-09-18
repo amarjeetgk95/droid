@@ -144,8 +144,9 @@ describe('telegram toggle accessibility', () => {
   });
 });
 
-describe('settings registry', () => {  it('exposes all eight tabs', () => {
-    expect(SETTINGS_TABS).toHaveLength(8);
+describe('settings registry', () => {
+  it('exposes all nine tabs', () => {
+    expect(SETTINGS_TABS).toHaveLength(9);
   });
 
   it('finds a section by a field-level keyword', () => {
@@ -155,12 +156,14 @@ describe('settings registry', () => {  it('exposes all eight tabs', () => {
     expect(searchTabs('openrouter').map((t) => t.id)).toEqual(['ai']);
     expect(searchTabs('circuit breaker').map((t) => t.id)).toEqual(['paper', 'monitoring']);
     expect(searchTabs('xgboost').map((t) => t.id)).toEqual(['ml']);
+    expect(searchTabs('nerve').map((t) => t.id)).toEqual(['system']);
   });
 
-  it('marks telegram, monitoring and ml as not saveable through the settings provider', () => {
+  it('marks telegram, monitoring, ml and system as not saveable through the settings provider', () => {
     expect(isSaveableTab('telegram')).toBe(false);
     expect(isSaveableTab('monitoring')).toBe(false);
     expect(isSaveableTab('ml')).toBe(false);
+    expect(isSaveableTab('system')).toBe(false);
     expect(isSaveableTab('broker')).toBe(true);
   });
 });
@@ -196,5 +199,18 @@ describe('settings sidebar', () => {
     renderSidebar('zzzznomatch');
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
     expect(screen.getByText(/No settings match/i)).toBeTruthy();
+  });
+
+  it('highlights the System Nerve tab when activeTab is system', () => {
+    render(
+      <SettingsSidebar
+        activeTab="system"
+        onTabChange={noop}
+        query=""
+        onQueryChange={noop}
+      />,
+    );
+    const systemTab = screen.getByRole('tab', { name: /System Nerve/i });
+    expect(systemTab.getAttribute('aria-selected')).toBe('true');
   });
 });

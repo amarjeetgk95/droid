@@ -12,7 +12,7 @@ import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { fmtINR } from '@/components/ui/desk';
-import { executeEmergencyKill } from './AlgoControlWidget';
+import { useKillSwitch } from '@/hooks/useKillSwitch';
 import { ShieldAlert, Power } from 'lucide-react';
 
 type AlgoMode = 'OFF' | 'PAPER' | 'LIVE';
@@ -30,10 +30,12 @@ function fmtCapitalLimit(v: unknown): string {
 }
 
 export const AlgoSafetyStrip = memo(function AlgoSafetyStrip() {
+  const { isKilled: killSwitchActive, executeEmergencyKill: triggerEmergencyKill } = useKillSwitch();
+
   // 'UNKNOWN' until the backend confirms a mode — a fetch failure must never
   // masquerade as a confirmed OFF engine.
   const [mode, setMode] = useState<AlgoModeView>('UNKNOWN');
-  const [isKilled, setIsKilled] = useState<boolean | null>(null);
+  const [localKilled, setLocalKilled] = useState<boolean | null>(null);
   const [confirmKill, setConfirmKill] = useState(false);
   const [acting, setActing] = useState(false);
   const [killAttempt, setKillAttempt] = useState(0);
@@ -51,7 +53,7 @@ export const AlgoSafetyStrip = memo(function AlgoSafetyStrip() {
 
   const markUnknown = useCallback((reason: string) => {
     setMode('UNKNOWN');
-    setIsKilled(null);
+    setLocalKilled(null);
     setCapital(null);
     setConsentOk(null);
     setFetchError(reason);
@@ -74,7 +76,7 @@ export const AlgoSafetyStrip = memo(function AlgoSafetyStrip() {
       }
       setMode(data.mode);
       const ks = data.kill_switch;
-      setIsKilled(isRecord(ks) ? Boolean(ks.is_killed) : ks === true);
+      setLocalKilled(isRecord(ks) ? Boolean(ks.is_killed) : ks === true);
       // Capital line only when the payload carries it (backend omits the
       // block when no capital row exists); consent gate only on explicit false.
       setCapital(isRecord(data.capital) ? data.capital : null);
@@ -121,10 +123,10 @@ export const AlgoSafetyStrip = memo(function AlgoSafetyStrip() {
     setKillError(null);
     setKillAttempt(1);
     try {
-      const res = await executeEmergencyKill(3, (n) => setKillAttempt(n));
+      const res = await triggerEmergencyKill(3, (n) => setKillAttempt(n));
       if (res.success) {
         setMode('OFF');
-        setIsKilled(true);
+        setLocalKilled(true);
         setFetchError(null);
         setConfirmKill(false);
       } else {
@@ -136,7 +138,9 @@ export const AlgoSafetyStrip = memo(function AlgoSafetyStrip() {
       setActing(false);
       setKillAttempt(0);
     }
-  }, [acting]);
+  }, [acting, triggerEmergencyKill]);
+
+  const isKilled = killSwitchActive || localKilled === true;
 
   // Inactive engine, never killed, backend confirmed: no pixels. Any fetch
   // error keeps the strip visible so the unknown state is stated, not hidden.

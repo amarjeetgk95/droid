@@ -12,7 +12,6 @@
 import {
   Activity,
   Bot,
-  BookOpenCheck,
   Compass,
   Crosshair,
   FlaskConical,
@@ -129,17 +128,9 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/signals',
         label: 'Signals',
         icon: Radio,
-        description: 'Active setups & paper trades',
+        description: 'Active setups, scanner workbench & paper trades',
         badgeKey: 'signals',
-        keywords: ['signals', 'setups', 'paper', 'trades', 'desk', 'scalp', 'intraday'],
-      },
-      {
-        id: 'forge',
-        href: '/forge',
-        label: 'Signal Forge',
-        icon: Hammer,
-        description: 'Generate & confirm intraday setups',
-        keywords: ['forge', 'generate', 'confirm', 'ai', 'workbench', 'scanner'],
+        keywords: ['signals', 'setups', 'paper', 'trades', 'desk', 'scalp', 'intraday', 'forge', 'scanner'],
       },
       {
         id: 'swing',
@@ -192,14 +183,6 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['lab', 'research', 'experiment', 'indicator', 'backtest', 'models'],
       },
       {
-        id: 'research',
-        href: '/research',
-        label: 'Financial Research',
-        icon: BookOpenCheck,
-        description: 'Fundamentals, filings & event studies',
-        keywords: ['research', 'fundamental', 'financial', 'filings', 'events', 'quant'],
-      },
-      {
         id: 'risk',
         href: '/risk',
         label: 'Risk Matrix',
@@ -242,17 +225,30 @@ export const ALL_NAV_ITEMS: NavItem[] = [
 
 export const ALL_NAV_HREFS = ALL_NAV_ITEMS.map((i) => i.href);
 
+/**
+ * Route aliases mapping deprecated or consolidated paths to active destinations.
+ */
+export const ROUTE_ALIASES: Record<string, string> = {
+  '/research': '/lab',
+  '/forge': '/signals',
+};
+
 export function isGroupActive(pathname: string, group: NavGroup): boolean {
   return group.items.some((i) => isActivePath(pathname, i.href));
 }
 
 export function isActivePath(pathname: string, href: string): boolean {
-  if (href === '/') return pathname === '/';
-  return pathname === href || pathname.startsWith(href + '/');
+  const normalizedPath = ROUTE_ALIASES[pathname] ?? pathname;
+  if (href === '/') return normalizedPath === '/';
+  return normalizedPath === href || normalizedPath.startsWith(href + '/');
 }
 
 export function findNavItemByHref(href: string): NavItem | undefined {
-  return ALL_NAV_ITEMS.find((i) => i.href === href);
+  const direct = ALL_NAV_ITEMS.find((i) => i.href === href);
+  if (direct) return direct;
+  const alias = ROUTE_ALIASES[href];
+  if (alias) return ALL_NAV_ITEMS.find((i) => i.href === alias);
+  return undefined;
 }
 
 /** Resolve a shortcut label (e.g. `⌘2`) to its nav item, if one is bound. */

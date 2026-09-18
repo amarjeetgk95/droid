@@ -1,12 +1,6 @@
-'use client';
+import { permanentRedirect } from 'next/navigation';
 
-import React from 'react';
-import { ForgeWorkbench } from '@/components/signal-forge';
-
+/** Signal Forge has been consolidated into the Signals desk (scanner tab). */
 export default function SignalForgePage() {
-  return (
-    <div className="space-y-5">
-      <ForgeWorkbench />
-    </div>
-  );
+  permanentRedirect('/signals?tab=scanner');
 }

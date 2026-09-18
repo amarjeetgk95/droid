@@ -1,12 +1,18 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, RefreshCw, Save, Settings2 } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { api } from '@/lib/api';
 import { SettingsProvider, useSettings } from '@/components/settings/SettingsProvider';
 import { SettingsSidebar } from '@/components/settings/SettingsSidebar';
-import { isSaveableTab, type SettingsTabId } from '@/components/settings/registry';
+import {
+  isSaveableTab,
+  SETTINGS_TAB_IDS,
+  DEFAULT_SETTINGS_TAB,
+  type SettingsTabId,
+} from '@/components/settings/registry';
+import { useEnumQueryParam, useQueryParamsWriter } from '@/lib/urlState';
 import { PreferencesTab } from '@/components/settings/PreferencesTab';
 import { AIEngineTab } from '@/components/settings/AIEngineTab';
 import { BrokerConnectionTab } from '@/components/settings/BrokerConnectionTab';
@@ -15,6 +21,7 @@ import { PaperTradingRiskTab } from '@/components/settings/PaperTradingRiskTab';
 import { TelegramTab } from '@/components/settings/TelegramTab';
 import { MonitoringTab } from '@/components/settings/MonitoringTab';
 import { MLOperationsTab } from '@/components/settings/MLOperationsTab';
+import { SystemNerveTab } from '@/components/settings/SystemNerveTab';
 import {
   mergeAppSettingsFromSupabase,
   toSupabasePayload,
@@ -23,8 +30,22 @@ import {
 import type { UserSettingsUpdate } from '@/lib/types';
 
 function SettingsDesk() {
-  const [activeTab, setActiveTab] = useState<SettingsTabId>('preferences');
+  const tabParam = useEnumQueryParam('tab', SETTINGS_TAB_IDS, DEFAULT_SETTINGS_TAB);
+  const setQueryParams = useQueryParamsWriter();
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(tabParam);
   const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    setActiveTab(tabParam);
+  }, [tabParam]);
+
+  const handleTabChange = useCallback(
+    (nextTab: SettingsTabId) => {
+      setActiveTab(nextTab);
+      setQueryParams({ tab: nextTab === DEFAULT_SETTINGS_TAB ? null : nextTab });
+    },
+    [setQueryParams],
+  );
 
   const {
     settings,
@@ -101,6 +122,8 @@ function SettingsDesk() {
         return <MonitoringTab />;
       case 'ml':
         return <MLOperationsTab />;
+      case 'system':
+        return <SystemNerveTab />;
       default:
         return null;
     }
@@ -212,7 +235,7 @@ function SettingsDesk() {
       <div className="grid grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)] gap-5 items-start">
         <SettingsSidebar
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={handleTabChange}
           query={query}
           onQueryChange={setQuery}
           dirtySections={isDirtySections}
@@ -248,7 +271,18 @@ export default function SettingsPage() {
 
   return (
     <SettingsProvider onSaveToBackend={handleSaveToBackend} onLoadFromBackend={handleLoadFromBackend}>
-      <SettingsDesk />
+      <Suspense
+        fallback={
+          <div className="ds-page">
+            <div className="card card-pad" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <RefreshCw className="w-4 h-4 animate-spin text-[var(--ds-ink-3)]" />
+              <span className="muted" style={{ fontSize: 13 }}>Loading terminal configuration…</span>
+            </div>
+          </div>
+        }
+      >
+        <SettingsDesk />
+      </Suspense>
     </SettingsProvider>
   );
 }

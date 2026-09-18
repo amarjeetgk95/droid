@@ -28,6 +28,7 @@ vi.mock('@/lib/api', () => ({
     getCallsPutsFull: getCallsPutsFullMock,
     getInstitutionalDataHealthDashboard: getInstitutionalDataHealthDashboardMock,
     getFiiDiiActivity: getFiiDiiActivityMock,
+    getFiiDiiData: getFiiDiiActivityMock,
     tripFeedCircuit: tripFeedCircuitMock,
     resyncFeedCircuit: resyncFeedCircuitMock,
   },

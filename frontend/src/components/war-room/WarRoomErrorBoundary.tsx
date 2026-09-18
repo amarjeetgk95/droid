@@ -2,7 +2,7 @@
 
 import React, { Component, type ReactNode } from 'react';
 import { ShieldAlert, RefreshCw, Power } from 'lucide-react';
-import { executeEmergencyKill } from './AlgoControlWidget';
+import { executeEmergencyKill } from '@/lib/api/algo';
 
 interface Props {
   children: ReactNode;

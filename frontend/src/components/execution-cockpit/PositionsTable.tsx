@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
+import { usePaperTrading } from '@/hooks/usePaperTrading';
 import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
@@ -65,10 +66,18 @@ const money = (value: number | null): string =>
     : `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export const PositionsTable: React.FC = () => {
-  const [positions, setPositions] = useState<CockpitPosition[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const {
+    positions: paperPositions,
+    loading: paperLoading,
+    positionsError: paperError,
+    squareOffPosition,
+    refresh: refreshPaper,
+    lastUpdated: paperLastUpdated,
+  } = usePaperTrading({ pollIntervalMs: 4000 });
+
+  const [algoPositions, setAlgoPositions] = useState<AlgoPosition[]>([]);
+  const [algoLoaded, setAlgoLoaded] = useState(false);
+  const [algoError, setAlgoError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [exitTarget, setExitTarget] = useState<CockpitPosition | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -79,48 +88,41 @@ export const PositionsTable: React.FC = () => {
     busyMessage: 'An exit is already in progress. Wait for it to finish.',
   });
 
-  const refresh = useCallback(async () => {
-    const [paperRes, algoRes] = await Promise.allSettled([
-      api.getPaperPositions(),
-      api.getAlgoPositions(),
-    ]);
-
-    const failures: string[] = [];
-    const merged: CockpitPosition[] = [];
-
-    if (paperRes.status === 'fulfilled') {
-      if (paperRes.value?.error) {
-        failures.push(`paper desk: ${paperRes.value.error}`);
-      } else if (Array.isArray(paperRes.value?.data)) {
-        paperRes.value.data.forEach((p) => {
-          if (p.is_open !== false) merged.push(mapPaper(p));
-        });
+  const refreshAlgo = useCallback(async () => {
+    try {
+      const res = await api.getAlgoPositions();
+      if (Array.isArray(res?.data)) {
+        setAlgoPositions(res.data);
+        setAlgoError(null);
       } else {
-        failures.push('paper desk returned an invalid payload');
+        setAlgoError('algo desk returned an invalid payload');
       }
-    } else {
-      failures.push(`paper desk: ${errorMessage(paperRes.reason, 'Unknown execution error')}`);
+    } catch (err) {
+      setAlgoError(`algo desk: ${errorMessage(err, 'Unknown execution error')}`);
+    } finally {
+      setAlgoLoaded(true);
     }
-
-    if (algoRes.status === 'fulfilled') {
-      if (Array.isArray(algoRes.value?.data)) {
-        algoRes.value.data.forEach((p) => merged.push(mapAlgo(p)));
-      } else {
-        failures.push('algo desk returned an invalid payload');
-      }
-    } else {
-      failures.push(`algo desk: ${errorMessage(algoRes.reason, 'Unknown execution error')}`);
-    }
-
-    if (paperRes.status === 'fulfilled' || algoRes.status === 'fulfilled') {
-      setPositions(merged);
-      setLoaded(true);
-      setLastUpdated(Date.now());
-    }
-    setLoadError(failures.length > 0 ? failures.join(' · ') : null);
   }, []);
 
-  usePolling(refresh, 4000);
+  usePolling(refreshAlgo, 4000);
+
+  const loaded = !paperLoading || algoLoaded;
+
+  const positions = useMemo(() => {
+    const merged: CockpitPosition[] = [];
+    paperPositions.forEach((p) => {
+      if (p.is_open !== false) merged.push(mapPaper(p));
+    });
+    algoPositions.forEach((p) => {
+      merged.push(mapAlgo(p));
+    });
+    return merged;
+  }, [paperPositions, algoPositions]);
+
+  const failures: string[] = [];
+  if (paperError) failures.push(`paper desk: ${paperError}`);
+  if (algoError) failures.push(algoError);
+  const loadError = failures.length > 0 ? failures.join(' · ') : null;
 
   useEffect(() => {
     if (!loaded) return;
@@ -150,11 +152,14 @@ export const PositionsTable: React.FC = () => {
           );
         }
       } else {
-        const res = await api.closePaperPosition(target.position_id);
+        const res = (await squareOffPosition(target.position_id)) as
+          | { data?: unknown; error?: string }
+          | undefined;
         const data = res?.data as unknown as
           | { closed?: boolean; is_open?: boolean }
           | undefined;
-        const confirmed = data?.closed === true || (data?.closed === undefined && data?.is_open === false);
+        const confirmed =
+          data?.closed === true || (data?.closed === undefined && data?.is_open === false);
         if (!confirmed) {
           throw new Error(
             `Paper desk did not confirm the close for ${target.symbol}. The position remains open.`,
@@ -170,10 +175,15 @@ export const PositionsTable: React.FC = () => {
       throw new Error(outcome.message);
     }
 
-    await refresh();
+    if (target.source === 'ALGO') {
+      await refreshAlgo();
+    } else {
+      await refreshPaper();
+    }
     setActionNotice(`Exit confirmed for ${target.symbol} (${target.source} desk).`);
   };
 
+  const lastUpdated = paperLastUpdated ? paperLastUpdated.getTime() : null;
   const formatAge = lastUpdated === null ? null : ageLabel(lastUpdated);
 
   return (

@@ -2,49 +2,18 @@
 
 /* PaperCard — Phase W6 paper-portfolio truth for the War Room rail.
  *
- * Self-fetching on a 15s poll (hidden-tab aware): getPaperPortfolio for
- * virtual_capital/available_margin/used_margin/utilization plus
- * realized/unrealized, and getPaperPositions for the open list (the backend
- * returns active AND closed rows, so is_open is filtered client-side).
- *
- * Square-off (per-row and square-off-all) is destructive and never fires
- * unconfirmed: both paths go through the single shared ConfirmDialog with an
- * intent block (position · side · qty · basis · snapshot time).
- *
- * Failure posture: muted notes, never fake zeros. A failed fetch keeps the
- * last known snapshot and says so; with no snapshot yet, only the note
- * renders — no zeroed capital, no invented margin.
- *
- * Visuals: .card/.card-hd/.card-title/.card-bd, TelemetryStrip, .tbl
- * tbl-dense, .num + fmtINR, .chip tones. No new styling dialects.
+ * Consumes usePaperTrading hook (self-fetching on a 15s poll).
+ * Square-off (per-row and square-off-all) is destructive and goes through
+ * the shared ConfirmDialog with an intent block.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '@/lib/api';
+import { memo, useCallback, useState } from 'react';
 import { fmtINR, TelemetryStrip, TelemetryItem } from '@/components/ui/desk';
 import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
-import type { PortfolioSummary, VirtualPosition } from '@/lib/types';
+import { usePaperTrading } from '@/hooks/usePaperTrading';
+import type { VirtualPosition } from '@/lib/types';
 
 const POLL_MS = 15_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asPositions(value: unknown): VirtualPosition[] | null {
-  const list = isRecord(value) && 'data' in value ? value.data : value;
-  if (!Array.isArray(list)) return null;
-  return list.filter(
-    (p): p is VirtualPosition =>
-      isRecord(p) && typeof p.position_id === 'string' && typeof p.symbol === 'string',
-  );
-}
-
-function asPortfolio(value: unknown): PortfolioSummary | null {
-  const data = isRecord(value) && 'data' in value ? value.data : value;
-  if (!isRecord(data) || typeof data.virtual_capital !== 'number') return null;
-  return data as unknown as PortfolioSummary;
-}
 
 function fmtQty(v: unknown): string {
   const n = typeof v === 'string' ? Number(v) : (v as number);
@@ -91,94 +60,42 @@ function intentRows(pending: PendingAction | null): ConfirmIntentRow[] {
 }
 
 export const PaperCard = memo(function PaperCard() {
-  const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
-  const [positions, setPositions] = useState<VirtualPosition[]>([]);
-  const [positionsKnown, setPositionsKnown] = useState(false);
-  const [portfolioNote, setPortfolioNote] = useState<string | null>(null);
-  const [positionsNote, setPositionsNote] = useState<string | null>(null);
+  const {
+    portfolio,
+    positions,
+    loading,
+    portfolioError: portfolioNote,
+    positionsError: positionsNote,
+    lastUpdated: updatedAt,
+    squareOffPosition,
+    squareOffAll,
+    refresh,
+  } = usePaperTrading({ pollIntervalMs: POLL_MS });
+
   const [actionNote, setActionNote] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [acting, setActing] = useState(false);
-  const inFlight = useRef(false);
-
-  const load = useCallback(async (opts?: { manual?: boolean }) => {
-    if (typeof document !== 'undefined' && document.hidden && !opts?.manual) return;
-    if (typeof api.getPaperPortfolio !== 'function' || typeof api.getPaperPositions !== 'function') {
-      setPortfolioNote('paper clients unavailable');
-      setPositionsNote('paper clients unavailable');
-      setLoading(false);
-      return;
-    }
-    if (inFlight.current) return;
-    inFlight.current = true;
-    try {
-      const [pfRes, posRes] = await Promise.allSettled([api.getPaperPortfolio(), api.getPaperPositions()]);
-      if (pfRes.status === 'fulfilled') {
-        const pf = asPortfolio(pfRes.value);
-        if (pf) {
-          setPortfolio(pf);
-          setPortfolioNote(null);
-        } else {
-          // Keep the last known snapshot; with none yet, the note below
-          // renders instead of zeroed capital.
-          setPortfolioNote('paper portfolio unavailable');
-        }
-      } else {
-        setPortfolioNote(pfRes.reason instanceof Error ? pfRes.reason.message : 'paper portfolio unavailable');
-      }
-      if (posRes.status === 'fulfilled') {
-        const list = asPositions(posRes.value);
-        if (list) {
-          setPositions(list.filter((p) => p.is_open === true));
-          setPositionsKnown(true);
-          setPositionsNote(null);
-        } else {
-          setPositionsNote('paper positions unavailable');
-        }
-      } else {
-        setPositionsNote(posRes.reason instanceof Error ? posRes.reason.message : 'paper positions unavailable');
-      }
-      setUpdatedAt(new Date());
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      void load();
-    }, POLL_MS);
-    return () => clearInterval(id);
-  }, [load]);
 
   const confirmSquareOff = useCallback(async () => {
     if (!pending || acting) return;
-    if (typeof api.squareOffPosition !== 'function' || typeof api.squareOffAllPositions !== 'function') {
-      setActionNote('square-off clients unavailable');
-      return;
-    }
     setActing(true);
     setActionNote(null);
     try {
       if (pending.kind === 'all') {
-        await api.squareOffAllPositions();
+        await squareOffAll();
       } else {
-        await api.squareOffPosition(pending.position.position_id);
+        await squareOffPosition(pending.position.position_id);
       }
       setPending(null);
-      await load({ manual: true });
+      await refresh();
     } catch (err) {
       setActionNote(err instanceof Error ? err.message : 'square-off failed');
     } finally {
       setActing(false);
     }
-  }, [pending, acting, load]);
+  }, [pending, acting, squareOffAll, squareOffPosition, refresh]);
 
+  const positionsKnown = !loading || positions.length > 0;
   const openCount = positions.length;
   const showSkeleton = loading && portfolio === null && !positionsKnown;
 

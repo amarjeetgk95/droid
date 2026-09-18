@@ -71,6 +71,7 @@ export function SettingsSidebar({
         type="button"
         role="tab"
         aria-selected={isActive}
+        data-tab={tab.id}
         title={tab.description}
         onClick={() => onTabChange(tab.id)}
         className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-xs transition-colors cursor-pointer text-left ${

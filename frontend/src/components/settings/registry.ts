@@ -20,10 +20,11 @@ export type SettingsTabId =
   | 'paper'
   | 'telegram'
   | 'monitoring'
-  | 'ml';
+  | 'ml'
+  | 'system';
 
-/** Sections persisted through SettingsProvider. Telegram, monitoring and ml manage themselves. */
-export type SettingsSaveableId = Exclude<SettingsTabId, 'telegram' | 'monitoring' | 'ml'>;
+/** Sections persisted through SettingsProvider. Telegram, monitoring, ml and system manage themselves. */
+export type SettingsSaveableId = Exclude<SettingsTabId, 'telegram' | 'monitoring' | 'ml' | 'system'>;
 
 export interface SettingsTabDef {
   id: SettingsTabId;
@@ -121,6 +122,16 @@ export const SETTINGS_TABS: readonly SettingsTabDef[] = [
       'champion', 'challenger', 'brier', 'settlement', 'probabilities', 'targets',
     ],
   },
+  {
+    id: 'system',
+    label: 'System Nerve',
+    description: 'Operational telemetry, broker session, notifications & diagnostics',
+    icon: Activity,
+    keywords: [
+      'system', 'nerve', 'telemetry', 'broker session', 'token', 'diagnostics',
+      'drift', 'cache', 'subsystems', 'operational', 'notifications',
+    ],
+  },
 ] as const;
 
 export const SETTINGS_TAB_IDS: readonly SettingsTabId[] = SETTINGS_TABS.map((t) => t.id);
@@ -132,7 +143,7 @@ export function getTabDef(id: SettingsTabId): SettingsTabDef {
 }
 
 export function isSaveableTab(id: SettingsTabId): id is SettingsSaveableId {
-  return id !== 'telegram' && id !== 'monitoring' && id !== 'ml';
+  return id !== 'telegram' && id !== 'monitoring' && id !== 'ml' && id !== 'system';
 }
 
 /** Case-insensitive match across label, description and keywords. */

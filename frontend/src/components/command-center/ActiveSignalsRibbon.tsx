@@ -1,77 +1,22 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useCallback, useState } from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { api } from '@/lib/api';
-import { toNumber } from '@/lib/coerce';
 import { Card } from '@/components/ui/card';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
-import { Modal } from '@/components/ui/modal';
 import { EmptyNote, fmtINR } from '@/components/ui/desk';
 import { FreshnessClock } from '@/components/common/FreshnessClock';
 import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
+import { useActiveSignals, type StandardActiveSignal as ActiveSignal } from '@/hooks/useActiveSignals';
+import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 
-export interface ActiveSignal {
-  signal_id: string;
-  instrument: string;
-  direction: string;
-  strategy: string;
-  fsm_state: string;
-  trigger: number | null;
-  stop_loss: number | null;
-  target_1: number | null;
-  target_2: number | null;
-  confidence: number | null;
-  timeframe: string | null;
-  distance_to_trigger_pts: number | null;
-  ttl_remaining_seconds: number | null;
-  data_quality: string | null;
-  rationale: string[];
-  risk_reward_t1: number | null;
-  created_at_str: string | null;
-}
-
-function num(v: unknown): number | null {
-  return toNumber(v);
-}
-
-function str(v: unknown): string | null {
-  return typeof v === 'string' && v.trim().length > 0 ? v : null;
-}
-
-function toActiveSignal(raw: unknown): ActiveSignal | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const signalId = str(o.signal_id);
-  if (!signalId) return null;
-  return {
-    signal_id: signalId,
-    instrument: str(o.underlying) ?? str(o.instrument) ?? '—',
-    direction: str(o.direction) ?? 'UNKNOWN',
-    strategy: str(o.strategy) ?? str(o.strategy_id) ?? '—',
-    fsm_state: str(o.fsm_state) ?? str(o.status) ?? 'UNKNOWN',
-    trigger: num(o.trigger) ?? num(o.trigger_level),
-    stop_loss: num(o.stop_loss),
-    target_1: num(o.target_1),
-    target_2: num(o.target_2),
-    confidence: num(o.confidence),
-    timeframe: str(o.timeframe),
-    distance_to_trigger_pts: num(o.distance_to_trigger_pts),
-    ttl_remaining_seconds: num(o.ttl_remaining_seconds),
-    data_quality: str(o.data_quality),
-    rationale: Array.isArray(o.rationale)
-      ? o.rationale.filter((r): r is string => typeof r === 'string').slice(0, 4)
-      : [],
-    risk_reward_t1: num(o.risk_reward_t1),
-    created_at_str: str(o.created_at_str),
-  };
-}
+export type { ActiveSignal };
 
 function confidencePct(confidence: number | null): string {
   if (confidence === null) return '—';
-  const pct = confidence <= 1 ? confidence * 100 : confidence;
+  const pct = confidence <= 1 && confidence > 0 ? confidence * 100 : confidence;
   return `${pct.toFixed(0)}%`;
 }
 
@@ -96,49 +41,34 @@ function stateVariant(state: string): BadgeVariant {
 
 function directionIsCall(direction: string): boolean {
   const d = direction.toUpperCase();
-  return d.includes('CALL') || d.includes('BULL');
+  return d.includes('CALL') || d.includes('BULL') || d.includes('BUY') || d.includes('LONG');
 }
 
 export const ActiveSignalsRibbon: React.FC = () => {
   const { instrument } = useInstrument();
   const { phase, isOpen } = useMarketSession();
-  const [signals, setSignals] = useState<ActiveSignal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [selectedSignal, setSelectedSignal] = useState<ActiveSignal | null>(null);
   const [pendingExec, setPendingExec] = useState<ActiveSignal | null>(null);
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [lastAt, setLastAt] = useState<Date | null>(null);
-  const loadedRef = useRef(false);
-  const hasDataRef = useRef(false);
 
-  const load = useCallback(async () => {
-    const initial = !loadedRef.current;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    try {
-      const res = await api.getSignalsActive({ instrument });
-      const rows = Array.isArray(res?.signals) ? res.signals : [];
-      setSignals(rows.map(toActiveSignal).filter((s): s is ActiveSignal => s !== null));
-      setError(null);
-      setLastAt(new Date());
-      hasDataRef.current = true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Active signals unavailable');
-    } finally {
-      loadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [instrument]);
+  const marketClosed = !isOpen;
 
-  usePolling(() => {
-    if (!isOpen && hasDataRef.current) return;
-    return load();
-  }, 3000);
+  const {
+    signals,
+    loading,
+    refreshing,
+    error,
+    lastAt,
+    refresh,
+  } = useActiveSignals({
+    instrument,
+    pollIntervalMs: 3000,
+    marketClosed,
+    requireContract: false,
+    requireTimestamp: false,
+  });
 
   const handleExecutePaper = useCallback(
     async (signal: ActiveSignal) => {
@@ -152,14 +82,14 @@ export const ActiveSignalsRibbon: React.FC = () => {
           `Paper order ${res?.order_id ?? '(no id)'} placed — ${signal.instrument} ${signal.strategy}${qty}`,
         );
         setPendingExec(null);
-        await load();
+        await refresh();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : 'Paper execution failed');
       } finally {
         setExecutingId(null);
       }
     },
-    [load],
+    [refresh],
   );
 
   const execIntentRows = (sig: ActiveSignal): ConfirmIntentRow[] => [
@@ -172,8 +102,6 @@ export const ActiveSignalsRibbon: React.FC = () => {
     { label: 'Target 2', value: fmtINR(sig.target_2) },
     { label: 'Confidence', value: confidencePct(sig.confidence) },
   ];
-
-  const marketClosed = !isOpen;
 
   return (
     <>
@@ -223,7 +151,7 @@ export const ActiveSignalsRibbon: React.FC = () => {
         ) : error && signals.length === 0 ? (
           <div className="text-center py-10 border border-dashed border-border rounded-lg">
             <EmptyNote>Active signals unavailable — {error}</EmptyNote>
-            <button type="button" className="btn mt-3" onClick={() => void load()} disabled={refreshing}>
+            <button type="button" className="btn mt-3" onClick={() => void refresh()} disabled={refreshing}>
               {refreshing ? 'Retrying…' : 'Retry'}
             </button>
           </div>
@@ -235,7 +163,8 @@ export const ActiveSignalsRibbon: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {signals.map((sig) => {
-              const isCall = directionIsCall(sig.direction);
+              const dirToken = sig.rawDirection || sig.direction;
+              const isCall = directionIsCall(dirToken);
               const executionBlocked = marketClosed || executingId === sig.signal_id;
               return (
                 <div
@@ -245,7 +174,7 @@ export const ActiveSignalsRibbon: React.FC = () => {
                   <div className="flex items-center justify-between mb-2 gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <Badge variant={isCall ? 'bull' : 'bear'} size="xs">
-                        {sig.direction}
+                        {dirToken}
                       </Badge>
                       <span className="font-mono text-xs font-semibold text-foreground truncate">
                         {sig.strategy}
@@ -285,13 +214,15 @@ export const ActiveSignalsRibbon: React.FC = () => {
 
                   <div className="flex items-center justify-between pt-1 gap-2">
                     <button
+                      type="button"
                       onClick={() => setSelectedSignal(sig)}
-                      className="text-xs text-ink-3 hover:text-foreground font-mono underline"
+                      className="text-xs text-ink-3 hover:text-foreground font-mono underline cursor-pointer"
                     >
                       Dossier
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => {
                         setActionError(null);
                         setPendingExec(sig);
@@ -302,7 +233,7 @@ export const ActiveSignalsRibbon: React.FC = () => {
                           ? `Paper execution blocked — market session ${phase}`
                           : 'Confirm paper execution'
                       }
-                      className="px-3 py-1 bg-up text-primary-foreground font-mono text-xs font-semibold rounded transition-all shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 bg-up text-primary-foreground font-mono text-xs font-semibold rounded transition-all shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {executingId === sig.signal_id ? 'Executing…' : 'Paper Exec'}
                     </button>
@@ -324,75 +255,11 @@ export const ActiveSignalsRibbon: React.FC = () => {
         </div>
       </Card>
 
-      {selectedSignal && (
-        <Modal
-          isOpen={true}
-          onClose={() => setSelectedSignal(null)}
-          title={`SIGNAL DOSSIER #${selectedSignal.signal_id.slice(0, 8)}`}
-          maxWidth="lg"
-        >
-          <div className="space-y-4 font-mono text-xs">
-            <div className="p-3 bg-surface-subtle rounded-lg border border-border flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <span className="text-ink-3">Underlying: </span>
-                <strong className="text-foreground">{selectedSignal.instrument}</strong>
-              </div>
-              <div>
-                <span className="text-ink-3">Direction: </span>
-                <Badge variant={directionIsCall(selectedSignal.direction) ? 'bull' : 'bear'} size="xs">
-                  {selectedSignal.direction}
-                </Badge>
-              </div>
-              <div>
-                <span className="text-ink-3">Confidence: </span>
-                <strong className="text-primary font-bold">
-                  {confidencePct(selectedSignal.confidence)}
-                </strong>
-              </div>
-              <div>
-                <span className="text-ink-3">FSM: </span>
-                <strong className="text-foreground">{selectedSignal.fsm_state}</strong>
-              </div>
-            </div>
-
-            <div className="p-3 bg-surface-subtle rounded-lg border border-border space-y-2">
-              <div className="text-ink-2 font-semibold">COHERENCE &amp; ATTRIBUTION</div>
-              <div className="text-ink-2">
-                Strategy <strong className="text-primary">{selectedSignal.strategy}</strong>
-                {selectedSignal.timeframe ? ` · ${selectedSignal.timeframe}` : ''}
-                {selectedSignal.created_at_str ? ` · created ${selectedSignal.created_at_str}` : ''}
-              </div>
-              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border">
-                <div>Trigger: {fmtINR(selectedSignal.trigger)}</div>
-                <div>Stop Loss: {fmtINR(selectedSignal.stop_loss)}</div>
-                <div>Target 1: {fmtINR(selectedSignal.target_1)}</div>
-                <div>Target 2: {fmtINR(selectedSignal.target_2)}</div>
-                <div>
-                  Distance to trigger:{' '}
-                  {selectedSignal.distance_to_trigger_pts !== null
-                    ? `${selectedSignal.distance_to_trigger_pts.toFixed(2)} pts`
-                    : '—'}
-                </div>
-                <div>
-                  TTL remaining:{' '}
-                  {selectedSignal.ttl_remaining_seconds !== null
-                    ? `${Math.round(selectedSignal.ttl_remaining_seconds)}s`
-                    : '—'}
-                </div>
-              </div>
-              {selectedSignal.rationale.length > 0 ? (
-                <ul className="pt-2 border-t border-border space-y-1 text-ink-2">
-                  {selectedSignal.rationale.map((line, i) => (
-                    <li key={i}>{line}</li>
-                  ))}
-                </ul>
-              ) : (
-                <EmptyNote>No rationale recorded for this signal.</EmptyNote>
-              )}
-            </div>
-          </div>
-        </Modal>
-      )}
+      <SignalDetailDrawer
+        signal={selectedSignal}
+        isOpen={selectedSignal !== null}
+        onClose={() => setSelectedSignal(null)}
+      />
 
       <ConfirmDialog
         open={pendingExec !== null}

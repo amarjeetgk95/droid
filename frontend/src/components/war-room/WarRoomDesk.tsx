@@ -9,7 +9,7 @@ import { VerdictPanel } from './VerdictPanel';
 import { AlgoSafetyStrip } from './AlgoSafetyStrip';
 import { OptionsChainDrawer } from './OptionsChainDrawer';
 import { SignalFeedPanel, shouldRefreshVerdictOnSignalEvent, type WarRoomSignal } from './SignalFeedPanel';
-import { SignalDossierDrawer } from './SignalDossierDrawer';
+import { SignalDetailDrawer } from '@/components/signals/SignalDetailDrawer';
 import { BiasLayersCard } from './BiasLayersCard';
 import { LevelsCard } from './LevelsCard';
 import { PaperCard } from './PaperCard';
@@ -471,7 +471,7 @@ export function WarRoomDesk() {
         </div>
       </div>
 
-      <SignalDossierDrawer
+      <SignalDetailDrawer
         signal={dossierSignal}
         isOpen={dossierOpen && dossierSignal !== null}
         onClose={() => setDossierOpen(false)}

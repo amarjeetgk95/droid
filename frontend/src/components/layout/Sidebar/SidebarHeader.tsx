@@ -34,7 +34,7 @@ export function SidebarHeader({
   return (
     <div
       className={cn(
-        'flex h-16 shrink-0 items-center justify-between border-b border-border/70 px-4 transition-all duration-150 select-none',
+        'flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-4 transition-all duration-150 select-none',
         collapsed && !isMobile && 'justify-center px-2',
       )}
     >
