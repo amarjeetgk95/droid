@@ -8,6 +8,19 @@ from app.models.contracts import TickEvent, EventPriority
 
 
 class TestWebSocketFeed:
+    @staticmethod
+    def _receive_until(websocket, expected_type, max_frames=6):
+        """Drain frames until the expected type arrives.
+
+        The server may push an unsolicited snapshot `MARKET_TICKS` catch-up
+        frame before command replies, so tests must not assume frame order.
+        """
+        for _ in range(max_frames):
+            response = json.loads(websocket.receive_text())
+            if response["type"] == expected_type:
+                return response
+        raise AssertionError(f"{expected_type} not received within {max_frames} frames")
+
     def test_websocket_connect_and_welcome(self):
         client = TestClient(app)
         with client.websocket_connect("/api/v1/ws/market-feed") as websocket:
@@ -25,8 +38,7 @@ class TestWebSocketFeed:
 
             # Send PING
             websocket.send_text(json.dumps({"action": "PING"}))
-            response = json.loads(websocket.receive_text())
-            assert response["type"] == "PONG"
+            response = self._receive_until(websocket, "PONG")
             assert "timestamp" in response
 
     def test_websocket_subscribe_action(self):
@@ -37,7 +49,6 @@ class TestWebSocketFeed:
 
             # Subscribe to symbol
             websocket.send_text(json.dumps({"action": "SUBSCRIBE", "symbol": "RELIANCE"}))
-            response = json.loads(websocket.receive_text())
-            assert response["type"] == "SUBSCRIBED"
+            response = self._receive_until(websocket, "SUBSCRIBED")
             assert response["symbol"] == "RELIANCE"
             assert "RELIANCE" in central_feed.get_subscriptions()

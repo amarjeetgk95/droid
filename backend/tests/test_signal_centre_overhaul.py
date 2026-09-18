@@ -157,7 +157,17 @@ class TestInstitutionalSignalCentre:
         assert "win_rate_pct" in data
         assert "strategy_breakdown" in data
 
-    def test_generate_and_execute_paper_signal(self, client, mock_market_feed, paper_fills_from_marks):
+    def test_generate_and_execute_paper_signal(self, client, mock_market_feed, paper_fills_from_marks, monkeypatch):
+        # Isolation: pin feed-monitor telemetry so a live market session with no
+        # test broker feed cannot auto-activate the kill switch mid-test (which
+        # would make the 1-click paper execute fail its execution guard).
+        from app.signals.safety.feed_health_monitor import feed_health_monitor
+
+        monkeypatch.setattr(
+            feed_health_monitor,
+            "get_telemetry",
+            lambda *args, **kwargs: {"status": "LIVE", "staleness_ms": 0},
+        )
         gen_payload = {
             "underlying": "NIFTY",
             "strategy": "BREAKOUT",
