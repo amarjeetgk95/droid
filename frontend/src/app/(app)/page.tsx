@@ -9,6 +9,7 @@ import {
   MLPredictionBadges,
 } from '@/components/command-center';
 import { useInstrument, type SupportedInstrument } from '@/context/InstrumentContext';
+import { PaperTradingProvider } from '@/context/PaperTradingContext';
 import { WhyStrip } from '@/components/dashboard/WhyStrip';
 import { ForecastOutcomes } from '@/components/dashboard/ForecastOutcomes';
 
@@ -37,7 +38,9 @@ export default function CommandCenterPage() {
       {/* Real-Time Quantitative Engine & Paper Accounting */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <MLPredictionBadges />
-        <PaperPnLWidget />
+        <PaperTradingProvider pollIntervalMs={4000}>
+          <PaperPnLWidget />
+        </PaperTradingProvider>
       </div>
 
       {/* Market context telemetry for the selected index */}

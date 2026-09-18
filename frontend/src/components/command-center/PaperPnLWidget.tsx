@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useMarketSession } from '@/hooks/useMarketSession';
-import { usePaperTrading } from '@/hooks/usePaperTrading';
+import { usePaperTradingData } from '@/context/PaperTradingContext';
 import { toNumber } from '@/lib/coerce';
 import { Card } from '@/components/ui/card';
 import { Gauge } from '@/components/ui/gauge';
@@ -36,7 +36,7 @@ export const PaperPnLWidget: React.FC = () => {
     positionsError,
     lastUpdated: lastAt,
     openPositionsCount: openCount,
-  } = usePaperTrading({ pollIntervalMs: 4000 });
+  } = usePaperTradingData({ pollIntervalMs: 4000 });
 
   return (
     <Card

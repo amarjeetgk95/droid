@@ -42,13 +42,14 @@ const { apiMock, polls } = vi.hoisted(() => {
 
 vi.mock('@/lib/api', () => ({ api: apiMock }));
 vi.mock('@/hooks/usePolling', () => ({
-  usePolling: (cb: () => unknown) => {
-    polls.push(cb);
+  usePolling: (cb: () => unknown, _intervalMs?: number, enabled = true) => {
+    if (enabled) polls.push(cb);
   },
 }));
 
 import { PositionsTable } from './PositionsTable';
 import { PaperPortfolioCard } from './PaperPortfolioCard';
+import { PaperTradingProvider } from '@/context/PaperTradingContext';
 import { OrderBook } from './OrderBook';
 import { BasketOrderBuilder } from './BasketOrderBuilder';
 import { KillSwitchButton } from './KillSwitchButton';
@@ -186,6 +187,28 @@ describe('PaperPortfolioCard truth states', () => {
     });
 
     expect(screen.getAllByText(/did not return a square-off result/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('PaperTradingProvider single owner', () => {
+  it('fetches portfolio and positions once per cycle for every subscriber', async () => {
+    apiMock.getPaperPositions.mockResolvedValue({ data: [paperPosition] });
+    apiMock.getPaperPortfolio.mockResolvedValue({ data: portfolio });
+
+    render(
+      <PaperTradingProvider pollIntervalMs={4000}>
+        <PaperPortfolioCard />
+        <PositionsTable />
+      </PaperTradingProvider>,
+    );
+    await flushPolls();
+
+    expect(apiMock.getPaperPortfolio).toHaveBeenCalledTimes(1);
+    expect(apiMock.getPaperPositions).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText('NIFTY 24350 CE').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/₹1,00,000 allocated across 2 active position/),
+    ).toBeTruthy();
   });
 });
 

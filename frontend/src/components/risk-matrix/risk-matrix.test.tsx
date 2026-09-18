@@ -22,6 +22,7 @@ import { PerformanceCards } from './PerformanceCards';
 import { PerformanceChart } from './PerformanceChart';
 import { PortfolioGreeksDisplay } from './PortfolioGreeksDisplay';
 import { PortfolioRiskPanel } from './PortfolioRiskPanel';
+import { RiskDataProvider } from '@/context/RiskDataContext';
 
 beforeEach(() => {
   Object.values(apiMocks).forEach((m) => m.mockReset());
@@ -61,7 +62,11 @@ describe('AuditLedger', () => {
       timestamp_ms: 1,
     });
 
-    render(<AuditLedger />);
+    render(
+      <RiskDataProvider>
+        <AuditLedger />
+      </RiskDataProvider>,
+    );
 
     await waitFor(() => expect(screen.getByText('SIG-1')).toBeTruthy());
     expect(screen.getByText('17 Sep 2026, 10:00:00 IST')).toBeTruthy();
@@ -75,7 +80,11 @@ describe('AuditLedger', () => {
 
   it('shows an explicit unavailable state when the ledger fetch fails', async () => {
     apiMocks.getSignalsAudit.mockRejectedValue(new Error('backend unreachable'));
-    render(<AuditLedger />);
+    render(
+      <RiskDataProvider>
+        <AuditLedger />
+      </RiskDataProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/Audit ledger unavailable/)).toBeTruthy());
     expect(screen.getByText(/backend unreachable/)).toBeTruthy();
   });
@@ -119,7 +128,11 @@ describe('PerformanceCards', () => {
       expectancy_r: -0.35,
     });
 
-    render(<PerformanceCards />);
+    render(
+      <RiskDataProvider>
+        <PerformanceCards />
+      </RiskDataProvider>,
+    );
 
     await waitFor(() => expect(screen.getByText('-0.35 R')).toBeTruthy());
     expect(screen.queryByText('+-0.35 R')).toBeNull();
@@ -130,7 +143,11 @@ describe('PerformanceCards', () => {
 
   it('shows an explicit unavailable state instead of seeded metrics when the fetch fails', async () => {
     apiMocks.getSignalsPerformance.mockRejectedValue(new Error('perf down'));
-    render(<PerformanceCards />);
+    render(
+      <RiskDataProvider>
+        <PerformanceCards />
+      </RiskDataProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/Performance metrics unavailable/)).toBeTruthy());
     expect(screen.getByText(/perf down/)).toBeTruthy();
   });
@@ -150,7 +167,11 @@ describe('PerformanceChart', () => {
       timestamp_ms: 1,
     });
 
-    const { unmount } = render(<PerformanceChart />);
+    const { unmount } = render(
+      <RiskDataProvider>
+        <PerformanceChart />
+      </RiskDataProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/CURRENT: -₹150/)).toBeTruthy());
     expect(screen.getByText(/MAX DD: -₹300/)).toBeTruthy();
     expect(screen.getByText(/Settled trades plotted: 3/)).toBeTruthy();
@@ -163,9 +184,39 @@ describe('PerformanceChart', () => {
       summary: {},
       timestamp_ms: 1,
     });
-    render(<PerformanceChart />);
+    render(
+      <RiskDataProvider>
+        <PerformanceChart />
+      </RiskDataProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/Cumulative curve unavailable/)).toBeTruthy());
     expect(screen.queryByText(/CURRENT:/)).toBeNull();
+  });
+
+  it('shares a single audit fetch between the ledger and the chart', async () => {
+    const settled = [
+      { signal_id: 'A', actual_pnl_inr: 100, exited_at_utc: 1, status: 'WON' },
+      { signal_id: 'B', actual_pnl_inr: -300, exited_at_utc: 2, status: 'LOST' },
+      { signal_id: 'C', actual_pnl_inr: 50, exited_at_utc: 3, status: 'WON' },
+    ];
+    apiMocks.getSignalsAudit.mockResolvedValue({
+      trades: settled,
+      count: settled.length,
+      summary: {},
+      timestamp_ms: 1,
+    });
+
+    render(
+      <RiskDataProvider>
+        <AuditLedger />
+        <PerformanceChart />
+      </RiskDataProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Settled trades plotted: 3/)).toBeTruthy());
+    expect(screen.getByText('A')).toBeTruthy();
+    expect(apiMocks.getSignalsAudit).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getSignalsAudit).toHaveBeenCalledWith({ limit: 200 });
   });
 });
 

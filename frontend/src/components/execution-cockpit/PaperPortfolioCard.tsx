@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
-import { usePaperTrading } from '@/hooks/usePaperTrading';
+import { usePaperTradingData } from '@/context/PaperTradingContext';
 import { ageLabel } from '@/lib/feedState';
 import { Card } from '@/components/ui/card';
 import { Gauge } from '@/components/ui/gauge';
@@ -25,7 +25,7 @@ export const PaperPortfolioCard: React.FC = () => {
     lastUpdated: lastUpdatedDate,
     refresh,
     squareOffAll,
-  } = usePaperTrading({ pollIntervalMs: 4000 });
+  } = usePaperTradingData({ pollIntervalMs: 4000 });
 
   const lastUpdated = lastUpdatedDate ? lastUpdatedDate.getTime() : null;
   const [squareOffModal, setSquareOffModal] = useState(false);

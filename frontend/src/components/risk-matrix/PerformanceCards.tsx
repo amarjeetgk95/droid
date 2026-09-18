@@ -1,20 +1,8 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
-import { api } from '@/lib/api';
-import { errorMessage } from '@/lib/errors';
+import React from 'react';
+import { useRiskPerformance } from '@/context/RiskDataContext';
 import { UNAVAILABLE, finiteNumber, signedNumber, valueToneClass } from './riskUtils';
-
-type PerformanceSummary = {
-  total_signals?: unknown;
-  winning_signals?: unknown;
-  losing_signals?: unknown;
-  win_rate_pct?: unknown;
-  profit_factor?: unknown;
-  average_rr?: unknown;
-  expectancy_r?: unknown;
-};
 
 function winRateTone(completed: number, winRate: number | null): string {
   if (completed === 0 || winRate === null) return valueToneClass(null);
@@ -36,29 +24,7 @@ function profitFactorTone(completed: number, pf: number | null): string {
  * unavailable state instead of plausible-looking numbers.
  */
 export const PerformanceCards: React.FC = () => {
-  const [perf, setPerf] = useState<PerformanceSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const requestSeqRef = useRef(0);
-
-  const fetchPerf = useCallback(async () => {
-    const seq = ++requestSeqRef.current;
-    try {
-      const res = await api.getSignalsPerformance();
-      if (seq !== requestSeqRef.current) return;
-      setPerf(res ?? null);
-      setError(null);
-      setUpdatedAt(Date.now());
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return;
-      setError(errorMessage(err, 'Performance metrics unavailable'));
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
-    }
-  }, []);
-
-  usePolling(fetchPerf, 6000);
+  const { data: perf, loading, error, updatedAt, refresh } = useRiskPerformance();
 
   if (loading && !perf && !error) {
     return (
@@ -82,7 +48,7 @@ export const PerformanceCards: React.FC = () => {
         <span>Performance metrics unavailable — {error ?? 'no data returned'}.</span>
         <button
           type="button"
-          onClick={() => void fetchPerf()}
+          onClick={() => void refresh()}
           className="px-2.5 py-1 rounded border border-down-line bg-surface hover:bg-down-wash font-semibold"
         >
           Retry

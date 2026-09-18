@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePolling } from '@/hooks/usePolling';
 import { useAsyncAction } from '@/hooks/useAsyncAction';
-import { usePaperTrading } from '@/hooks/usePaperTrading';
+import { usePaperTradingData } from '@/context/PaperTradingContext';
 import { api } from '@/lib/api';
 import { toNumber } from '@/lib/coerce';
 import { errorMessage } from '@/lib/errors';
@@ -73,7 +73,7 @@ export const PositionsTable: React.FC = () => {
     squareOffPosition,
     refresh: refreshPaper,
     lastUpdated: paperLastUpdated,
-  } = usePaperTrading({ pollIntervalMs: 4000 });
+  } = usePaperTradingData({ pollIntervalMs: 4000 });
 
   const [algoPositions, setAlgoPositions] = useState<AlgoPosition[]>([]);
   const [algoLoaded, setAlgoLoaded] = useState(false);

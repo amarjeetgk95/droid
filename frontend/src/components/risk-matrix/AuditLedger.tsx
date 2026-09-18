@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useMemo, useState } from 'react';
+import { useRiskAudit } from '@/context/RiskDataContext';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { fmtINR } from '@/components/ui/desk';
@@ -55,34 +55,19 @@ function contractLabel(t: AuditTradeLike): string {
  * flagged as unavailable render an explicit UNAVAILABLE instead of ₹0.
  */
 export const AuditLedger: React.FC = () => {
-  const [trades, setTrades] = useState<AuditTradeLike[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const {
+    trades: auditTrades,
+    loading,
+    error,
+    updatedAt,
+    refresh,
+    removeTrades,
+  } = useRiskAudit();
+  const trades = useMemo(() => auditTrades.slice(0, 50), [auditTrades]);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedVoidId, setSelectedVoidId] = useState<string | null>(null);
   const [sanitizing, setSanitizing] = useState(false);
-  // Last-write-wins guard: a stale poll response can never replace a newer one.
-  const requestSeqRef = useRef(0);
-
-  const fetchAudit = useCallback(async () => {
-    const seq = ++requestSeqRef.current;
-    try {
-      const res = await api.getSignalsAudit({ limit: 50 });
-      if (seq !== requestSeqRef.current) return;
-      setTrades(Array.isArray(res?.trades) ? (res.trades as AuditTradeLike[]) : []);
-      setError(null);
-      setUpdatedAt(Date.now());
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return;
-      setError(errorMessage(err, 'Audit ledger unavailable'));
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
-    }
-  }, []);
-
-  usePolling(fetchAudit, 6000);
 
   const handleVoidTrade = async () => {
     if (!selectedVoidId) return;
@@ -97,7 +82,7 @@ export const AuditLedger: React.FC = () => {
       // Thrown so ConfirmDialog renders the failure in-dialog and stays open.
       throw new Error(`No record voided — ${selectedVoidId} was not found in the ledger.`);
     }
-    setTrades((prev) => prev.filter((t) => t.signal_id !== selectedVoidId));
+    removeTrades([selectedVoidId]);
     setActionMessage(
       `Quarantined ${voided} record (${selectedVoidId}) — excluded from the served ledger and P&L aggregates; retained as audit evidence.`,
     );
@@ -112,7 +97,7 @@ export const AuditLedger: React.FC = () => {
       setActionMessage(
         `Sanitize complete — ${res?.db_restored_repaired ?? 0} persisted record(s) repaired, ${res?.memory_sanitized ?? 0} in-memory record(s) sanitized.`,
       );
-      void fetchAudit();
+      void refresh();
     } catch (err) {
       setActionError(errorMessage(err, 'Sanitize failed — ledger left unchanged.'));
     } finally {
@@ -281,7 +266,7 @@ export const AuditLedger: React.FC = () => {
               <p>Audit ledger unavailable — {error}.</p>
               <button
                 type="button"
-                onClick={() => void fetchAudit()}
+                onClick={() => void refresh()}
                 className="px-2.5 py-1 rounded border border-down-line bg-surface hover:bg-down-wash font-semibold"
               >
                 Retry

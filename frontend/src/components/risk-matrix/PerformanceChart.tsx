@@ -1,13 +1,10 @@
 'use client';
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { usePolling } from '@/hooks/usePolling';
-import { api } from '@/lib/api';
+import React, { useMemo } from 'react';
 import { linearScale, polylinePoints } from '@/lib/chartGeometry';
-import { errorMessage } from '@/lib/errors';
+import { useRiskAudit } from '@/context/RiskDataContext';
 import { Card } from '@/components/ui/card';
 import {
-  type AuditTradeLike,
   buildEquityCurve,
   finiteNumber,
   signedINR,
@@ -30,29 +27,7 @@ function fmtDay(ms: number): string {
  * mixing it in would make the curve disagree with settled performance KPIs.
  */
 export const PerformanceChart: React.FC = () => {
-  const [trades, setTrades] = useState<AuditTradeLike[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const requestSeqRef = useRef(0);
-
-  const fetchTrades = useCallback(async () => {
-    const seq = ++requestSeqRef.current;
-    try {
-      const res = await api.getSignalsAudit({ limit: 200 });
-      if (seq !== requestSeqRef.current) return;
-      setTrades(Array.isArray(res?.trades) ? (res.trades as AuditTradeLike[]) : []);
-      setError(null);
-      setUpdatedAt(Date.now());
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return;
-      setError(errorMessage(err, 'Equity source unavailable'));
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
-    }
-  }, []);
-
-  usePolling(fetchTrades, 15000);
+  const { trades, loading, error, updatedAt, refresh } = useRiskAudit();
 
   const curve = useMemo(() => buildEquityCurve(trades), [trades]);
   const settledCount = useMemo(
@@ -108,7 +83,7 @@ export const PerformanceChart: React.FC = () => {
             <p>Equity curve unavailable — {error}.</p>
             <button
               type="button"
-              onClick={() => void fetchTrades()}
+              onClick={() => void refresh()}
               className="px-2.5 py-1 rounded border border-down-line bg-surface hover:bg-down-wash font-semibold"
             >
               Retry

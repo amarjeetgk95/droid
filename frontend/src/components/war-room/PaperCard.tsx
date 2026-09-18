@@ -2,7 +2,8 @@
 
 /* PaperCard — Phase W6 paper-portfolio truth for the War Room rail.
  *
- * Consumes usePaperTrading hook (self-fetching on a 15s poll).
+ * Consumes the route's shared PaperTradingProvider (15s cycle); falls back to
+ * a self-owned 15s poll outside a provider.
  * Square-off (per-row and square-off-all) is destructive and goes through
  * the shared ConfirmDialog with an intent block.
  */
@@ -10,7 +11,7 @@
 import { memo, useCallback, useState } from 'react';
 import { fmtINR, TelemetryStrip, TelemetryItem } from '@/components/ui/desk';
 import { ConfirmDialog, type ConfirmIntentRow } from '@/components/ui/ConfirmDialog';
-import { usePaperTrading } from '@/hooks/usePaperTrading';
+import { usePaperTradingData } from '@/context/PaperTradingContext';
 import type { VirtualPosition } from '@/lib/types';
 
 const POLL_MS = 15_000;
@@ -70,7 +71,7 @@ export const PaperCard = memo(function PaperCard() {
     squareOffPosition,
     squareOffAll,
     refresh,
-  } = usePaperTrading({ pollIntervalMs: POLL_MS });
+  } = usePaperTradingData({ pollIntervalMs: POLL_MS });
 
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
