@@ -16,6 +16,13 @@ P3 additive sections (`paper`, `forecast`, `algo`) extend the same envelope for
 state the frontend used to poll. `SECTION_KEYS` keeps the original seven names
 and order and appends the new three, so existing consumers' snapshots stay
 stable.
+
+D7 per-instrument maps (`regime.value.by_symbol`, `ml.value.by_symbol`,
+`forecast.value.by_instrument`) extend the NIFTY-pinned sections with
+BANKNIFTY/SENSEX payloads so the frontend can drop its remaining
+per-instrument REST fallbacks. Map entries are fail-open `null`s and never
+degrade their section: an optional instrument being absent is not a fault of
+the global section.
 """
 from __future__ import annotations
 
@@ -116,9 +123,27 @@ FORECAST_PREDICTIONS_LIMIT = 50
 ALGO_COMPOSE_USER_ID = SIGNAL_BOOK_USER_ID
 ALGO_ORDERS_LIMIT = 50
 
+#: D7 per-instrument maps: the top-level `regime`/`ml`/`forecast` legs stay
+#: pinned to NIFTY (the stream is a global broadcast with no request identity);
+#: these maps carry the same payloads per instrument so the frontend can drop
+#: its remaining BANKNIFTY/SENSEX REST fallbacks. Keys are the canonical symbol
+#: each source expects — `PredictionService` stores the "NIFTY 50" spelling,
+#: the regime/ML services normalize the broker underlying themselves.
+INSTRUMENT_SYMBOLS: tuple[str, ...] = ("NIFTY", "BANKNIFTY", "SENSEX")
+FORECAST_INSTRUMENTS: tuple[str, ...] = ("NIFTY 50", "BANKNIFTY", "SENSEX")
+
+#: Per-instrument map TTLs: regime ~45s (heavy indicator/chain probes), ML
+#: ~15s (the ensemble fans out to market/regime/options per symbol), forecast
+#: ~60s (rides the top-level section's cache entry, hence the alias).
+REGIME_BY_SYMBOL_FRESH_TTL = 45.0
+ML_BY_SYMBOL_FRESH_TTL = 15.0
+FORECAST_BY_INSTRUMENT_FRESH_TTL = FORECAST_FRESH_TTL
+
 _paper_cache: dict[str, tuple[float, _Leg]] = {}
 _forecast_cache: dict[str, tuple[float, _Leg]] = {}
 _algo_cache: dict[str, tuple[float, _Leg]] = {}
+_regime_by_symbol_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_ml_by_symbol_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 #: section -> (sha256(value), version). Single-process asyncio: this map is only
 #: touched synchronously (no await between read and update), so no locks needed.
@@ -299,6 +324,91 @@ async def _get_futures_overviews() -> tuple[dict[str, Any], datetime | None]:
     return values, oldest
 
 
+async def _get_regime_by_symbol(summary: DashboardSummary) -> dict[str, Any]:
+    """Per-instrument regime + options analytics, cached ~45s, fail-open.
+
+    Mirrors ``GET /api/v1/regime/{symbol}/overview`` and
+    ``GET /api/v1/options/{symbol}/analytics`` (service calls, not HTTP).
+    NIFTY's regime leg reuses the dashboard summary payload — the same
+    ``classify_market_regime("NIFTY")`` call and shape — while options
+    analytics comes from the options service for every symbol, keeping the map
+    shape-consistent across instruments. A per-symbol failure is an explicit
+    ``null`` in that entry: an optional instrument being absent is not a
+    section fault (same rationale as the futures overlay), so this map never
+    degrades the regime section.
+    """
+    cached = _regime_by_symbol_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < REGIME_BY_SYMBOL_FRESH_TTL:
+        return cached[1]
+
+    from app.services.options_service import options_service
+    from app.services.regime_service import regime_service
+
+    values: dict[str, Any] = {}
+    for symbol in INSTRUMENT_SYMBOLS:
+        entry: dict[str, Any] = {"regime_overview": None, "options_analytics": None}
+        if symbol == "NIFTY" and summary.regime_overview is not None:
+            entry["regime_overview"] = summary.regime_overview
+        else:
+            try:
+                overview = await regime_service.classify_market_regime(symbol)
+                entry["regime_overview"] = _as_json(overview)
+            except Exception as exc:
+                logger.warning(
+                    "command_view_regime_by_symbol_failed",
+                    symbol=symbol,
+                    error=str(exc)[:150],
+                )
+        try:
+            chain = await options_service.get_option_chain_matrix(symbol)
+            analytics = getattr(chain, "analytics", None)
+            entry["options_analytics"] = _as_json(analytics) if analytics is not None else None
+        except Exception as exc:
+            logger.warning(
+                "command_view_options_by_symbol_failed",
+                symbol=symbol,
+                error=str(exc)[:150],
+            )
+        values[symbol] = entry
+
+    _regime_by_symbol_cache["default"] = (time.monotonic(), values)
+    return values
+
+
+async def _get_ml_by_symbol() -> dict[str, Any]:
+    """Per-instrument ML probabilities, cached ~15s, fail-open per symbol.
+
+    Reuses the exact call behind ``dashboard._compute_summary``'s ``_fetch_ml``
+    (``ml_predictor.predict_probabilities``), which normalizes the underlying
+    itself; the map keys stay the canonical broker symbols. A failed symbol is
+    cached as ``null`` for the TTL and never degrades the section — the
+    top-level NIFTY leg owns section health.
+    """
+    cached = _ml_by_symbol_cache.get("default")
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < ML_BY_SYMBOL_FRESH_TTL:
+        return cached[1]
+
+    from app.ml.predictor import ml_predictor
+
+    values: dict[str, Any] = {}
+    for symbol in INSTRUMENT_SYMBOLS:
+        try:
+            prediction = await ml_predictor.predict_probabilities(symbol)
+            values[symbol] = _as_json(prediction)
+        except Exception as exc:
+            values[symbol] = None
+            logger.warning(
+                "command_view_ml_by_symbol_failed",
+                symbol=symbol,
+                error=str(exc)[:150],
+            )
+
+    _ml_by_symbol_cache["default"] = (time.monotonic(), values)
+    return values
+
+
 async def _get_event_risk_overlay() -> tuple[dict[str, Any] | None, datetime | None]:
     """Event-aware risk overlay, cached 60s, fail-open to `null`.
 
@@ -357,6 +467,7 @@ async def _leg_market() -> _Leg:
 async def _leg_regime() -> _Leg:
     summary = await _get_summary()
     futures, futures_ts = await _get_futures_overviews()
+    by_symbol = await _get_regime_by_symbol(summary)
     leg_errors = {
         key: summary.errors[key]
         for key in ("regime", "options")
@@ -366,11 +477,11 @@ async def _leg_regime() -> _Leg:
         leg_errors["regime"] = "Regime classification unavailable"
     if summary.options_analytics is None and "options" not in leg_errors:
         leg_errors["options"] = "Options analytics unavailable"
-    # Futures is an optional overlay: the engine self-describes as UNAVAILABLE
-    # until a broker feed is wired, and `value.futures` carries explicit nulls.
-    # Deliberately not section-degrading — a permanent degraded badge on the
-    # regime card for an optional leg would train operators to ignore
-    # degradation signals.
+    # Futures and the per-instrument map are optional overlays: the engine
+    # self-describes as UNAVAILABLE until a broker feed is wired, and a symbol
+    # absent from `by_symbol` is an explicit null. Deliberately not
+    # section-degrading — a permanent degraded badge on the regime card for an
+    # optional instrument would train operators to ignore degradation signals.
     updated_at = _parse_time(summary.generated_at)
     if futures_ts is not None and (updated_at is None or futures_ts < updated_at):
         updated_at = futures_ts
@@ -380,6 +491,7 @@ async def _leg_regime() -> _Leg:
             "regime_overview": summary.regime_overview,
             "options_analytics": summary.options_analytics,
             "futures": futures,
+            "by_symbol": by_symbol,
         },
         updated_at=updated_at,
         degraded=bool(leg_errors),
@@ -389,11 +501,12 @@ async def _leg_regime() -> _Leg:
 
 async def _leg_ml() -> _Leg:
     summary = await _get_summary()
+    by_symbol = await _get_ml_by_symbol()
     leg_errors = {"ml": summary.errors["ml"]} if "ml" in summary.errors else {}
     if summary.ml_prediction is None and not leg_errors:
         leg_errors["ml"] = "ML prediction unavailable"
     return _Leg(
-        value={"ml_prediction": summary.ml_prediction},
+        value={"ml_prediction": summary.ml_prediction, "by_symbol": by_symbol},
         updated_at=_parse_time(summary.generated_at),
         degraded=bool(leg_errors),
         error=_join_errors(leg_errors),
@@ -518,15 +631,17 @@ async def _leg_paper() -> _Leg:
 
 
 async def _leg_forecast() -> _Leg:
-    """NIFTY research forecast + prediction track record, cached ~60s.
+    """NIFTY research forecast + per-instrument prediction track record, ~60s.
 
     Reuses ``trend_forecaster`` (the engine behind
     ``GET /api/v1/research/forecast/{horizon}``) and
     ``PredictionService.list_predictions`` (behind
     ``GET /api/v1/research/predictions``, the track-record source). The section
     is composed with ``record=False``: minting an immutable prediction on every
-    stream refresh would be noise, not research. A failing leg is an honest
-    ``null``; the other stays populated.
+    stream refresh would be noise, not research. ``by_instrument`` fans the
+    same read-only ``list_predictions`` call out to BANKNIFTY/SENSEX; NIFTY 50
+    reuses the top-level rows. A failing leg is an honest ``null``; the other
+    stays populated, and a per-instrument failure never degrades the section.
     """
     cached = _forecast_cache.get("default")
     now = time.monotonic()
@@ -536,7 +651,11 @@ async def _leg_forecast() -> _Leg:
     from app.research.predictions import PredictionService
     from app.research.trend_forecast import trend_forecaster
 
-    values: dict[str, Any] = {"forecast": None, "predictions": None}
+    values: dict[str, Any] = {
+        "forecast": None,
+        "predictions": None,
+        "by_instrument": {instrument: None for instrument in FORECAST_INSTRUMENTS},
+    }
     leg_errors: dict[str, str] = {}
     async with _db_session() as session:
         try:
@@ -562,6 +681,23 @@ async def _leg_forecast() -> _Leg:
         except Exception as exc:
             leg_errors["predictions"] = _short_error(exc)
             logger.warning("command_view_forecast_predictions_failed", error=str(exc)[:150])
+        for instrument in FORECAST_INSTRUMENTS:
+            if instrument == FORECAST_INSTRUMENT and values["predictions"] is not None:
+                values["by_instrument"][instrument] = values["predictions"]
+                continue
+            try:
+                rows = await PredictionService.list_predictions(
+                    instrument=instrument,
+                    limit=FORECAST_PREDICTIONS_LIMIT,
+                    session=session,
+                )
+                values["by_instrument"][instrument] = _as_json(rows)
+            except Exception as exc:
+                logger.warning(
+                    "command_view_forecast_by_instrument_failed",
+                    instrument=instrument,
+                    error=str(exc)[:150],
+                )
 
     leg = _Leg(
         value=values,

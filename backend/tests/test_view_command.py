@@ -25,12 +25,16 @@ from app.api.dashboard import DashboardSummary
 from app.event_engine.risk_overlay import EventRiskParameters
 from app.event_engine.service import event_engine_service
 from app.main import app
+from app.ml.predictor import ml_predictor
+from app.models.options import OptionChainResponse, OptionsAnalytics
 from app.models.paper import PortfolioSummary, VirtualPosition
 from app.research.enums import Direction, ForecastHorizon
 from app.research.models import ResearchPrediction
 from app.research.predictions import PredictionService
 from app.research.trend_forecast import trend_forecaster
+from app.services.options_service import options_service
 from app.services.paper_service import paper_service
+from app.services.regime_service import regime_service
 from app.signals.portfolio_greeks import PortfolioGreeksSummary, portfolio_greeks_ledger
 
 client = TestClient(app)
@@ -57,6 +61,13 @@ FIXED_REGIME = {"regime_state": "TRENDING_UP"}
 FIXED_OPTIONS = {"pcr_oi": 1.1, "available": True}
 FIXED_ML = {"prob_up": 0.61}
 FIXED_FII = {"fii_net_crores": -1200.0}
+
+# ── D7 per-instrument maps: regime / ml / forecast ───────────────────────
+FIXED_ML_BY_SYMBOL = {
+    "NIFTY": {"symbol": "NIFTY", "predicted_bias": "BULLISH", "confidence_score": 0.61},
+    "BANKNIFTY": {"symbol": "BANKNIFTY", "predicted_bias": "BEARISH", "confidence_score": 0.54},
+    "SENSEX": {"symbol": "SENSEX", "predicted_bias": "NEUTRAL", "confidence_score": 0.50},
+}
 
 FIXED_GENERATED_AT = "2026-09-18T07:22:01+00:00"
 FIXED_FUTURES_TS = "2026-09-18T07:21:30+00:00"
@@ -201,12 +212,12 @@ FIXED_PORTFOLIO_GREEKS = {
 }
 
 
-def _fixed_prediction() -> ResearchPrediction:
+def _fixed_prediction(instrument: str = "NIFTY 50", prediction_id: str = "pred-1") -> ResearchPrediction:
     return ResearchPrediction(
-        prediction_id="pred-1",
+        prediction_id=prediction_id,
         indicator_id="trend_forecast_1h",
         indicator_version="v1",
-        instrument="NIFTY 50",
+        instrument=instrument,
         timeframe="1h",
         timestamp=datetime.fromisoformat(FIXED_PREDICTION_TS),
         current_price=24710.0,
@@ -215,6 +226,42 @@ def _fixed_prediction() -> ResearchPrediction:
         confidence=0.7,
         forecast_horizon=ForecastHorizon.HORIZON_1H,
         horizon_candles=1,
+    )
+
+
+def _fixed_regime_overview(symbol: str) -> dict:
+    return {
+        "symbol": symbol,
+        "regime_state": "TRENDING_UP" if symbol == "NIFTY" else "RANGEBOUND",
+        "confidence_score": 0.8,
+        "key_levels": {
+            "nearest_support": 24600.0,
+            "nearest_resistance": 25100.0,
+        },
+    }
+
+
+def _fixed_options_analytics(symbol: str) -> OptionsAnalytics:
+    return OptionsAnalytics(
+        symbol=symbol,
+        spot_price=24870.0,
+        futures_price=24951.0,
+        expiry="2026-09-24",
+        atm_strike=24900.0,
+        atm_iv=13.85,
+        pcr_oi=1.12,
+        pcr_volume=1.05,
+        max_pain_strike=24900.0,
+    )
+
+
+def _fixed_option_chain(symbol: str) -> OptionChainResponse:
+    return OptionChainResponse(
+        underlying=symbol,
+        spot_price=24870.0,
+        futures_price=24951.0,
+        expiry="2026-09-24",
+        analytics=_fixed_options_analytics(symbol),
     )
 
 
@@ -294,6 +341,8 @@ def _clear_view_state():
     view_api._forecast_cache.clear()
     view_api._algo_cache.clear()
     view_api._feed_circuits_cache.clear()
+    view_api._regime_by_symbol_cache.clear()
+    view_api._ml_by_symbol_cache.clear()
     view_api._section_versions.clear()
     yield
     dashboard_api._summary_cache.clear()
@@ -304,6 +353,8 @@ def _clear_view_state():
     view_api._forecast_cache.clear()
     view_api._algo_cache.clear()
     view_api._feed_circuits_cache.clear()
+    view_api._regime_by_symbol_cache.clear()
+    view_api._ml_by_symbol_cache.clear()
     view_api._section_versions.clear()
 
 
@@ -350,7 +401,16 @@ def _stable_legs(monkeypatch):
         return dict(FIXED_FORECAST_PAYLOAD)
 
     async def _predictions(indicator_id=None, instrument=None, limit=50, session=None):
-        return [_fixed_prediction()]
+        return [_fixed_prediction(instrument=instrument or "NIFTY 50")]
+
+    async def _regime(symbol: str = "NIFTY"):
+        return _fixed_regime_overview(symbol)
+
+    async def _options_chain(symbol: str = "NIFTY", expiry_str=None):
+        return _fixed_option_chain(symbol)
+
+    async def _ml(symbol: str = "NIFTY", horizon_minutes=60):
+        return dict(FIXED_ML_BY_SYMBOL[symbol])
 
     async def _account(session=None, user_id=None):
         return dict(FIXED_ALGO_ACCOUNT)
@@ -371,6 +431,9 @@ def _stable_legs(monkeypatch):
     monkeypatch.setattr(futures_api, "build_futures_overview", _live_futures_overview)
     monkeypatch.setattr(event_engine_service, "get_risk_overlay", _fixed_event_risk)
     monkeypatch.setattr(event_engine_service, "_initialized", True)
+    monkeypatch.setattr(regime_service, "classify_market_regime", _regime)
+    monkeypatch.setattr(options_service, "get_option_chain_matrix", _options_chain)
+    monkeypatch.setattr(ml_predictor, "predict_probabilities", _ml)
     monkeypatch.setattr(paper_service, "get_portfolio_summary", _paper_portfolio)
     monkeypatch.setattr(paper_service, "get_positions", _paper_positions)
     monkeypatch.setattr(trend_forecaster, "forecast", _forecast)
@@ -422,13 +485,26 @@ def test_command_view_contract_snapshot(_stable_legs):
         "NIFTY": _expected_futures("NIFTY"),
         "BANKNIFTY": _expected_futures("BANKNIFTY"),
     }
+    regime_by_symbol = regime["by_symbol"]
+    assert set(regime_by_symbol) == {"NIFTY", "BANKNIFTY", "SENSEX"}
+    for symbol, entry in regime_by_symbol.items():
+        assert set(entry) == {"regime_overview", "options_analytics"}, f"shape drift for {symbol}"
+    assert regime_by_symbol["NIFTY"]["regime_overview"] == FIXED_REGIME
+    assert regime_by_symbol["BANKNIFTY"]["regime_overview"] == _fixed_regime_overview("BANKNIFTY")
+    assert regime_by_symbol["SENSEX"]["regime_overview"] == _fixed_regime_overview("SENSEX")
+    for symbol in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        assert regime_by_symbol[symbol]["options_analytics"] == _fixed_options_analytics(
+            symbol
+        ).model_dump(mode="json")
 
     assert body["sections"]["signals"]["value"] == FIXED_SIGNALS_PAYLOAD
     feed_health = body["sections"]["feed_health"]["value"]
     assert feed_health["subsystems"] == FIXED_HEALTH_PAYLOAD
     assert feed_health["feed_circuits"] == FIXED_FEED_CIRCUITS
     assert body["sections"]["kill_switch"]["value"]["active"] is False
-    assert body["sections"]["ml"]["value"] == {"ml_prediction": FIXED_ML}
+    ml = body["sections"]["ml"]["value"]
+    assert ml["ml_prediction"] == FIXED_ML
+    assert ml["by_symbol"] == FIXED_ML_BY_SYMBOL
 
     paper = body["sections"]["paper"]["value"]
     assert paper["portfolio"] == FIXED_PAPER_PORTFOLIO
@@ -437,6 +513,10 @@ def test_command_view_contract_snapshot(_stable_legs):
     forecast = body["sections"]["forecast"]["value"]
     assert forecast["forecast"] == FIXED_FORECAST_PAYLOAD
     assert forecast["predictions"] == [_fixed_prediction().model_dump(mode="json")]
+    assert forecast["by_instrument"] == {
+        instrument: [_fixed_prediction(instrument=instrument).model_dump(mode="json")]
+        for instrument in ("NIFTY 50", "BANKNIFTY", "SENSEX")
+    }
 
     algo = body["sections"]["algo"]["value"]
     assert algo["account"] == FIXED_ALGO_ACCOUNT
@@ -555,7 +635,8 @@ def test_command_view_partial_summary_failure_maps_to_own_section(_stable_legs, 
     assert body["degraded"] is True
     assert "ML prediction unavailable" in body["errors"]["ml"]
     assert body["sections"]["ml"]["degraded"] is True
-    assert body["sections"]["ml"]["value"] == {"ml_prediction": None}
+    assert body["sections"]["ml"]["value"]["ml_prediction"] is None
+    assert set(body["sections"]["ml"]["value"]["by_symbol"]) == {"NIFTY", "BANKNIFTY", "SENSEX"}
 
     # A damaged summary leg must not poison the other sections.
     assert "market" not in body["errors"]
@@ -702,7 +783,19 @@ def test_new_sections_reuse_cached_sources_within_ttl(_stable_legs, monkeypatch)
 
     async def _predictions(indicator_id=None, instrument=None, limit=50, session=None):
         _count("predictions")
-        return [_fixed_prediction()]
+        return [_fixed_prediction(instrument=instrument or "NIFTY 50")]
+
+    async def _regime(symbol: str = "NIFTY"):
+        _count("regime")
+        return _fixed_regime_overview(symbol)
+
+    async def _options_chain(symbol: str = "NIFTY", expiry_str=None):
+        _count("options")
+        return _fixed_option_chain(symbol)
+
+    async def _ml(symbol: str = "NIFTY", horizon_minutes=60):
+        _count("ml")
+        return dict(FIXED_ML_BY_SYMBOL[symbol])
 
     async def _account(session=None, user_id=None):
         _count("account")
@@ -724,6 +817,9 @@ def test_new_sections_reuse_cached_sources_within_ttl(_stable_legs, monkeypatch)
     monkeypatch.setattr(paper_service, "get_positions", _paper_positions)
     monkeypatch.setattr(trend_forecaster, "forecast", _forecast)
     monkeypatch.setattr(PredictionService, "list_predictions", _predictions)
+    monkeypatch.setattr(regime_service, "classify_market_regime", _regime)
+    monkeypatch.setattr(options_service, "get_option_chain_matrix", _options_chain)
+    monkeypatch.setattr(ml_predictor, "predict_probabilities", _ml)
     monkeypatch.setattr(algo_account_service, "get_account_detail", _account)
     monkeypatch.setattr(algo_signals_service, "get_exposure", _exposure)
     monkeypatch.setattr(algo_order_service, "list_orders", _orders)
@@ -733,18 +829,22 @@ def test_new_sections_reuse_cached_sources_within_ttl(_stable_legs, monkeypatch)
     second = client.get("/api/v1/view/command").json()
 
     # The ~2s stream cadence must hit each source once per TTL window, not once
-    # per compose.
+    # per compose. NIFTY reuses the summary regime leg; NIFTY 50 reuses the
+    # top-level prediction rows.
     assert calls == {
         "paper_portfolio": 1,
         "paper_positions": 1,
         "forecast": 1,
-        "predictions": 1,
+        "predictions": 3,
+        "regime": 2,
+        "options": 3,
+        "ml": 3,
         "account": 1,
         "exposure": 1,
         "orders": 1,
         "greeks": 1,
     }
-    for name in ("paper", "forecast", "algo"):
+    for name in ("paper", "forecast", "algo", "regime", "ml"):
         assert first["sections"][name]["value"] == second["sections"][name]["value"]
 
 
@@ -815,3 +915,118 @@ def test_algo_section_degrades_leg_independently(_stable_legs, monkeypatch):
 
     assert body["sections"]["paper"]["degraded"] is False
     assert body["sections"]["forecast"]["degraded"] is False
+
+
+# ── D7: per-instrument maps for regime / ml / forecast ───────────────────
+
+
+def test_per_instrument_maps_cover_all_instruments(_stable_legs):
+    body = client.get("/api/v1/view/command").json()
+
+    regime = body["sections"]["regime"]["value"]["by_symbol"]
+    ml = body["sections"]["ml"]["value"]["by_symbol"]
+    forecast = body["sections"]["forecast"]["value"]["by_instrument"]
+
+    assert set(regime) == {"NIFTY", "BANKNIFTY", "SENSEX"}
+    assert set(ml) == {"NIFTY", "BANKNIFTY", "SENSEX"}
+    assert set(forecast) == {"NIFTY 50", "BANKNIFTY", "SENSEX"}
+
+    for symbol, entry in regime.items():
+        assert set(entry) == {"regime_overview", "options_analytics"}, f"shape drift for {symbol}"
+        assert entry["regime_overview"] is not None
+        assert entry["options_analytics"] is not None
+
+    assert regime["NIFTY"]["regime_overview"] == FIXED_REGIME
+    assert regime["BANKNIFTY"]["regime_overview"] == _fixed_regime_overview("BANKNIFTY")
+    assert regime["SENSEX"]["regime_overview"] == _fixed_regime_overview("SENSEX")
+    for symbol in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        assert regime[symbol]["options_analytics"] == _fixed_options_analytics(
+            symbol
+        ).model_dump(mode="json")
+
+    assert ml == FIXED_ML_BY_SYMBOL
+    for instrument in ("NIFTY 50", "BANKNIFTY", "SENSEX"):
+        assert forecast[instrument] == [
+            _fixed_prediction(instrument=instrument).model_dump(mode="json")
+        ]
+
+
+def test_regime_by_symbol_nifty_reuses_summary_without_service_call(_stable_legs, monkeypatch):
+    calls: list[str] = []
+
+    async def _regime(symbol: str = "NIFTY"):
+        calls.append(symbol)
+        return _fixed_regime_overview(symbol)
+
+    monkeypatch.setattr(regime_service, "classify_market_regime", _regime)
+
+    body = client.get("/api/v1/view/command").json()
+
+    # NIFTY is already classified by the summary SWR; only the siblings probe.
+    assert calls == ["BANKNIFTY", "SENSEX"]
+    assert (
+        body["sections"]["regime"]["value"]["by_symbol"]["NIFTY"]["regime_overview"]
+        == FIXED_REGIME
+    )
+
+
+def test_per_instrument_maps_fail_open_per_symbol(_stable_legs, monkeypatch):
+    async def _regime(symbol: str = "NIFTY"):
+        if symbol == "SENSEX":
+            raise RuntimeError("SENSEX regime feed down")
+        return _fixed_regime_overview(symbol)
+
+    async def _ml(symbol: str = "NIFTY", horizon_minutes=60):
+        if symbol == "BANKNIFTY":
+            raise RuntimeError("BANKNIFTY ML model unavailable")
+        return dict(FIXED_ML_BY_SYMBOL[symbol])
+
+    async def _predictions(indicator_id=None, instrument=None, limit=50, session=None):
+        if instrument == "SENSEX":
+            raise RuntimeError("SENSEX predictions store down")
+        return [_fixed_prediction(instrument=instrument or "NIFTY 50")]
+
+    monkeypatch.setattr(regime_service, "classify_market_regime", _regime)
+    monkeypatch.setattr(ml_predictor, "predict_probabilities", _ml)
+    monkeypatch.setattr(PredictionService, "list_predictions", _predictions)
+
+    r = client.get("/api/v1/view/command")
+    assert r.status_code == 200
+    body = r.json()
+
+    regime = body["sections"]["regime"]
+    assert regime["value"]["by_symbol"]["SENSEX"]["regime_overview"] is None
+    # One failed source only nulls its own leg — options analytics still lands.
+    assert regime["value"]["by_symbol"]["SENSEX"]["options_analytics"] is not None
+    assert regime["value"]["by_symbol"]["NIFTY"]["regime_overview"] == FIXED_REGIME
+    assert (
+        regime["value"]["by_symbol"]["BANKNIFTY"]["regime_overview"]
+        == _fixed_regime_overview("BANKNIFTY")
+    )
+
+    ml = body["sections"]["ml"]
+    assert ml["value"]["by_symbol"]["BANKNIFTY"] is None
+    assert ml["value"]["by_symbol"]["NIFTY"] == FIXED_ML_BY_SYMBOL["NIFTY"]
+    assert ml["value"]["by_symbol"]["SENSEX"] == FIXED_ML_BY_SYMBOL["SENSEX"]
+
+    forecast = body["sections"]["forecast"]
+    assert forecast["value"]["by_instrument"]["SENSEX"] is None
+    assert forecast["value"]["by_instrument"]["NIFTY 50"] == [
+        _fixed_prediction().model_dump(mode="json")
+    ]
+    assert forecast["value"]["by_instrument"]["BANKNIFTY"] == [
+        _fixed_prediction(instrument="BANKNIFTY").model_dump(mode="json")
+    ]
+
+    # A missing optional instrument is not a section fault: neither the
+    # sections nor the view degrade, and no fabricated payloads appear.
+    assert body["degraded"] is False
+    assert body["errors"] == {}
+    for name in ("regime", "ml", "forecast"):
+        assert body["sections"][name]["degraded"] is False, f"{name} must stay healthy"
+
+
+def test_per_instrument_map_ttls_match_poll_cadence():
+    assert 0.0 < view_api.REGIME_BY_SYMBOL_FRESH_TTL <= 45.0
+    assert 0.0 < view_api.ML_BY_SYMBOL_FRESH_TTL <= 15.0
+    assert view_api.FORECAST_BY_INSTRUMENT_FRESH_TTL >= 60.0
