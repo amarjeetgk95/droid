@@ -1,8 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { DeskHeader, DeskShell } from '@/components/layout/DeskShell';
 import { useInstrument } from '@/context/InstrumentContext';
+import { api } from '@/lib/api';
+import { ScannerPanel, type ScannerData } from '@/components/signals/ScannerPanel';
 import {
   CalibrationHeatmap,
   ExperimentRunner,
@@ -22,6 +24,25 @@ export default function ResearchLabPage() {
     allInstruments,
     allTimeframes,
   } = useInstrument();
+
+  /* Scanner is on-demand only (no poll): one GET per explicit Scan click, and
+     the same defensive flow as the signals desk loader. */
+  const [scannerData, setScannerData] = useState<ScannerData | null>(null);
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+
+  const loadScanner = useCallback(async () => {
+    setScannerLoading(true);
+    setScannerError(null);
+    try {
+      const res = await api.getSignalsScanner();
+      setScannerData(res);
+    } catch (e) {
+      setScannerError(e instanceof Error ? e.message : 'Scanner failed');
+    } finally {
+      setScannerLoading(false);
+    }
+  }, []);
 
   return (
     <DeskShell>
@@ -63,6 +84,13 @@ export default function ResearchLabPage() {
       />
 
       <div className="space-y-5">
+        <ScannerPanel
+          scannerData={scannerData}
+          scannerLoading={scannerLoading}
+          scannerError={scannerError}
+          onScan={loadScanner}
+        />
+
         <StrategyLabBuilder />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
