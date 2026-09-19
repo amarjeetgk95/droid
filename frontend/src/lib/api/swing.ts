@@ -177,6 +177,74 @@ export type PortfolioRiskDTO = {
   open_risk_capital?: number;
 };
 
+export type SwingRegimeDTO = {
+  regime: string;
+  confidence: number;
+  persistence_bars: number;
+  benchmark_symbol: string;
+  benchmark_price: number;
+  benchmark_change_pct: number;
+  ma_alignment_score: number;
+  recent_drawdown_pct: number;
+  iv_percentile: number;
+  iv_regime: string;
+  reasons: string[];
+};
+
+export type SwingSectorDTO = {
+  sector: string;
+  trend: string;
+  relative_strength: number;
+  return_20d_pct: number;
+  leading_stocks: string[];
+};
+
+export type SwingRegimeResponse = {
+  regime: SwingRegimeDTO | null;
+  sectors: SwingSectorDTO[];
+  scan_timestamp_utc?: number;
+};
+
+export type SwingPositionsResponse = {
+  open_positions: SwingPositionDTO[];
+  closed_positions: SwingPositionDTO[];
+  portfolio_risk: PortfolioRiskDTO;
+};
+
+export type SwingScanResponse = {
+  scan_timestamp_utc: number;
+  duration_seconds: number;
+  indices_scanned: number;
+  regime: SwingRegimeDTO | null;
+  sectors: SwingSectorDTO[];
+  setups: SwingSetupDTO[];
+  open_positions: SwingPositionDTO[];
+  closed_positions_count: number;
+  portfolio_risk: PortfolioRiskDTO;
+};
+
+export type SwingThesisResponse = {
+  setup_id: string;
+  contract: string;
+  context: Record<string, unknown>;
+  structured_prompt: string;
+};
+
+/** Mirrors backend `app.swing.models.ExitReason`. */
+export type SwingExitReason =
+  | 'UNDERLYING_STOP'
+  | 'OPTION_STOP'
+  | 'TARGET_1'
+  | 'TARGET_2'
+  | 'TRAILING_STOP'
+  | 'THETA_DECAY'
+  | 'EXPIRY_RISK'
+  | 'IV_CRUSH'
+  | 'LIQUIDITY_FAILURE'
+  | 'PORTFOLIO_RISK'
+  | 'REGIME_INVALIDATION'
+  | 'MANUAL_EXIT';
+
 export type Envelope<T> = {
   data: T;
   error: string | null;
@@ -190,50 +258,16 @@ export function createSwingApi(core: ApiCore) {
     limit_symbols?: string[];
     horizon?: string;
   }) =>
-    core.request<
-      Envelope<{
-        scan_timestamp_utc: number;
-        duration_seconds: number;
-        indices_scanned: number;
-        regime: any;
-        sectors: any[];
-        setups: SwingSetupDTO[];
-        open_positions: SwingPositionDTO[];
-        closed_positions_count: number;
-        portfolio_risk: PortfolioRiskDTO;
-      }>
-    >('/api/v1/swing/scan', {
+    core.request<Envelope<SwingScanResponse>>('/api/v1/swing/scan', {
       method: 'POST',
       body: JSON.stringify(payload || {}),
+      // Universe-wide EOD scan is heavy (candle + option-chain fan-out).
+      timeoutMs: 180_000,
     });
 
   return {
     async getSwingRegime() {
-      return core.request<
-        Envelope<{
-          regime: {
-            regime: string;
-            confidence: number;
-            persistence_bars: number;
-            benchmark_symbol: string;
-            benchmark_price: number;
-            benchmark_change_pct: number;
-            ma_alignment_score: number;
-            recent_drawdown_pct: number;
-            iv_percentile: number;
-            iv_regime: string;
-            reasons: string[];
-          } | null;
-          sectors: Array<{
-            sector: string;
-            trend: string;
-            relative_strength: number;
-            return_20d_pct: number;
-            leading_stocks: string[];
-          }>;
-          scan_timestamp_utc?: number;
-        }>
-      >('/api/v1/swing/regime');
+      return core.request<Envelope<SwingRegimeResponse>>('/api/v1/swing/regime');
     },
 
     async getSwingSetups(params?: {
@@ -266,13 +300,7 @@ export function createSwingApi(core: ApiCore) {
     triggerSwingScan,
 
     async getSwingPositions() {
-      return core.request<
-        Envelope<{
-          open_positions: SwingPositionDTO[];
-          closed_positions: SwingPositionDTO[];
-          portfolio_risk: PortfolioRiskDTO;
-        }>
-      >('/api/v1/swing/positions');
+      return core.request<Envelope<SwingPositionsResponse>>('/api/v1/swing/positions');
     },
 
     async enterSwingPosition(payload: {
@@ -292,7 +320,7 @@ export function createSwingApi(core: ApiCore) {
       position_id: string;
       exit_premium?: number;
       exit_price?: number;
-      exit_reason?: string;
+      exit_reason?: SwingExitReason;
     }) {
       return core.request<Envelope<SwingPositionDTO>>('/api/v1/swing/positions/exit', {
         method: 'POST',
@@ -301,14 +329,7 @@ export function createSwingApi(core: ApiCore) {
     },
 
     async getSwingThesis(setupId: string) {
-      return core.request<
-        Envelope<{
-          setup_id: string;
-          contract: string;
-          context: Record<string, any>;
-          structured_prompt: string;
-        }>
-      >('/api/v1/swing/thesis', {
+      return core.request<Envelope<SwingThesisResponse>>('/api/v1/swing/thesis', {
         method: 'POST',
         body: JSON.stringify({ setup_id: setupId }),
       });

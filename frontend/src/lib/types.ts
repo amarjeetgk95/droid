@@ -1,4 +1,4 @@
-import type { ForecastV2Probabilities, ForecastV2Status } from '@/components/research/forecastStatus';
+import type { ForecastV2Probabilities, ForecastV2Status } from '@/lib/forecastStatus';
 
 export type DataStatus = 'LIVE' | 'DEGRADED' | 'STALE' | 'OFFLINE' | 'DISCONNECTED' | 'ERROR' | 'CLOSED' | 'INVALID';
 export type MarketSession = 'PRE_OPEN' | 'OPEN' | 'CLOSED' | 'POST_CLOSE';
@@ -824,6 +824,12 @@ export type HourForecast = {
   // snapshot+prediction were actually written to the database). Absent on
   // pre-P0 responses, so treat undefined as unknown rather than false-y.
   persisted?: boolean | null;
+  // Tactical-bias cache honesty (SWR): generated_at is the backend UTC
+  // timestamp of the run that produced this payload; stale/cache_age_s are
+  // set when the server served it from cache instead of a live run.
+  generated_at?: string | null;
+  stale?: boolean | null;
+  cache_age_s?: number | null;
 };
 
 

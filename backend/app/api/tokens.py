@@ -34,8 +34,14 @@ async def get_token_status():
     provider = get_provider()
     token_mgr = provider.get_token_manager()
     diagnostics = token_mgr.get_diagnostics()
+    feed = None
+    if hasattr(provider, "get_stream_diagnostics"):
+        try:
+            feed = provider.get_stream_diagnostics()
+        except Exception:  # noqa: BLE001 - telemetry must never break the endpoint
+            feed = None
     return {
-        "data": diagnostics,
+        "data": {**diagnostics, "feed": feed},
         "error": None,
         "meta": _make_meta().model_dump(),
     }

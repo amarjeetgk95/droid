@@ -30,17 +30,11 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground">
-        <div className="flex flex-col items-center gap-4 p-8 rounded-xl bg-card/60 border border-border shadow-sm">
-          <div className="relative">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center border border-primary/30">
-              <Shield className="w-6 h-6 text-primary animate-pulse" />
-            </div>
-            <Loader2 className="w-12 h-12 text-primary animate-spin absolute -inset-0 opacity-70" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-semibold tracking-wider uppercase text-foreground">DROID Terminal</p>
-            <p className="text-xs text-muted-foreground mt-1">Verifying credentials &amp; session...</p>
-          </div>
+        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-card border border-border shadow-card">
+          <Loader2 className="w-4 h-4 text-ink-2 animate-spin" />
+          <span className="text-xs font-medium text-ink-2 tracking-wide">
+            Verifying credentials...
+          </span>
         </div>
       </div>
     );

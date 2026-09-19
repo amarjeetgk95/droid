@@ -152,6 +152,8 @@ export function migrateSchemaVersion(settings: AppSettings): AppSettings {
   return out;
 }
 
+/** The stylesheet is light-only, so any persisted 'dark' is a lie we cannot honour.
+ *  Swap this for a real migration only if a dark token set ever ships. */
 function migrateThemeToLight(settings: AppSettings): AppSettings {
   const t = (settings.preferences as unknown as { theme?: string })?.theme;
   if (t !== 'light') {

@@ -204,6 +204,13 @@ def isolate_signals_state(tmp_path, monkeypatch):
     monkeypatch.setattr("app.signals.signals_persistence.SIGNALS_STATE_FILE", test_state_file)
     monkeypatch.setattr("app.core.database.get_async_session_factory", lambda: None)
     monkeypatch.setattr("app.signals.signals_persistence.get_async_session_factory", lambda: None)
+    # The suite must stay hermetic: never let the FYERS HSM socket start from a
+    # test's app lifespan / ensure_provider_stream() and feed the real broker
+    # snapshots into the global central_feed (that would make OFFLINE/degraded
+    # assertions depend on the machine's .fyers_token and the wall clock).
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "fyers_ws_enabled", False, raising=False)
     from app.signals.fsm import signal_fsm
     from app.signals.audit_ledger import signal_audit_ledger
     from app.core import broker_runtime

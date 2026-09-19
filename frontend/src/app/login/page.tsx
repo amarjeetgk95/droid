@@ -247,7 +247,7 @@ function LoginContent() {
       <div className="w-full max-w-[380px] relative z-10">
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center h-10 w-10 rounded-[4px] bg-primary text-white font-bold text-lg mb-3 shadow-xs">
+          <div className="inline-flex items-center justify-center h-10 w-10 rounded-lg bg-primary text-white font-bold text-lg mb-3 shadow-card">
             <span>D</span>
           </div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">{heading}</h1>
@@ -255,25 +255,25 @@ function LoginContent() {
         </div>
 
         {/* Auth Card */}
-        <div className="bg-card border border-border rounded-[4px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6 sm:p-7">
+        <div className="bg-card border border-border rounded-xl shadow-card p-6 sm:p-7">
           {isDemoMode && (
             <div
               role="status"
               aria-live="polite"
-              className="mb-4 p-3 rounded-[3px] bg-warn-wash border border-warn-line text-warn-ink text-xs flex items-start gap-2"
+              className="mb-4 p-3 rounded-lg bg-warn-wash border border-warn-line text-warn-ink text-xs flex items-start gap-2"
             >
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-warn" />
               <div className="leading-relaxed">
                 <span className="font-semibold">Authentication is not configured (demo mode).</span>{' '}
                 Set{' '}
-                <code className="bg-warn-wash px-1 py-0.5 rounded-[2px] text-[11px]">
+                <code className="bg-warn-wash px-1 py-0.5 rounded-sm text-[11px]">
                   NEXT_PUBLIC_SUPABASE_URL
                 </code>{' '}
                 and{' '}
-                <code className="bg-warn-wash px-1 py-0.5 rounded-[2px] text-[11px]">
+                <code className="bg-warn-wash px-1 py-0.5 rounded-sm text-[11px]">
                   NEXT_PUBLIC_SUPABASE_ANON_KEY
                 </code>{' '}
-                in <code className="bg-warn-wash px-1 py-0.5 rounded-[2px] text-[11px]">frontend/.env.local</code>{' '}
+                in <code className="bg-warn-wash px-1 py-0.5 rounded-sm text-[11px]">frontend/.env.local</code>{' '}
                 and restart the dev server. Until then sign-in is disabled because credentials cannot be verified.
               </div>
             </div>
@@ -284,7 +284,7 @@ function LoginContent() {
             <div
               role="status"
               aria-live="polite"
-              className="mb-4 p-3 rounded-[3px] bg-warn-wash border border-warn-line text-warn-ink text-xs flex items-start gap-2.5"
+              className="mb-4 p-3 rounded-lg bg-warn-wash border border-warn-line text-warn-ink text-xs flex items-start gap-2.5"
             >
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <div className="leading-relaxed">{notice}</div>
@@ -297,7 +297,7 @@ function LoginContent() {
               id={ERROR_REGION_ID}
               role="alert"
               aria-live="assertive"
-              className="mb-4 p-3 rounded-[3px] bg-down-wash border border-down-line text-down text-xs flex items-start gap-2.5"
+              className="mb-4 p-3 rounded-lg bg-down-wash border border-down-line text-down text-xs flex items-start gap-2.5"
             >
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <div className="leading-relaxed">{error}</div>
@@ -309,7 +309,7 @@ function LoginContent() {
             <div
               role="status"
               aria-live="polite"
-              className="mb-4 p-3 rounded-[3px] bg-up-wash border border-up-line text-up-strong text-xs flex items-start gap-2.5"
+              className="mb-4 p-3 rounded-lg bg-up-wash border border-up-line text-up-strong text-xs flex items-start gap-2.5"
             >
               <Shield className="w-4 h-4 shrink-0 mt-0.5" />
               <div className="leading-relaxed">{info}</div>
@@ -342,7 +342,7 @@ function LoginContent() {
                     disabled={isDemoMode}
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? ERROR_REGION_ID : undefined}
-                    className="w-full h-10 bg-card border border-border rounded-[4px] pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
+                    className="w-full h-11 bg-card border border-border rounded-md pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-colors disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -360,7 +360,7 @@ function LoginContent() {
                     type="button"
                     onClick={switchToForgot}
                     disabled={isDemoMode}
-                    className="text-[11px] font-medium text-primary hover:text-primary/80 disabled:opacity-50 cursor-pointer"
+                    className="text-xs font-medium text-primary hover:text-primary/80 disabled:opacity-50 cursor-pointer"
                   >
                     Forgot password?
                   </button>
@@ -378,7 +378,7 @@ function LoginContent() {
                     disabled={isDemoMode}
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? ERROR_REGION_ID : undefined}
-                    className="w-full h-10 bg-card border border-border rounded-[4px] pl-9 pr-10 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
+                    className="w-full h-11 bg-card border border-border rounded-md pl-9 pr-10 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-colors disabled:opacity-50"
                   />
                   <button
                     type="button"
@@ -386,7 +386,7 @@ function LoginContent() {
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                     aria-pressed={showPassword}
                     title={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-[2px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus-visible:ring-1 focus-visible:ring-ring"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -397,7 +397,7 @@ function LoginContent() {
               <button
                 type="submit"
                 disabled={submitting || isDemoMode}
-                className="w-full mt-2 h-10 px-4 rounded-[4px] bg-primary text-white text-xs font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full mt-2 h-11 px-4 rounded-md bg-primary text-white text-[13px] font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-card"
               >
                 {submitting ? (
                   <>
@@ -434,7 +434,7 @@ function LoginContent() {
                     disabled={isDemoMode}
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? ERROR_REGION_ID : undefined}
-                    className="w-full h-10 bg-card border border-border rounded-[4px] pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
+                    className="w-full h-11 bg-card border border-border rounded-md pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-colors disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -442,7 +442,7 @@ function LoginContent() {
               <button
                 type="submit"
                 disabled={submitting || isDemoMode}
-                className="w-full mt-2 h-10 px-4 rounded-[4px] bg-primary text-white text-xs font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full mt-2 h-11 px-4 rounded-md bg-primary text-white text-[13px] font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-card"
               >
                 {submitting ? (
                   <>
@@ -488,7 +488,7 @@ function LoginContent() {
                     autoComplete="new-password"
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? ERROR_REGION_ID : undefined}
-                    className="w-full h-10 bg-card border border-border rounded-[4px] pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                    className="w-full h-11 bg-card border border-border rounded-md pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-colors"
                   />
                 </div>
               </div>
@@ -513,7 +513,7 @@ function LoginContent() {
                     autoComplete="new-password"
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? ERROR_REGION_ID : undefined}
-                    className="w-full h-10 bg-card border border-border rounded-[4px] pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                    className="w-full h-11 bg-card border border-border rounded-md pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-colors"
                   />
                 </div>
               </div>
@@ -521,7 +521,7 @@ function LoginContent() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full mt-2 h-10 px-4 rounded-[4px] bg-primary text-white text-xs font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full mt-2 h-11 px-4 rounded-md bg-primary text-white text-[13px] font-semibold hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-card"
               >
                 {submitting ? (
                   <>
@@ -546,7 +546,7 @@ function LoginContent() {
         </div>
 
         {/* Security & System Footer */}
-        <div className="mt-5 flex items-center justify-center gap-3 text-[11px] text-muted-foreground">
+        <div className="mt-5 flex items-center justify-center gap-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Shield className="w-3.5 h-3.5 text-up" />
             <span>Supabase Auth</span>

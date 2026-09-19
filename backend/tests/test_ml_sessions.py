@@ -1,6 +1,6 @@
 """Phase 1 session-aware settlement tests: window classification,
 forward-spot resolution, and settlement planning. Pure — no brokers or DB."""
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.ml.sessions import classify_window, is_crypto_symbol, resolve_forward_spot
@@ -51,6 +51,22 @@ def test_nse_weekend_unsettleable():
     w = classify_window("NIFTY", SAT_NOON_IST, 15)
     assert w["settleable"] is False
     assert "non-trading-day" in w["reason"]
+
+
+def test_nse_special_session_blocks_only_its_own_window():
+    special_day = next(d for d in sorted(calendar_service.SPECIAL_SESSIONS) if d.year == 2026)
+    assert calendar_service.is_trading_day(special_day)
+    special_open, _, _ = calendar_service.SPECIAL_SESSIONS[special_day]
+
+    inside = datetime.combine(special_day, special_open, tzinfo=IST) + timedelta(minutes=10)
+    w_inside = classify_window("NIFTY", inside, 5)
+    assert w_inside["settleable"] is False
+    assert w_inside["reason"] == "special-session-involved"
+
+    outside = datetime.combine(special_day, time(10, 0), tzinfo=IST)
+    w_outside = classify_window("NIFTY", outside, 5)
+    assert w_outside["settleable"] is False
+    assert w_outside["reason"] == "observation-outside-session"
 
 
 def test_resolve_forward_spot_picks_last_in_window():

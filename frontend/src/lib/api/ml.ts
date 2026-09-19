@@ -41,7 +41,26 @@ export function createMlApi(core: ApiCore) {
     async getMLPrediction(symbol: string, horizonMinutes?: number) {
     const qs = horizonMinutes ? `?horizon_minutes=${horizonMinutes}` : '';
     return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/predict/${encodeURIComponent(symbol)}${qs}`);
-  },
+    },
+
+    async getMLCurrentRegime(symbol: string = 'NIFTY') {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ml/current-regime?symbol=${encodeURIComponent(symbol)}`);
+    },
+
+    async settleMLOutcome(params: { prediction_id: string; outcome_spot: number; atr_at_t: number; spot_at_t: number }) {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/outcomes/settle', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    },
+
+    async trainMLEnsemble(params: { features: number[][]; labels: number[]; horizon_minutes?: number; target_spec_version?: string }) {
+    return core.request<{ data: Record<string, any>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ml/train', {
+      method: 'POST',
+      body: JSON.stringify(params),
+      timeoutMs: 180_000,
+    });
+    },
   };
 }
 

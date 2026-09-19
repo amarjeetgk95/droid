@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     fyers_redirect_uri: str = "http://127.0.0.1:8000/api/v1/tokens/fyers/callback"
     fyers_access_token: str = ""
 
+    # FYERS HSM v1-5 data socket (tick-by-tick primary feed). The REST poller
+    # in app.providers.fyers stays as the fallback/health probe whenever the
+    # socket is down or the market is closed.
+    fyers_ws_enabled: bool = True
+    fyers_ws_url: str = "wss://socket.fyers.in/hsm/v1-5/prod"
+
 
     # WebSocket & Reconnect Settings (Phase 2)
     ws_reconnect_initial_seconds: float = 1.0

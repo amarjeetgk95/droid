@@ -42,7 +42,7 @@ export function ErrorCard({
             type="button"
             onClick={onRetry}
             disabled={isRetrying}
-            className="px-2.5 py-1 rounded-md bg-destructive/15 hover:bg-destructive/25 text-destructive font-semibold transition-colors cursor-pointer shrink-0 flex items-center gap-1 text-[11px]"
+            className="px-2.5 py-1 rounded-md bg-destructive/15 hover:bg-destructive/25 text-destructive font-semibold transition-colors cursor-pointer shrink-0 flex items-center gap-1 text-xs"
           >
             <RefreshCw className={cn("w-3 h-3", isRetrying && "animate-spin")} />
             <span>Retry</span>
@@ -73,7 +73,7 @@ export function ErrorCard({
             type="button"
             onClick={onRetry}
             disabled={isRetrying}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors cursor-pointer shadow-card disabled:opacity-50"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", isRetrying && "animate-spin")} />
             <span>Retry Connection</span>
@@ -88,7 +88,7 @@ export function ErrorCard({
     <div
       data-slot="error-inline"
       className={cn(
-        "bg-card border border-destructive/30 rounded-xl p-5 min-h-[160px] flex flex-col items-center justify-center text-center gap-2.5 shadow-2xs",
+        "bg-card border border-destructive/30 rounded-xl p-5 min-h-[160px] flex flex-col items-center justify-center text-center gap-2.5 shadow-card",
         className
       )}
     >
@@ -97,7 +97,7 @@ export function ErrorCard({
       </div>
       <div className="space-y-0.5 max-w-xs">
         <p className="text-xs font-bold text-foreground">{title}</p>
-        {message && <p className="text-[11px] text-muted-foreground">{message}</p>}
+        {message && <p className="text-xs text-muted-foreground">{message}</p>}
       </div>
       {onRetry && (
         <button

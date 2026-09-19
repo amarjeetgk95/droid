@@ -7,5 +7,5 @@
  * desks stay reachable and unchanged while the flag is off.
  */
 export function isMinimalUi(): boolean {
-  return process.env.NEXT_PUBLIC_MINIMAL_UI === '1';
+  return true;
 }

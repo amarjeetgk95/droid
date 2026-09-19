@@ -91,7 +91,7 @@ export function DataTable<T>({
     <div className={`overflow-x-auto w-full ${className}`}>
       <table className="w-full text-left text-xs border-collapse">
         <thead>
-          <tr className="border-b border-border bg-surface-subtle text-ink-3 font-mono uppercase tracking-wider">
+          <tr className="border-b border-border bg-surface-subtle text-ink-3 tracking-wide">
             {columns.map((col) => {
               const isSorted = sortKey === col.key;
               const ariaSort = col.sortable
@@ -127,7 +127,7 @@ export function DataTable<T>({
                       <button
                         type="button"
                         onClick={() => handleHeaderClick(col)}
-                        className={`inline-flex items-center gap-1 font-semibold uppercase tracking-wider cursor-pointer hover:text-foreground ${
+                        className={`inline-flex items-center gap-1 font-semibold tracking-wide cursor-pointer hover:text-foreground ${
                           alignClass
                         }`}
                       >
@@ -194,7 +194,7 @@ export function DataTable<T>({
             <button
               disabled={safePage <= 1}
               onClick={() => setPage(Math.max(1, safePage - 1))}
-              className="px-2 py-0.5 rounded border border-border-strong disabled:opacity-30 hover:bg-muted-strong text-ink-2"
+              className="px-2 py-0.5 rounded-sm border border-border-strong disabled:opacity-30 hover:bg-muted-strong text-ink-2"
             >
               Prev
             </button>
@@ -204,7 +204,7 @@ export function DataTable<T>({
             <button
               disabled={safePage >= totalPages}
               onClick={() => setPage(Math.min(totalPages, safePage + 1))}
-              className="px-2 py-0.5 rounded border border-border-strong disabled:opacity-30 hover:bg-muted-strong text-ink-2"
+              className="px-2 py-0.5 rounded-sm border border-border-strong disabled:opacity-30 hover:bg-muted-strong text-ink-2"
             >
               Next
             </button>

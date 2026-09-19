@@ -17,10 +17,6 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["date-fns"],
   },
-  typescript: {
-    // kept true for export CI; flip to false once strict passes
-    ignoreBuildErrors: true,
-  },
   // swcMinify is default in Next 14+ (kept implicit)
 };
 

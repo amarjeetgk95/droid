@@ -57,7 +57,7 @@ describe('Badge (unified variants)', () => {
 
     const badge = container.querySelector('[data-slot="badge"]')!;
     expect(badge.className).toContain('bg-up-wash');
-    expect(badge.className).toContain('text-[10px]');
+    expect(badge.className).toContain('text-[11px]');
     expect(badge.querySelector('.animate-pulse')).toBeTruthy();
   });
 

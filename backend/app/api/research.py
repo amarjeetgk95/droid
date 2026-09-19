@@ -251,6 +251,34 @@ def _get_bias_lock(key: str) -> asyncio.Lock:
     return _tactical_bias_locks[key]
 
 
+def _bias_generated_at_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _stamp_tactical_bias(data: Dict[str, Any], cache_age_s: float) -> Dict[str, Any]:
+    """Copy a tactical-bias payload with honest cache metadata.
+
+    The cache entry itself is never mutated: callers get a shallow copy with
+    ``cache_age_s``/``stale`` (and ``served-stale-cache`` appended to
+    limitations past the fresh TTL) so a replayed run cannot masquerade as a
+    fresh one. ``generated_at`` is set once, when the run is first cached.
+    """
+    stamped = dict(data)
+    age = max(0.0, float(cache_age_s))
+    stamped["cache_age_s"] = round(age, 3)
+    stale = age >= TACTICAL_BIAS_FRESH_TTL
+    stamped["stale"] = stale
+    if stale:
+        try:
+            limitations = list(stamped.get("limitations") or [])
+        except Exception:
+            limitations = []
+        if "served-stale-cache" not in limitations:
+            limitations.append("served-stale-cache")
+        stamped["limitations"] = limitations
+    return stamped
+
+
 def _trigger_bias_refresh(
     cache_key: str,
     instrument: str,
@@ -287,6 +315,7 @@ def _trigger_bias_refresh(
                     include_layers=include_layers,
                     include_explain=include_explain,
                 )
+            res["generated_at"] = _bias_generated_at_iso()
             _tactical_bias_cache[cache_key] = (time.monotonic(), res)
             logger.debug("tactical_bias_bg_refreshed", key=cache_key)
         except Exception as e:
@@ -332,25 +361,23 @@ async def get_tactical_bias(
         )
 
     cache_key = f"{instrument.strip().upper()}:{h}:{bool(include_layers)}:{bool(include_explain)}"
-    now = time.monotonic()
     cached = _tactical_bias_cache.get(cache_key)
-
     if cached is not None:
-        cached_time, cached_data = cached
-        age = now - cached_time
-        if age < TACTICAL_BIAS_FRESH_TTL:
-            return cached_data
-        if age < TACTICAL_BIAS_MAX_AGE:
+        cached_age = time.monotonic() - cached[0]
+        if cached_age < TACTICAL_BIAS_FRESH_TTL:
+            return _stamp_tactical_bias(cached[1], cached_age)
+        if cached_age < TACTICAL_BIAS_MAX_AGE:
             _trigger_bias_refresh(cache_key, instrument, h, record, include_layers, include_explain)
-            return cached_data
+            return _stamp_tactical_bias(cached[1], cached_age)
+        # Past MAX_AGE the cached payload is never served: regenerate below or
+        # fail loud — a stale verdict must not read as a live one.
 
     lock = _get_bias_lock(cache_key)
     async with lock:
         cached = _tactical_bias_cache.get(cache_key)
-        if cached is not None:
-            cached_time, cached_data = cached
-            if time.monotonic() - cached_time < TACTICAL_BIAS_FRESH_TTL:
-                return cached_data
+        cached_age = (time.monotonic() - cached[0]) if cached is not None else None
+        if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_FRESH_TTL:
+            return _stamp_tactical_bias(cached[1], cached_age)
 
         try:
             res = await tactical_horizon_engine.forecast(
@@ -361,21 +388,22 @@ async def get_tactical_bias(
                 include_layers=include_layers,
                 include_explain=include_explain,
             )
+            res["generated_at"] = _bias_generated_at_iso()
             _tactical_bias_cache[cache_key] = (time.monotonic(), res)
-            return res
+            return _stamp_tactical_bias(res, 0.0)
         except ForecastDeadlineExceeded as e:
-            if cached is not None:
+            if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_MAX_AGE:
                 logger.warning("tactical_bias_deadline_serving_stale", horizon=h, instrument=instrument)
-                return cached[1]
+                return _stamp_tactical_bias(cached[1], cached_age)
             logger.warning("tactical_bias_deadline_exceeded", horizon=h, instrument=instrument, error=str(e))
             raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
         except ValueError as e:
             logger.warning("tactical_bias_insufficient_data", horizon=h, instrument=instrument, error=str(e))
             raise HTTPException(status_code=503, detail=str(e))
         except Exception as e:
-            if cached is not None:
+            if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_MAX_AGE:
                 logger.warning("tactical_bias_error_serving_stale", horizon=h, instrument=instrument, error=str(e))
-                return cached[1]
+                return _stamp_tactical_bias(cached[1], cached_age)
             logger.error("tactical_bias_failed", horizon=h, instrument=instrument, error=str(e))
             raise HTTPException(status_code=500, detail=f"Tactical bias failed: {e}")
 

@@ -18,6 +18,10 @@ export function createMarketsApi(core: ApiCore) {
     return core.request<{ data: import('../types').MarketStatusResponse; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/markets/status');
   },
 
+    async getQuotes() {
+      return core.request<{ data: Array<import('../types').NormalizedQuote>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/markets/quotes');
+    },
+
     async getQuote(symbol: string) {
     return core.request<{ data: import('../types').NormalizedQuote; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/markets/${encodeURIComponent(symbol)}/quote`);
   },

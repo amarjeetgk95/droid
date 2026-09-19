@@ -38,14 +38,14 @@ export type ChartTokens = {
  * scripts/check-design-rules.mjs).
  */
 const FALLBACK: ChartTokens = {
-  up: '#16a34a',       // --ds-bull
-  down: '#dc2626',     // --ds-bear
-  accent: '#0284c7',   // --ds-accent
-  warn: '#d97706',     // --ds-warn
-  grid: 'rgba(15, 23, 42, 0.05)',      // --ds-chart-grid
-  crosshair: 'rgba(15, 23, 42, 0.35)', // --ds-chart-crosshair
-  axis: 'rgba(15, 23, 42, 0.10)',      // --ds-chart-axis
-  text: '#64748b',     // --ds-ink-3
+  up: '#4caf50',       // --ds-bull
+  down: '#df5148',     // --ds-bear
+  accent: '#387ed1',   // --ds-accent
+  warn: '#ff9500',     // --ds-warn
+  grid: 'rgba(68, 68, 68, 0.06)',      // --ds-chart-grid
+  crosshair: 'rgba(68, 68, 68, 0.35)', // --ds-chart-crosshair
+  axis: 'rgba(68, 68, 68, 0.12)',      // --ds-chart-axis
+  text: '#9b9b9b',     // --ds-ink-3
   surface: '#ffffff',  // --ds-surface
 };
 

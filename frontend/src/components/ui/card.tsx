@@ -50,7 +50,7 @@ function Card({
     return (
       <div
         className={cn(
-          "relative rounded-lg border border-border bg-card text-foreground transition-all duration-200",
+          "relative rounded-lg border border-border bg-card text-foreground shadow-card transition-shadow duration-200",
           glowStyles[glow ?? "none"],
           className
         )}
@@ -79,7 +79,7 @@ function Card({
     <div
       data-slot="card"
       className={cn(
-        "flex flex-col gap-4 rounded-[4px] border border-border bg-card py-4 text-card-foreground shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+        "flex flex-col gap-4 rounded-lg border border-border bg-card py-4 text-card-foreground shadow-card",
         className
       )}
       {...props}
@@ -106,7 +106,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold text-[13px] text-foreground tracking-tight", className)}
+      className={cn("leading-none font-semibold text-sm text-foreground tracking-tight", className)}
       {...props}
     />
   )

@@ -85,7 +85,7 @@ export const Gauge: React.FC<GaugeProps> = ({
           style={{ width: `${percentage}%` }}
         />
       </div>
-      {sublabel && <div className="text-[10px] text-ink-3 mt-1 font-mono">{sublabel}</div>}
+      {sublabel && <div className="text-[11px] text-ink-3 mt-1 font-mono">{sublabel}</div>}
     </div>
   );
 };

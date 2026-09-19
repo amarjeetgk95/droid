@@ -4,6 +4,9 @@ import './globals.css';
 import { AuthProvider } from '@/components/auth/AuthProvider';
 import { WebVitalsReporter } from '@/components/common/WebVitalsReporter';
 import { ToastProvider } from '@/components/ui/toast';
+import { AppStreamProvider } from '@/context/AppStreamContext';
+import { InstrumentProvider } from '@/context/InstrumentContext';
+import { MarketSessionProvider } from '@/context/MarketSessionContext';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -17,16 +20,17 @@ const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-jetbrains',
-  preload: false,
+  preload: true,
+  fallback: ['ui-monospace', 'Consolas', 'monospace'],
 });
 
 export const metadata: Metadata = {
-  title: 'Droid - F&O Market Analysis',
-  description: 'AI-Powered Indian F&O Market Analysis Platform',
+  title: 'Droid — F&O Terminal',
+  description: 'Multi-horizon market forecast, signal generation and paper P&L for Indian F&O.',
 };
 
 export const viewport: Viewport = {
-  themeColor: '#f8fafc',
+  themeColor: '#ffffff',
   colorScheme: 'light',
   width: 'device-width',
   initialScale: 1,
@@ -35,10 +39,16 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
-      <body className={`${inter.className} antialiased bg-background text-foreground`}>
+      <body className="bg-background text-foreground">
         <WebVitalsReporter />
         <ToastProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <MarketSessionProvider>
+              <InstrumentProvider>
+                <AppStreamProvider>{children}</AppStreamProvider>
+              </InstrumentProvider>
+            </MarketSessionProvider>
+          </AuthProvider>
         </ToastProvider>
       </body>
     </html>

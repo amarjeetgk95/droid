@@ -81,6 +81,9 @@ export interface PaperTradingSettings {
 }
 
 export interface PreferencesSettings {
+  /** Persisted for forward-compatibility only — the stylesheet is light-only, so
+   *  nothing reads this yet and the app coerces it back to 'light'. Add the dark
+   *  token set before surfacing a control for it. */
   theme: 'light' | 'dark';
   numberFormat: 'INDIAN' | 'INTERNATIONAL';
   defaultIndexSymbol: string;

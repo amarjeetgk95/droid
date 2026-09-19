@@ -154,6 +154,7 @@ class FyersProvider(MarketDataProvider):
         self._stream_running = False
         self._stream_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
+        self._ws_client = None  # FyersHsmSocket — tick-by-tick primary feed
         self._start_lock: asyncio.Lock | None = None
         self._consecutive_failures = 0
         self._last_known_quotes: dict[str, NormalizedQuote] = {}
@@ -906,12 +907,16 @@ class FyersProvider(MarketDataProvider):
         return sum(1 for ts, _ in self._sanity_reject_events if ts >= cutoff)
 
     async def _poller_loop(self) -> None:
-        """Backend-owned FYERS poller -> central_feed, with backoff reconnect.
+        """FYERS market-data loop -> central_feed.
+
+        Primary source is the HSM v1-5 data socket (tick-by-tick, sub-second).
+        While that socket is connected AND the market is open, the REST poll is
+        skipped entirely (no double API burn, no stale REST ticks racing live
+        ticks). The REST poller remains the fallback/health probe whenever the
+        socket is down or the market is closed, with backoff reconnect.
 
         Runs for the lifetime of the backend process (started once at backend
-        startup). Survives transient failures via TokenManager exponential
-        backoff; only stops at backend shutdown or backend-owned restart.
-        Frontend connects/disconnects never touch this loop.
+        startup). Frontend connects/disconnects never touch this loop.
         """
         from app.services.central_feed import central_feed as _cf
         logger.info("fyers_poller_loop_started", interval_s=1.0)
@@ -919,6 +924,14 @@ class FyersProvider(MarketDataProvider):
         while self._stream_running:
             delay = 1.0
             try:
+                ws_active = self._ws_client is not None and self._ws_client.is_healthy()
+                if ws_active and calendar_service.is_market_open_now():
+                    # Live socket owns the feed while the market is open.
+                    try:
+                        await asyncio.sleep(1.0)
+                    except asyncio.CancelledError:
+                        break
+                    continue
                 now = datetime.now(timezone.utc)
                 quotes_map = await self._fetch_fyers_quotes(symbols)
                 if quotes_map:
@@ -988,10 +1001,12 @@ class FyersProvider(MarketDataProvider):
         logger.info("fyers_poller_loop_stopped")
 
     async def start_stream(self) -> None:
-        """Idempotent backend-owned start — one REST poller per instance max.
+        """Idempotent backend-owned start — one HSM socket + one REST poller.
 
-        Interface name `start_stream` is kept for MarketDataProvider compat,
-        but this is a 1s REST poller, not a websocket stream.
+        The HSM v1-5 data socket (``app.providers.fyers_ws``) is the primary
+        tick source; ``_poller_loop`` runs alongside it as the fallback and
+        health probe (it steps aside while the socket is healthy and the
+        market is open).
         """
         lock = self._get_start_lock()
         async with lock:
@@ -1003,9 +1018,112 @@ class FyersProvider(MarketDataProvider):
             self._stream_running = True
             self._consecutive_failures = 0
             self.token_manager.set_state(ConnectionState.CONNECTING)
-            logger.info("fyers_stream_started", mode="poller")
+            self._start_ws_client()
+            logger.info(
+                "fyers_stream_started",
+                mode="hsm_socket+rest_fallback" if self._ws_client else "poller",
+            )
             self._poll_task = asyncio.create_task(self._poller_loop())
             self._stream_task = self._poll_task
+
+    def _start_ws_client(self) -> None:
+        """Start the tick-by-tick HSM socket (idempotent, best-effort)."""
+        if not settings.fyers_ws_enabled:
+            logger.info("fyers_ws_disabled_by_config")
+            return
+        if self._ws_client is not None and self._ws_client.is_ready():
+            return
+        try:
+            from app.providers.fyers_ws import FyersHsmSocket
+
+            self._ws_client = FyersHsmSocket(
+                url=settings.fyers_ws_url,
+                token_provider=self._ws_access_token,
+                symbol_map=self.symbol_map,
+                on_quote=self._on_ws_quote,
+            )
+            self._ws_client.start()
+        except Exception as e:  # noqa: BLE001 - REST poller remains the fallback
+            self._ws_client = None
+            logger.warning("fyers_ws_start_failed", error=str(e)[:200])
+
+    async def _ws_access_token(self) -> str:
+        """Current token for the socket handshake (token_manager -> runtime cfg)."""
+        try:
+            token = await self.token_manager.get_valid_token()
+        except Exception:
+            token = ""
+        if token:
+            return token
+        try:
+            from app.core.broker_runtime import get_config
+
+            cfg_obj = get_config()
+            if cfg_obj.provider == "fyers":
+                return cfg_obj.credentials.get("access_token") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
+    async def _on_ws_quote(self, symbol: str, quote: dict) -> None:
+        """Ingest a decoded socket quote with the same sanity gate as REST."""
+        from types import SimpleNamespace
+
+        from app.services.central_feed import central_feed as _cf
+
+        ltp = float(quote.get("ltp") or 0.0)
+        if ltp <= 0:
+            return
+        view = SimpleNamespace(
+            ltp=ltp,
+            open=quote.get("open"),
+            high=quote.get("high"),
+            low=quote.get("low"),
+            previous_close=quote.get("previous_close") or 0.0,
+        )
+        if not self._quote_passes_sanity(symbol, view):
+            return
+
+        now = datetime.now(timezone.utc)
+        tick = TickEvent(
+            timestamp=now,
+            symbol=symbol,
+            instrument_token=self.symbol_map.get(symbol, symbol),
+            ltp=ltp,
+            open=view.open,
+            high=view.high,
+            low=view.low,
+            close=view.previous_close or ltp,
+            volume=0,
+            provider=self.PROVIDER_ID,
+            priority=EventPriority.HIGH,
+        )
+        await _cf.ingest_tick(tick)
+        if self.token_manager.state != ConnectionState.CONNECTED:
+            self.token_manager.set_state(ConnectionState.CONNECTED)
+        self.token_manager.record_message()
+        prev = float(view.previous_close or 0.0)
+        self._last_known_quotes[symbol] = NormalizedQuote(
+            symbol=symbol,
+            display_name=symbol,
+            timestamp=now,
+            ltp=round(ltp, 2),
+            open=round(float(view.open or ltp), 2),
+            high=round(float(view.high or ltp), 2),
+            low=round(float(view.low or ltp), 2),
+            previous_close=round(prev, 2),
+            change=round(ltp - prev, 2) if prev else 0.0,
+            change_percent=round((ltp - prev) / prev * 100, 2) if prev else 0.0,
+            volume=0,
+            status=DataStatus.LIVE if calendar_service.is_market_open_now() else DataStatus.CLOSED,
+            provider=self.provider_name,
+        )
+
+    def get_stream_diagnostics(self) -> dict:
+        """Feed-source telemetry for /tokens/status and health surfaces."""
+        if self._ws_client is None:
+            return {"source": "rest_poller", "ws": None}
+        return {"source": "hsm_socket", "ws": dict(self._ws_client.stats)}
 
     async def stop_stream(self) -> None:
         """Backend-owned stop (shutdown / restart only — never frontend)."""
@@ -1015,6 +1133,13 @@ class FyersProvider(MarketDataProvider):
                 return
             self._stream_running = False
             self.token_manager.set_state(ConnectionState.MANUAL_STOP)
+            ws_client = self._ws_client
+            self._ws_client = None
+            if ws_client is not None:
+                try:
+                    await ws_client.stop()
+                except Exception:  # noqa: BLE001
+                    pass
             for t in (self._poll_task, self._stream_task):
                 if t and t is not asyncio.current_task():
                     try:

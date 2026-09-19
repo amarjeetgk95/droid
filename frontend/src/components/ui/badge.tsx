@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
    shared kit (success/danger/warning/info/purple/neutral/outline/bull/bear)
    and the radix kit aliases (default/secondary/destructive/ghost/link). */
 const badgeVariants = cva(
-  "inline-flex items-center gap-1.5 font-mono uppercase font-medium rounded border transition-all duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex items-center gap-1.5 font-medium rounded-full border transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
@@ -28,9 +28,9 @@ const badgeVariants = cva(
         link: "border-transparent bg-transparent text-primary underline-offset-4 hover:underline",
       },
       size: {
-        xs: "text-[10px] px-1.5 py-0.5 tracking-wider",
-        sm: "text-xs px-2 py-0.5 tracking-wide",
-        md: "text-sm px-2.5 py-1 tracking-wide",
+        xs: "text-[11px] px-2 py-0.5 tracking-normal",
+        sm: "text-xs px-2.5 py-0.5 tracking-normal",
+        md: "text-[13px] px-3 py-1 tracking-normal",
       },
     },
     defaultVariants: {

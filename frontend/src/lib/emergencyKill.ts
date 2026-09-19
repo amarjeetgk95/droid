@@ -1,6 +1,6 @@
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { playScalpAudio } from '@/components/scalp/scalpAudio';
+import { playScalpAudio } from '@/lib/scalpAudio';
 
 /**
  * Executes emergency kill switch with multi-attempt retry, backoff, and signal escalation fallback.

@@ -217,8 +217,38 @@ export function createAiApi(core: ApiCore) {
   },
 
     async refreshAIModels() {
-    return core.request<{ data: { provider: string; updated_at: string; free_only: boolean; models: import('../types').OpenRouterModel[]; default_model: import('../types').OpenRouterModel | null; using_cached: boolean }; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/models/refresh`, { method: 'POST' });
-  },
+      return core.request<{ data: { provider: string; updated_at: string; free_only: boolean; models: import('../types').OpenRouterModel[]; default_model: import('../types').OpenRouterModel | null; using_cached: boolean }; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/models/refresh`, { method: 'POST' });
+    },
+
+    async getAIModelsCacheStatus() {
+      return core.request<{ data: { cached?: boolean; timestamp?: string | null; age_seconds?: number | null; total_count?: number; using_cached?: boolean; error?: string | null }; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/models/cache-status`);
+    },
+
+    async analyzeSymbolWithModel(
+      symbol: string,
+      opts?: { model?: string; allow_paid?: boolean | null; openRouterApiKey?: string; geminiApiKey?: string },
+    ) {
+      const query = new URLSearchParams();
+      if (opts?.model) query.set('model', opts.model);
+      if (opts?.allow_paid !== undefined && opts?.allow_paid !== null) query.set('allow_paid', String(opts.allow_paid));
+      const qs = query.toString();
+      const headers: Record<string, string> = {};
+      if (opts?.openRouterApiKey) headers['X-OpenRouter-Key'] = opts.openRouterApiKey;
+      if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey;
+      return core.request<{ data: import('../types').AIInsightResponse; error: string | null; meta: import('../types').ApiMeta; model_used?: string; latency_ms?: number; hint?: string }>(
+        `/api/v1/ai/analyze/${encodeURIComponent(symbol)}/with-model${qs ? `?${qs}` : ''}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: opts?.model ?? 'auto',
+            symbol,
+            allow_paid: opts?.allow_paid ?? null,
+            openRouterApiKey: opts?.openRouterApiKey ?? null,
+          }),
+        },
+      );
+    },
 
     streamAIChat: (
       payload: import('../types').AIChatRequest,

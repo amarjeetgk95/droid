@@ -234,6 +234,33 @@ export function createAlgoApi(core: ApiCore) {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    // Sizing preview with the exact backend body (entry_price required).
+    // The legacy previewAlgoSizing above sends {symbol,...} which the backend
+    // ignores; use this for the /trade sizing tool.
+    previewAlgoSizingRisk: (payload: {
+      entry_price: number;
+      stop_price?: number | null;
+      risk_budget?: number | null;
+      lot_size?: number | null;
+      contract_multiplier?: number | null;
+      max_capital_per_trade?: number | null;
+      max_position_size?: number | null;
+      available_capital?: number | null;
+      available_margin?: number | null;
+      margin_per_unit?: number | null;
+    }) =>
+      core.request<{
+        data: {
+          quantity: number;
+          notional: string;
+          risk_per_unit: string | null;
+          reason: string | null;
+          capped_by: string | null;
+        };
+      }>('/api/v1/algo/sizing/preview', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     selectAlgoOptions: (payload: { direction: string; candidates: Record<string, unknown>[] }) =>
       core.request<{ data: Record<string, unknown> }>('/api/v1/algo/options/select', {
         method: 'POST',

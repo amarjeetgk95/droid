@@ -29,7 +29,7 @@ export default function AppError({
         ) : null}
         <button
           onClick={() => retry()}
-          className="bg-primary text-primary-foreground px-4 py-2 rounded font-medium hover:bg-primary/90 transition-colors"
+          className="bg-primary text-primary-foreground px-4 py-2 rounded-md font-medium hover:bg-primary/90 transition-colors"
         >
           Try again
         </button>

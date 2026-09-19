@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { Linter } from 'eslint';
-// @ts-ignore - local .mjs rule ships without type declarations
 import rule from '../../eslint-rules/rules/no-component-polling.mjs';
 
 const linter = new Linter();

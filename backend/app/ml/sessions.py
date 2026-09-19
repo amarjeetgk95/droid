@@ -11,7 +11,9 @@ Rules:
   T and T+H must fall in the SAME regular session. Windows crossing the
   close, weekends, holidays, or touching a special session are
   INSUFFICIENT_DATA — never bridged with the next open, which would mix
-  overnight-gap returns into an intraday label.
+  overnight-gap returns into an intraday label. A special session only
+  blocks its own window; times outside it follow the session-hours rule
+  (so a special-evening date is not blanket-rejected all day).
 
 PIT discipline: resolution only reads candles with timestamps <= T+H that
 were fetched AFTER T+H (historical fact at settle time). Candle timestamps
@@ -82,13 +84,33 @@ def classify_window(
             "t_plus_h_utc": t_plus_h,
             "session_close_utc": None,
         }
-    if info.is_special_session or info.market_open is None or info.market_close is None:
+    if info.market_open is None or info.market_close is None:
+        return {
+            "universe": "nse",
+            "settleable": False,
+            "reason": "session-times-unavailable",
+            "t_plus_h_utc": t_plus_h,
+            "session_close_utc": None,
+        }
+    if info.is_special_session:
+        # A special session blocks only its own window: observations outside
+        # it are judged by the same-session rule below instead of
+        # blanket-rejecting the whole date. Windows inside it stay
+        # unsettleable (special sessions are never labeled).
+        if not (info.market_open <= t_ist < info.market_close):
+            return {
+                "universe": "nse",
+                "settleable": False,
+                "reason": "observation-outside-session",
+                "t_plus_h_utc": t_plus_h,
+                "session_close_utc": info.market_close.astimezone(timezone.utc),
+            }
         return {
             "universe": "nse",
             "settleable": False,
             "reason": "special-session-involved",
             "t_plus_h_utc": t_plus_h,
-            "session_close_utc": None,
+            "session_close_utc": info.market_close.astimezone(timezone.utc),
         }
     if not (info.market_open <= t_ist < info.market_close):
         return {

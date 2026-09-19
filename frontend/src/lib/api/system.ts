@@ -6,9 +6,39 @@ export function createSystemApi(core: ApiCore) {
     return core.request<any>('/api/v1/pipeline/pricing/calculate', { method: 'POST', body: JSON.stringify(payload) });
   },
 
-    async captureMarketState(symbol: string = 'NIFTY') {
-    return core.request<any>(`/api/v1/pipeline/state/capture?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' });
-  },
+    async captureMarketState(symbol: string, currentPrice: number, atr: number, regime: string = 'UNKNOWN') {
+      const params = new URLSearchParams({
+        symbol,
+        current_price: String(currentPrice),
+        atr: String(atr),
+        regime,
+      });
+      return core.request<any>(`/api/v1/pipeline/state/capture?${params.toString()}`, { method: 'POST' });
+    },
+
+    async evaluateTrigger(symbol: string, triggerType: string, currentPrice: number, significance?: number) {
+      const params = new URLSearchParams({
+        symbol,
+        trigger_type: triggerType,
+        current_price: String(currentPrice),
+      });
+      if (significance !== undefined && significance !== null && Number.isFinite(significance)) {
+        params.set('significance', String(significance));
+      }
+      return core.request<any>(`/api/v1/pipeline/trigger/evaluate?${params.toString()}`, { method: 'POST' });
+    },
+
+    async getDashboardSymbol(symbol: string) {
+      return core.request<{ data: Record<string, unknown>; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/dashboard/${encodeURIComponent(symbol)}`);
+    },
+
+    async getDbHealth() {
+      return core.request<{ status: string; connected: boolean; database?: string | null; user?: string | null; server?: string | null; counts?: Record<string, unknown>; error?: string; configured?: boolean }>('/api/v1/health/database');
+    },
+
+    async health() {
+      return core.request<{ status: string; timestamp?: string }>('/health');
+    },
 
     async checkStaleness(payload: any) {
     return core.request<any>('/api/v1/pipeline/staleness/check', { method: 'POST', body: JSON.stringify(payload) });
@@ -87,6 +117,14 @@ export function createSystemApi(core: ApiCore) {
 
     async tripCircuitBreaker() {
     return core.request<{ data: Record<string, unknown>; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/circuit-breaker/trip', { method: 'POST' });
+  },
+
+    async getSignalsSubsystemsHealth() {
+    return core.request<{
+      timestamp?: string;
+      elements?: Record<string, boolean | string>;
+      [key: string]: unknown;
+    }>('/health/subsystems');
   },
 
     async getForecastHealth(limit: number = 30) {

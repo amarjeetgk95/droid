@@ -65,7 +65,23 @@ export function createIntelligenceApi(core: ApiCore) {
     if (lifecycle) params.set('lifecycle', lifecycle);
     const qs = params.toString() ? `?${params.toString()}` : '';
     return core.request<any[]>(`/api/v1/research/indicators${qs}`);
-  },
+    },
+
+    async getResearchIndicator(id: string) {
+    return core.request<any>(`/api/v1/research/indicators/${encodeURIComponent(id)}`);
+    },
+
+    async getResearchChartState(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
+    return core.request<any>(
+      `/api/v1/research/chart/state?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`,
+    );
+    },
+
+    async getResearchChartFeatures(instrument: string = 'NIFTY 50', timeframe: string = '5m') {
+    return core.request<any>(
+      `/api/v1/research/chart/features?instrument=${encodeURIComponent(instrument)}&timeframe=${encodeURIComponent(timeframe)}`,
+    );
+    },
 
     async getResearchOptionsContext(instrument: string = 'NIFTY 50') {
     return core.request<any>(`/api/v1/research/options-context?instrument=${encodeURIComponent(instrument)}`);
@@ -73,7 +89,18 @@ export function createIntelligenceApi(core: ApiCore) {
 
     async getResearchPredictionOutcome(predictionId: string) {
     return core.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}/outcome`);
-  },
+    },
+
+    async getResearchPrediction(predictionId: string) {
+    return core.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}`);
+    },
+
+    async createResearchPrediction(params: Record<string, unknown>) {
+    return core.request<any>('/api/v1/research/predictions', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    },
 
     async listResearchPredictions(params?: { indicator_id?: string; instrument?: string; limit?: number }) {
     const q = new URLSearchParams();
@@ -103,7 +130,35 @@ export function createIntelligenceApi(core: ApiCore) {
       method: 'POST',
       body: JSON.stringify(params),
     });
-  },
+    },
+
+    async listResearchSnapshots(instrument?: string, limit: number = 50) {
+    const q = new URLSearchParams();
+    if (instrument) q.set('instrument', instrument);
+    q.set('limit', String(limit));
+    return core.request<any[]>(`/api/v1/research/snapshots?${q.toString()}`);
+    },
+
+    async createResearchSnapshot(params: Record<string, unknown>) {
+    return core.request<any>('/api/v1/research/snapshots', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    },
+
+    async listResearchAnnotations(instrument?: string) {
+    const q = new URLSearchParams();
+    if (instrument) q.set('instrument', instrument);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return core.request<any[]>(`/api/v1/research/annotations${qs}`);
+    },
+
+    async createResearchAnnotation(params: Record<string, unknown>) {
+    return core.request<any>('/api/v1/research/annotations', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    },
 
     async selectOptimalContract(params: any) {
     return core.request<any>('/api/v1/options-intelligence/select-contract', {
@@ -125,6 +180,41 @@ export function createIntelligenceApi(core: ApiCore) {
       body: JSON.stringify(params),
     });
   },
+
+    /**
+     * AI financial research context (backend returns the report directly, no
+     * envelope). Fail-open read: callers render an honest empty state when the
+     * engine has nothing stored for this underlying/horizon/direction.
+     */
+    async getFinancialResearch(
+      underlying: string,
+      horizon: string = 'INTRADAY',
+      direction: 'BULLISH' | 'BEARISH' = 'BULLISH',
+    ) {
+      const qs = new URLSearchParams({ horizon, direction }).toString();
+      return core.request<any>(
+        `/api/v1/options-intelligence/financial-research/${encodeURIComponent(underlying)}?${qs}`,
+      );
+    },
+
+    /**
+     * Synthesize fresh AI research. Heavy (model inference): callers gate it
+     * behind a ConfirmDialog and surface the outcome via toast.
+     */
+    async synthesizeFinancialResearch(params: {
+      underlying: string;
+      horizon?: string;
+      direction?: 'BULLISH' | 'BEARISH';
+    }) {
+      return core.request<any>('/api/v1/options-intelligence/financial-research/synthesize', {
+        method: 'POST',
+        body: JSON.stringify({
+          underlying: params.underlying,
+          horizon: params.horizon ?? 'INTRADAY',
+          direction: params.direction ?? 'BULLISH',
+        }),
+      });
+    },
   };
 }
 

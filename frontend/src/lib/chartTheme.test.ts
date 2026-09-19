@@ -10,11 +10,11 @@ describe('chartTokens', () => {
   it('returns the CSS-mirrored fallback during SSR (no window/document)', () => {
     const tokens = chartTokens();
     // Fallback values must mirror :root in globals.css.
-    expect(tokens.up).toBe('#16a34a');
-    expect(tokens.down).toBe('#dc2626');
-    expect(tokens.accent).toBe('#0284c7');
-    expect(tokens.warn).toBe('#d97706');
-    expect(tokens.text).toBe('#64748b');
+    expect(tokens.up).toBe('#4caf50');
+    expect(tokens.down).toBe('#df5148');
+    expect(tokens.accent).toBe('#387ed1');
+    expect(tokens.warn).toBe('#ff9500');
+    expect(tokens.text).toBe('#9b9b9b');
     expect(tokens.surface).toBe('#ffffff');
 
     expect(chartTokens()).toBe(tokens);
@@ -35,7 +35,7 @@ describe('chartTokens', () => {
     expect(tokens.up).toBe('rgb(1, 2, 3)');
     expect(tokens.text).toBe('#abcdef');
     // Missing token => per-token fallback, not undefined/empty.
-    expect(tokens.down).toBe('#dc2626');
+    expect(tokens.down).toBe('#df5148');
 
     values['--ds-bull'] = 'rgb(9, 9, 9)';
     expect(chartTokens()).toBe(tokens);
@@ -53,7 +53,7 @@ describe('chartTokens', () => {
     });
 
     const tokens = chartTokens();
-    expect(tokens.up).toBe('#16a34a');
-    expect(tokens.down).toBe('#dc2626');
+    expect(tokens.up).toBe('#4caf50');
+    expect(tokens.down).toBe('#df5148');
   });
 });

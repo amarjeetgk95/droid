@@ -122,7 +122,7 @@ export function FreshnessClock({
 function stateLabel(s: FeedState, age: string | null, fetching?: boolean): string {
   switch (s) {
     case 'LIVE':
-      return age ? `LIVE · ${age}` : 'LIVE';
+      return 'LIVE';
     case 'SYNCING':
       return fetching ? 'SYNCING · updating' : 'SYNCING · waiting';
     case 'STALE':

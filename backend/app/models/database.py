@@ -25,7 +25,6 @@ class Profile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     settings: Mapped[Optional["UserSettings"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
-    alert_rules: Mapped[list["AlertRuleDB"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     paper_portfolio: Mapped[Optional["PaperPortfolioDB"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
@@ -95,46 +94,6 @@ class Expiry(Base):
 
     instrument: Mapped[Optional["Instrument"]] = relationship(back_populates="expiries")
 
-
-# ============================================================
-# Alert Rules Table
-# ============================================================
-class AlertRuleDB(Base):
-    __tablename__ = "alert_rules"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    alert_type: Mapped[str] = mapped_column(Text, nullable=False)
-    condition: Mapped[str] = mapped_column(Text, nullable=False)
-    threshold: Mapped[float] = mapped_column(Float, nullable=False)
-    channel: Mapped[str] = mapped_column(Text, default="IN_APP")
-    webhook_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_triggered: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    user: Mapped["Profile"] = relationship(back_populates="alert_rules")
-
-
-# ============================================================
-# Alert History Table
-# ============================================================
-class AlertHistoryDB(Base):
-    __tablename__ = "alert_history"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    alert_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="SET NULL"), nullable=True)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)
-    alert_name: Mapped[str] = mapped_column(Text, nullable=False)
-    symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    triggered_value: Mapped[float] = mapped_column(Float, nullable=False)
-    threshold_value: Mapped[float] = mapped_column(Float, nullable=False)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    channel_dispatched: Mapped[str] = mapped_column(Text, default="IN_APP")
 
 
 # ============================================================

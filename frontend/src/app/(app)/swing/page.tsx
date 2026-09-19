@@ -1,7 +1,5 @@
-'use client';
-
-import { SwingDesk } from '@/components/swing/SwingDesk';
+import { SwingModule } from '@/components/swing/SwingModule';
 
 export default function SwingPage() {
-  return <SwingDesk />;
+  return <SwingModule />;
 }

@@ -109,6 +109,8 @@ export const PaperTradingSettingsSchema = z.object({
 
 // --- Preferences Settings ---
 export const PreferencesSettingsSchema = z.object({
+  // Accepted so old backups still import, but `migrateThemeToLight` coerces it back:
+  // globals.css has no dark token set, so 'dark' can never be honoured.
   theme: z.enum(['light', 'dark']).default('light'),
   numberFormat: z.enum(['INDIAN', 'INTERNATIONAL']),
   defaultIndexSymbol: z.string().trim().min(1).max(50),

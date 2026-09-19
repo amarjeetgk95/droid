@@ -24,32 +24,11 @@
  * polling call.
  */
 
-// P3 exception allowlist: exact paths relative to `frontend/src/components/`.
+// Exception allowlist: exact paths relative to `frontend/src/components/`.
+// Only a 1s visual clock remains; every data-bearing component consumes the
+// unified app stream (context) or a hook under `src/hooks/**`.
 const PENDING_POLLERS = new Set([
-  'common/FreshnessClock.tsx', // clock-only: 1s visual clock, no data fetch (P3-3)
-  'dashboard/WhyStrip.tsx', // P3 pending: non-NIFTY REST fallback (OptionsAnalytics lacks call/put walls)
-  'execution-cockpit/BasketOrderBuilder.tsx', // P3 pending: quotes
-  'execution-cockpit/ExecutionModeSwitcher.tsx', // P3 blocked: D6 per-user algo
-  'execution-cockpit/ExposureGauge.tsx', // P3 pending: exposure percentage fields
-  'execution-cockpit/OrderBook.tsx', // P3 blocked: D6 per-user algo
-  'execution-cockpit/PositionsTable.tsx', // P3 blocked: D6 per-user paper
-  'execution-cockpit/ReconciliationPanel.tsx', // clock-only: 1s visual clock, no data fetch (P3-3)
-  'intel-hub/DataHealthMatrix.tsx', // P3 pending: legacy intel desk
-  'intel-hub/InstitutionalFlowTicker.tsx', // P3 pending: legacy intel desk
-  'intel-hub/IntelHubData.tsx', // P3 pending: legacy intel desk
-  'intel-hub/OptionsFlowPanel.tsx', // P3 pending: legacy intel desk
-  'layout/Clock.tsx', // clock-only: 1s visual clock, no data fetch (P3-3)
-  'layout/Header/HeaderMarketSession.tsx', // clock-only: 1s visual clock, no data fetch (P3-3)
-  'research-lab/FeatureInspector.tsx', // P3 pending: research desk
-  'settings/telegram/useTelegram.ts', // settings only: Telegram connection polling lives outside desks (P3-3)
-  'signal-forge/MLGateIndicator.tsx', // P3 pending: forge
-  'signals/useSignalsData.ts', // P3 pending: legacy signals desk
-  'system-nerve/PanelState.tsx', // P3 pending: system desk
-  'war-room/AccountabilityStrip.tsx', // P3 pending: legacy war-room desk
-  'war-room/AlgoSafetyStrip.tsx', // P3 pending: legacy war-room desk
-  'war-room/LevelsCard.tsx', // P3 pending: legacy war-room desk
-  'war-room/SessionStrip.tsx', // P3 pending: legacy war-room desk
-  'war-room/WarRoomDesk.tsx', // P3 pending: legacy war-room desk
+  'common/FreshnessClock.tsx', // clock-only: 1s visual clock, no data fetch
 ]);
 
 const POLLING_CALLS = new Set(['setInterval', 'usePolling', 'useSmartInterval']);

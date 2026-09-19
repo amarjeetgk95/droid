@@ -13,6 +13,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot "frontend\node_modules
 
 # NEXT_PUBLIC_* vars are baked into the static export at build time.
 $env:NEXT_PUBLIC_API_URL = "http://127.0.0.1:8000"
+$env:NEXT_PUBLIC_MINIMAL_UI = "1"
 npm run build
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
