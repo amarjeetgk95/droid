@@ -27,11 +27,17 @@ class RegimeClassifier:
         nifty_candles: list[dict[str, Any]],
         symbol: str = "NIFTY",
     ) -> MarketRegime:
-        """Evaluates completed daily candles of NIFTY to detect market regime."""
+        """Evaluates completed daily candles of NIFTY to detect market regime.
+
+        Fail-closed: confidence is None + INSUFFICIENT_DATA/UNVETTED, never fixed
+        60/65/75/80/85 presented as measured. Regime label is deterministic from
+        MA structure; confidence is unmeasured.
+        """
         if not nifty_candles or len(nifty_candles) < 20:
             return MarketRegime(
                 regime="DATA_UNCERTAIN",
-                confidence=0.0,
+                confidence=None,
+                confidence_status="INSUFFICIENT_DATA",
                 benchmark_symbol=symbol,
                 reasons=["Insufficient benchmark candle history for regime determination."],
             )
@@ -63,7 +69,9 @@ class RegimeClassifier:
 
         reasons: list[str] = []
         raw_regime: MarketRegimeType = "NEUTRAL"
-        confidence: float = 60.0
+        # Unmeasured by construction: None + UNVETTED, never 60/65/75/80/85.
+        confidence: float | None = None
+        confidence_status: str = "UNVETTED"
 
         above_ema20 = curr_close > ema20
         above_sma50 = curr_close > sma50
@@ -81,26 +89,24 @@ class RegimeClassifier:
 
         if atr_pct > 1.8:
             raw_regime = "HIGH_VOLATILITY"
-            confidence = 75.0
             reasons.append(f"NIFTY Daily ATR is elevated at {round(atr_pct, 2)}% (High Volatility).")
         elif above_ema20 and above_sma50 and above_sma200:
             raw_regime = "BULL"
-            confidence = 85.0
             reasons.append("Full bullish moving-average stack (Price > 20 EMA > 50 SMA > 200 SMA).")
         elif not above_ema20 and above_sma50:
             raw_regime = "DISTRIBUTION"
-            confidence = 65.0
             reasons.append("Mild distribution: Broken 20 EMA but holding 50 SMA.")
         elif not above_ema20 and not above_sma50:
             raw_regime = "BEAR"
-            confidence = 80.0
             reasons.append("Bearish regime: Price below both 20 EMA and 50 SMA.")
         else:
             raw_regime = "NEUTRAL"
-            confidence = 60.0
             reasons.append("Mixed signals across moving average structure.")
+        reasons.append("Regime confidence unmeasured (UNVETTED): fixed 60/65/75/80/85 removed.")
 
-        # Hysteresis (§9): avoid single-day regime flips unless high confidence
+        # Hysteresis (§9): avoid single-day regime flips. Confidence is unmeasured
+        # (UNVETTED), so hysteresis is purely bar-count + BEAR/HIGH_VOLATILITY
+        # priority — never a confidence-gated flip off fixed 60/65/75/80/85.
         if raw_regime == self._last_regime:
             self._persistence_counter += 1
         else:
@@ -112,22 +118,37 @@ class RegimeClassifier:
                 raw_regime = self._last_regime
                 self._persistence_counter += 1
 
-        ma_score = 50.0
-        if raw_regime == "BULL":
-            ma_score = 90.0
-        elif raw_regime == "DISTRIBUTION":
-            ma_score = 45.0
-        elif raw_regime == "BEAR":
-            ma_score = 15.0
+        # MA alignment is structural (not a measured confidence): None when the
+        # MA stack is incomplete, else the deterministic stack score with explicit
+        # fallback status. Never a silent 50.0 presented as measured.
+        try:
+            _stack_complete = len(closes) >= 50
+        except Exception:
+            _stack_complete = False
+        if not _stack_complete:
+            ma_score = None
+            _ma_status = "INSUFFICIENT_DATA"
+        else:
+            if raw_regime == "BULL":
+                ma_score = 90.0
+            elif raw_regime == "DISTRIBUTION":
+                ma_score = 45.0
+            elif raw_regime == "BEAR":
+                ma_score = 15.0
+            else:
+                ma_score = 50.0
+            _ma_status = "fallback"
 
         return MarketRegime(
             regime=raw_regime,
             confidence=confidence,
+            confidence_status=confidence_status,
             persistence_bars=self._persistence_counter,
             benchmark_symbol=symbol,
             benchmark_price=round(curr_close, 2),
             benchmark_change_pct=day_chg_pct,
             ma_alignment_score=ma_score,
+            ma_alignment_status=_ma_status,
             recent_drawdown_pct=drawdown_pct,
             reasons=reasons,
         )
@@ -140,8 +161,19 @@ class RegimeClassifier:
     ) -> MarketRegime:
         """
         Enriches technical regime with IV percentile and classification.
+        Fail-closed: empty IV history yields None + INSUFFICIENT_DATA, never a
+        silent 50.0 percentile.
         """
         from app.swing.technical import compute_iv_percentile, classify_iv_regime
+        if not iv_history:
+            regime.iv_percentile = None
+            try:
+                regime.iv_percentile_status = "INSUFFICIENT_DATA"  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            regime.iv_regime = "UNKNOWN"
+            regime.reasons.append("Implied Volatility environment: UNKNOWN (INSUFFICIENT_DATA: empty IV history, no 50.0 fallback)")
+            return regime
         pctl = compute_iv_percentile(current_iv, iv_history or [])
         iv_reg = classify_iv_regime(pctl)
         regime.iv_percentile = pctl

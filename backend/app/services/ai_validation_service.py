@@ -48,8 +48,17 @@ class AITradeValidationService:
         r1 = regime.key_levels.classic_pivots.r1
         s1 = regime.key_levels.classic_pivots.s1
         poc = regime.key_levels.poc
+        # Honesty: IV/PCR defaults are ASSUMPTIONS when chain unavailable.
+        _iv_assumed = analytics is None
         atm_iv = analytics.atm_iv if analytics else 14.5
         pcr = analytics.pcr_oi if analytics else 1.0
+        if _iv_assumed:
+            logger.warning(
+                "validation_iv_pcr_assumed_not_measured",
+                atm_iv=atm_iv,
+                pcr=pcr,
+                reason="options-chain-unavailable",
+            )
 
         system_prompt = """You are DROID Trade Thesis Auditor, a rigorous risk-manager and institutional trade validator.
 Your goal is to find flaws, hidden option writer walls, fakeouts, and structural invalidations in proposed trades.
@@ -93,14 +102,14 @@ LIVE MARKET CONTEXT:
 """
 
         provider_name = (request.provider or "openrouter").lower()
-        provider = create_provider_for_test(
-            provider_name,
-            model=request.model,
-            openRouterApiKey=request.openrouter_api_key,
-            geminiApiKey=request.gemini_api_key,
-        )
-
         try:
+            provider = create_provider_for_test(
+                provider_name,
+                model=request.model,
+                openRouterApiKey=request.openrouter_api_key,
+                geminiApiKey=request.gemini_api_key,
+            )
+
             if provider_name == "openrouter":
                 import httpx
                 url = "https://openrouter.ai/api/v1/chat/completions"
@@ -156,21 +165,25 @@ LIVE MARKET CONTEXT:
 
         except Exception as e:
             logger.error("trade_validation_failed", error=str(e))
-            # Safe deterministic score
-            is_good_rr = rr_calc >= 1.5
+            # Deterministic fallback: LABELED degraded + non-actionable.
+            # Never auto-CONFIRM on LLM failure: WATCH/UNCERTAIN only, requires
+            # explicit user confirmation. Silent CONFIRM would be actionable.
             return AITradeValidationResponse(
                 symbol=symbol,
-                decision="CONFIRM" if is_good_rr else "WATCH",
-                score=75 if is_good_rr else 50,
+                decision="WATCH",
+                score=50,
                 risk_reward_calculated=rr_calc,
-                technical_alignment=f"R:R of 1:{rr_calc} evaluated against Spot ₹{spot}.",
-                derivatives_alignment="Options data verification completed via fallback rules.",
-                volatility_regime_check="Normal volatility parameters.",
+                technical_alignment=f"[DEGRADED FALLBACK — LLM unavailable, non-actionable] R:R of 1:{rr_calc} evaluated against Spot ₹{spot}. IV assumed {atm_iv} (available={not _iv_assumed}).",
+                derivatives_alignment="Options data verification unavailable — fallback rules only (DEGRADED).",
+                volatility_regime_check="Volatility check unavailable — LLM failed (DEGRADED).",
                 invalidation_conditions=[f"Stop loss trigger at ₹{request.stop_loss}"],
-                warning_traps=["Ensure position sizing adheres to maximum 1% portfolio risk."],
-                executive_verdict=f"Deterministic audit: {'Favorable Risk-to-Reward' if is_good_rr else 'Sub-optimal Risk-to-Reward (< 1:1.5)'}.",
+                warning_traps=[
+                    "DEGRADED deterministic fallback — requires explicit user confirmation before any action.",
+                    "Ensure position sizing adheres to maximum 1% portfolio risk.",
+                ],
+                executive_verdict=f"Deterministic audit (DEGRADED, non-actionable): R:R 1:{rr_calc}. LLM failed — user must confirm.",
                 timestamp=datetime.now(timezone.utc),
-                provider_used="deterministic_fallback",
+                provider_used="deterministic_fallback-degraded-nonactionable",
             )
 
 

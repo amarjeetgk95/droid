@@ -8,7 +8,7 @@ import {
   type DisplayEntry,
   type StrategyRow,
 } from '@/lib/tradeOps';
-import type { TradeCapital, TradeConsent, TradeKillSwitch } from '@/hooks/useTradeOps';
+import type { TradeCapital, TradeConsent } from '@/hooks/useTradeOps';
 
 function KvList({ entries, emptyNote }: { entries: DisplayEntry[]; emptyNote: string }) {
   if (entries.length === 0) return <p className="sg-empty">{emptyNote}</p>;
@@ -54,7 +54,6 @@ export function HealthPanel({
   slo,
   brokerCaps,
   greeks,
-  killSwitch,
 }: {
   consent: TradeConsent | null;
   capital: TradeCapital | null;
@@ -64,7 +63,6 @@ export function HealthPanel({
   slo: Record<string, unknown> | null;
   brokerCaps: Record<string, unknown> | null;
   greeks: Record<string, unknown> | null;
-  killSwitch: TradeKillSwitch | null;
 }) {
   const sloEntries: DisplayEntry[] = slo
     ? [
@@ -113,21 +111,6 @@ export function HealthPanel({
 
       <Readout title="Capital Config" meta={capital ? 'risk limits' : undefined}>
         <KvList emptyNote="Capital config unavailable." entries={toDisplayEntries(capital?.config, 14)} />
-      </Readout>
-
-      <Readout title="Kill Switch" meta="read-only">
-        <KvList
-          emptyNote="Kill-switch status unavailable."
-          entries={
-            killSwitch
-              ? [
-                  { label: 'killed', value: killSwitch.isKilled === true ? 'yes' : killSwitch.isKilled === false ? 'no' : '—' },
-                  { label: 'level', value: killSwitch.killLevel ?? '—' },
-                  ...(killSwitch.reason ? [{ label: 'reason', value: killSwitch.reason }] : []),
-                ]
-              : []
-          }
-        />
       </Readout>
 
       <Readout title="Strategies Registry" meta={`${strategies.length} strategie(s)`}>

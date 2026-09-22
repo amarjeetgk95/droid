@@ -82,7 +82,7 @@ describe('stream frame contract', () => {
     const frame = {
       event: 'view.section.changed',
       data: {
-        section: 'kill_switch',
+        section: 'market',
         version: 2,
         value: { active: false, reason: null },
         updated_at: '2026-09-18T07:22:01.412306+00:00',
@@ -93,7 +93,7 @@ describe('stream frame contract', () => {
       seq: 42,
       timestamp: 1789716120000,
     };
-    expect(parseViewSectionChangedFrame(frame)?.data.section).toBe('kill_switch');
+    expect(parseViewSectionChangedFrame(frame)?.data.section).toBe('market');
     expect(parseHeartbeatFrame(frame)).toBeNull();
   });
 

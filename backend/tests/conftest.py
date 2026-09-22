@@ -202,6 +202,24 @@ def isolate_signals_state(tmp_path, monkeypatch):
     """Ensure test runs write to an isolated temporary state file and do not pollute production state or database."""
     test_state_file = tmp_path / "test_signals_state.json"
     monkeypatch.setattr("app.signals.signals_persistence.SIGNALS_STATE_FILE", test_state_file)
+    # The cold-start snapshot path is CWD-relative (settings.snapshot_file_path),
+    # so a test run started from backend/ writes `backend/market_snapshot.json`
+    # and the NEXT run's app lifespan warms from it. Because the app polls the
+    # real FYERS feed when a token is present, that file can carry live-looking
+    # prices (e.g. NIFTY 23346.4) straight into the degraded-path tests — which
+    # then report a fabricated price with the feed "down". Point the snapshot
+    # service at tmp so the suite neither reads nor writes repo state.
+    from app.services.snapshot_service import snapshot_service
+
+    monkeypatch.setattr(snapshot_service, "snapshot_path", tmp_path / "market_snapshot.json")
+    from app.services.market_data_coordinator import market_data_coordinator
+
+    market_data_coordinator._cache.clear()
+    # The market-data coordinator memoizes provider answers process-wide and is
+    # also warmed by the dashboard startup prewarm. A value cached by an earlier
+    # test (or by the prewarm running against a live FYERS token) then gets
+    # served to every later test, which is how "the feed is down" assertions
+    # end up seeing real prices. Start each test from an empty cache.
     monkeypatch.setattr("app.core.database.get_async_session_factory", lambda: None)
     monkeypatch.setattr("app.signals.signals_persistence.get_async_session_factory", lambda: None)
     # The suite must stay hermetic: never let the FYERS HSM socket start from a
@@ -217,19 +235,14 @@ def isolate_signals_state(tmp_path, monkeypatch):
     from app.algo.algo_service import reset_algo_caches
 
     # Isolate fail-closed safety state so a stale token / degraded feed in the
-    # environment (e.g. an expired backend/.fyers_token) cannot auto-activate the
-    # kill switch and block execution across the whole suite.
-    # NOTE: resolve modules via importlib — `app.signals.safety.kill_switch` is
-    # shadowed by the singleton export on the package, so string targets misresolve.
+    # environment (e.g. an expired backend/.fyers_token) cannot block execution
+    # across the whole suite.
     import importlib
-    _ks_mod = importlib.import_module("app.signals.safety.kill_switch")
     _sv_mod = importlib.import_module("app.signals.safety.sequence_validator")
     _fhm_mod = importlib.import_module("app.signals.safety.feed_health_monitor")
     _sw_persist = importlib.import_module("app.swing.persistence")
-    from app.signals.safety.kill_switch import kill_switch
     from app.signals.safety.feed_circuit import feed_circuit
 
-    monkeypatch.setattr(_ks_mod, "_KILL_STATE_FILE", tmp_path / "kill_switch_state.json")
     monkeypatch.setattr(_sv_mod, "_SEQ_STATE_FILE", tmp_path / "sequence_state.json")
     # Swing state files are CWD-relative: isolate them to tmp so tests never
     # overwrite the real swing_state.json, and reset the scanner's cached last
@@ -241,7 +254,6 @@ def isolate_signals_state(tmp_path, monkeypatch):
     swing_scanner._candle_cache.clear()
     swing_scanner._disk_cache.clear()
 
-    kill_switch.deactivate(by="test")
     feed_circuit._states.clear()
     monkeypatch.setattr(_fhm_mod, "_TELEMETRY_CACHE", {"ts_ns": 0, "payload": None})
     monkeypatch.setattr(_fhm_mod, "_last_raw", None)
@@ -257,7 +269,6 @@ def isolate_signals_state(tmp_path, monkeypatch):
     yield
     broker_runtime.reset()
     reset_algo_caches()
-    kill_switch.deactivate(by="test")
     feed_circuit._states.clear()
     with signal_fsm._lock:
         signal_fsm._signals.clear()

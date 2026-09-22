@@ -1,0 +1,111 @@
+{
+  "version": "1.0.0",
+  "effective_from": "2026-09-20",
+  "session": {
+    "timezone": "Asia/Kolkata",
+    "market_open_time": "09:15",
+    "opening_range_end": "09:45",
+    "normal_intraday_end": "14:45",
+    "forced_square_off_time": "15:15",
+    "market_close_time": "15:30",
+    "no_trade_windows": [
+      ["09:15", "09:20"],
+      ["15:15", "15:30"]
+    ]
+  },
+  "structural_levels": {
+    "relevance_decay_half_life_points": 120.0,
+    "retest_tolerance_pct": 0.0018,
+    "touch_tolerance_pct": 0.0012,
+    "swing_window_5m": 5,
+    "max_levels_tracked": 25,
+    "broken_retention_bars": 30
+  },
+  "compression": {
+    "atr_short_period": 5,
+    "atr_long_period": 20,
+    "realized_vol_window": 20,
+    "overlap_window": 5,
+    "contraction_window": 10,
+    "entropy_window": 10,
+    "displacement_window": 10,
+    "uncompressed_threshold": 0.55,
+    "watch_threshold": 0.55,
+    "armed_threshold": 0.70,
+    "extreme_threshold": 0.85
+  },
+  "pressure": {
+    "pressure_window": 10,
+    "ema_alpha": 0.25,
+    "scale_window": 20,
+    "persistence_threshold": 3,
+    "epsilon": 1e-9
+  },
+  "translation": {
+    "reference_lookback_bars": 5,
+    "volatility_scale_bars": 20,
+    "pressure_scale_bars": 20,
+    "high_translation_threshold": 1.25,
+    "low_translation_threshold": 0.45,
+    "high_pressure_threshold": 0.60,
+    "epsilon": 1e-9
+  },
+  "absorption": {
+    "min_volume_shock": 1.5,
+    "min_pressure_score": 0.60,
+    "max_translation_score": 0.40,
+    "min_rejection_wick_ratio": 0.45,
+    "level_interaction_tolerance_pct": 0.0020,
+    "failure_extend_bars": 2
+  },
+  "vacuum": {
+    "min_range_expansion": 1.45,
+    "min_volume_shock": 1.35,
+    "close_location_bull_min": 0.70,
+    "close_location_bear_max": 0.30,
+    "max_overlap_penalty": 0.45,
+    "prior_compression_threshold": 0.65
+  },
+  "snap_energy": {
+    "min_compression_duration": 3,
+    "duration_saturation_bars": 15,
+    "consistency_weight": 0.35,
+    "energy_explosive_threshold": 0.82
+  },
+  "regime": {
+    "adx_period": 14,
+    "trend_adx_threshold": 22.0,
+    "efficiency_trend_threshold": 0.55,
+    "efficiency_range_threshold": 0.30,
+    "volatility_expansion_ratio": 1.35,
+    "exhaustion_volume_shock": 2.2,
+    "chaotic_entropy_threshold": 0.75
+  },
+  "data": {
+    "require_real_data": true,
+    "strict_mode_env": "VORTEX_SNAP_REQUIRE_REAL_DATA",
+    "synthetic_note": "Simulated seed-42 intraday session (no real 1m parquet found). Levels and gauges do NOT reflect live prices."
+  },
+  "instrument_overrides": {
+    "NIFTY": {
+      "relevance_decay_half_life_points": 100.0,
+      "retest_tolerance_pct": 0.0015
+    },
+    "BANKNIFTY": {
+      "relevance_decay_half_life_points": 250.0,
+      "retest_tolerance_pct": 0.0020
+    },
+    "SENSEX": {
+      "relevance_decay_half_life_points": 350.0,
+      "retest_tolerance_pct": 0.0018
+    }
+  },
+  "enable_compression": true,
+  "enable_pressure": true,
+  "enable_translation": true,
+  "enable_vacuum": true,
+  "enable_absorption": true,
+  "enable_snap_energy": true,
+  "enable_structural_levels": true,
+  "enable_regime": true
+}

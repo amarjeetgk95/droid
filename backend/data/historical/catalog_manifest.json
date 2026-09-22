@@ -1,0 +1,777 @@
+{
+  "datasets": {
+    "SENSEX_1M": {
+      "id": "SENSEX_1M",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "1m",
+      "provider": "fyers",
+      "status": "READY",
+      "current_version_id": "SENSEX_1M_v2",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:59:00Z",
+      "total_candles": 92698,
+      "latest_quality_score": 98.83,
+      "storage_bytes": 5506548,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1m\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.572931Z",
+      "updated_at": "2026-09-22T16:00:48.572935Z"
+    },
+    "NIFTY_1M": {
+      "id": "NIFTY_1M",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "1m",
+      "provider": "fyers",
+      "status": "READY",
+      "current_version_id": "NIFTY_1M_v1",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:59:00Z",
+      "total_candles": 92703,
+      "latest_quality_score": 98.84,
+      "storage_bytes": 2602082,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1m\\candles_v1.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.574696Z",
+      "updated_at": "2026-09-22T16:00:48.574699Z"
+    },
+    "SENSEX_5M": {
+      "id": "SENSEX_5M",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "5m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "SENSEX_5M_v5",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:55:00Z",
+      "total_candles": 18541,
+      "latest_quality_score": 98.84,
+      "storage_bytes": 574649,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\5m\\candles_v5.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v5"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.573268Z",
+      "updated_at": "2026-09-22T16:00:48.573269Z"
+    },
+    "SENSEX_15M": {
+      "id": "SENSEX_15M",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "15m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "SENSEX_15M_v5",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:45:00Z",
+      "total_candles": 6182,
+      "latest_quality_score": 98.86,
+      "storage_bytes": 196968,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\15m\\candles_v5.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v5"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.571305Z",
+      "updated_at": "2026-09-22T16:00:48.571308Z"
+    },
+    "NIFTY_5M": {
+      "id": "NIFTY_5M",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "5m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "NIFTY_5M_v2",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:55:00Z",
+      "total_candles": 18542,
+      "latest_quality_score": 98.84,
+      "storage_bytes": 1113740,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\5m\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.574938Z",
+      "updated_at": "2026-09-22T16:00:48.574939Z"
+    },
+    "NIFTY_15M": {
+      "id": "NIFTY_15M",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "15m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "NIFTY_15M_v2",
+      "earliest_available_ts": "2025-09-22T03:45:00Z",
+      "latest_available_ts": "2026-09-22T09:45:00Z",
+      "total_candles": 6183,
+      "latest_quality_score": 98.87,
+      "storage_bytes": 388412,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\15m\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.573384Z",
+      "updated_at": "2026-09-22T16:00:48.573385Z"
+    },
+    "NIFTY_30M": {
+      "id": "NIFTY_30M",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "30m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "NIFTY_30M_v2",
+      "earliest_available_ts": "2025-09-22T03:30:00Z",
+      "latest_available_ts": "2026-09-22T09:30:00Z",
+      "total_candles": 3214,
+      "latest_quality_score": 98.84,
+      "storage_bytes": 208804,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\30m\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.574847Z",
+      "updated_at": "2026-09-22T16:00:48.574848Z"
+    },
+    "NIFTY_1H": {
+      "id": "NIFTY_1H",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "1h",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "NIFTY_1H_v2",
+      "earliest_available_ts": "2025-09-22T03:00:00Z",
+      "latest_available_ts": "2026-09-22T09:00:00Z",
+      "total_candles": 1731,
+      "latest_quality_score": 98.86,
+      "storage_bytes": 117648,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1h\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.574363Z",
+      "updated_at": "2026-09-22T16:00:48.574367Z"
+    },
+    "NIFTY_1D": {
+      "id": "NIFTY_1D",
+      "symbol": "NIFTY",
+      "exchange": "NSE",
+      "asset_type": "INDEX",
+      "timeframe": "1d",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "NIFTY_1D_v2",
+      "earliest_available_ts": "2025-09-22T00:00:00Z",
+      "latest_available_ts": "2026-09-22T00:00:00Z",
+      "total_candles": 248,
+      "latest_quality_score": 98.83,
+      "storage_bytes": 24978,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1d\\candles_v2.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1",
+          "v2"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.573483Z",
+      "updated_at": "2026-09-22T16:00:48.573484Z"
+    },
+    "SENSEX_30M": {
+      "id": "SENSEX_30M",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "30m",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "SENSEX_30M_v1",
+      "earliest_available_ts": "2025-09-22T03:30:00Z",
+      "latest_available_ts": "2026-09-22T09:30:00Z",
+      "total_candles": 3214,
+      "latest_quality_score": 98.84,
+      "storage_bytes": 105661,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\30m\\candles_v1.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.573162Z",
+      "updated_at": "2026-09-22T16:00:48.573163Z"
+    },
+    "SENSEX_1D": {
+      "id": "SENSEX_1D",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "1d",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "SENSEX_1D_v1",
+      "earliest_available_ts": "2025-09-22T00:00:00Z",
+      "latest_available_ts": "2026-09-22T00:00:00Z",
+      "total_candles": 248,
+      "latest_quality_score": 98.83,
+      "storage_bytes": 13016,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1d\\candles_v1.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.571465Z",
+      "updated_at": "2026-09-22T16:00:48.571468Z"
+    },
+    "SENSEX_1H": {
+      "id": "SENSEX_1H",
+      "symbol": "SENSEX",
+      "exchange": "BSE",
+      "asset_type": "INDEX",
+      "timeframe": "1h",
+      "provider": "derived_from_1m",
+      "status": "READY",
+      "current_version_id": "SENSEX_1H_v1",
+      "earliest_available_ts": "2025-09-22T03:00:00Z",
+      "latest_available_ts": "2026-09-22T09:00:00Z",
+      "total_candles": 1731,
+      "latest_quality_score": 98.86,
+      "storage_bytes": 59830,
+      "parquet_relative_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1h\\candles_v1.parquet",
+      "metadata": {
+        "source": "disk_scan",
+        "available_versions": [
+          "v1"
+        ]
+      },
+      "created_at": "2026-09-22T16:00:48.571597Z",
+      "updated_at": "2026-09-22T16:00:48.571599Z"
+    }
+  },
+  "versions": {
+    "SENSEX_1M": [
+      {
+        "version_id": "SENSEX_1M_v2",
+        "dataset_id": "SENSEX_1M",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:59:00Z",
+        "row_count": 92698,
+        "checksum_sha256": "3090c8c45787bde83251a6dcff7552a42b7bdc39bc6967c644ebbc2c3d375aa9",
+        "quality_score": 98.83,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1m\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "fyers",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T11:24:15.888835Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.562707Z"
+      },
+      {
+        "version_id": "SENSEX_1M_v1",
+        "dataset_id": "SENSEX_1M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:59:00Z",
+        "row_count": 92698,
+        "checksum_sha256": "3090c8c45787bde83251a6dcff7552a42b7bdc39bc6967c644ebbc2c3d375aa9",
+        "quality_score": 98.83,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "fyers",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T11:21:46.106241Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.562331Z"
+      }
+    ],
+    "NIFTY_1M": [
+      {
+        "version_id": "NIFTY_1M_v1",
+        "dataset_id": "NIFTY_1M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:59:00Z",
+        "row_count": 92703,
+        "checksum_sha256": "a0a236e95bcccb4559e3eecf63538adfb202c8d56cb60d1e08c62e97276ada82",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "fyers",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T11:22:42.217963Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.567305Z"
+      }
+    ],
+    "SENSEX_5M": [
+      {
+        "version_id": "SENSEX_5M_v5",
+        "dataset_id": "SENSEX_5M",
+        "version_tag": "v5",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:55:00Z",
+        "row_count": 18541,
+        "checksum_sha256": "d1fd1719613ddb81187a8bab5ab8ade800d6d1c81e37caefa1d1310cbfe72617",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\5m\\candles_v5.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:47.969258Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.563727Z"
+      }
+    ],
+    "SENSEX_15M": [
+      {
+        "version_id": "SENSEX_15M_v5",
+        "dataset_id": "SENSEX_15M",
+        "version_tag": "v5",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:45:00Z",
+        "row_count": 6182,
+        "checksum_sha256": "b7b369477a4346846a3f1778536bd6e3fdde27752c3171ab183d913c3f42855a",
+        "quality_score": 98.86,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\15m\\candles_v5.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:48.720456Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.560355Z"
+      }
+    ],
+    "NIFTY_5M": [
+      {
+        "version_id": "NIFTY_5M_v2",
+        "dataset_id": "NIFTY_5M",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:55:00Z",
+        "row_count": 18542,
+        "checksum_sha256": "343ea05548279cc653ea20018ba89f760956094923975c31a7378e7c52c62ddd",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\5m\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:55.903343Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.569453Z"
+      },
+      {
+        "version_id": "NIFTY_5M_v1",
+        "dataset_id": "NIFTY_5M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:55:00Z",
+        "row_count": 18542,
+        "checksum_sha256": "343ea05548279cc653ea20018ba89f760956094923975c31a7378e7c52c62ddd",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\5m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T14:50:27.679828Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.568598Z"
+      }
+    ],
+    "NIFTY_15M": [
+      {
+        "version_id": "NIFTY_15M_v2",
+        "dataset_id": "NIFTY_15M",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:45:00Z",
+        "row_count": 6183,
+        "checksum_sha256": "b405cb235e61e6b2cc43dec9b4317f74ff74b3fa58cf13604b02992f01f8a215",
+        "quality_score": 98.87,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\15m\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:56.689715Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.565145Z"
+      },
+      {
+        "version_id": "NIFTY_15M_v1",
+        "dataset_id": "NIFTY_15M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:45:00Z",
+        "end_time": "2026-09-22T09:45:00Z",
+        "row_count": 6183,
+        "checksum_sha256": "b405cb235e61e6b2cc43dec9b4317f74ff74b3fa58cf13604b02992f01f8a215",
+        "quality_score": 98.87,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\15m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T14:50:40.866149Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.564756Z"
+      }
+    ],
+    "NIFTY_30M": [
+      {
+        "version_id": "NIFTY_30M_v2",
+        "dataset_id": "NIFTY_30M",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T03:30:00Z",
+        "end_time": "2026-09-22T09:30:00Z",
+        "row_count": 3214,
+        "checksum_sha256": "5609c50c8b3fedd951884fc985358874d22274fa0ddf99bdd8e82a78faa3cfca",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\30m\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:57.495588Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.568140Z"
+      },
+      {
+        "version_id": "NIFTY_30M_v1",
+        "dataset_id": "NIFTY_30M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:30:00Z",
+        "end_time": "2026-09-22T09:30:00Z",
+        "row_count": 3214,
+        "checksum_sha256": "5609c50c8b3fedd951884fc985358874d22274fa0ddf99bdd8e82a78faa3cfca",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\30m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T14:50:55.100105Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.567779Z"
+      }
+    ],
+    "NIFTY_1H": [
+      {
+        "version_id": "NIFTY_1H_v2",
+        "dataset_id": "NIFTY_1H",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T03:00:00Z",
+        "end_time": "2026-09-22T09:00:00Z",
+        "row_count": 1731,
+        "checksum_sha256": "c4aa0b5d5585582ed505b9b237ef0b0859619468eb68b305c498f9be0fddfa29",
+        "quality_score": 98.86,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1h\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:58.545658Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.566815Z"
+      },
+      {
+        "version_id": "NIFTY_1H_v1",
+        "dataset_id": "NIFTY_1H",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:00:00Z",
+        "end_time": "2026-09-22T09:00:00Z",
+        "row_count": 1731,
+        "checksum_sha256": "c4aa0b5d5585582ed505b9b237ef0b0859619468eb68b305c498f9be0fddfa29",
+        "quality_score": 98.86,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1h\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T14:51:02.844239Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.566454Z"
+      }
+    ],
+    "NIFTY_1D": [
+      {
+        "version_id": "NIFTY_1D_v2",
+        "dataset_id": "NIFTY_1D",
+        "version_tag": "v2",
+        "start_time": "2025-09-22T00:00:00Z",
+        "end_time": "2026-09-22T00:00:00Z",
+        "row_count": 248,
+        "checksum_sha256": "eb2baa4cc461232dd69f4cc561e5dea6348ac873882530b17f53db398fcb93b2",
+        "quality_score": 98.83,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1d\\candles_v2.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:59.340738Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.565988Z"
+      },
+      {
+        "version_id": "NIFTY_1D_v1",
+        "dataset_id": "NIFTY_1D",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T00:00:00Z",
+        "end_time": "2026-09-22T00:00:00Z",
+        "row_count": 248,
+        "checksum_sha256": "eb2baa4cc461232dd69f4cc561e5dea6348ac873882530b17f53db398fcb93b2",
+        "quality_score": 98.83,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\nifty\\1d\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T14:51:19.178706Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.565634Z"
+      }
+    ],
+    "SENSEX_30M": [
+      {
+        "version_id": "SENSEX_30M_v1",
+        "dataset_id": "SENSEX_30M",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:30:00Z",
+        "end_time": "2026-09-22T09:30:00Z",
+        "row_count": 3214,
+        "checksum_sha256": "3a66f8553729728c4fb5b4c256f475ab42981a7d6f331a39e391687a84b9a9bd",
+        "quality_score": 98.84,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\30m\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:49.563384Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.563239Z"
+      }
+    ],
+    "SENSEX_1D": [
+      {
+        "version_id": "SENSEX_1D_v1",
+        "dataset_id": "SENSEX_1D",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T00:00:00Z",
+        "end_time": "2026-09-22T00:00:00Z",
+        "row_count": 248,
+        "checksum_sha256": "5cbf104bdf994d41c324642ca739993e13cc23bcf80e86785838142a1534b9b5",
+        "quality_score": 98.83,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1d\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:50.949251Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.561303Z"
+      }
+    ],
+    "SENSEX_1H": [
+      {
+        "version_id": "SENSEX_1H_v1",
+        "dataset_id": "SENSEX_1H",
+        "version_tag": "v1",
+        "start_time": "2025-09-22T03:00:00Z",
+        "end_time": "2026-09-22T09:00:00Z",
+        "row_count": 1731,
+        "checksum_sha256": "bbcf3e8f3fe92fb14ef44b230ee80b639962fbb23f5a651f0cfc8bc0b96f1ee7",
+        "quality_score": 98.86,
+        "quality_status": "PASSED",
+        "parquet_path": "E:\\Droid\\backend\\data\\historical\\parquet\\sensex\\1h\\candles_v1.parquet",
+        "lineage": {
+          "engine_version": "1.0.0",
+          "provider_id": "derived_from_1m",
+          "provider_api_version": "v3",
+          "calendar_version": "2026.1",
+          "normalizer_version": "1.0.0",
+          "validation_ruleset_version": "1.0.0",
+          "created_at": "2026-09-22T15:53:50.272533Z"
+        },
+        "methodology_events": [],
+        "created_at": "2026-09-22T16:00:48.561830Z"
+      }
+    ]
+  },
+  "jobs": {
+    "job_SENSEX_1m_1790092442": {
+      "job_id": "job_SENSEX_1m_1790092442",
+      "dataset_id": "SENSEX_1M",
+      "symbol": "SENSEX",
+      "timeframe": "1m",
+      "provider": "fyers",
+      "range_from": "2026-01-01",
+      "range_to": "2026-01-10",
+      "status": "CANCELLED",
+      "progress_pct": 0.0,
+      "total_chunks": 1,
+      "completed_chunks": 0,
+      "rows_downloaded": 0,
+      "rows_valid": 0,
+      "rows_rejected": 0,
+      "retry_count": 0,
+      "error_message": "Interrupted by server restart",
+      "chunks": [
+        {
+          "chunk_id": "job_SENSEX_1m_1790092442_c0",
+          "job_id": "job_SENSEX_1m_1790092442",
+          "chunk_index": 0,
+          "range_from": "2026-01-01",
+          "range_to": "2026-01-10",
+          "status": "CANCELLED",
+          "rows_fetched": 0,
+          "retries": 0,
+          "error_message": null,
+          "started_at": null,
+          "completed_at": null
+        }
+      ],
+      "started_at": "2026-09-22T15:54:03.071753Z",
+      "completed_at": "2026-09-22T15:54:14.217762Z",
+      "created_at": "2026-09-22T15:54:02.816795Z"
+    }
+  },
+  "gaps": {}
+}

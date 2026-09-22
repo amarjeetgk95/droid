@@ -95,17 +95,43 @@ export function ExperimentsPanel({ lab }: { lab: Lab }) {
             <button type="button" className="btn btn-primary" disabled={lab.expBusy} onClick={() => setConfirmExp(true)}>
               {lab.expBusy ? 'Running…' : 'Run experiment'}
             </button>
+        </div>
+        {lab.expError ? <p className="sg-err">{lab.expError}</p> : null}
+        {expObj ? (
+          <div className="mt-3 border-t border-border-subtle pt-3">
+            <div className="sg-kvlist">
+              <div className="sg-kv"><span className="l">samples</span><span className="v">{String(pickNum(runObj ?? {}, 'sample_count') ?? '—')}</span></div>
+              <div className="sg-kv"><span className="l">status</span><span className="v">{pickStr(runObj ?? {}, 'status') ?? '—'}</span></div>
+              <div className="sg-kv"><span className="l">accuracy</span><span className="v">{fmtLabNum(pickNum(reportObj ?? {}, 'accuracy'))}</span></div>
+              <div className="sg-kv"><span className="l">excess accuracy</span><span className="v">{fmtLabNum(pickNum(reportObj ?? {}, 'excess_accuracy'))}</span></div>
+              <div className="sg-kv"><span className="l">significant</span><span className="v">{String(reportObj?.is_statistically_significant ?? '—')}</span></div>
+            </div>
           </div>
-          {lab.expError ? <p className="sg-err">{lab.expError}</p> : null}
-          {expObj ? (
-            <div className="mt-3 border-t border-border-subtle pt-3">
-              <div className="sg-kvlist">
-                <div className="sg-kv"><span className="l">samples</span><span className="v">{String(pickNum(runObj ?? {}, 'sample_count') ?? '—')}</span></div>
-                <div className="sg-kv"><span className="l">status</span><span className="v">{pickStr(runObj ?? {}, 'status') ?? '—'}</span></div>
-                <div className="sg-kv"><span className="l">accuracy</span><span className="v">{fmtLabNum(pickNum(reportObj ?? {}, 'accuracy'))}</span></div>
-                <div className="sg-kv"><span className="l">excess accuracy</span><span className="v">{fmtLabNum(pickNum(reportObj ?? {}, 'excess_accuracy'))}</span></div>
-                <div className="sg-kv"><span className="l">significant</span><span className="v">{String(reportObj?.is_statistically_significant ?? '—')}</span></div>
-              </div>
+        ) : null}
+        </div>
+      </section>
+
+      <section className="card" aria-label="Champion/Challenger promotion">
+        <div className="card-hd"><h3 className="card-title">Model promotion</h3><span className="card-meta">champion ← challenger</span></div>
+        <div className="card-bd">
+          <p className="sg-note">Archives the current champion, copies validated challenger artifacts into place, and appends an audit entry. This is a blocking file-operation call — confirm before running.</p>
+          <div className="ds-filters">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={lab.promoting}
+              onClick={async () => {
+                const res = await lab.promoteChallenger();
+                push(res.ok ? 'success' : 'error', res.message);
+              }}
+            >
+              {lab.promoting ? 'Promoting…' : 'Promote challengers'}
+            </button>
+          </div>
+          {lab.promoteResult ? (
+            <div className="sg-kvlist">
+              <div className="sg-kv"><span className="l">promoted</span><span className="v">{lab.promoteResult.count}</span></div>
+              {lab.promoteResult.promoted.map((f) => <div key={f} className="sg-kv"><span className="l">file</span><span className="v mono sg-sym">{f}</span></div>)}
             </div>
           ) : null}
         </div>

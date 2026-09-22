@@ -1,25 +1,61 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-const setInstrument = vi.fn();
+const { marketSection, marketTicks, setInstrument } = vi.hoisted(() => ({
+  setInstrument: vi.fn(),
+  marketSection: { value: null as unknown },
+  marketTicks: {
+    latestTicks: {} as Record<string, unknown>,
+    ticksFresh: false,
+  },
+}));
 
 vi.mock('@/context/InstrumentContext', () => ({
   useInstrument: () => ({ instrument: 'NIFTY', setInstrument }),
 }));
 
 vi.mock('@/context/AppStreamContext', () => ({
-  useCommandSection: () => ({
-    value: {
-      cards: [
-        { symbol: 'NIFTY 50', ltp: 24185.3, change: 101.2, change_percent: 0.42 },
-        { symbol: 'BANKNIFTY', ltp: 52100.5, change: -80.1, change_percent: -0.15 },
-      ],
-    },
-  }),
+  useCommandSection: () => marketSection,
+}));
+
+vi.mock('@/context/MarketTicksContext', () => ({
+  useMarketTicks: () => marketTicks,
 }));
 
 import { InstrumentPicker } from './InstrumentPicker';
+
+function card(symbol: string, ltp: number, changePercent = 0.42) {
+  return {
+    symbol,
+    display_name: symbol,
+    ltp,
+    change: 1,
+    change_percent: changePercent,
+    open: ltp,
+    high: ltp,
+    low: ltp,
+    previous_close: ltp,
+    volume: 0,
+    open_interest: null,
+    sparkline: [],
+    status: 'LIVE',
+    timestamp: null,
+    provider: 'fyers',
+  };
+}
+
+function tick(symbol: string, ltp: number, receivedAt = Date.now(), close?: number) {
+  return { symbol, ltp, received_at: receivedAt, ...(close != null ? { close } : {}) };
+}
+
+beforeEach(() => {
+  marketSection.value = {
+    cards: [card('NIFTY 50', 24185.3), card('BANKNIFTY', 52100.5, -0.15)],
+  };
+  marketTicks.latestTicks = {};
+  marketTicks.ticksFresh = false;
+});
 
 afterEach(() => {
   cleanup();
@@ -27,7 +63,7 @@ afterEach(() => {
 });
 
 describe('InstrumentPicker', () => {
-  it('renders one tab per instrument with the live quote', () => {
+  it('renders one tab per switchable instrument with the live quote', () => {
     render(<InstrumentPicker />);
 
     const tabs = screen.getAllByRole('tab');
@@ -63,5 +99,72 @@ describe('InstrumentPicker', () => {
 
     fireEvent.keyDown(tabs[0], { key: 'ArrowLeft' });
     expect(setInstrument).toHaveBeenLastCalledWith('SENSEX');
+  });
+
+  it('shows INDIAVIX as a readout, not a tab, and ignores other indices', () => {
+    marketSection.value = {
+      cards: [
+        card('NIFTY 50', 24185.3),
+        card('BANKNIFTY', 52100.5),
+        card('FINNIFTY', 56642.55, 0.31),
+        card('INDIA VIX', 11.21, -2.4),
+      ],
+    };
+    render(<InstrumentPicker />);
+
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByText('INDIAVIX')).toBeTruthy();
+    expect(screen.getByText('11.21')).toBeTruthy();
+    expect(screen.getByText('-2.40%')).toBeTruthy();
+    expect(screen.queryByText('FINNIFTY')).toBeNull();
+  });
+
+  it('reserves the full expanded strip before any quote arrives', () => {
+    marketSection.value = { cards: [] };
+    render(<InstrumentPicker />);
+
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByText('INDIAVIX')).toBeTruthy();
+    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.queryByText('FINNIFTY')).toBeNull();
+  });
+
+  it('derives change % from the tick so quotes are complete before cards load', () => {
+    marketSection.value = { cards: [] };
+    marketTicks.ticksFresh = true;
+    marketTicks.latestTicks = {
+      'NIFTY 50': tick('NIFTY 50', 24201.4, Date.now(), 24100),
+    };
+    render(<InstrumentPicker />);
+
+    expect(screen.getByText('24,201.40')).toBeTruthy();
+    expect(screen.getByText('+0.42%')).toBeTruthy();
+  });
+
+  it('never lets a VIX tick overwrite the NIFTY quote', () => {
+    marketTicks.ticksFresh = true;
+    marketTicks.latestTicks = {
+      'INDIA VIX': tick('INDIA VIX', 11.21),
+      'NIFTY 50': tick('NIFTY 50', 24201.4),
+    };
+    render(<InstrumentPicker />);
+
+    const niftyTab = screen.getAllByRole('tab')[0];
+    expect(niftyTab.textContent).toContain('24,201.40');
+    expect(niftyTab.textContent).not.toContain('11.21');
+    expect(screen.getByText('11.21')).toBeTruthy();
+  });
+
+  it('ignores stale ticks and unknown symbols', () => {
+    marketTicks.ticksFresh = true;
+    marketTicks.latestTicks = {
+      'INDIA VIX': tick('INDIA VIX', 11.21, Date.now() - 30_000),
+      USDINR: tick('USDINR', 83.2),
+    };
+    render(<InstrumentPicker />);
+
+    expect(screen.queryByText('11.21')).toBeNull();
+    expect(screen.queryByText('83.20')).toBeNull();
+    expect(screen.getByText(/24,185/)).toBeTruthy();
   });
 });

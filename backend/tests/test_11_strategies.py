@@ -240,6 +240,55 @@ class TestNewIntradayStrategies:
         assert cand.direction == "LONG_CALL"
         assert cand.trigger > cand.spot_price
 
+    def test_volatility_breakout_requires_fresh_cross_of_broken_level(self):
+        """Live analyzer shape: nearest `resistance` sits ABOVE the last close.
+
+        The breakout must be measured against a typed level the decision
+        candle actually crossed (prev close at/below it, close above it),
+        never against the nearest-overhead scalar — `c_close >= resistance`
+        was unsatisfiable on real data and silenced the strategy.
+        """
+        strat = VolatilityBreakoutStrategy()
+
+        candles = [
+            {"high": 25005.0, "low": 24995.0, "open": 25000.0, "close": 25002.0, "volume": 1000},
+            {"high": 25008.0, "low": 24998.0, "open": 25002.0, "close": 25005.0, "volume": 1000},
+            {"high": 25006.0, "low": 24997.0, "open": 25004.0, "close": 25000.0, "volume": 1000},
+            {"high": 25030.0, "low": 25000.0, "open": 25002.0, "close": 25022.0, "volume": 8000},
+        ]
+
+        def _ctx(candle_series):
+            return StrategyContext(
+                underlying="NIFTY",
+                spot_price=Decimal("25022.0"),
+                timeframe="5M",
+                candles=candle_series,
+                indicators={
+                    "atr": 20.0,
+                    "volume_ratio": 1.8,
+                    "breakout_pressure": 78.0,
+                    "support_resistance": {
+                        "resistance": 25050.0,
+                        "support": 24950.0,
+                        "levels": [
+                            {"level": 25010.0, "type": "RESISTANCE", "source": "Pivot R1"},
+                            {"level": 24950.0, "type": "SUPPORT", "source": "Pivot S1"},
+                        ],
+                    },
+                },
+                mtf={"overall_bias": "BULLISH", "alignment_score": 80.0},
+                regime="TREND_UP",
+            )
+
+        cand = strat.detect(_ctx(candles))
+        assert cand is not None
+        assert cand.direction == "LONG_CALL"
+
+        # Prev close already above the level => no fresh cross, no breakout.
+        stale = [dict(c) for c in candles]
+        stale[-2]["close"] = 25015.0
+        assert strat.detect(_ctx(stale)) is None
+
 
 class TestSharedFeaturesAndConfluence:
     def test_feature_snapshot_computation(self):

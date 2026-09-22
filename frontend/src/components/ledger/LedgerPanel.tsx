@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { RotateCcw, Square } from 'lucide-react';
-import { fmtInr, pnlClass, positionUnrealized } from '@/lib/ledger';
+import { fmtInr, pnlClass, positionUnrealized, describeLedgerMark } from '@/lib/ledger';
 import { safeNum } from '@/lib/utils';
 import { shortId, stateTone, type LedgerRow } from '@/lib/signalsNormalize';
 import type { VirtualPosition } from '@/lib/types';
@@ -16,11 +16,15 @@ function sideText(side: string | null | undefined): string {
 
 function StatusStrip({ ledger }: { ledger: PaperLedgerState }) {
   const { totals, ledgerSummary } = ledger;
+  // Honest mark: source + age from the last successful load. Never invented.
+  const mark = describeLedgerMark(ledger.updatedAt, ledger.liveSource);
   return (
     <div className="pnl-strip">
       <span className="ps">
         <span className="ps-l">Source</span>
-        <span className="ps-v">{ledger.liveSource === 'stream' ? 'LIVE MTM' : 'REST SNAPSHOT'}</span>
+        <span className="ps-v" title={`Mark ${mark.ageLabel} — ${mark.sourceLabel}`}>
+          {mark.sourceLabel} · {mark.ageLabel}
+        </span>
       </span>
       <span className="ps">
         <span className="ps-l">Capital</span>

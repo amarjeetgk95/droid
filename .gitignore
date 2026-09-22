@@ -95,3 +95,17 @@ backend/.fyers_token
 backend/*candles_cache.json
 *.flag
 backend/data/*.flag
+
+# Institutional hygiene: runtime derivatives must never be committed (Truth-of-Wall)
+# Package-manager resolution: repo standard is pip (README), uv.lock is stray local output
+uv.lock
+backend/uv.lock
+# Quant research runtime outputs (untracked session state, not code)
+backend/data/quant_experiments.json
+backend/data/quant_session_study.json
+backend/artifacts/executed_signals_backup.json
+backend/artifacts/*.backup.json
+backend/app/ml/artifacts/archive/
+# Event-bus failure log is runtime telemetry, not source (already tracked once by accident)
+event_bus_failures.jsonl
+backend/event_bus_failures.jsonl

@@ -27,6 +27,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application source code
 COPY app/ ./app/
 
+# Ship the reviewed config directory (risk_envelopes.json, event_scoring.json,
+# event_sources.json, scoring_weights.json). Without it the loader falls back to
+# its inline defaults at runtime (`json_config_fallback_default` warnings),
+# which would silently swap the operator's risk limits for code defaults.
+COPY config/ ./config/
+
 # Expose port (Cloud Run sets $PORT automatically)
 EXPOSE 8000
 

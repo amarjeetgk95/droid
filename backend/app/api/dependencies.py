@@ -44,8 +44,8 @@ async def get_or_create_account(
     """Resolve the caller's algo account (DB-backed, else deterministic synthetic).
 
     Delegates to ``AlgoAccountService.get_or_create_account`` so the default
-    capital config, kill-switch row, and synthetic fallback remain exactly as
-    they were before the extraction.
+    capital config and synthetic fallback remain exactly as they were before
+    the extraction.
     """
     return await algo_account_service.get_or_create_account(session, user_id)
 

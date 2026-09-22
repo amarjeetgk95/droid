@@ -142,6 +142,14 @@ class TestValidateWidth:
 class TestStrictLoader:
     def test_missing_returns_none_no_fallback(self, tmp_path, monkeypatch):
         monkeypatch.setattr(trainer, "MODEL_DIR", tmp_path)
+        # `artifact_paths(DEFAULT_HORIZON)` returns the module-level frozen
+        # XGB_PATH/LGB_PATH/META_PATH, not MODEL_DIR-derived paths. Patch them
+        # too, otherwise the legacy loader finds the real committed artifacts
+        # whenever the `ml` extra is installed and the test fails locally while
+        # "passing" in a dependency-free CI.
+        monkeypatch.setattr(trainer, "XGB_PATH", tmp_path / "xgb_model.json")
+        monkeypatch.setattr(trainer, "LGB_PATH", tmp_path / "lgb_model.txt")
+        monkeypatch.setattr(trainer, "META_PATH", tmp_path / "meta.json")
         assert trainer.load_ensemble_strict(60, EXPECTED_WIDTH_V2, "v2-atr-em-session") is None
         # Legacy loader stays intact for v1 compat (triple, no raise).
         assert trainer.load_ensemble(60) == (None, None, None)
@@ -195,10 +203,22 @@ class TestStrictLoader:
 
 class TestTrainerH60Guards:
     @pytest.mark.asyncio
-    async def test_h60_v2_width_spec_reaches_dep_check(self):
-        # xgb/lgb/sklearn are NOT installed here -> RuntimeError proves the
-        # h60/12-wide/v2-spec validation passed (a ValueError would mean
-        # the challenger path rejected the v2 contract).
+    async def test_h60_v2_width_spec_reaches_dep_check(self, monkeypatch):
+        # Force the ML-deps import to fail so a RuntimeError proves the
+        # h60/12-wide/v2-spec validation passed (a ValueError would mean the
+        # challenger path rejected the v2 contract). Injecting `None` into
+        # sys.modules makes `import xgboost` raise ImportError, so this no
+        # longer depends on whether the `ml` extra is installed here.
+        import sys
+
+        for mod in (
+            "xgboost",
+            "lightgbm",
+            "sklearn",
+            "sklearn.model_selection",
+            "sklearn.metrics",
+        ):
+            monkeypatch.setitem(sys.modules, mod, None)
         X, y = _synthetic_v2_dataset(n=120)
         with pytest.raises(RuntimeError, match="ML deps not installed"):
             await trainer.train_ensemble(features=X, labels=y, horizon_minutes=60,

@@ -649,11 +649,19 @@ def _register_instance(req, u, tf, dir_val, spot, strat_val, is_scalp_setup, lev
     ttl_s = SCALP_TTL_S if is_scalp_setup else INTRADAY_TTL_S
 
     # Manual setups are unrated: cap confidence at 60 and null the breakdown.
+    # Missing caller confidence is explicit UNVETTED (never a silent 80.0);
+    # provided confidence is capped and flagged MANUAL_UNRATED.
     try:
-        asked = float(req.confidence) if req.confidence is not None else MANUAL_CONFIDENCE_CAP
+        if req.confidence is None:
+            confidence: float | None = MANUAL_CONFIDENCE_CAP  # type: ignore[annotation-unchecked]
+            _conf_status = "UNVETTED"
+        else:
+            asked = float(req.confidence)
+            confidence = min(asked, MANUAL_CONFIDENCE_CAP)
+            _conf_status = "MANUAL_UNRATED"
     except Exception:
-        asked = MANUAL_CONFIDENCE_CAP
-    confidence = min(asked, MANUAL_CONFIDENCE_CAP)
+        confidence = MANUAL_CONFIDENCE_CAP  # type: ignore[assignment]
+        _conf_status = "UNVETTED"
 
     instance = SignalInstance(
         underlying=u,
@@ -687,6 +695,7 @@ def _register_instance(req, u, tf, dir_val, spot, strat_val, is_scalp_setup, lev
             "ai": None,
             "confluence_source": MANUAL_CONFLUENCE_SOURCE,
             "unrated": True,
+            "confidence_status": _conf_status,
         },
         rationale=req.rationale or [f"Manual {req.strategy} setup on {u}"],
         option_contract=contract.model_dump(),
@@ -698,6 +707,7 @@ def _register_instance(req, u, tf, dir_val, spot, strat_val, is_scalp_setup, lev
 
 async def _persist_and_audit(req, instance: SignalInstance) -> None:
     try:
+        _audit_conf = float(instance.confidence) if getattr(instance, "confidence", None) is not None else None
         signal_audit_ledger.record_signal_created(
             signal_id=instance.signal_id,
             underlying=instance.underlying,
@@ -709,7 +719,7 @@ async def _persist_and_audit(req, instance: SignalInstance) -> None:
             stop_loss=float(instance.stop_loss),
             target_1=float(instance.target_1),
             target_2=float(instance.target_2),
-            confidence=float(instance.confidence),
+            confidence=_audit_conf if _audit_conf is not None else 60.0,
             option_contract=instance.option_contract,
             lots=req.lots or 1,
             status=instance.fsm_state,
@@ -775,6 +785,7 @@ async def _maybe_notify_telegram(req, instance: SignalInstance, dir_val: str, tf
     try:
         from app.institutional.telegram_notifications import SignalEvent, telegram_notification_queue
 
+        _tg_conf = float(instance.confidence) if getattr(instance, "confidence", None) is not None else None
         ev = SignalEvent(
             event_type=ev_type,
             signal_id=instance.signal_id,
@@ -786,7 +797,7 @@ async def _maybe_notify_telegram(req, instance: SignalInstance, dir_val: str, tf
             trigger_level=float(instance.trigger),
             current_price=float(instance.spot_price),
             stop_loss=float(instance.stop_loss),
-            confidence=float(instance.confidence),
+            confidence=_tg_conf if _tg_conf is not None else 0.0,
             paper_order_id=paper_result.order_id if is_real_fill else None,
             paper_fill_price=paper_result.fill_price if is_real_fill else None,
             paper_filled_qty=paper_result.quantity if is_real_fill else None,
@@ -820,24 +831,27 @@ async def resolve_live_spot(u: str) -> Decimal | None:
 
 
 def build_baseline_candidate(u: str, strategy: str, timeframe: str, spot: Decimal) -> dict:
-    """Baseline (detected=False) pre-fill levels from a live spot price."""
-    contract = resolve_option_contract(u, spot, "CE", strike_offset=0, require_chain_mark=False)
-    entry = normalize_price(spot, TICK)
-    sl = normalize_price(spot * Decimal("0.995"), TICK)
-    t1 = normalize_price(spot + ((entry - sl) * Decimal("1.5")), TICK)
-    t2 = normalize_price(spot + ((entry - sl) * Decimal("3.0")), TICK)
+    """Fail-closed baseline for detected=False: no tradable levels.
+
+    Returns spot context only — entry/stop/target are None, confidence is None
+    with INSUFFICIENT_DATA, option_contract is None, tradable=False. Callers
+    must not enter/stop/target off an undetected baseline.
+    """
     return {
         "underlying": u,
         "strategy": strategy,
-        "direction": "LONG_CALL",
+        "direction": "NO_TRADE",
         "timeframe": timeframe,
         "spot_price": float(spot),
-        "entry_min": float(entry),
-        "entry_max": float(entry + Decimal("10.0")),
-        "trigger": float(entry + TICK),
-        "stop_loss": float(sl),
-        "target_1": float(t1),
-        "target_2": float(t2),
-        "confidence": 75.0,
-        "option_contract": contract.model_dump(),
+        "entry_min": None,
+        "entry_max": None,
+        "trigger": None,
+        "stop_loss": None,
+        "target_1": None,
+        "target_2": None,
+        "confidence": None,
+        "confidence_status": "INSUFFICIENT_DATA",
+        "option_contract": None,
+        "tradable": False,
+        "status": "UNVETTED",
     }

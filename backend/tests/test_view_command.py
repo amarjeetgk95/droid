@@ -45,7 +45,6 @@ EXPECTED_SECTIONS = {
     "regime",
     "signals",
     "feed_health",
-    "kill_switch",
     "ml",
     "risk_events",
     "paper",
@@ -169,7 +168,6 @@ FIXED_ALGO_ACCOUNT = {
         "daily_loss_limit": "500.00",
         "is_breached": False,
     },
-    "kill_switch": {"is_killed": False, "kill_level": "NONE"},
     "consent": {"acknowledged": True, "disclosure_version": "v1.0-2026-08-31"},
 }
 FIXED_ALGO_EXPOSURE = {
@@ -501,7 +499,6 @@ def test_command_view_contract_snapshot(_stable_legs):
     feed_health = body["sections"]["feed_health"]["value"]
     assert feed_health["subsystems"] == FIXED_HEALTH_PAYLOAD
     assert feed_health["feed_circuits"] == FIXED_FEED_CIRCUITS
-    assert body["sections"]["kill_switch"]["value"]["active"] is False
     ml = body["sections"]["ml"]["value"]
     assert ml["ml_prediction"] == FIXED_ML
     assert ml["by_symbol"] == FIXED_ML_BY_SYMBOL
@@ -593,7 +590,6 @@ def test_command_view_degraded_leg_isolated_and_honest(_stable_legs, monkeypatch
     assert body["sections"]["market"]["degraded"] is False
     assert body["sections"]["market"]["value"]["market_status"] == FIXED_STATUS
     assert body["sections"]["feed_health"]["degraded"] is False
-    assert body["sections"]["kill_switch"]["degraded"] is False
     assert set(body["errors"].keys()) == {"signals"}
 
 

@@ -1,0 +1,29 @@
+[
+  {
+    "candidate_id": "S6CAND_A_S6BE_S6CE_SENSEX_5m_1773636600_LONG_5m_1773637500_1773637800",
+    "strategy_id": "S6",
+    "variant": "S6-A",
+    "instrument": "SENSEX",
+    "direction": 1,
+    "signal_time": "2026-03-16T05:05:00+00:00",
+    "entry_time": "2026-03-16T05:10:00+00:00",
+    "entry_reference_price": 83056.56741158573,
+    "execution_timeframe": "5m",
+    "context_timeframe": "5m",
+    "atr5": 130.84338120737036,
+    "stop_distance": 196.26507181105552,
+    "target_distance": 327.1084530184259,
+    "episode_id": "S6CE_SENSEX_5m_1773636600",
+    "event_id": "S6BE_S6CE_SENSEX_5m_1773636600_LONG_5m_1773637500",
+    "regime": "LOW_VOLATILITY",
+    "volume_ratio": 1.567753940585289,
+    "close_location": 0.8711824037880195,
+    "room_atr": 999.0,
+    "reason_codes": [
+      "REGIME_LOW_VOLATILITY",
+      "VOL_1.57",
+      "CLOSE_LOC_0.87",
+      "ROOM_999.00"
+    ]
+  }
+]

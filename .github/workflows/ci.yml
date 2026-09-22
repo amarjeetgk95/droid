@@ -39,24 +39,16 @@ jobs:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
 
   backend:
-    # ADVISORY, NOT GATING — on purpose.
+    # GATING. The suite is green (1613 passed) as of the data-truth + test
+    # isolation pass: the previously failing 12 included a scikit-learn 1.7
+    # API removal (`multi_class`), a tasks-vs-handlers race in the event-bus
+    # test, two time/order-dependent tests (a hardcoded past expiry and a
+    # prewarmed dashboard summary), and three paper/signal tests that only
+    # passed when the ambient broker feed happened to be up.
     #
-    # Baseline at the time of writing: 1228 passed, 19 failed, 6 skipped.
-    # All 19 failures live in the in-progress "data-truth" refactor that is
-    # currently uncommitted in the working tree (fsm.py, outcome_tracker.py,
-    # transaction_costs.py, options_intelligence/selector.py, paper_engine.py,
-    # fill_reconciler.py, plus the swing strategies). The affected tests are
-    # still asserting the pre-refactor behaviour:
-    #   test_financial_parity.py (7), test_signal_audit_domain_fixes.py (2),
-    #   test_options_intelligence*.py (3), test_intraday_swing_*.py (3),
-    #   test_signal_model_immutability.py (1), test_cost_aware_outcomes.py (1),
-    #   test_expected_move.py (1), test_ollama.py (1)
-    #
-    # TODO: remove `continue-on-error` once that refactor lands and the suite
-    # is green. Until then a red backend job would just train everyone to
-    # ignore CI, which is worse than no CI.
-    name: Backend (pytest) [advisory]
-    continue-on-error: true
+    # `continue-on-error` was removed with that fix. If this job goes red,
+    # the regression is real — do not silence it again; fix it or revert.
+    name: Backend (pytest)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -69,10 +61,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # The `ml` extra is required: app/quant/* and app/ml/* import numpy,
+      # polars and scikit-learn. Installing only `.[dev]` used to make the
+      # whole ML/quant surface unexercisable in CI.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,ml]"
 
       - name: Run tests
         run: python -m pytest tests -q

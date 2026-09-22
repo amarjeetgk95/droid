@@ -19,7 +19,7 @@ Design notes (what changed vs the demo engine and why)
    ``app.quant.costs.calculate_option_costs`` (brokerage + STT + exchange +
    GST + slippage). Gross fill stays in ``fill_price`` for backward compat.
 5. Risk gate: max single-order qty, max open positions, per-symbol exposure,
-   fat-finger band (LIMIT only, when live is known), daily-loss kill switch.
+   fat-finger band (LIMIT only, when live is known), daily-loss brake.
 6. Idempotency: optional ``client_order_id`` — resubmission returns the
    original order instead of double-filling (signal engine passes
    ``sig-{signal_id}``).
@@ -72,7 +72,7 @@ MAX_SINGLE_ORDER_QTY = 100_000
 MAX_OPEN_POSITIONS = 100
 MAX_POSITION_QTY_PER_SYMBOL = 200_000
 FAT_FINGER_BAND_PCT = 0.20
-DAILY_LOSS_KILL_PCT = 0.25
+DAILY_LOSS_BRAKE_PCT = 0.25
 # MTM persist throttle: skip DB write if unrealized barely moved.
 MTM_PERSIST_EPS = 1.0
 
@@ -664,13 +664,13 @@ class PaperTradingService:
                     f"SYMBOL_EXPOSURE_LIMIT: would hold {existing_preview.quantity + payload.quantity}",
                     order_id, now_str, session, user_id, orders,
                 )
-        # Daily-loss kill switch (long-only brake; shorts to exit still allowed).
+        # Daily-loss brake (long-only; shorts to exit still allowed).
         realized_now = self._get_realized(user_id)
         capital_now = self._get_capital(user_id)
-        if realized_now < -DAILY_LOSS_KILL_PCT * capital_now and payload.side == "BUY" and is_new_position:
+        if realized_now < -DAILY_LOSS_BRAKE_PCT * capital_now and payload.side == "BUY" and is_new_position:
             return await self._reject(
                 payload,
-                f"DAILY_LOSS_LIMIT: realized {realized_now:,.2f} breached {-DAILY_LOSS_KILL_PCT*100:.0f}% of capital",
+                f"DAILY_LOSS_LIMIT: realized {realized_now:,.2f} breached {-DAILY_LOSS_BRAKE_PCT*100:.0f}% of capital",
                 order_id, now_str, session, user_id, orders,
             )
 

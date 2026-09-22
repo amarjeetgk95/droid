@@ -73,27 +73,6 @@ def test_algo_capital_endpoint(client: TestClient):
     assert "config" in body["data"]
 
 
-def test_algo_kill_switch_endpoints(client: TestClient):
-    # GET kill switch
-    resp = client.get("/api/v1/algo/kill-switch")
-    assert resp.status_code == 200
-    assert resp.json()["data"]["is_killed"] is False
-
-    # POST kill switch
-    resp2 = client.post(
-        "/api/v1/algo/kill-switch",
-        json={"kill_level": "FULL_EXECUTION_STOP", "reason": "Emergency drill"},
-    )
-    assert resp2.status_code == 200
-    assert resp2.json()["data"]["is_killed"] is True
-    assert resp2.json()["data"]["kill_level"] == "FULL_EXECUTION_STOP"
-
-    # Reset kill switch
-    resp3 = client.post("/api/v1/algo/kill-switch", json={"kill_level": "NONE"})
-    assert resp3.status_code == 200
-    assert resp3.json()["data"]["is_killed"] is False
-
-
 def test_algo_sizing_preview_endpoint(client: TestClient):
     resp = client.post(
         "/api/v1/algo/sizing/preview",

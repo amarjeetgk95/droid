@@ -16,7 +16,6 @@ export interface AlgoAccountResponse {
     mode: 'OFF' | 'PAPER' | 'LIVE';
     is_active?: boolean;
     capital?: { investment_limit: string; max_capital_per_trade: string; max_daily_loss: string } | null;
-    kill_switch?: { is_killed: boolean; kill_level: string } | null;
     consent_ok?: boolean;
     disclosure_version?: string;
   };
@@ -96,13 +95,6 @@ export interface AlgoStrategy {
   weights?: Record<string, unknown>;
   ai_mode?: string;
   is_active?: boolean;
-}
-
-export interface AlgoKillSwitchStatus {
-  is_killed: boolean;
-  kill_level: string;
-  killed_at?: string;
-  reason?: string;
 }
 
 export function createAlgoApi(core: ApiCore) {
@@ -202,14 +194,6 @@ export function createAlgoApi(core: ApiCore) {
         method: 'POST',
       }),
 
-    // Kill Switch
-    getAlgoKillSwitch: () => core.request<{ data: AlgoKillSwitchStatus }>('/api/v1/algo/kill-switch'),
-    triggerAlgoKillSwitch: (kill_level = 'FULL_EXECUTION_STOP', reason?: string) =>
-      core.request<{ data: AlgoKillSwitchStatus }>('/api/v1/algo/kill-switch', {
-        method: 'POST',
-        body: JSON.stringify({ kill_level, reason }),
-      }),
-
     // AI Governance & Drift
     getAlgoAiModels: () => core.request<{ data: Record<string, unknown>[] }>('/api/v1/algo/ai-models'),
     registerAlgoAiModel: (model: Record<string, unknown>) =>
@@ -281,5 +265,3 @@ export function createAlgoApi(core: ApiCore) {
 }
 
 export type AlgoApi = ReturnType<typeof createAlgoApi>;
-
-export { executeEmergencyKill } from '../emergencyKill';

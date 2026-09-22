@@ -22,8 +22,7 @@ export const SUPPORTED_OPENROUTER_MODELS: SupportedModelOption[] = [
   { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', provider: 'openrouter', tag: 'Math & Quantitative', description: 'Superb numerical math and complex derivatives logic' },
 ];
 
-export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [
-  { id: 'deepseek-r1:8b', name: 'DeepSeek-R1 8B', provider: 'ollama', tag: 'Local CoT', description: 'High efficiency local reasoning model' },
+export const SUPPORTED_OLLAMA_MODELS: SupportedModelOption[] = [  { id: 'deepseek-r1:8b', name: 'DeepSeek-R1 8B', provider: 'ollama', tag: 'Local CoT', description: 'High efficiency local reasoning model' },
   { id: 'deepseek-r1:14b', name: 'DeepSeek-R1 14B', provider: 'ollama', tag: 'High Precision', description: 'Balanced memory footprint and analytical depth' },
   { id: 'llama3.3:70b', name: 'Llama 3.3 70B', provider: 'ollama', tag: 'Full Local Power', description: 'Requires 40GB+ VRAM or quantized setup' },
   { id: 'llama3.1:8b', name: 'Llama 3.1 8B', provider: 'ollama', tag: 'Light & Fast', description: 'Runs on standard consumer GPUs (8GB VRAM)' },
@@ -112,3 +111,21 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultIndexSymbol: 'NIFTY 50',
   },
 };
+
+/** Provenance badge for factory defaults. Never present as a live/broker value. */
+export const SETTINGS_SOURCE_LABEL = 'local-default' as const;
+/** Capital default provenance: confirm in Paper Trading settings before sizing. */
+export const CAPITAL_DEFAULT_SOURCE_LABEL =
+  'local-default — confirm in Paper Trading settings' as const;
+/** Factory paper capital (INR). Display must carry CAPITAL_DEFAULT_SOURCE_LABEL. */
+export const DEFAULT_PAPER_CAPITAL_INR = 1000000;
+
+/** True when a capital value is exactly the factory default (unconfirmed local). */
+export function isLocalDefaultCapital(value: unknown): boolean {
+  return value === DEFAULT_PAPER_CAPITAL_INR;
+}
+
+/** Honest source label for a capital figure: live vs local-default. */
+export function capitalSourceLabel(isPersisted: boolean): string {
+  return isPersisted ? 'live' : CAPITAL_DEFAULT_SOURCE_LABEL;
+}

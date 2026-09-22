@@ -5,8 +5,8 @@ These pin the exact semantics the routers relied on before the extraction:
 * ``AuthUser`` -> UUID parsing (missing / empty / malformed id -> None),
 * ``require_user_uuid`` raising the canonical 401,
 * account resolution delegating to ``AlgoAccountService`` (default capital
-  config + kill-switch row created, deterministic synthetic fallback when the
-  DB is unavailable),
+  config created, deterministic synthetic fallback when the DB is
+  unavailable),
 * representative routes still emitting the unchanged ``{data, error, meta}``
   envelope.
 """
@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.algo.algo_service import algo_account_service
-from app.algo.models import AlgoAccount, AlgoCapitalConfig, AlgoKillSwitch
+from app.algo.models import AlgoAccount, AlgoCapitalConfig
 from app.api.dependencies import (
     get_capital_config,
     get_or_create_account,
@@ -90,7 +90,7 @@ class TestGetOrCreateAccount:
         assert result is sentinel
         mocked.assert_awaited_once_with(session, FIXED_UID)
 
-    async def test_creation_creates_default_capital_and_kill_switch(self, monkeypatch):
+    async def test_creation_creates_default_capital(self, monkeypatch):
         monkeypatch.setattr(
             "app.algo.algo_service.settings.database_url",
             "postgresql+asyncpg://user:pw@localhost/db",
@@ -116,7 +116,6 @@ class TestGetOrCreateAccount:
         assert any(isinstance(obj, AlgoAccount) for obj in added)
         cfg = next(obj for obj in added if isinstance(obj, AlgoCapitalConfig))
         assert cfg.account_id == acct.id
-        assert any(isinstance(obj, AlgoKillSwitch) for obj in added)
         session.commit.assert_awaited()
 
 
@@ -157,7 +156,6 @@ def test_algo_account_route_response_shape():
         "mode",
         "is_active",
         "capital",
-        "kill_switch",
         "consent_ok",
         "disclosure_version",
     }

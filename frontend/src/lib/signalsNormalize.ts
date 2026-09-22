@@ -3,6 +3,7 @@
    to a safe shape so the UI never crashes on partial data. */
 
 import { toNumber } from '@/lib/coerce';
+import { DEFAULT_STALE_AFTER_MS } from '@/lib/feedState';
 
 export function asStr(v: unknown): string | null {
   if (v === null || v === undefined) return null;
@@ -76,6 +77,117 @@ export function resolveExpiresMs(
     return { expiresMs: baseMs + ttlMs, source: 'ttl_duration' };
   }
   return { expiresMs: null, source: 'none' };
+}
+
+/** Payload generation instant for hook freshness: prefers backend timestamps
+ *  (generated_at / timestamp_ms / evaluated_at / updated_at_utc / ...).
+ *  Returns null when the payload carries no usable instant — callers must keep
+ *  the last age instead of bumping to Date.now(). Never invents a "now" mark.
+ *  Handles arrays and response envelopes ({data, meta}) so a mixed batch of
+ *  backend payloads resolves to the newest honest instant it actually carries. */
+const PAYLOAD_TS_KEYS = [
+  'generated_at',
+  'generated_at_ms',
+  'timestamp_ms',
+  'timestamp',
+  'evaluated_at',
+  'evaluated_at_utc',
+  'updated_at_utc',
+  'updated_at',
+  'created_at_utc',
+  'realtime_sync_ts',
+  'scan_timestamp_utc',
+] as const;
+
+const PAYLOAD_TS_WRAPPERS = ['data', 'meta', 'payload'] as const;
+
+export function payloadTimestampMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const t = Date.parse(value);
+    return Number.isFinite(t) ? t : null;
+  }
+  if (Array.isArray(value)) return maxPayloadTimestampMs(value);
+  const o = getObj(value);
+  if (!o) return null;
+  const direct = pickMs(o, ...PAYLOAD_TS_KEYS);
+  if (direct !== null) return direct;
+  for (const key of PAYLOAD_TS_WRAPPERS) {
+    const nested = o[key];
+    if (nested === undefined || nested === null) continue;
+    const t = payloadTimestampMs(nested);
+    if (t !== null) return t;
+  }
+  return null;
+}
+
+/** Max payload instant across candidates. Null when none carry a timestamp. */
+export function maxPayloadTimestampMs(values: Array<unknown>): number | null {
+  let best: number | null = null;
+  for (const v of values) {
+    const t = payloadTimestampMs(v);
+    if (t !== null && (best === null || t > best)) best = t;
+  }
+  return best;
+}
+
+/* ---------------- data freshness (payload time, never the browser clock) ---------------- */
+
+export type DataFreshness = {
+  /** Payload age in ms. Null when the payload carried no usable instant. */
+  ageMs: number | null;
+  /** True when the timestamp is missing or older than the staleness window. */
+  stale: boolean;
+  hasTimestamp: boolean;
+  /** Alias for "no usable time" — render age unknown, never "just now". */
+  timeUnknown: boolean;
+};
+
+/** Freshness of a payload instant. Missing time → `stale: true`, age null. */
+export function dataFreshness(
+  updatedAt: number | null | undefined,
+  options: { nowMs?: number; staleAfterMs?: number } = {},
+): DataFreshness {
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  const now =
+    typeof options.nowMs === 'number' && Number.isFinite(options.nowMs) && options.nowMs > 0
+      ? options.nowMs
+      : Date.now();
+  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) {
+    return { ageMs: null, stale: true, hasTimestamp: false, timeUnknown: true };
+  }
+  const ageMs = Math.max(0, now - updatedAt);
+  return { ageMs, stale: ageMs > staleAfterMs, hasTimestamp: true, timeUnknown: false };
+}
+
+export type SignalLiveness = {
+  timeUnknown: boolean;
+  today: boolean;
+  /** Today, within the staleness window — the only state that may say "live". */
+  live: boolean;
+  stale: boolean;
+  ageMs: number | null;
+};
+
+/** Missing time is NEVER today-live: `timeUnknown` rows fail the live check. */
+export function signalLiveness(
+  timeMs: number | null | undefined,
+  options: { nowMs?: number; staleAfterMs?: number } = {},
+): SignalLiveness {
+  const fresh = dataFreshness(timeMs, options);
+  if (timeMs === null || timeMs === undefined || !Number.isFinite(timeMs)) {
+    return { timeUnknown: true, today: false, live: false, stale: true, ageMs: null };
+  }
+  const today = isTodayIST(timeMs, options.nowMs);
+  return {
+    timeUnknown: false,
+    today,
+    live: today && !fresh.stale,
+    stale: fresh.stale,
+    ageMs: fresh.ageMs,
+  };
 }
 
 /* ---------------- formatting ---------------- */
@@ -193,6 +305,64 @@ export function isHiddenTab(): boolean {
   return typeof document !== 'undefined' && document.hidden;
 }
 
+/* ---------------- trading-day partition (IST) ---------------- */
+
+/** IST calendar day key `YYYY-MM-DD` for an epoch-ms timestamp. Null in → null out. */
+export function dayKeyIST(ms: number | null): string | null {
+  if (ms === null || !Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  // en-CA yields YYYY-MM-DD; timeZone pins it to the IST trading day.
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+/** True when `ms` falls on today's IST trading day.
+ *  Rows with no timestamp are NOT today — they render "age unknown" and live
+ *  under History for triage instead of silently joining the live book. */
+export function isTodayIST(ms: number | null, nowMs?: number): boolean {
+  if (ms === null || !Number.isFinite(ms)) return false;
+  const now = nowMs && nowMs > 0 ? nowMs : Date.now();
+  return dayKeyIST(ms) === dayKeyIST(now);
+}
+
+/** Displayed age for a signal timestamp. Missing time → 'age unknown', never 'today'. */
+export const SIGNAL_AGE_UNKNOWN_LABEL = 'age unknown' as const;
+export function signalAgeLabel(timeMs: number | null | undefined, nowMs?: number): string {
+  if (timeMs === null || timeMs === undefined || !Number.isFinite(timeMs)) {
+    return SIGNAL_AGE_UNKNOWN_LABEL;
+  }
+  const now = nowMs && nowMs > 0 ? nowMs : Date.now();
+  const seconds = Math.max(0, Math.round((now - timeMs) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
+
+/** Epoch-ms of today's IST midnight (start of the trading day).
+ *  Used as `before_ms` when archiving/clearing pre-today signals. */
+export function startOfTodayISTMs(nowMs?: number): number | null {
+  const now = nowMs && nowMs > 0 ? nowMs : Date.now();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(now));
+  const get = (type: string): number | null => {
+    const p = parts.find((entry) => entry.type === type);
+    if (!p) return null;
+    const n = Number(p.value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const y = get('year');
+  const m = get('month');
+  const d = get('day');
+  if (y === null || m === null || d === null) return null;
+  // IST midnight = 18:30 UTC on the previous calendar day.
+  return Date.UTC(y, m - 1, d) - 5.5 * 60 * 60 * 1000;
+}
+
 /* ---------------- filter predicates ---------------- */
 
 export type DeskScope = 'SCALP' | 'INTRADAY';
@@ -231,6 +401,8 @@ export type ActiveRow = {
   raw: Record<string, unknown>;
   id: string;
   timeMs: number | null;
+  /** True when the payload carried no usable time — never today-live. */
+  timeUnknown?: boolean;
   symbol: string;
   strategy: string;
   direction: unknown;
@@ -286,6 +458,7 @@ export function toActiveRow(s: unknown): ActiveRow | null {
     raw: o,
     id,
     timeMs,
+    timeUnknown: timeMs === null,
     symbol: pickStr(o, 'underlying', 'instrument', 'symbol') ?? '—',
     strategy: pickStr(o, 'strategy') ?? '—',
     direction: o.direction ?? o.bias ?? 'NEUTRAL',
@@ -328,6 +501,8 @@ export type LedgerRow = {
   unrealized: number | null;
   total: number | null;
   timeMs: number | null;
+  /** True when the row carried no usable time — render age unknown, not today. */
+  timeUnknown?: boolean;
   entryTimeMs: number | null;
   exitTimeMs: number | null;
   expiry: string | null;
@@ -368,6 +543,7 @@ export function toLedgerRow(t: unknown): LedgerRow | null {
       current = null;
     }
   }
+  const timeMs = pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at', 'updated_at_utc', 'created_at_utc');
   return {
     id,
     underlying: pickStr(o, 'underlying', 'instrument', 'symbol') ?? '—',
@@ -384,7 +560,8 @@ export function toLedgerRow(t: unknown): LedgerRow | null {
     realized: pickNum(o, 'actual_pnl_inr', 'realized_pnl', 'pnl'),
     unrealized: pickNum(o, 'unrealized_pnl_inr'),
     total: pickNum(o, 'total_pnl_inr', 'net_pnl'),
-    timeMs: pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at', 'updated_at_utc', 'created_at_utc'),
+    timeMs,
+    timeUnknown: timeMs === null,
     entryTimeMs: pickMs(o, 'executed_at_utc', 'executed_at', 'created_at_utc', 'created_at_ms', 'created_at'),
     exitTimeMs: pickMs(o, 'exited_at_utc', 'closed_at_ms', 'closed_at'),
     expiry: ledgerExpiry(o),

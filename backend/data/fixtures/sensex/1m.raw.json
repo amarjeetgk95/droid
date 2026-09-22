@@ -1,0 +1,12 @@
+{
+  "dataset_id": "ds_sensex_1m_20260919_151352",
+  "instrument": "sensex",
+  "timeframe": "1m",
+  "row_count": 67500,
+  "start_time": "2025-12-23 03:45:00+00:00",
+  "end_time": "2026-08-31 09:59:00+00:00",
+  "checksum_sha256": "11b8ce16b90ddfb0ecea7645f0969a7ac8ef9c830ccf03030e7eb8ae7949b283",
+  "created_at_utc": "2026-09-19T15:13:52.724205+00:00",
+  "source": "synthetic_fixture",
+  "data_quality_score": 100.0
+}

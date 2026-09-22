@@ -7,7 +7,7 @@ One SSE connection per tab carries every server-pushed concern:
     A single background task composes the frozen CommandView roughly every 2 s,
     compares each section against its last version/content digest, and emits
     only genuinely changed sections, coalesced to at most one frame per section
-    per second. The kill-switch section is P0; every other section is P1.
+    per second. Section deltas are P1.
   * ``signal.event`` — re-emission of ``SignalSSEHub`` broadcasts (P1).
   * ``hint.raised`` / ``hint.cleared`` — operator hint lifecycle. Hints with
     ``action_required`` are P0; informational hints are P1.
@@ -402,7 +402,7 @@ class AppStreamHub:
         }
 
     async def _emit_section(self, name: str, payload: dict[str, Any], now: float) -> None:
-        priority = "P0" if name == "kill_switch" else "P1"
+        priority = "P1"
         await self.publish("view.section.changed", payload, priority=priority)
         self._last_emit[name] = now
 

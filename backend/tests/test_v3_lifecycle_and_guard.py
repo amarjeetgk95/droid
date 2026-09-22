@@ -3,8 +3,7 @@ Unified Signal & Execution Engine v3.0 Comprehensive Test Suite
 Tests:
   - 3-Domain Decoupled FSMs (Signal, Execution Intent, Position)
   - Deterministic SHA-256 Idempotency & Intent Ledger
-  - Hierarchical 15-Check Final Execution Guard
-  - Global Kill Switch Sub-millisecond Safety
+  - Hierarchical 14-Check Final Execution Guard
   - Feed Circuit Breaker Integration
   - Exact Decimal Quantization
 """
@@ -13,7 +12,6 @@ import time
 from decimal import Decimal
 import uuid
 
-from app.signals.safety.kill_switch import kill_switch
 from app.signals.safety.feed_circuit import feed_circuit
 from app.signals.safety.decimal_types import (
     D,
@@ -44,13 +42,11 @@ from app.signals.fsm import SignalInstance, signal_fsm
 @pytest.fixture(autouse=True)
 def reset_safety_and_ledgers():
     """Ensure clean global state before each test."""
-    kill_switch.deactivate()
     for u in ["NIFTY", "BANKNIFTY", "SENSEX", "TEST"]:
         feed_circuit.on_authoritative_snapshot(u, int(time.time() * 1000), 100)
     intent_ledger.clear()
     position_registry.clear()
     yield
-    kill_switch.deactivate()
 
 
 # ── 1. DETERMINISTIC IDEMPOTENCY & INTENT LEDGER TESTS ────────────────
@@ -187,45 +183,6 @@ def _make_dummy_signal(state="ARMED", expired=False):
         expires_at_utc=now_ms - 1000 if expired else now_ms + 300000,
     )
     return sig
-
-
-def test_guard_level1_kill_switch():
-    sig = _make_dummy_signal()
-    kill_switch.activate("Operator panic stop")
-    res = final_execution_guard(
-        signal=sig,
-        execution_intent_id="intent-1",
-        order_price=Decimal("120.00"),
-        order_quantity=75,
-        allow_closed_market=True,
-    )
-    assert not res.passed
-    assert res.failed_check == "1_KILL_SWITCH"
-    assert res.level == 1
-
-
-def test_feed_monitor_kill_auto_recovers_on_live_feed():
-    """A transient feed blip must not halt signal registration for the session."""
-    kill_switch.deactivate(by="test")
-    kill_switch.auto_activate_from_monitor("DOWN", None)
-    assert kill_switch.is_active() is True
-    assert kill_switch.status()["activated_by"] == "feed_monitor"
-
-    kill_switch.auto_recover_from_monitor("STALE")
-    assert kill_switch.is_active() is True
-
-    recovered = kill_switch.auto_recover_from_monitor("LIVE")
-    assert recovered is not None
-    assert kill_switch.is_active() is False
-
-
-def test_operator_kill_stays_latched_on_live_feed():
-    """Operator/risk kills are never auto-cleared by feed recovery."""
-    kill_switch.deactivate(by="test")
-    kill_switch.activate("Operator panic stop", by="operator")
-
-    assert kill_switch.auto_recover_from_monitor("LIVE") is None
-    assert kill_switch.is_active() is True
 
 
 def test_guard_level1_ttl_expired():
@@ -385,7 +342,7 @@ def test_guard_level4_persistence_unavailable():
     assert res.level == 4
 
 
-def test_guard_all_15_checks_pass():
+def test_guard_all_14_checks_pass():
     sig = _make_dummy_signal()
     res = final_execution_guard(
         signal=sig,
@@ -405,7 +362,7 @@ def test_guard_all_15_checks_pass():
     )
     assert res.passed
     assert res.failed_check is None
-    assert len(res.checks_evaluated) == 15
+    assert len(res.checks_evaluated) == 14
 
 
 # ── 4. SIGNAL INSTANCE SERIALIZATION & REPRODUCIBILITY ────────────────

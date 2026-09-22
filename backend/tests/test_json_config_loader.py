@@ -302,3 +302,49 @@ def test_scoring_service_custom_config_path_takes_precedence(tmp_path):
 
     service = scoring_module.EventScoringService(config_path=str(custom))
     assert service._config["version"] == "vTEST"
+
+
+# ── canonical config root ────────────────────────────────────────────
+
+CANONICAL_CONFIG_FILES = (
+    "risk_envelopes.json",
+    "event_scoring.json",
+    "event_sources.json",
+    "scoring_weights.json",
+)
+
+
+def test_canonical_config_root_is_backend_config():
+    """`backend/config/` is the single source of truth for shipped config.
+
+    The loader searches `<backend>/config` first, so a second copy at the repo
+    root is dead weight at best. The two copies used to be byte-identical, which
+    means the next edit to one of them would have silently changed the
+    operator's risk limits in exactly one of the two run modes (and the root
+    copy had already drifted into being a subset — it was missing
+    `scoring_weights.json`). Guard against the duplicate creeping back.
+    """
+    backend_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
+
+    for name in CANONICAL_CONFIG_FILES:
+        assert (backend_root / "config" / name).is_file(), f"missing canonical {name}"
+
+    stale = [name for name in CANONICAL_CONFIG_FILES if (repo_root / "config" / name).exists()]
+    assert not stale, (
+        f"duplicate config at the repo root: {stale}. Edit backend/config/ instead "
+        "(backend/Dockerfile ships it; nothing ships the repo-root copy)."
+    )
+
+
+def test_shipped_configs_parse():
+    """Every canonical config must parse as a non-empty JSON object.
+
+    A malformed file is not fatal at runtime (the loader warns and falls back to
+    its inline defaults), which is precisely why it needs a test: a typo would
+    otherwise quietly replace the reviewed risk envelopes with code defaults.
+    """
+    backend_root = Path(__file__).resolve().parents[1]
+    for name in CANONICAL_CONFIG_FILES:
+        payload = json.loads((backend_root / "config" / name).read_text(encoding="utf-8"))
+        assert isinstance(payload, dict) and payload, f"{name} is empty or not an object"

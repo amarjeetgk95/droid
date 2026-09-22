@@ -116,15 +116,19 @@ class UniverseItem(BaseModel):
 # ---------------------------------------------------------------------------
 class MarketRegime(BaseModel):
     regime: MarketRegimeType = "NEUTRAL"
-    confidence: float = 50.0
+    # Fail-closed: None when unmeasured (UNVETTED/INSUFFICIENT_DATA), never 50.0.
+    confidence: float | None = None
+    confidence_status: str = "UNVETTED"
     persistence_bars: int = 0
     benchmark_symbol: str = "NIFTY"
     benchmark_price: float = 0.0
     benchmark_change_pct: float = 0.0
-    ma_alignment_score: float = 50.0  # % above moving averages
+    ma_alignment_score: float | None = None
+    ma_alignment_status: str = "INSUFFICIENT_DATA"
     recent_drawdown_pct: float = 0.0
-    iv_percentile: float = 50.0       # India VIX / IV percentile rank (0-100)
-    iv_regime: str = "NORMAL"         # LOW, NORMAL, ELEVATED, EXTREME
+    iv_percentile: float | None = None
+    iv_percentile_status: str = "INSUFFICIENT_DATA"
+    iv_regime: str = "UNKNOWN"         # LOW, NORMAL, ELEVATED, EXTREME, UNKNOWN
     reasons: list[str] = Field(default_factory=list)
     timestamp: int = Field(default_factory=lambda: int(time.time()))
 
@@ -132,7 +136,9 @@ class MarketRegime(BaseModel):
 class SectorClassification(BaseModel):
     sector: str
     trend: SectorStatusType = "NEUTRAL"
-    relative_strength: float = 50.0  # vs NIFTY
+    # Fail-closed: None when unmeasured, never silent 50.0.
+    relative_strength: float | None = None
+    relative_strength_status: str = "INSUFFICIENT_DATA"
     return_20d_pct: float = 0.0
     leading_stocks: list[str] = Field(default_factory=list)
     timestamp: int = Field(default_factory=lambda: int(time.time()))

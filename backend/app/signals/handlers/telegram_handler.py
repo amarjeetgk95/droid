@@ -3,8 +3,8 @@ Telegram Notification Event Handler for Droid Signal Engine (Version 6.0)
 
 Subscribes to SignalEventBus events and queues Telegram alerts for confirmed signals
 and terminal outcomes when configured.
-Validates Price/Decimal (reject missing, never 0.0 default), skips when kill
-active or monitor != LIVE (except KILL events), handles terminals, no float().
+Validates Price/Decimal (reject missing, never 0.0 default), skips when
+monitor != LIVE, handles terminals, no float().
 """
 from __future__ import annotations
 
@@ -18,17 +18,6 @@ _TERMINAL_NOTIFY = {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_
                     "RUNNER_TIME_STOP_HIT", "EXPIRED", "CLOSED", "INVALIDATED"}
 _TRANSITION_NOTIFY = {"TRIGGERED", "CONFIRMED", "STOP_LOSS_HIT", "TARGET_1_HIT",
                       "TARGET_2_HIT", "EXPIRED"} | _TERMINAL_NOTIFY
-
-
-def _kill_skip(event: SignalEvent) -> bool:
-    try:
-        p = event.payload or {}
-        if p.get("kind") == "KILL" or p.get("kill"):
-            return False
-        from app.signals.safety.kill_switch import kill_switch
-        return bool(kill_switch.is_active())
-    except Exception:
-        return False
 
 
 def _feed_allows() -> bool:
@@ -61,8 +50,6 @@ def _dec(v, field: str, signal_id: str) -> Decimal | None:
 async def handle_signal_registered_telegram(event: SignalEvent) -> None:
     """Dispatches Telegram alert on new signal registration if requested."""
     try:
-        if _kill_skip(event):
-            return
         payload = event.payload or {}
         if not payload.get("notify_telegram"):
             return
@@ -104,8 +91,6 @@ async def handle_signal_registered_telegram(event: SignalEvent) -> None:
 async def handle_signal_transitioned_telegram(event: SignalEvent) -> None:
     """Telegram for TRANSITIONED: TRIGGERED/CONFIRMED/SL/T1/T2/EXPIRED + terminals."""
     try:
-        if _kill_skip(event):
-            return
         payload = event.payload or {}
         to_state = str(payload.get("to_state", ""))
         if to_state not in _TRANSITION_NOTIFY:

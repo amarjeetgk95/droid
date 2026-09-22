@@ -216,7 +216,21 @@ def restore_signals_state_local() -> int:
                 sdata.pop("row_hash", None)
                 sdata.pop("updated_at", None)
                 sdata.pop("updated_at_utc", None) if "last_updated_utc" in sdata else None
+                # Compat: NULL confidence restores as None + UNVETTED (never 80.0).
+                # SignalInstance requires float at validation, so validate with a
+                # compat placeholder then surface None post-construction.
+                _conf_was_null = sdata.get("confidence") is None
+                if _conf_was_null:
+                    sdata["confidence"] = 80.0
                 inst = SignalInstance(**{k: v for k, v in sdata.items() if k in SignalInstance.model_fields})
+                if _conf_was_null:
+                    try:
+                        inst.confidence = None  # type: ignore[assignment]
+                        _cb = dict(getattr(inst, "confluence_breakdown", {}) or {})
+                        _cb.setdefault("confidence_status", "UNVETTED")
+                        inst.confluence_breakdown = _cb
+                    except Exception:
+                        pass
                 # Preserve history when present.
                 try:
                     if "state_history" in sdata and isinstance(sdata["state_history"], list):
@@ -561,7 +575,7 @@ async def ensure_signals_tables() -> bool:
                     is_winner BOOLEAN,
                     option_contract JSONB DEFAULT '{}'::jsonb,
                     state_history JSONB DEFAULT '[]'::jsonb,
-                    confidence DOUBLE PRECISION DEFAULT 80.0,
+                    confidence DOUBLE PRECISION DEFAULT NULL,
                     risk_points DOUBLE PRECISION,
                     risk_reward_t1 DOUBLE PRECISION DEFAULT 1.5,
                     risk_reward_t2 DOUBLE PRECISION DEFAULT 3.0,
@@ -569,9 +583,11 @@ async def ensure_signals_tables() -> bool:
                     updated_at_utc BIGINT NOT NULL
                 )
             """))
-            # Schema migrations for v6.0 dual-cadence scalping engine
+            # Schema migrations for v6.0 dual-cadence scalping engine — batched into single query
+            # confidence is NULLABLE with no fake 80.0 default; new rows store NULL
+            # when unmeasured (UNVETTED). Compat reads preserve legacy 80.0 values.
             cols_to_add = [
-                ("confidence", "DOUBLE PRECISION DEFAULT 80.0"),
+                ("confidence", "DOUBLE PRECISION DEFAULT NULL"),
                 ("risk_points", "DOUBLE PRECISION"),
                 ("risk_reward_t1", "DOUBLE PRECISION DEFAULT 1.5"),
                 ("risk_reward_t2", "DOUBLE PRECISION DEFAULT 3.0"),
@@ -589,15 +605,34 @@ async def ensure_signals_tables() -> bool:
                 ("net_realized_pnl_inr", "DOUBLE PRECISION"),
                 ("recon_json", "JSONB DEFAULT '{}'::jsonb"),
             ]
-            for col, col_type in cols_to_add:
-                try:
-                    await session.execute(text(f"ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS {col} {col_type}"))
-                except Exception as ce:
-                    logger.debug("executed_signals_add_column_skipped", column=col, error=str(ce)[:150])
+            try:
+                alter_clauses = [f"ADD COLUMN IF NOT EXISTS {col} {col_type}" for col, col_type in cols_to_add]
+                await session.execute(text(f"ALTER TABLE executed_signals {', '.join(alter_clauses)}"))
+            except Exception as ce:
+                logger.debug("executed_signals_batch_alter_failed", error=str(ce)[:150])
+                # Fallback to individual column adds if batch fails
+                for col, col_type in cols_to_add:
+                    try:
+                        await session.execute(text(f"ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                    except Exception:
+                        pass
 
-            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_underlying ON executed_signals (underlying)"))
-            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_status ON executed_signals (status)"))
-            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_executed_signals_created ON executed_signals (created_at_utc DESC)"))
+            try:
+                await session.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_executed_signals_underlying ON executed_signals (underlying);
+                    CREATE INDEX IF NOT EXISTS idx_executed_signals_status ON executed_signals (status);
+                    CREATE INDEX IF NOT EXISTS idx_executed_signals_created ON executed_signals (created_at_utc DESC);
+                """))
+            except Exception as ie:
+                logger.debug("executed_signals_indices_create_failed", error=str(ie)[:150])
+
+            # Migrate legacy fake default away: new rows must store NULL when
+            # unmeasured, never an implicit 80.0. Keeps compat reads of old rows.
+            try:
+                await session.execute(text("ALTER TABLE executed_signals ALTER COLUMN confidence DROP DEFAULT"))
+            except Exception as me:
+                logger.debug("executed_signals_confidence_default_migrate_skipped", error=str(me)[:150])
+
             await session.commit()
             logger.info("executed_signals_table_ensured")
             return True
@@ -746,7 +781,7 @@ async def persist_executed_signal(record: Any) -> bool:
             "is_winner": getattr(record, "is_winner", None),
             "option_contract": opt_json,
             "state_history": hist_json,
-            "confidence": float(getattr(record, "confidence", 80.0) or 80.0),
+            "confidence": (lambda _c: float(_c) if _c is not None else None)(getattr(record, "confidence", None)),
             "risk_points": rp,
             "risk_reward_t1": rec_rr_t1,
             "risk_reward_t2": rec_rr_t2,
@@ -1077,7 +1112,9 @@ async def restore_signals_from_db() -> int:
                                 risk_points=Decimal(str(row.get("risk_points") or abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
                                 risk_reward_t1=float(row.get("risk_reward_t1") or 1.5),
                                 risk_reward_t2=float(row.get("risk_reward_t2") or 3.0),
-                                confidence=float(row.get("confidence") or 80.0),
+                                # Compat reads: legacy 80.0 rows keep 80.0; new NULL rows
+                                # restore as None + UNVETTED (never a silent 80.0).
+                                confidence=float(row.get("confidence")) if row.get("confidence") is not None else 80.0,
                                 option_contract=opt_dict,
                                 signal_type=str(row.get("signal_type") or "INTRADAY"),
                                 is_scalp=bool(row.get("is_scalp") or False),
@@ -1096,6 +1133,19 @@ async def restore_signals_from_db() -> int:
                                 lots=row.get("lots"),
                                 quantity=trade_qty,
                             )
+                            # NULL confidence (new rows) surfaces as None + UNVETTED,
+                            # never a silent 80.0. Compat: legacy 80.0 rows keep 80.0.
+                            try:
+                                if row.get("confidence") is None:
+                                    fsm_inst.confidence = None  # type: ignore[assignment]
+                                    try:
+                                        _cb = dict(getattr(fsm_inst, "confluence_breakdown", {}) or {})
+                                        _cb["confidence_status"] = "UNVETTED"
+                                        fsm_inst.confluence_breakdown = _cb
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                             signal_fsm._signals[sid] = fsm_inst
 
                             # Synthesize the paper execution receipt so restored

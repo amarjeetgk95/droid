@@ -1,0 +1,21 @@
+{
+  "symbol": "SENSEX",
+  "timeframe": "15m",
+  "version_tag": "v5",
+  "row_count": 6182,
+  "start_time": "2025-09-22T03:45:00+00:00",
+  "end_time": "2026-09-22T09:45:00+00:00",
+  "checksum_sha256": "b7b369477a4346846a3f1778536bd6e3fdde27752c3171ab183d913c3f42855a",
+  "quality_score": 98.86,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "derived_from_1m",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-22T15:53:48.720456Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-22T15:53:48.814069+00:00"
+}

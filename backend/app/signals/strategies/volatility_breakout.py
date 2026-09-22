@@ -142,6 +142,27 @@ class VolatilityBreakoutStrategy(Strategy):
             except Exception:
                 pass
 
+        # Analyzer candidate levels carry their type (RESISTANCE/SUPPORT/PIVOT).
+        # The scalar `resistance`/`support` fields are the NEAREST levels on
+        # each side of the last close, so `c_close >= resistance` is
+        # unsatisfiable (same for support). The typed list is what makes a
+        # genuine close-beyond cross measurable.
+        for lvl in sr.get("levels") or []:
+            if not isinstance(lvl, dict):
+                continue
+            try:
+                lvl_val = Decimal(str(lvl.get("level")))
+            except Exception:
+                continue
+            lvl_type = str(lvl.get("type") or "").upper()
+            if lvl_type == "RESISTANCE":
+                resistances.append(lvl_val)
+            elif lvl_type == "SUPPORT":
+                supports.append(lvl_val)
+            elif lvl_type == "PIVOT":
+                resistances.append(lvl_val)
+                supports.append(lvl_val)
+
         # Fail-closed if S/R missing.
         if not resistances and not supports:
             return None
@@ -158,6 +179,10 @@ class VolatilityBreakoutStrategy(Strategy):
         c_high = Decimal(str(last_c.get("high", spot)))
         c_low = Decimal(str(last_c.get("low", spot)))
         c_close = Decimal(str(last_c.get("close", spot)))
+        try:
+            prev_close = Decimal(str(candles[-2].get("close", spot)))
+        except Exception:
+            return None
         curr_range = float(c_high - c_low)
 
         # Expansion condition: current candle range >= 1.1x average prior range.
@@ -172,9 +197,11 @@ class VolatilityBreakoutStrategy(Strategy):
 
         # ── BULLISH VOLATILITY BREAKOUT (requires CLOSE beyond level) ──
         if resistances:
-            key_res = min([r for r in resistances if r >= spot * Decimal("0.99")], default=resistances[0])
+            # The broken level is the highest resistance now BELOW the close;
+            # the previous close must sit at/below it so this is a fresh cross.
+            key_res = max([r for r in resistances if r < c_close], default=None)
             # P1: close-beyond gate — intrabar spot touch is not enough.
-            if c_close >= key_res and mtf_bias != "BEARISH" and c_close >= c_open:
+            if key_res is not None and prev_close <= key_res and mtf_bias != "BEARISH" and c_close >= c_open:
                 if spot < key_res:
                     trigger = normalize_price(key_res + min_gap, tick)
                     if trigger <= spot or abs(trigger - spot) < min_gap:
@@ -241,8 +268,10 @@ class VolatilityBreakoutStrategy(Strategy):
 
         # ── BEARISH VOLATILITY BREAKDOWN (requires CLOSE beyond level) ──
         if supports:
-            key_sup = max([s for s in supports if s <= spot * Decimal("1.01")], default=supports[0])
-            if c_close <= key_sup and mtf_bias != "BULLISH" and c_close <= c_open:
+            # The broken level is the lowest support now ABOVE the close;
+            # the previous close must sit at/above it so this is a fresh cross.
+            key_sup = min([s for s in supports if s > c_close], default=None)
+            if key_sup is not None and prev_close >= key_sup and mtf_bias != "BULLISH" and c_close <= c_open:
                 if spot > key_sup:
                     trigger = normalize_price(key_sup - min_gap, tick)
                     if trigger >= spot or abs(spot - trigger) < min_gap:

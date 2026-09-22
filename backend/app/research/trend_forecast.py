@@ -97,6 +97,134 @@ LAYER_WEIGHTS = {
     "structure": 0.05,
 }
 
+# Horizon-aware base weights (sum == 1.0). Short horizons trust the primary
+# timeframe's fast momentum (structure/indicators); long horizons trust the
+# cross-TF alignment. "1h" intentionally equals LAYER_WEIGHTS (v1 compat).
+HORIZON_LAYER_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "1m": {"mtf_alignment": 0.15, "indicators": 0.25, "ml": 0.10, "options": 0.10, "structure": 0.40},
+    "5m": {"mtf_alignment": 0.20, "indicators": 0.28, "ml": 0.12, "options": 0.10, "structure": 0.30},
+    "15m": {"mtf_alignment": 0.25, "indicators": 0.30, "ml": 0.15, "options": 0.10, "structure": 0.20},
+    "30m": {"mtf_alignment": 0.28, "indicators": 0.30, "ml": 0.20, "options": 0.10, "structure": 0.12},
+    "1h": {"mtf_alignment": 0.30, "indicators": 0.30, "ml": 0.25, "options": 0.10, "structure": 0.05},
+}
+
+# How much of the MTF layer comes from the global cross-TF vote vs the
+# primary timeframe alone. 1.0 = legacy global-only (1h compat).
+HORIZON_MTF_GLOBAL_BLEND: Dict[str, float] = {
+    "1m": 0.25,
+    "5m": 0.40,
+    "15m": 0.60,
+    "30m": 0.75,
+    "1h": 1.0,
+}
+
+# Short horizons get smaller directional cutoffs (smaller expected moves)
+# and trust fast momentum more in the structure layer.
+HORIZON_DIRECTION_THRESHOLD: Dict[str, float] = {
+    "1m": 10.0,
+    "5m": 12.0,
+    "15m": 15.0,
+    "30m": 18.0,
+    "1h": 20.0,
+}
+
+# Fast-momentum weight inside the structure layer (rest is legacy
+# supertrend+RSI so bullish fixtures stay bullish).
+HORIZON_STRUCT_FAST_BLEND: Dict[str, float] = {
+    "1m": 0.70,
+    "5m": 0.65,
+    "15m": 0.55,
+    "30m": 0.50,
+    "1h": 0.50,
+}
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(lo, min(hi, v))
+
+
+def _primary_fast_score(feat_primary: Dict[str, Any], current_price: float) -> float:
+    """Fast primary-TF momentum in [-100, 100] from already-available data.
+
+    Combines lagging supertrend with fast inputs the old structure layer
+    ignored: EMA-9/21 stack, VWAP distance, last-candle returns and
+    acceleration (all PIT-safe, all from FeatureLayer.compute_features).
+    A fresh 1m dump turns this bearish long before 1h/4h supertrend flips.
+    """
+    if not isinstance(feat_primary, dict) or not feat_primary:
+        return 0.0
+    quant = feat_primary.get("quant", {}) if isinstance(feat_primary.get("quant"), dict) else {}
+    mom = feat_primary.get("momentum_dynamics", {}) if isinstance(feat_primary.get("momentum_dynamics"), dict) else {}
+
+    def _f(v: Any, default: float = 0.0) -> float:
+        try:
+            f = float(v)
+            return f if math.isfinite(f) else default
+        except (TypeError, ValueError):
+            return default
+
+    score = 0.0
+    # Lagging trend base (kept, but no longer the whole story).
+    st_dir = str(quant.get("supertrend_dir", "NEUTRAL")).upper()
+    if st_dir == "BULLISH":
+        score += 22.0
+    elif st_dir == "BEARISH":
+        score -= 22.0
+    # RSI position.
+    score += _clamp((_f(quant.get("rsi_14"), 50.0) - 50.0) * 0.9, -25.0, 25.0)
+    # EMA stack: price vs fast averages.
+    price = _f(quant.get("current_price"), 0.0) or _f(current_price, 0.0)
+    ema_9 = _f(quant.get("ema_9"), 0.0)
+    ema_21 = _f(quant.get("ema_21"), 0.0)
+    if price > 0 and ema_9 > 0:
+        score += 8.0 if price >= ema_9 else -8.0
+    if ema_9 > 0 and ema_21 > 0:
+        score += 7.0 if ema_9 >= ema_21 else -7.0
+    # VWAP: below intraday VWAP is intraday-weak.
+    vwap_d = _f(quant.get("vwap_dist_pct"), 0.0)
+    score += _clamp(vwap_d * 12.0, -14.0, 14.0)
+    # Fresh returns: ATR-normalized so a 1m -0.1% with thin ATR still counts.
+    atr = _f(quant.get("atr_14"), 0.0)
+    atr_pct = (atr / price * 100.0) if price > 0 and atr > 0 else 0.05
+    if atr_pct <= 0:
+        atr_pct = 0.05
+    ret_1 = _f(mom.get("return_1_pct"), 0.0)
+    ret_5 = _f(mom.get("return_5_pct"), 0.0)
+    score += _clamp((ret_1 / atr_pct) * 8.0, -22.0, 22.0)
+    score += _clamp((ret_5 / max(atr_pct * 2.0, 1e-9)) * 8.0, -18.0, 18.0)
+    # Acceleration: expanding down-move pushes further bearish.
+    accel = _f(mom.get("acceleration"), 0.0)
+    if atr > 0:
+        score += _clamp((accel / atr) * 10.0, -10.0, 10.0)
+    return _clamp(score, -100.0, 100.0)
+
+
+def _resolve_horizon_weights(horizon: str, ml_available: bool) -> Dict[str, float]:
+    """Horizon base weights with missing-ML weight redistributed.
+
+    When ML is unavailable (today's normal state) its share is dealt back
+    to the tradeable layers proportionally instead of being scored as 0 and
+    silently shrinking the final score toward neutral-while-MTF-dominates.
+    Keeps an explicit ``ml: 0.0`` key so ``layer_weights`` shape is stable.
+    """
+    base = HORIZON_LAYER_WEIGHTS.get(horizon, LAYER_WEIGHTS)
+    w = dict(base)
+    if not ml_available and float(w.get("ml", 0.0)) > 0:
+        dropped = float(w.get("ml", 0.0))
+        w["ml"] = 0.0
+        rest = sum(v for k, v in w.items() if k != "ml" and v > 0)
+        if rest > 0:
+            for k in list(w.keys()):
+                if k == "ml":
+                    continue
+                w[k] = w[k] + dropped * (w[k] / rest)
+    total = sum(w.values()) or 1.0
+    return {k: v / total for k, v in w.items()}
+
 # Regime-adaptive layer weights for Tactical Horizon Bias:
 # - Trending: Trend alignment & ML momentum dominate
 # - Ranging / Compressing: Indicators (oscillators/VWAP) & options walls dominate
@@ -200,6 +328,12 @@ HORIZON_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 SUPPORTED_HORIZONS = tuple(HORIZON_CONFIG.keys())
+
+# Horizons rendered as one board (frontend Market Forecast). A board run
+# resolves all five off a single shared MTF snapshot + anchor price
+# (see TacticalHorizonEngine.forecast_board) so the cards cannot drift
+# apart the way five independent point-in-time runs do.
+BOARD_HORIZONS = ("1m", "5m", "15m", "30m", "1h")
 
 # ---------------------------------------------------------------------------
 # Forecast 1h-v2 (P0) contract constants
@@ -397,6 +531,57 @@ def _forecast_weights_version() -> str:
     """Weights bundle tag. P0 only ships v1 (rollback = flip env + redeploy)."""
     raw = (os.getenv("FORECAST_WEIGHTS_VERSION", "v1") or "v1").strip() or "v1"
     return f"forecast-{raw}"
+
+
+async def _ensure_forecast_indicator_definition(
+    session: Any, *, indicator_id: str, horizon: str
+) -> None:
+    """Idempotently seed this engine's indicator definition row.
+
+    ``research_predictions.indicator_id`` is a FK to
+    ``research_indicator_definitions`` and nothing ever seeds the
+    ``trend_forecast_*`` ids (``IndicatorRegistry.sync_to_db`` is never
+    called), so without this every strict prediction insert fails the FK and
+    the run degrades with ``persistence-failed:prediction``. ON CONFLICT DO
+    NOTHING keeps this safe to call on every record path; the commit makes the
+    row durable even if the prediction insert that follows still fails.
+    """
+    from sqlalchemy import text as _text
+
+    await session.execute(
+        _text("""
+            INSERT INTO research_indicator_definitions (
+                indicator_id, name, category, description, author,
+                lifecycle, current_version, supported_timeframes,
+                supported_instruments, formula_summary, parameters_schema,
+                updated_at
+            ) VALUES (
+                :indicator_id, :name, :category, :description, :author,
+                :lifecycle, :current_version, CAST(:supported_timeframes AS jsonb),
+                CAST(:supported_instruments AS jsonb), :formula_summary,
+                CAST(:parameters_schema AS jsonb), NOW()
+            )
+            ON CONFLICT (indicator_id) DO NOTHING;
+        """),
+        {
+            "indicator_id": indicator_id,
+            "name": f"Tactical Horizon Bias {horizon}",
+            "category": "PROPRIETARY",
+            "description": (
+                "Probabilistic tactical horizon bias from the tactical_horizon_engine "
+                "ensemble (MTF alignment, research indicators, ML, options context, "
+                "structure) with ATR/EM risk targets."
+            ),
+            "author": "system",
+            "lifecycle": "PRODUCTION",
+            "current_version": "1.0.0",
+            "supported_timeframes": json.dumps(["1m", "5m", "15m", "30m", "1h"]),
+            "supported_instruments": json.dumps(["NIFTY 50", "BANKNIFTY", "SENSEX"]),
+            "formula_summary": "Regime-weighted layer vote; direction at |score|>=20; ATR14 targets.",
+            "parameters_schema": json.dumps({}),
+        },
+    )
+    await session.commit()
 
 
 def _heuristic_allowed() -> bool:
@@ -1490,11 +1675,37 @@ class TrendForecaster:
         forecast_horizon: ForecastHorizon = cfg["forecast_horizon"]
         horizon_candles: int = cfg["horizon_candles"]
 
-        # Layer 1: MTF alignment score (-100 to +100)
-        alignment = mtf_features.get("alignment", {})
+        # Layer 1: MTF alignment score (-100 to +100), horizon-blended.
+        # Legacy bug: every horizon (even 1m) used the same unanimous global
+        # vote, so a 1m dump could never flip while 1h/4h stayed bullish.
+        # Now short horizons blend in their own primary-TF fast momentum.
+        alignment = mtf_features.get("alignment", {}) if isinstance(mtf_features.get("alignment", {}), dict) else {}
         overall_bias = alignment.get("overall_bias", "NEUTRAL")
-        alignment_score = float(alignment.get("alignment_score", 0.0))
-        mtf_normalized = alignment_score if overall_bias == "BULLISH" else -alignment_score if overall_bias == "BEARISH" else 0.0
+        try:
+            alignment_score = float(alignment.get("alignment_score", 0.0))
+        except (TypeError, ValueError):
+            alignment_score = 0.0
+        mtf_global = alignment_score if overall_bias == "BULLISH" else -alignment_score if overall_bias == "BEARISH" else 0.0
+
+        # Layer 5 (early): need primary features for both the MTF blend and
+        # the fast structure layer — all from already-available data.
+        per_tf = mtf_features.get("per_timeframe", {}) if isinstance(mtf_features.get("per_timeframe", {}), dict) else {}
+        feat_primary = (per_tf.get(timeframe, {}) or {}).get("features", {})
+        if not feat_primary:
+            # Fall back to any available timeframe's features
+            for tf_payload in per_tf.values():
+                if (tf_payload or {}).get("features"):
+                    feat_primary = tf_payload["features"]
+                    break
+        if not isinstance(feat_primary, dict):
+            feat_primary = {}
+        _primary_fast = _primary_fast_score(feat_primary, current_price)
+        try:
+            _blend = float(HORIZON_MTF_GLOBAL_BLEND.get(horizon, 1.0))
+        except (TypeError, ValueError):
+            _blend = 1.0
+        _blend = max(0.0, min(1.0, _blend))
+        mtf_normalized = _clamp(_blend * mtf_global + (1.0 - _blend) * _primary_fast, -100.0, 100.0)
 
         # Layer 2: Research indicators average
         ind_score = 0.0
@@ -1547,16 +1758,14 @@ class TrendForecaster:
                 opt_score += round(20.0 * prox, 2)
         opt_score = max(-100.0, min(100.0, opt_score))
 
-        # Layer 5: Primary-timeframe structure
-        per_tf = mtf_features.get("per_timeframe", {})
-        feat_primary = (per_tf.get(timeframe, {}) or {}).get("features", {})
-        if not feat_primary:
-            # Fall back to any available timeframe's features
-            for tf_payload in per_tf.values():
-                if (tf_payload or {}).get("features"):
-                    feat_primary = tf_payload["features"]
-                    break
+        # Layer 5: Primary-timeframe structure (fast momentum-aware).
+        # Old: supertrend (±30) + RSI (±20) only — too slow for 1m/5m.
+        # New: same base + EMA stack / VWAP / ATR-normalized ret_1/ret_5 /
+        # acceleration via _primary_fast_score, horizon-blended so 1h
+        # fixtures stay bullish while 1m dumps flip fast.
         quant_primary = (feat_primary or {}).get("quant", {})
+        if not isinstance(quant_primary, dict):
+            quant_primary = {}
         structure_score = 0.0
         st_dir = quant_primary.get("supertrend_dir", "NEUTRAL")
         if st_dir == "BULLISH":
@@ -1570,19 +1779,36 @@ class TrendForecaster:
             rsi_primary = 50.0
         structure_score += max(-20.0, min(20.0, (rsi_primary - 50.0) * 0.8))
         structure_score = max(-100.0, min(100.0, structure_score))
+        # Blend with fast momentum (no-op when no momentum data present).
+        try:
+            _sf = float(HORIZON_STRUCT_FAST_BLEND.get(horizon, 0.5))
+        except (TypeError, ValueError):
+            _sf = 0.5
+        _sf = max(0.0, min(1.0, _sf))
+        try:
+            structure_score = _clamp((1.0 - _sf) * float(structure_score) + _sf * float(_primary_fast), -100.0, 100.0)
+        except (TypeError, ValueError):
+            pass
 
         # Extract regime and session for regime-adaptive weighting
         regime_v2 = self._extract_regime(mtf_features, timeframe)
         session_v2 = self._extract_session(mtf_features, timeframe)
-        weights = get_regime_layer_weights(regime_v2)
+        # Horizon-aware weights (redistributes missing-ML share). 1h equals
+        # the legacy LAYER_WEIGHTS path so v1 contract tests are unaffected.
+        if horizon in HORIZON_LAYER_WEIGHTS:
+            weights = _resolve_horizon_weights(horizon, ml_available=bool(ml_forecast))
+        else:
+            weights = get_regime_layer_weights(regime_v2)
+            if not ml_forecast and float(weights.get("ml", 0.0)) > 0:
+                weights = _resolve_horizon_weights("1h", ml_available=False)
 
-        # Weighted ensemble using regime-adaptive weights
+        # Weighted ensemble using horizon-aware weights
         final_score = (
-            weights["mtf_alignment"] * mtf_normalized +
-            weights["indicators"] * ind_score +
-            weights["ml"] * ml_score +
-            weights["options"] * opt_score +
-            weights["structure"] * structure_score
+            float(weights.get("mtf_alignment", 0.0)) * mtf_normalized +
+            float(weights.get("indicators", 0.0)) * ind_score +
+            float(weights.get("ml", 0.0)) * ml_score +
+            float(weights.get("options", 0.0)) * opt_score +
+            float(weights.get("structure", 0.0)) * structure_score
         )
         final_score = round(max(-100.0, min(100.0, final_score)), 2)
 
@@ -1591,10 +1817,16 @@ class TrendForecaster:
         confidence_inputs = [alignment_confidence, ind_confidence, ml_confidence]
         confidence = round(sum(confidence_inputs) / len(confidence_inputs), 3)
 
-        # Direction & targets (ATR of the primary timeframe scales naturally)
-        if final_score >= 20.0:
+        # Direction & targets (ATR of the primary timeframe scales naturally).
+        # Horizon-specific cutoffs: 1m needs only ±10 to call a scalp move,
+        # 1h keeps the legacy ±20 so v1 contract tests are unaffected.
+        try:
+            _dir_th = float(HORIZON_DIRECTION_THRESHOLD.get(horizon, 20.0))
+        except (TypeError, ValueError):
+            _dir_th = 20.0
+        if final_score >= _dir_th:
             direction = Direction.BULLISH
-        elif final_score <= -20.0:
+        elif final_score <= -_dir_th:
             direction = Direction.BEARISH
         else:
             direction = Direction.NEUTRAL
@@ -1637,6 +1869,10 @@ class TrendForecaster:
             "confidence": confidence,
             "target_price": target_price,
             "invalidation_price": invalidation_price,
+            # Neutral verdicts carry the expected band here (directional
+            # verdicts carry target/invalidation prices with expected_range
+            # None — see risk_v2.compute_targets for the v2 path).
+            "expected_range": expected_range_default,
             "layer_scores": {
                 "mtf_alignment": round(mtf_normalized, 2),
                 "indicators": round(ind_score, 2),
@@ -1845,6 +2081,8 @@ class TrendForecaster:
         session: Any = None,
         include_layers: bool = False,
         include_explain: bool = True,
+        mtf_candles: Optional[Any] = None,
+        anchor_price: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Generate a directional forecast for the given horizon and optionally persist it.
 
@@ -1853,6 +2091,13 @@ class TrendForecaster:
         strict failure semantics and ``result["persisted"]`` reports whether a
         complete record exists. Without it, behaviour is unchanged (bounded
         in-memory fallback; ``persisted`` stays False).
+
+        ``mtf_candles`` / ``anchor_price`` are board-run injection points (see
+        :meth:`TacticalHorizonEngine.forecast_board`): a shared MTF snapshot to
+        read instead of fetching, and a shared spot to anchor
+        target/invalidation off instead of this horizon's own last candle
+        close. Both default to None, which preserves the standalone
+        point-in-time behaviour exactly.
 
         P1-2: the whole orchestration runs under a ``FORECAST_DEADLINE_S``
         watchdog. A timeout raises :class:`ForecastDeadlineExceeded` instead of
@@ -1875,6 +2120,8 @@ class TrendForecaster:
                 session=session,
                 include_layers=include_layers,
                 include_explain=include_explain,
+                mtf_candles=mtf_candles,
+                anchor_price=anchor_price,
             )
         _deadline_start = time.monotonic()
         try:
@@ -1886,6 +2133,8 @@ class TrendForecaster:
                     session=session,
                     include_layers=include_layers,
                     include_explain=include_explain,
+                    mtf_candles=mtf_candles,
+                    anchor_price=anchor_price,
                 ),
                 timeout=budget,
             )
@@ -1913,6 +2162,8 @@ class TrendForecaster:
         session: Any = None,
         include_layers: bool = False,
         include_explain: bool = True,
+        mtf_candles: Optional[Any] = None,
+        anchor_price: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Compute one forecast — see :meth:`forecast` for the public contract."""
         cfg = HORIZON_CONFIG.get(horizon)
@@ -1932,7 +2183,10 @@ class TrendForecaster:
 
         # 1. Fetch all timeframe candles (MTF cache lives inside
         # fetch_multi_timeframe_candles; hit flag mirrored for completion log).
-        mtf_candles = await self.fetch_multi_timeframe_candles(instrument)
+        # A board run injects one shared snapshot so every horizon resolves
+        # the same candles (see TacticalHorizonEngine.forecast_board).
+        if mtf_candles is None:
+            mtf_candles = await self.fetch_multi_timeframe_candles(instrument)
         # P1-3: provenance travels with the payload (see _MTFCandles.cache_hit).
         try:
             if bool(getattr(mtf_candles, "cache_hit", False)):
@@ -1997,7 +2251,23 @@ class TrendForecaster:
             ml_forecast = None
 
         # 6. Ensemble (adds the v2 base contract: probabilities, versions, ...)
+        # A board run injects one shared anchor so every horizon's target /
+        # invalidation is computed off the same print; standalone runs keep
+        # the horizon's own last candle close.
         current_price = float(primary_candles[-1]["close"])
+        if anchor_price is not None:
+            try:
+                _anchor = float(anchor_price)
+            except (TypeError, ValueError):
+                _anchor = 0.0
+            if _anchor > 0:
+                current_price = _anchor
+                logger.info(
+                    "forecast_anchor_override",
+                    instrument=instrument,
+                    horizon=horizon,
+                    anchor_price=_anchor,
+                )
         # Provenance for the P0-2 gates + explain bundle (explain reads these
         # keys to report missing/resampled timeframes).
         missing_tfs = [tf for tf in FORECAST_TIMEFRAMES if not (mtf_candles.get(tf) or [])]
@@ -2273,6 +2543,21 @@ class TrendForecaster:
                     limitations.append("snapshot-unavailable")
                 result["limitations"] = limitations
             if snapshot_id:
+                if session is not None:
+                    # Self-healing FK guard: the trend_forecast_* indicator ids
+                    # are never seeded, so without this the strict prediction
+                    # insert below always fails the FK. A failure here only
+                    # logs — the insert stays honest about its own outcome.
+                    try:
+                        await _ensure_forecast_indicator_definition(
+                            session, indicator_id=indicator_id, horizon=horizon
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "forecast_indicator_definition_ensure_failed",
+                            instrument=instrument, indicator_id=indicator_id,
+                            error=str(e),
+                        )
                 pred = ResearchPrediction(
                     prediction_id=f"forecast_{horizon}_{uuid.uuid4().hex[:12]}",
                     indicator_id=indicator_id,
@@ -2553,6 +2838,177 @@ class TacticalHorizonEngine(TrendForecaster):
         return await self.forecast(
             instrument=instrument, horizon=horizon, record=record, session=session
         )
+
+    async def _resolve_board_anchor(
+        self, instrument: str, mtf_candles: Any
+    ) -> Tuple[float, str, Optional[str]]:
+        """Resolve one shared spot for a board run: live LTP first, 1m close fallback.
+
+        Returns ``(price, source, ts_iso)``. Never fabricates: raises
+        ValueError when neither a usable quote nor any candle exists.
+        """
+        try:
+            quote = await self.market_service.get_quote(instrument)
+            ltp = float(getattr(quote, "ltp", 0.0) or 0.0)
+            if ltp > 0:
+                status = getattr(getattr(quote, "status", None), "value", None) or str(
+                    getattr(quote, "status", "UNKNOWN")
+                )
+                ts = getattr(quote, "timestamp", None)
+                ts_iso = (
+                    ts.isoformat()
+                    if hasattr(ts, "isoformat")
+                    else (str(ts) if ts else None)
+                )
+                return ltp, f"quote:{status}", ts_iso
+        except Exception as e:
+            logger.debug(
+                "board_anchor_quote_failed", instrument=instrument, error=str(e)[:120]
+            )
+        try:
+            tf_map = mtf_candles if isinstance(mtf_candles, dict) else {}
+            for tf in ("1m", "5m", "15m", "30m", "1h"):
+                candles = tf_map.get(tf) or []
+                if not candles:
+                    continue
+                last = candles[-1] or {}
+                if isinstance(last, dict):
+                    price = float(last.get("close") or 0.0)
+                    ts = last.get("timestamp")
+                else:
+                    price = float(getattr(last, "close", 0.0) or 0.0)
+                    ts = getattr(last, "timestamp", None)
+                if price > 0:
+                    ts_iso = (
+                        ts.isoformat()
+                        if hasattr(ts, "isoformat")
+                        else (str(ts) if ts else None)
+                    )
+                    return price, f"{tf}-close", ts_iso
+        except Exception as e:
+            logger.debug(
+                "board_anchor_candle_failed", instrument=instrument, error=str(e)[:120]
+            )
+        raise ValueError(
+            f"No usable anchor price for {instrument} (quote + all candles empty)"
+        )
+
+    async def forecast_board(
+        self,
+        instrument: str,
+        record: bool = True,
+        session_factory: Any = None,
+        include_layers: bool = False,
+        include_explain: bool = True,
+    ) -> Dict[str, Any]:
+        """Run every BOARD_HORIZONS forecast off ONE shared MTF snapshot + anchor.
+
+        Five independent point-in-time runs resolve five different spots (each
+        card reads its own horizon's last candle close at its own fetch
+        instant, plus per-horizon cache ages) — the board then renders them as
+        if they were one snapshot. This fans the horizons out concurrently
+        from a single ``fetch_multi_timeframe_candles`` payload and a single
+        anchor print, and stamps every card with the same ``generated_at``.
+
+        ``session_factory`` (optional) is a zero-arg callable returning an
+        async-context-manager session (see
+        ``app.core.database.get_async_session_factory``). Each horizon gets
+        its own session because one AsyncSession cannot be shared across
+        concurrent coroutines. With ``record=True`` but no factory, behaviour
+        matches the single-horizon endpoint without a DB (in-memory fallback,
+        ``persisted`` False).
+
+        A horizon that fails (deadline / insufficient data / unexpected error)
+        degrades to ``errors[horizon]`` instead of failing the board; only a
+        board with zero successful horizons raises.
+        """
+        import asyncio
+        from datetime import datetime, timezone
+
+        shared_candles = await self.fetch_multi_timeframe_candles(instrument)
+        anchor_price, anchor_source, anchor_ts = await self._resolve_board_anchor(
+            instrument, shared_candles
+        )
+
+        async def _one(horizon: str) -> Tuple[str, Dict[str, Any]]:
+            try:
+                if record and session_factory is not None:
+                    async with session_factory() as sess:
+                        res = await self.forecast(
+                            instrument,
+                            horizon,
+                            record=True,
+                            session=sess,
+                            include_layers=include_layers,
+                            include_explain=include_explain,
+                            mtf_candles=shared_candles,
+                            anchor_price=anchor_price,
+                        )
+                else:
+                    res = await self.forecast(
+                        instrument,
+                        horizon,
+                        record=record,
+                        session=None,
+                        include_layers=include_layers,
+                        include_explain=include_explain,
+                        mtf_candles=shared_candles,
+                        anchor_price=anchor_price,
+                    )
+                return horizon, res
+            except ForecastDeadlineExceeded as e:
+                logger.warning(
+                    "board_horizon_deadline",
+                    instrument=instrument,
+                    horizon=horizon,
+                    error=str(e)[:150],
+                )
+                return horizon, {"error": f"deadline_exceeded: {e}"}
+            except ValueError as e:
+                logger.warning(
+                    "board_horizon_insufficient_data",
+                    instrument=instrument,
+                    horizon=horizon,
+                    error=str(e)[:150],
+                )
+                return horizon, {"error": str(e)}
+            except Exception as e:
+                logger.warning(
+                    "board_horizon_failed",
+                    instrument=instrument,
+                    horizon=horizon,
+                    error=str(e)[:150],
+                )
+                return horizon, {"error": f"board horizon failed: {e}"}
+
+        pairs = await asyncio.gather(*[_one(h) for h in BOARD_HORIZONS])
+        board_ts = datetime.now(timezone.utc).isoformat()
+        horizons: Dict[str, Any] = {}
+        errors: Dict[str, str] = {}
+        for horizon, payload in pairs:
+            if isinstance(payload, dict) and "error" not in payload:
+                payload["generated_at"] = board_ts
+                payload["anchor_price"] = anchor_price
+                payload["anchor_source"] = anchor_source
+                horizons[horizon] = payload
+            else:
+                try:
+                    errors[horizon] = str((payload or {}).get("error") or "unknown error")
+                except Exception:
+                    errors[horizon] = "unknown error"
+        if not horizons:
+            raise ValueError(errors.get(BOARD_HORIZONS[0], "board run produced no horizons"))
+        persisted = all(bool((h or {}).get("persisted")) for h in horizons.values())
+        return {
+            "instrument": instrument,
+            "generated_at": board_ts,
+            "anchor_price": anchor_price,
+            "anchor_source": anchor_source,
+            "anchor_ts": anchor_ts,
+            "persisted": persisted,
+            "horizons": horizons,
+            "errors": errors,
+        }
 
 
 # Backward-compatible class alias

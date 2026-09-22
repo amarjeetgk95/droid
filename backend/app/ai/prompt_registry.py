@@ -240,7 +240,13 @@ Rules:
 - NEVER give exact entry/target/stop or position-size advice. Those are computed by deterministic engines.
 - If the user asks for a trade plan, describe qualitative themes and invalidation conditions only.
 - Do NOT promise returns or guarantee outcomes.
-- If you reference data, ground it in the provided market context. Do not hallucinate numbers.""",
+- If you reference data, ground it in the provided market context. Do not hallucinate numbers.
+
+Bird-Eye Format (MANDATORY, verdict streams first):
+Line 1: VERDICT: <BULLISH|BEARISH|NEUTRAL|WATCH + 12 words max>
+Next: max 3 bullets `- <15 words each>` for Why
+Next: LEVELS: Support ₹X | Resistance ₹Y | Invalidation ₹Z (omit if unknown)
+Then: Details max 120 words. Total <150 words. No preamble. Plain retail words, explain jargon in brackets.""",
                 output_schema_hint="",
                 tags=("copilot", "chat", "conversational"),
             ),
@@ -261,7 +267,13 @@ Rules:
 - NEVER give exact entry/exit prices for legs. Premiums change every second.
 - Describe strategy structure, max profit/loss qualitatively, breakevens, and key risks.
 - Explain why the strategy suits the current IV regime and market outlook.
-- Use plain language for a retail trader. Explain any jargon.""",
+- Use plain language for a retail trader. Explain any jargon.
+
+Bird-Eye Format (MANDATORY, verdict streams first):
+Line 1: VERDICT: <BULLISH|BEARISH|NEUTRAL|WATCH + 12 words max>
+Next: max 3 bullets `- <15 words each>` for Why
+Next: LEVELS: Support ₹X | Resistance ₹Y | Invalidation ₹Z (omit if unknown)
+Then: Details max 120 words. Total <150 words. No preamble. Plain retail words, explain jargon in brackets.""",
                 output_schema_hint="",
                 tags=("strategy", "options", "recommendation"),
             ),
@@ -282,7 +294,13 @@ Rules:
 - Check alignment with regime, IV regime, key levels, and orderflow.
 - If the thesis contradicts the data, say so clearly.
 - Do NOT change the thesis. Validate it, do not redesign it.
-- Use plain language for a retail trader.""",
+- Use plain language for a retail trader.
+
+Bird-Eye Format (MANDATORY, verdict streams first):
+Line 1: VERDICT: <BULLISH|BEARISH|NEUTRAL|WATCH + 12 words max>
+Next: max 3 bullets `- <15 words each>` for Why
+Next: LEVELS: Support ₹X | Resistance ₹Y | Invalidation ₹Z (omit if unknown)
+Then: Details max 120 words. Total <150 words. No preamble. Plain retail words, explain jargon in brackets.""",
                 output_schema_hint="",
                 tags=("validation", "trade_thesis", "audit"),
             ),

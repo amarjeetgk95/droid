@@ -74,6 +74,17 @@ describe('forecastBoard', () => {
     expect(expectedMovePct(forecast({}))).toBeNull();
   });
 
+  it('falls back to the target distance for directional verdicts', () => {
+    const bull = forecast({ direction: 'BULLISH', current_price: 100, target_price: 101.8, expected_range: null });
+    expect(expectedMovePct(bull)).toBeCloseTo(1.8, 6);
+    const bear = forecast({ direction: 'BEARISH', current_price: 100, target_price: 98.2, expected_range: null });
+    expect(expectedMovePct(bear)).toBeCloseTo(1.8, 6);
+    const noTarget = forecast({ direction: 'NEUTRAL', current_price: 100, target_price: null, expected_range: null });
+    expect(expectedMovePct(noTarget)).toBeNull();
+    const noSpot = forecast({ direction: 'BULLISH', current_price: null, target_price: 101 });
+    expect(expectedMovePct(noSpot)).toBeNull();
+  });
+
   it('weights the horizon consensus by horizon size', () => {
     const consensus = consensusOf({
       '1m': forecast({ direction: 'BEARISH' }),

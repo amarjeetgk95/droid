@@ -5,6 +5,7 @@ import { AuthProvider } from '@/components/auth/AuthProvider';
 import { WebVitalsReporter } from '@/components/common/WebVitalsReporter';
 import { ToastProvider } from '@/components/ui/toast';
 import { AppStreamProvider } from '@/context/AppStreamContext';
+import { MarketTicksProvider } from '@/context/MarketTicksContext';
 import { InstrumentProvider } from '@/context/InstrumentContext';
 import { MarketSessionProvider } from '@/context/MarketSessionContext';
 
@@ -45,7 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AuthProvider>
             <MarketSessionProvider>
               <InstrumentProvider>
-                <AppStreamProvider>{children}</AppStreamProvider>
+                <AppStreamProvider>
+                  <MarketTicksProvider>{children}</MarketTicksProvider>
+                </AppStreamProvider>
               </InstrumentProvider>
             </MarketSessionProvider>
           </AuthProvider>

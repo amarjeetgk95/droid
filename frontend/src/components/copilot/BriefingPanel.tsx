@@ -3,6 +3,7 @@
 /* Briefing tab: instrument-aware GET /briefing/{symbol} + /deep-insight/{symbol} cards with refresh. */
 
 import { useState } from 'react';
+import { CopilotAnswer } from './CopilotAnswer';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useCopilotBriefing } from '@/hooks/useCopilot';
 import { useToast } from '@/components/ui/toast';
@@ -85,32 +86,70 @@ export function BriefingPanel() {
               </span>
             </div>
             <div className="card-bd">
-              <p>{card.summary}</p>
-              <p className="card-meta">
-                {card.timestamp} · {card.provider}
-              </p>
+              <CopilotAnswer
+                raw={card.summary}
+                providerLabel={`${card.timestamp} · ${card.provider}`}
+                provider={card.provider}
+              />
             </div>
           </section>
 
           <section className="card" aria-label="Key levels">
             <div className="card-hd">
               <h2 className="card-title">Key levels</h2>
+              <span className="card-meta num" title="Levels are only as fresh as the briefing payload that produced them.">
+                source {card.provider} · as of {card.timestamp}
+              </span>
             </div>
             <div className="card-bd">
               {card.levels.length === 0 ? (
                 <p className="sg-empty">No levels returned.</p>
               ) : (
                 <div className="sg-kvlist">
-                  {card.levels.map((l) => (
-                    <div key={l.label} className="sg-kv">
+                  {card.levels.slice(0, 6).map((l) => (
+                    <div key={l.label} className="sg-kv" title={`${l.label}: ${l.value} (${card.provider} · ${card.timestamp})`}>
                       <span className="l">{l.label}</span>
                       <span className="v num">{l.value}</span>
                     </div>
                   ))}
                 </div>
               )}
-              <p className="sg-note">{card.pinPivots}</p>
-              <p className="sg-note">FII/DII: {card.fiiDii}</p>
+              {card.pinPivots !== '—' || card.fiiDii !== '—' ? (
+                <span className="stat-chips">
+                  {card.pinPivots !== '—' ? (
+                    <span
+                      className="stat-chip"
+                      title={`${card.pinPivots} — ${card.provider} · ${card.timestamp}`}
+                      style={{
+                        whiteSpace: 'normal',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {card.pinPivots}
+                    </span>
+                  ) : null}
+                  {card.fiiDii !== '—' ? (
+                    <span
+                      className="stat-chip"
+                      title={`${card.fiiDii} — ${card.provider} · ${card.timestamp}`}
+                      style={{
+                        whiteSpace: 'normal',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      FII/DII: {card.fiiDii}
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                <p className="sg-note">No pin/pivot or FII/DII readout in this briefing payload.</p>
+              )}
             </div>
           </section>
 
@@ -123,11 +162,23 @@ export function BriefingPanel() {
                 <p className="sg-empty">No playbook steps returned.</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {card.playbook.map((step, i) => (
+                  {card.playbook.slice(0, 3).map((step, i) => (
                     <p key={i} className="sg-rownote">
                       {step}
                     </p>
                   ))}
+                  {card.playbook.length > 3 ? (
+                    <details>
+                      <summary className="sg-rownote">Show all {card.playbook.length}</summary>
+                      <div className="flex flex-col gap-2">
+                        {card.playbook.slice(3).map((step, i) => (
+                          <p key={i + 3} className="sg-rownote">
+                            {step}
+                          </p>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -145,14 +196,29 @@ export function BriefingPanel() {
           {desk.deepRows.length === 0 && !desk.deepError ? (
             <p className="sg-empty">No deep-insight fields returned.</p>
           ) : (
-            <div className="sg-kvlist">
-              {desk.deepRows.map((row) => (
-                <div key={row.label} className="sg-kv">
-                  <span className="l">{row.label}</span>
-                  <span className="v">{row.value}</span>
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="sg-kvlist">
+                {desk.deepRows.slice(0, 6).map((row) => (
+                  <div key={row.label} className="sg-kv" title={`${row.label}: ${row.value}`}>
+                    <span className="l">{row.label.split('.').pop()?.replace(/_/g, ' ') ?? row.label}</span>
+                    <span className="v">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+              {desk.deepRows.length > 6 ? (
+                <details>
+                  <summary className="sg-rownote">Show all {desk.deepRows.length}</summary>
+                  <div className="sg-kvlist">
+                    {desk.deepRows.slice(6).map((row) => (
+                      <div key={row.label} className="sg-kv" title={`${row.label}: ${row.value}`}>
+                        <span className="l">{row.label.split('.').pop()?.replace(/_/g, ' ') ?? row.label}</span>
+                        <span className="v">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+            </>
           )}
         </div>
       </section>

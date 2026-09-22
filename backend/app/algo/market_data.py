@@ -105,7 +105,9 @@ class TechnicalState:
     price_vs_vwap: Literal["ABOVE", "BELOW", "AT"] = "AT"
     breakout: bool = False
     breakdown: bool = False
-    technical_score: int = 50
+    # Fail-closed: None when unmeasured (INSUFFICIENT_DATA), never a silent 50.
+    technical_score: int | None = None
+    score_status: str = "INSUFFICIENT_DATA"
     details: dict = field(default_factory=dict)
 
 
@@ -115,21 +117,40 @@ class TechnicalEngine:
     def analyze(self, candles: list[dict] | None = None, price: Decimal | None = None, indicators: dict | None = None) -> TechnicalState:
         """
         Produce structured state. In production delegates to app.quant.indicators.
-        For now rule-based from provided indicators dict.
+        Fail-closed: missing rsi/adx/close yields score None + INSUFFICIENT_DATA,
+        never a silent 50 neutral presented as measured.
         """
         if indicators is None:
             indicators = {}
 
-        # Simple scoring: replicate spec's example output
-        # Real implementation calls calculate_rsi, macd, vwap etc (already exists)
-        try:
-            pass
-        except Exception:
-            pass
+        # Explicit presence checks — no silent 50/15/0 defaults.
+        _has_rsi = indicators.get("rsi") is not None
+        _has_adx = indicators.get("adx") is not None
+        _has_close = (price is not None) or (indicators.get("close") is not None)
+        if not (_has_rsi and _has_adx and _has_close):
+            return TechnicalState(
+                trend="NEUTRAL",
+                momentum="NEUTRAL",
+                volume_confirmation=False,
+                price_vs_vwap="AT",
+                breakout=False,
+                breakdown=False,
+                technical_score=None,
+                score_status="INSUFFICIENT_DATA",
+                details=dict(indicators),
+            )
 
-        rsi = indicators.get("rsi", 50)
-        adx = indicators.get("adx", 15)
-        close = D(price) if price is not None else D(indicators.get("close", 0))
+        rsi = indicators.get("rsi")
+        adx = indicators.get("adx")
+        try:
+            close = D(price) if price is not None else D(indicators.get("close"))
+        except Exception:
+            return TechnicalState(
+                trend="NEUTRAL", momentum="NEUTRAL", volume_confirmation=False,
+                price_vs_vwap="AT", breakout=False, breakdown=False,
+                technical_score=None, score_status="INSUFFICIENT_DATA",
+                details=dict(indicators),
+            )
         vwap = indicators.get("vwap", close)
         vol_ratio = indicators.get("volume_ratio", 1.0)
         breakout_flag = indicators.get("breakout", False)
@@ -155,6 +176,7 @@ class TechnicalEngine:
         return TechnicalState(
             trend=trend, momentum=momentum, volume_confirmation=volume_confirmation,
             price_vs_vwap=price_vs_vwap, breakout=bool(breakout_flag), technical_score=score,
+            score_status="MEASURED",
             details=indicators,
         )
 
@@ -433,28 +455,50 @@ class RegimeEngine:
     def classify(self, inputs: dict) -> dict:
         """
         inputs: trend, adx, atr, vix, breadth, price_structure etc.
-        Returns regime label + confidence.
+        Fail-closed: missing inputs yield confidence None + INSUFFICIENT_DATA
+        (never silent defaults); fixed confidences are removed in favour of
+        explicit UNVETTED status — regime label is deterministic, confidence is
+        unmeasured.
         """
-        adx = inputs.get("adx", 15)
-        vix = inputs.get("vix", 15)
-        trend = inputs.get("trend", "NEUTRAL")
-        breadth = inputs.get("breadth", 0)
-        atr_pct = inputs.get("atr_pct", 1.0)
+        if not isinstance(inputs, dict) or not inputs:
+            return {
+                "regime": "RANGE",
+                "confidence": None,
+                "confidence_status": "INSUFFICIENT_DATA",
+                "reason": "INSUFFICIENT_DATA: empty regime inputs",
+            }
+        adx = inputs.get("adx")
+        vix = inputs.get("vix")
+        trend = inputs.get("trend")
+        atr_pct = inputs.get("atr_pct")
         event_flag = inputs.get("event_risk", False)
 
+        # Missing critical fields => unmeasured (None), never defaulted 15/NEUTRAL.
+        if adx is None or vix is None or trend is None or atr_pct is None:
+            try:
+                _trend_lbl = str(trend) if trend is not None else "RANGE"
+            except Exception:
+                _trend_lbl = "RANGE"
+            return {
+                "regime": _trend_lbl if _trend_lbl in self.REGIMES else "RANGE",
+                "confidence": None,
+                "confidence_status": "INSUFFICIENT_DATA",
+                "reason": "INSUFFICIENT_DATA: adx/vix/trend/atr_pct required",
+            }
+
         if event_flag:
-            return {"regime": "EVENT_RISK", "confidence": 0.9, "reason": "EVENT_FLAG"}
+            return {"regime": "EVENT_RISK", "confidence": None, "confidence_status": "UNVETTED", "reason": "EVENT_FLAG"}
         if vix >= 24 or atr_pct >= 3:
-            return {"regime": "HIGH_VOLATILITY", "confidence": 0.85, "reason": "VIX/ATR_ELEVATED"}
+            return {"regime": "HIGH_VOLATILITY", "confidence": None, "confidence_status": "UNVETTED", "reason": "VIX/ATR_ELEVATED"}
         if trend == "BULLISH" and adx >= 30:
-            return {"regime": "STRONG_BULL", "confidence": 0.88, "reason": "TREND_STRONG_BULL"}
+            return {"regime": "STRONG_BULL", "confidence": None, "confidence_status": "UNVETTED", "reason": "TREND_STRONG_BULL"}
         if trend == "BULLISH":
-            return {"regime": "BULL", "confidence": 0.75, "reason": "TREND_BULL"}
+            return {"regime": "BULL", "confidence": None, "confidence_status": "UNVETTED", "reason": "TREND_BULL"}
         if trend == "BEARISH" and adx >= 30:
-            return {"regime": "STRONG_BEAR", "confidence": 0.88, "reason": "TREND_STRONG_BEAR"}
+            return {"regime": "STRONG_BEAR", "confidence": None, "confidence_status": "UNVETTED", "reason": "TREND_STRONG_BEAR"}
         if trend == "BEARISH":
-            return {"regime": "BEAR", "confidence": 0.75, "reason": "TREND_BEAR"}
-        return {"regime": "RANGE", "confidence": 0.7, "reason": "DEFAULT_RANGE"}
+            return {"regime": "BEAR", "confidence": None, "confidence_status": "UNVETTED", "reason": "TREND_BEAR"}
+        return {"regime": "RANGE", "confidence": None, "confidence_status": "UNVETTED", "reason": "DEFAULT_RANGE"}
 
 
 # Singletons

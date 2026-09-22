@@ -232,7 +232,7 @@ class AIModelGovernance:
 
     def canary_allowed(self, system_state: str) -> bool:
         """§80 / §37: canary has zero influence during critical states."""
-        blocked = {"FULL_EXECUTION_STOP", "ORPHANED_ALERT", "CRITICAL_RECONCILIATION_FAILURE", "CRITICAL_DATA_FAILURE", "CRITICAL_BROKER_FAILURE", "GLOBAL_KILL_SWITCH"}
+        blocked = {"ORPHANED_ALERT", "CRITICAL_RECONCILIATION_FAILURE", "CRITICAL_DATA_FAILURE", "CRITICAL_BROKER_FAILURE"}
         return system_state not in blocked
 
 

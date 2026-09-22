@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.api.envelope import make_meta
 from app.models.market import DataStatus
 from app.core.logging import setup_logging
-from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, instruments, futures, strategy
+from app.api import auth, markets, health, contracts, calendar, tokens, ws, cache, circuit_breaker, timeseries, options, regime, ai, paper, ml, fii_dii, instruments, futures, strategy, pap
 from app.api import settings as settings_api
 from app.api import market_state as pipeline_api
 from app.api import dashboard as dashboard_api
@@ -23,7 +23,10 @@ from app.api import swing as swing_api
 from app.api import monitoring as monitoring_api
 from app.api import view as view_api
 from app.api import stream as stream_api
+from app.api import quant as quant_api
+from app.api import vortex as vortex_api
 from app.api.signals import router as signals_api
+from app.historical_data.api.routes import router as historical_data_api
 from app.services.central_feed import central_feed
 from app.services.write_pipeline import write_pipeline
 from app.services.snapshot_service import snapshot_service
@@ -94,6 +97,22 @@ async def lifespan(app: FastAPI):
     snapshot = snapshot_service.load_snapshot()
     if snapshot:
         logger.info("warm_start_restored", snapshot_time=snapshot.timestamp.isoformat())
+
+    # Cold-Start Historical Data Sync & Orphan Job Reconciliation
+    try:
+        from app.historical_data.storage.db_repository import db_repo
+        await db_repo.sync_from_disk()
+        await db_repo.reconcile_orphaned_jobs()
+        logger.info("historical_data_synced_on_startup", count=len(db_repo._mem_datasets))
+    except Exception as e:
+        logger.warning("historical_data_startup_sync_failed", error=str(e))
+
+    # Automated Daily EOD Historical Ingestion & Catch-Up Scheduler
+    try:
+        from app.historical_data.services.auto_sync_service import auto_sync_service
+        auto_sync_service.start()
+    except Exception as e:
+        logger.warning("historical_auto_sync_startup_failed", error=str(e))
 
     # Load persisted broker config from DB (so Groww token survives restart/Re-deploy)
     # Non-blocking with 3s timeout — previously blocked lifespan for 10s+ when DB cold (caused slow load)
@@ -170,9 +189,20 @@ async def lifespan(app: FastAPI):
             restored = await asyncio.wait_for(_init_signals_persistence(), timeout=25.0)
             logger.info("signals_persistence_initialized", restored_count=restored)
         except asyncio.TimeoutError:
-            logger.warning("signals_persistence_init_timeout", hint="DB slow — continuing degraded, will retry on next write")
+            logger.warning("signals_persistence_init_timeout", hint="DB slow — continuing degraded with local cache fallback")
+            try:
+                from app.signals.signals_persistence import restore_signals_state_local
+                restored = restore_signals_state_local()
+                logger.info("signals_persistence_fallback_restored", restored_count=restored)
+            except Exception as fe:
+                logger.warning("signals_persistence_local_fallback_failed", error=str(fe))
     except Exception as e:
         logger.warning("signals_persistence_init_failed", error=str(e))
+        try:
+            from app.signals.signals_persistence import restore_signals_state_local
+            restore_signals_state_local()
+        except Exception:
+            pass
 
     # Hydrate the anonymous signal paper book from persisted paper_* rows (owned
     # by the reserved system user) so open signal positions survive a restart.
@@ -259,6 +289,11 @@ async def lifespan(app: FastAPI):
         try:
             from app.swing.worker import swing_worker
             swing_worker.stop()
+        except Exception:
+            pass
+        try:
+            from app.historical_data.services.auto_sync_service import auto_sync_service
+            await auto_sync_service.stop()
         except Exception:
             pass
         await stop_telegram_stack()
@@ -374,6 +409,7 @@ def create_app() -> FastAPI:
     app.include_router(contracts.router)
     app.include_router(calendar.router)
     app.include_router(tokens.router)
+    app.include_router(pap.router)
     app.include_router(ws.router)
     app.include_router(cache.router)
     app.include_router(circuit_breaker.router)
@@ -402,6 +438,9 @@ def create_app() -> FastAPI:
     app.include_router(monitoring_api.router)
     app.include_router(view_api.router)
     app.include_router(stream_api.router)
+    app.include_router(quant_api.router)
+    app.include_router(vortex_api.router)
+    app.include_router(historical_data_api)
     
     return app
 

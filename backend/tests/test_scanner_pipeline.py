@@ -13,7 +13,6 @@ import pytest
 from app.signals.strategies.base import SignalCandidate
 from app.signals.pipeline.gates import (
     GateChain,
-    KillSwitchGate,
     FeedCircuitGate,
     FNOIntegrityGate,
     DeskConcurrencyGate,
@@ -25,6 +24,7 @@ from app.signals.pipeline.gates import (
     OptionViabilityGate,
 )
 from app.signals.pipeline.data_acquisition import calculate_session_vwap, detect_market_regime
+from app.signals.pipeline.data_acquisition import reconcile_pit_volume
 from app.signals.pipeline.signal_factory import build_signal_instance
 from app.signals.risk_engine import ValidatedRiskDecision
 
@@ -172,7 +172,6 @@ def test_regime_percentiles_fail_closed_on_thin_history():
 def test_gate_chain_evaluation_passes_valid_candidate():
     cand = _sample_candidate()
     chain = GateChain([
-        KillSwitchGate(),
         FeedCircuitGate(),
         FNOIntegrityGate(),
         RSIGate(),
@@ -229,3 +228,95 @@ def test_build_signal_instance():
     assert sig.fsm_state == "ARMED"
     assert sig.lots == 2
     assert sig.quantity == 130
+
+
+class _PitSnap:
+    def __init__(self, rvol):
+        self.rvol = rvol
+
+
+def test_reconcile_pit_volume_overwrites_forming_bar_ratio():
+    """Mid-bar TA ratio (~0.2 on a partial print) must not gate volume.
+
+    The PIT snapshot measures the last CLOSED bar vs the prior 20; the TA
+    surface is reconciled to it so detect() gates agree with participation.
+    """
+    ta = {"volume_ratio": 0.17, "volume": {"relative_volume": 0.17}}
+    applied = reconcile_pit_volume(ta, _PitSnap(1.36))
+    assert applied == 1.36
+    assert ta["volume_ratio"] == 1.36
+    assert ta["volume"]["relative_volume"] == 1.36
+
+
+def test_reconcile_pit_volume_fail_closed_without_snapshot():
+    """No usable snapshot value -> TA untouched, gates fail closed as before."""
+    ta = {"volume_ratio": 0.17, "volume": {"relative_volume": 0.17}}
+    assert reconcile_pit_volume(ta, None) is None
+    assert reconcile_pit_volume(ta, _PitSnap(0.0)) is None
+    assert reconcile_pit_volume(ta, _PitSnap(-2.0)) is None
+    assert ta["volume_ratio"] == 0.17
+    assert reconcile_pit_volume({}, _PitSnap(1.5)) == 1.5
+
+
+def _chain_put_candidate(premium, iv_greeks=None, spot=Decimal("74500.0")):
+    from datetime import date, timedelta
+    from app.signals.contract_resolver import InstrumentMaster
+
+    cand = _sample_candidate(strategy="TREND_PULLBACK", direction="LONG_PUT", spot=spot)
+    cand.option_contract = InstrumentMaster(
+        instrument_id="SENSEX_20260924_MONTHLY_74600_PE",
+        broker_symbol="BSE:SENSEX26SEP74600PE",
+        underlying="SENSEX",
+        exchange="BSE",
+        instrument_type="OPTION",
+        option_type="PE",
+        strike=Decimal("74600.0"),
+        expiry_date=date.today() + timedelta(days=2),
+        expiry_type="MONTHLY",
+        lot_size=10,
+        tick_size=Decimal("0.05"),
+        strike_interval=Decimal("100.0"),
+        contract_source="fyers_chain",
+        live_premium=premium,
+    )
+    cand.greeks = iv_greeks
+    return cand
+
+
+def test_attach_chain_implied_greeks_recovers_iv():
+    """IV solved from a live chain premium must round-trip the pricer."""
+    from app.signals.options_intelligence.greeks import BlackScholesGreeks
+    from app.signals.pipeline.contract_greeks import attach_chain_implied_greeks
+
+    spot, strike, true_iv, t = 74500.0, 74600.0, 0.15, 2.0 / 365.0
+    premium = BlackScholesGreeks.calculate_price(spot, strike, t, true_iv, "PE")
+    assert premium > 0
+    cand = _chain_put_candidate(premium)
+    assert attach_chain_implied_greeks(cand) is None
+    assert cand.greeks is not None
+    assert abs(float(cand.greeks["iv"]) - true_iv) < 0.02
+    assert float(cand.greeks["delta"]) < 0  # PUT delta negative
+    assert float(cand.greeks["theta_hour"]) < 0
+
+
+def test_attach_chain_implied_greeks_fail_closed():
+    from app.signals.pipeline.contract_greeks import attach_chain_implied_greeks
+
+    # Pre-existing Greeks are never overwritten.
+    cand = _chain_put_candidate(298.0, iv_greeks={"iv": 0.2, "delta": -0.4})
+    assert attach_chain_implied_greeks(cand) is None
+    assert float(cand.greeks["iv"]) == 0.2
+
+    # No contract / no premium / formula-only -> reason, greeks stay None.
+    bare = _sample_candidate()
+    assert attach_chain_implied_greeks(bare) == "no_contract"
+    assert bare.greeks is None
+
+    no_prem = _chain_put_candidate(None)
+    assert attach_chain_implied_greeks(no_prem) == "no_live_premium"
+    assert no_prem.greeks is None
+
+    formula = _chain_put_candidate(298.0)
+    formula.option_contract.contract_source = "formula"
+    assert attach_chain_implied_greeks(formula) == "formula_only_no_chain_mark"
+    assert formula.greeks is None

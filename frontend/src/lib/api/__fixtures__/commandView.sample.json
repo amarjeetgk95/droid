@@ -148,19 +148,6 @@
       "degraded": false,
       "version": 12
     },
-    "kill_switch": {
-      "value": {
-        "active": false,
-        "reason": null,
-        "activated_at_ms": null,
-        "activated_by": null,
-        "activated_monotonic_ns": null
-      },
-      "updated_at": "2026-09-18T07:22:01.412306+00:00",
-      "freshness_s": 0,
-      "degraded": false,
-      "version": 2
-    },
     "ml": {
       "value": {
         "ml_prediction": {

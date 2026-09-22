@@ -31,6 +31,26 @@ def feed_down(monkeypatch):
 
     monkeypatch.setattr(MarketService, "get_quote", _raise)
 
+    # Index cards do NOT go through get_quote — they read the broker provider
+    # directly (MarketService.fetch_index_cards_raw -> provider.get_index_cards).
+    # On a machine with a valid backend/.fyers_token the REST poller starts with
+    # the app and answers with real prices, so without this the dashboard shows
+    # a live NIFTY level while the test claims the feed is down. Enforce the
+    # outage at this boundary too, so the assertion holds on any machine.
+    async def _raise_raw(*args, **kwargs):
+        raise ConnectionError("broker unreachable (test: feed down)")
+
+    monkeypatch.setattr(MarketService, "fetch_index_cards_raw", _raise_raw)
+
+    # Candle/OHLC fetches are their own path too. With a valid broker token the
+    # forecast endpoint happily assembles a series and answers 200/ABSTAIN on a
+    # non-trading day, so the "missing candles" case only exists when the candle
+    # source is actually down — which is what this fixture claims to simulate.
+    async def _raise_candles(*args, **kwargs):
+        raise ConnectionError("broker unreachable (test: feed down)")
+
+    monkeypatch.setattr(MarketService, "get_candles", _raise_candles)
+
 
 # ---------------------------------------------------------------------------
 # /health/ready — honest readiness
@@ -119,24 +139,45 @@ class TestDashboardDegraded:
         risk = data["risk"]
         assert all(v is None for v in risk.values())
 
-    def test_summary_degrades_without_fabricating_cards(self, client, feed_down, monkeypatch):
+    def test_summary_degrades_without_fabricating_cards(self, feed_down, monkeypatch):
         from app.api import dashboard as dashboard_api
 
-        monkeypatch.setattr(dashboard_api, "_summary_cache", {})
+        # The app lifespan schedules `prewarm_dashboard_summary()` as a
+        # background task, which computes the summary against the AMBIENT feed
+        # and writes it into `_summary_cache` — possibly after this test has
+        # already cleared the cache. On a machine with a live FYERS token that
+        # prewarm captures real prices, the endpoint then serves them from
+        # cache, and the test would "prove" a fabricated price with the feed
+        # down. Disable the prewarm BEFORE the lifespan starts, so the only
+        # summary that can be computed is the one under test.
+        async def _no_prewarm() -> None:
+            return None
+
+        monkeypatch.setattr(dashboard_api, "prewarm_dashboard_summary", _no_prewarm)
         monkeypatch.setattr(dashboard_api, "_refresh_summary_background", lambda *a, **k: None)
 
-        r = client.get("/api/v1/dashboard/summary")
+        with TestClient(app) as c:
+            monkeypatch.setattr(dashboard_api, "_summary_cache", {})
+            r = c.get("/api/v1/dashboard/summary")
+
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["degraded"] is True
         # Cards are structural placeholders when the feed is down: status must
-        # say OFFLINE and ltp must be the structural zero (IndexCard.ltp is a
-        # non-nullable float). A card showing a POSITIVE ltp with the feed down
-        # would mean something fabricated a price.
+        # be a non-live one and ltp must be the structural zero (IndexCard.ltp
+        # is a non-nullable float). A card showing a POSITIVE ltp with the feed
+        # down would mean something fabricated a price — that is the assertion
+        # that matters here.
+        #
+        # OFFLINE is the status when nothing is known; CLOSED is the status when
+        # the session calendar says the market is shut. Both are honest, and
+        # which one appears depends on whether an earlier test warmed the
+        # session clock, so accepting only OFFLINE made this test pass or fail
+        # by test ordering rather than by behaviour.
         for card in data["cards"]:
             ltp = card.get("ltp")
             status = str(card.get("status", "")).upper()
-            assert status == "OFFLINE", (
+            assert status in ("OFFLINE", "CLOSED"), (
                 f"card[{card.get('symbol', '?')}] status={status!r} with the feed down"
             )
             assert ltp in (0, 0.0, None), (
@@ -151,6 +192,10 @@ class TestDashboardDegraded:
 
 class TestForecastDegraded:
     def test_missing_candles_are_503_not_synthetic(self, client, feed_down):
+        # `feed_down` now takes the candle source down as well: with a live
+        # broker token the engine assembles a real series and answers
+        # 200/ABSTAIN on a non-trading day, which is honest but is not the
+        # data-gap path under test here.
         r = client.get("/api/v1/research/forecast/1h", params={"instrument": "NIFTY 50"})
         assert r.status_code == 503
         detail = str(r.json().get("detail", ""))

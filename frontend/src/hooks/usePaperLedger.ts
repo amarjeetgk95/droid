@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { computePaperTotals, type PaperTotals } from '@/lib/ledger';
+import { computePaperTotals, ledgerMarkSource, type LedgerMarkSource, type PaperTotals } from '@/lib/ledger';
 import {
   toLedgerRow,
   toLedgerSummary,
+  maxPayloadTimestampMs,
+  dataFreshness,
   type LedgerRow,
   type LedgerSummary,
 } from '@/lib/signalsNormalize';
@@ -34,10 +36,16 @@ export type PaperLedgerState = {
   ledgerRows: LedgerRow[];
   ledgerSummary: LedgerSummary | null;
   liveSource: 'stream' | 'rest';
+  /** Provenance of the mark behind unrealized MTM (stream vs REST snapshot). */
+  markSource: LedgerMarkSource;
   loading: boolean;
   refreshing: boolean;
   error: string | null;
   updatedAt: number | null;
+  /** Age of `updatedAt` in ms. Null when the payload carried no instant. */
+  ageMs: number | null;
+  /** True when `updatedAt` is missing or older than the staleness window. */
+  stale: boolean;
   refresh: () => Promise<void>;
   closePosition: (positionId: string) => Promise<LedgerActionResult>;
   closeAll: () => Promise<LedgerActionResult>;
@@ -104,7 +112,26 @@ export function usePaperLedger(
       }
 
       setError(failures.length > 0 ? failures[0] : null);
-      setRestUpdatedAt(Date.now());
+      // Prefer backend instants (audit timestamp_ms / order fills) over the
+      // browser clock. A fully-failed load keeps the last age (no bump).
+      const anySuccess =
+        portfolioResult.status === 'fulfilled' ||
+        positionsResult.status === 'fulfilled' ||
+        ordersResult.status === 'fulfilled' ||
+        auditResult.status === 'fulfilled';
+      if (anySuccess) {
+        const payloadTs = maxPayloadTimestampMs([
+          portfolioResult.status === 'fulfilled' ? portfolioResult.value : null,
+          positionsResult.status === 'fulfilled' ? positionsResult.value : null,
+          ordersResult.status === 'fulfilled' ? ordersResult.value : null,
+          auditResult.status === 'fulfilled' ? auditResult.value : null,
+        ]);
+        // Payload instant only. A successful fetch that carries no backend
+        // timestamp keeps the last known age — never stamped as "just now".
+        if (payloadTs !== null) {
+          setRestUpdatedAt(payloadTs);
+        }
+      }
       setLoading(false);
       if (showSpinner) setRefreshing(false);
     },
@@ -154,6 +181,7 @@ export function usePaperLedger(
     sectionValue?.portfolio !== undefined || sectionValue?.positions !== undefined ? 'stream' : 'rest';
 
   const totals = useMemo(() => computePaperTotals(portfolio, positions), [portfolio, positions]);
+  const freshness = dataFreshness(updatedAt);
 
   const refresh = useCallback(async () => {
     await load(true);
@@ -200,10 +228,13 @@ export function usePaperLedger(
     ledgerRows,
     ledgerSummary,
     liveSource,
+    markSource: ledgerMarkSource(liveSource),
     loading,
     refreshing,
     error,
     updatedAt,
+    ageMs: freshness.ageMs,
+    stale: freshness.stale,
     refresh,
     closePosition,
     closeAll,

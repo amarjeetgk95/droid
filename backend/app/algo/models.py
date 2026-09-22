@@ -129,6 +129,11 @@ class AlgoOrderDB(Base):
 
 
 class AlgoSignalDB(Base):
+    """Algo signals: score/confidence are NULL when unmeasured (UNVETTED /
+    INSUFFICIENT_DATA), never 50.0/0.5/0.75 placeholders. Fail-closed: NULL
+    confidence rows are non-actionable (never ACTIVE).
+    """
+
     __tablename__ = "algo_signals"
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     signal_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), unique=True, nullable=False)
@@ -150,18 +155,17 @@ class AlgoSignalDB(Base):
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    @property
+    def confidence_status(self) -> str:
+        """Explicit status for NULL confidence (never a silent 50.0)."""
+        return "MEASURED" if self.confidence is not None else "UNVETTED"
 
-class AlgoKillSwitch(Base):
-    __tablename__ = "algo_kill_switch"
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    account_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("algo_accounts.id", ondelete="CASCADE"), unique=True, nullable=False)
-    is_killed: Mapped[bool] = mapped_column(Boolean, default=False)
-    kill_level: Mapped[str] = mapped_column(Text, default="NONE")
-    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    triggered_by: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    @property
+    def is_actionable(self) -> bool:
+        """Fail-closed: NULL confidence/score is never actionable (never ACTIVE)."""
+        if self.confidence is None or self.score is None:
+            return False
+        return str(self.direction) in ("LONG", "SHORT")
 
 
 class AlgoConsent(Base):

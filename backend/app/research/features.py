@@ -183,7 +183,8 @@ class FeatureLayer:
         # 5. Market Regime Determination
         regime = determine_market_regime(closes, highs, lows, current_price)
 
-        # 6. Options Features
+        # 6. Options Features — only when upstream snapshot is available.
+        # Missing fields stay None + assumptions (never silent 15.0/1.0).
         opt_features = {}
         if options_ctx and options_ctx.get("available", False):
             call_wall = options_ctx.get("call_wall")
@@ -192,16 +193,18 @@ class FeatureLayer:
             pw_dist = round(((current_price - put_wall) / current_price) * 100.0, 2) if put_wall else None
 
             opt_features = {
-                "pcr_oi": options_ctx.get("pcr_oi", 1.0),
-                "pcr_vol": options_ctx.get("pcr_vol", 1.0),
-                "atm_iv": options_ctx.get("atm_iv", 15.0),
+                "pcr_oi": options_ctx.get("pcr_oi"),
+                "pcr_vol": options_ctx.get("pcr_vol"),
+                "atm_iv": options_ctx.get("atm_iv"),
                 "call_wall": call_wall,
                 "put_wall": put_wall,
                 "max_pain": options_ctx.get("max_pain"),
                 "call_wall_distance_pct": cw_dist,
                 "put_wall_distance_pct": pw_dist,
-                "days_to_expiry": options_ctx.get("days_to_expiry", 1.0),
-                "atm_theta": options_ctx.get("atm_theta", -10.0),
+                "days_to_expiry": options_ctx.get("days_to_expiry"),
+                "atm_theta": options_ctx.get("atm_theta"),
+                "assumptions": list(options_ctx.get("assumptions") or []),
+                "available": True,
             }
 
         return {

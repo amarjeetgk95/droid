@@ -1,0 +1,21 @@
+{
+  "symbol": "NIFTY",
+  "timeframe": "1m",
+  "version_tag": "v1",
+  "row_count": 92703,
+  "start_time": "2025-09-22T03:45:00+00:00",
+  "end_time": "2026-09-22T09:59:00+00:00",
+  "checksum_sha256": "a0a236e95bcccb4559e3eecf63538adfb202c8d56cb60d1e08c62e97276ada82",
+  "quality_score": 98.84,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "fyers",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-22T11:22:42.217963Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-22T11:22:42.294724+00:00"
+}

@@ -3,7 +3,7 @@
 Provides unit-testable service classes:
 - AlgoAccountService: deterministic account resolution, synthetic fallbacks, mode transitions, consent, capital
 - AlgoOrderService: full-stack pre-trade risk evaluation, order submission, idempotency, baskets, position exits
-- AlgoGovernanceService: strategy lifecycle, AI models/canary, kill switch
+- AlgoGovernanceService: strategy lifecycle, AI models/canary
 - AlgoSignalsService: signal creation, fusion, sizing preview, exposure
 """
 from __future__ import annotations
@@ -44,7 +44,6 @@ from app.algo.models import (
     AlgoOrderDB,
     AlgoPositionDB,
     AlgoSignalDB,
-    AlgoKillSwitch,
     AlgoConsent,
     AlgoRiskDecision,
     AlgoAuditLog,
@@ -106,8 +105,6 @@ class AlgoAccountService:
                 await session.flush()
                 cfg = AlgoCapitalConfig(account_id=acct.id)
                 session.add(cfg)
-                ks = AlgoKillSwitch(account_id=acct.id)
-                session.add(ks)
                 await session.flush()
                 await session.commit()
             self._synthetic_account_cache[user_id] = acct
@@ -125,7 +122,7 @@ class AlgoAccountService:
     async def get_account_detail(
         self, session: AsyncSession | None, user_id: UUID
     ) -> dict[str, Any]:
-        """Fetch account state, capital limits, kill-switch status, and consent."""
+        """Fetch account state, capital limits, and consent."""
         acct = await self.get_or_create_account(session, user_id)
         if session is None:
             # Fail-closed: no DB = no capital numbers. Never invent a
@@ -146,15 +143,10 @@ class AlgoAccountService:
                     "daily_loss_limit": "0.00",
                     "is_breached": False,
                 },
-                "kill_switch": {"is_killed": True, "kill_level": "FULL"},
                 "consent": {"acknowledged": False, "disclosure_version": DISCLOSURE_VERSION},
             }
 
         snap = await capital_engine.get_snapshot(session, acct.id)
-        ks_res = await session.execute(
-            select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id)
-        )
-        ks = ks_res.scalar_one_or_none()
         cs_res = await session.execute(
             select(AlgoConsent).where(
                 AlgoConsent.account_id == acct.id,
@@ -176,10 +168,6 @@ class AlgoAccountService:
                 "daily_loss": str(snap.daily_loss),
                 "daily_loss_limit": str(snap.daily_loss_limit),
                 "is_breached": snap.is_breached,
-            },
-            "kill_switch": {
-                "is_killed": ks.is_killed if ks else False,
-                "kill_level": ks.kill_level if ks else "NONE",
             },
             "consent": {
                 "acknowledged": consent.acknowledged if consent else False,
@@ -229,16 +217,6 @@ class AlgoAccountService:
                 raise HTTPException(
                     status_code=400,
                     detail="LIVE mode requires positive available capital and unbreached daily loss (§81.4)",
-                )
-
-            ks_res = await session.execute(
-                select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id)
-            )
-            ks = ks_res.scalar_one_or_none()
-            if ks and ks.is_killed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"LIVE mode blocked: kill switch active at level {ks.kill_level} (§81.5)",
                 )
 
         acct.mode = target_mode
@@ -471,21 +449,9 @@ class AlgoOrderService:
 
     def __init__(self, account_service: AlgoAccountService) -> None:
         self.account_service = account_service
-        self._kill_cache: dict[UUID, dict[str, Any]] = {}
 
     def reset(self) -> None:
-        """Reset in-memory kill switch cache."""
-        self._kill_cache.clear()
-
-    def set_kill_cache(self, key_id: UUID, is_killed: bool, kill_level: str, reason: str | None = None) -> None:
-        self._kill_cache[key_id] = {
-            "is_killed": is_killed,
-            "kill_level": kill_level,
-            "reason": reason,
-        }
-
-    def get_kill_cache(self, key_id: UUID) -> dict[str, Any] | None:
-        return self._kill_cache.get(key_id)
+        """Reset in-memory order-service state (for test isolation)."""
 
     async def evaluate_full_stack(
         self,
@@ -672,7 +638,6 @@ class AlgoOrderService:
             "broker_health": intent.broker_health,
             "instrument_tradable": intent.is_tradable,
             "has_circuit": intent.has_circuit,
-            "kill_switch": intent.kill_switch_active,
             "price": intent.price,
             "spread_pct": float(intent.spread_pct) if intent.spread_pct else None,
             "max_spread_pct": limits.get("max_spread_pct"),
@@ -731,32 +696,6 @@ class AlgoOrderService:
         aid = acct.id
         mode = acct.mode
         is_paper = mode != "LIVE"
-
-        # Check Kill Switch
-        kill_active = False
-        kill_level = "NONE"
-        if user_id in self._kill_cache and self._kill_cache[user_id].get("is_killed"):
-            kill_level = self._kill_cache[user_id]["kill_level"]
-            raise HTTPException(status_code=403, detail=f"KILL_SWITCH_ACTIVE:{kill_level}")
-        if aid in self._kill_cache and self._kill_cache[aid].get("is_killed"):
-            kill_level = self._kill_cache[aid]["kill_level"]
-            raise HTTPException(status_code=403, detail=f"KILL_SWITCH_ACTIVE:{kill_level}")
-
-        if session is not None:
-            try:
-                ks_res = await session.execute(
-                    select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == aid)
-                )
-                ks = ks_res.scalar_one_or_none()
-                if ks and ks.is_killed:
-                    kill_active = True
-                    kill_level = ks.kill_level
-                    self._kill_cache[aid] = {"is_killed": True, "kill_level": kill_level}
-                    raise HTTPException(status_code=403, detail=f"KILL_SWITCH_ACTIVE:{ks.kill_level}")
-            except HTTPException:
-                raise
-            except Exception:
-                pass
 
         cid = UUID(payload.client_order_id) if payload.client_order_id else uuid.uuid4()
         price = D(payload.price) if payload.price is not None else D(0)
@@ -834,7 +773,6 @@ class AlgoOrderService:
             clock_health="HEALTHY",
             broker_health="HEALTHY",
             reconciliation_health="HEALTHY",
-            kill_switch_active=kill_active,
             capital_available=capital_available,
             margin_available=margin_available,
             estimated_margin=price * D(payload.quantity) * D("0.15") if price else None,
@@ -950,7 +888,6 @@ class AlgoOrderService:
             "no_duplicate_signal": True,
             "no_duplicate_order": True,
             "conflict_resolved": True,
-            "kill_switch_inactive": not kill_active,
             "execution_safety_pass": True,
         }
         ok_gate, gate_reason = live_entry_gate(gate_checks)
@@ -1235,14 +1172,6 @@ class AlgoOrderService:
         )
 
         row.exit_state = pos.exit_state
-        if pos.exit_state == "ORPHANED_ALERT":
-            ks_res = await session.execute(
-                select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id)
-            )
-            ks = ks_res.scalar_one_or_none()
-            if ks:
-                ks.is_killed = True
-                ks.kill_level = "STOP_NEW_ENTRIES"
         if result.get("status") == "FILLED":
             row.is_open = False
             row.exit_state = "CLOSED"
@@ -1285,7 +1214,7 @@ class AlgoOrderService:
 
 
 class AlgoGovernanceService:
-    """Manages strategy configurations, AI canary rollouts, and kill-switch states."""
+    """Manages strategy configurations and AI canary rollouts."""
 
     def __init__(
         self, account_service: AlgoAccountService, order_service: AlgoOrderService
@@ -1404,116 +1333,6 @@ class AlgoGovernanceService:
         )
         return {"strategy_id": strategy_id, "stage": target_stage, "previous_stage": prev}
 
-    async def set_kill_switch(
-        self,
-        session: AsyncSession | None,
-        user_id: UUID,
-        kill_level: str,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Trigger or reset kill switch with order cancellation and position exit side effects."""
-        is_kill = kill_level != "NONE"
-        self.order_service.set_kill_cache(user_id, is_kill, kill_level, reason)
-
-        if session is None:
-            audit_trail.append(
-                AuditRecord(
-                    account_id=user_id,
-                    event_type="KILL_SWITCH_CHANGED",
-                    details={"kill_level": kill_level, "reason": reason},
-                )
-            )
-            return {
-                "account_id": str(user_id),
-                "kill_level": kill_level,
-                "is_killed": is_kill,
-            }
-
-        acct = await self.account_service.get_or_create_account(session, user_id)
-        self.order_service.set_kill_cache(acct.id, is_kill, kill_level, reason)
-        res = await session.execute(
-            select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id)
-        )
-        ks = res.scalar_one_or_none()
-        if not ks:
-            ks = AlgoKillSwitch(account_id=acct.id)
-            session.add(ks)
-            await session.flush()
-
-        ks.is_killed = is_kill
-        ks.kill_level = kill_level
-        ks.reason = reason
-        ks.triggered_at = datetime.now(timezone.utc) if is_kill else None
-        ks.triggered_by = user_id if is_kill else None
-
-        if kill_level in ("CANCEL_ENTRY_ORDERS", "EXIT_ALL_POSITIONS", "FULL_EXECUTION_STOP"):
-            ores = await session.execute(
-                select(AlgoOrderDB).where(
-                    AlgoOrderDB.account_id == acct.id,
-                    AlgoOrderDB.status.in_(["CREATED", "RISK_APPROVED", "SUBMITTED", "ACKNOWLEDGED"]),
-                )
-            )
-            for o in ores.scalars().all():
-                try:
-                    rec = order_manager.get(o.client_order_id)
-                    if rec:
-                        await order_manager.cancel(rec)
-                        o.status = "CANCEL_PENDING"
-                except Exception:
-                    pass
-
-        if kill_level in ("EXIT_ALL_POSITIONS", "FULL_EXECUTION_STOP"):
-            pres = await session.execute(
-                select(AlgoPositionDB).where(
-                    AlgoPositionDB.account_id == acct.id, AlgoPositionDB.is_open == True
-                )
-            )
-            for p in pres.scalars().all():
-                p.exit_state = "EXIT_TRIGGERED"
-
-        await session.flush()
-        await session.commit()
-        audit_trail.append(
-            AuditRecord(
-                account_id=acct.id,
-                event_type="KILL_SWITCH_CHANGED",
-                details={"kill_level": kill_level, "reason": reason},
-            )
-        )
-        return {
-            "account_id": str(acct.id),
-            "kill_level": kill_level,
-            "is_killed": is_kill,
-        }
-
-    async def get_kill_switch(
-        self, session: AsyncSession | None, user_id: UUID
-    ) -> dict[str, Any]:
-        """Fetch active kill switch status."""
-        cached = self.order_service.get_kill_cache(user_id)
-        if cached:
-            return cached
-
-        if session is None:
-            return {"is_killed": False, "kill_level": "NONE"}
-
-        acct = await self.account_service.get_or_create_account(session, user_id)
-        try:
-            res = await session.execute(
-                select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id)
-            )
-            ks = res.scalar_one_or_none()
-            return {
-                "is_killed": ks.is_killed if ks else False,
-                "kill_level": ks.kill_level if ks else "NONE",
-                "reason": ks.reason if ks else None,
-            }
-        except Exception:
-            cached_aid = self.order_service.get_kill_cache(acct.id)
-            if cached_aid:
-                return cached_aid
-            return {"is_killed": False, "kill_level": "NONE"}
-
 
 class AlgoSignalsService:
     """Manages algo signal ingestion, conflict resolution, sizing preview, and portfolio exposure."""
@@ -1534,20 +1353,51 @@ class AlgoSignalsService:
 
         dir_in = payload.direction
         fused = None
+        _fusion_status = "INSUFFICIENT_DATA" if not dir_in else "UNVETTED"
         if not dir_in:
-            inp = SignalInputs(
-                symbol=payload.symbol,
-                technical=payload.technical,
-                mtf=payload.mtf,
-                fno=payload.fno,
-                regime=payload.regime,
-                ai=payload.ai,
-                event_risk=payload.event_risk,
-            )
-            fused = signal_fusion.fuse(inp)
-            dir_in = fused.direction
-            if not fused.is_actionable:
-                dir_in = "NEUTRAL"
+            try:
+                inp = SignalInputs(
+                    technical=payload.technical,
+                    mtf=payload.mtf,
+                    fno=payload.fno,
+                    regime=payload.regime,
+                    ai=payload.ai,
+                    event_risk=payload.event_risk,
+                )
+                fused = signal_fusion.fuse(
+                    inp,
+                    strategy_id=payload.strategy_id,
+                    symbol=payload.symbol,
+                    instrument_id=getattr(payload, "instrument_id", None),
+                )
+                dir_in = fused.direction
+                try:
+                    _actionable = bool(fused.is_actionable())
+                except Exception:
+                    _actionable = False
+                if not _actionable:
+                    dir_in = "NO_TRADE"
+                    _fusion_status = "INSUFFICIENT_DATA"
+                else:
+                    _fusion_status = "MEASURED"
+            except Exception as fe:
+                logger.warning("signal_fusion_failed_fail_closed", error=str(fe)[:200])
+                fused = None
+                dir_in = "NO_TRADE"
+                _fusion_status = "INSUFFICIENT_DATA"
+
+        try:
+            _is_actionable = bool(fused.is_actionable()) if fused is not None else False
+        except Exception:
+            _is_actionable = False
+        # Fail-closed: missing fusion yields null confidence + non-actionable,
+        # never 0.75 / ACTIVE.
+        _fused_conf = None
+        try:
+            if fused is not None and getattr(fused, "confidence", None) is not None:
+                _fused_conf = fused.confidence
+        except Exception:
+            _fused_conf = None
 
         sig_id = uuid.uuid4()
         now = datetime.now(timezone.utc)
@@ -1557,8 +1407,12 @@ class AlgoSignalsService:
             "strategy_id": payload.strategy_id,
             "symbol": payload.symbol,
             "direction": dir_in,
-            "fused_confidence": fused.confidence if fused else 0.75,
-            "is_actionable": fused.is_actionable if fused else True,
+            "fused_confidence": _fused_conf,
+            "confidence": _fused_conf,
+            "confidence_status": _fusion_status if _fused_conf is None else "MEASURED",
+            "fusion_status": _fusion_status,
+            "is_actionable": _is_actionable,
+            "status": "PENDING",
             "created_at": now.isoformat(),
         }
 
@@ -1571,16 +1425,8 @@ class AlgoSignalsService:
                     symbol=payload.symbol,
                     instrument_id=payload.instrument_id,
                     direction=dir_in,
-                    confidence=fused.confidence if fused else 0.75,
-                    status="ACTIVE" if (fused.is_actionable if fused else True) else "REJECTED",
-                    raw_payload={
-                        "technical": payload.technical,
-                        "mtf": payload.mtf,
-                        "fno": payload.fno,
-                        "regime": payload.regime,
-                        "ai": payload.ai,
-                        "event_risk": payload.event_risk,
-                    },
+                    confidence=_fused_conf,
+                    is_duplicate=False,
                 )
                 session.add(db_sig)
                 await session.flush()
@@ -1626,22 +1472,32 @@ class AlgoSignalsService:
             q = q.where(AlgoSignalDB.symbol == symbol)
         if direction:
             q = q.where(AlgoSignalDB.direction == direction)
-        if status:
-            q = q.where(AlgoSignalDB.status == status)
+        # AlgoSignalDB has no status column (fail-closed: never filter on a
+        # fabricated ACTIVE). Status filtering is in-memory only; DB rows carry
+        # confidence NULL + is_duplicate only.
         res = await session.execute(q)
         rows = res.scalars().all()
-        return [
-            {
-                "signal_id": str(r.signal_id),
-                "strategy_id": r.strategy_id,
-                "symbol": r.symbol,
-                "direction": r.direction,
-                "confidence": str(r.confidence) if r.confidence else None,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            _c = getattr(r, "confidence", None)
+            _c_str = str(_c) if _c is not None else None
+            _c_status = "MEASURED" if _c is not None else "UNVETTED"
+            _row_status = "PENDING"
+            if status and str(status).upper() != _row_status:
+                continue
+            out.append(
+                {
+                    "signal_id": str(r.signal_id),
+                    "strategy_id": r.strategy_id,
+                    "symbol": r.symbol,
+                    "direction": r.direction,
+                    "confidence": _c_str,
+                    "confidence_status": _c_status,
+                    "status": _row_status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+            )
+        return out
 
     def preview_sizing(
         self,

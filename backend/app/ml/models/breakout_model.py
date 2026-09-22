@@ -49,28 +49,20 @@ class BreakoutModel:
     ) -> Dict[str, Any]:
         """
         Predicts whether a breakout candidate is genuine or an exhaustion trap.
+
+        Fail-closed honesty: unfitted returns status="fallback" with NULL
+        probs (never 0.50-based heuristic). Callers MUST check
+        `status`/`is_fallback`.
         """
         if self.model is None:
-            # Deterministic heuristic fallback using range expansion and volume/OI features
-            range_exp = feature_vector[6] if len(feature_vector) > 6 else 1.0
-            vwap_dist = abs(feature_vector[10]) if len(feature_vector) > 10 else 0.0
-            adx = feature_vector[13] if len(feature_vector) > 13 else 20.0
-
-            # Strong breakout characteristics: expansion without severe exhaustion
-            score = 0.50
-            if range_exp > 1.2:
-                score += 0.15
-            if adx > 25.0:
-                score += 0.15
-            if vwap_dist > 1.5:  # Overextended away from VWAP -> higher false breakout risk
-                score -= 0.20
-
-            p_valid = max(0.10, min(0.90, score))
+            # No trained model: fail-closed, never fabricate from 0.50.
             return {
-                "p_valid_breakout": round(p_valid, 4),
-                "p_false_breakout": round(1.0 - p_valid, 4),
-                "is_continuation": p_valid >= 0.55,
+                "p_valid_breakout": None,
+                "p_false_breakout": None,
+                "is_continuation": None,
                 "is_fallback": True,
+                "status": "fallback",
+                "reason": "breakout-model-unfitted-no-artifact",
                 "model_version": "heuristic_breakout_baseline",
             }
 

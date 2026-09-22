@@ -41,6 +41,11 @@ export const MODULE_NAV: ModuleNavItem[] = [
     description: 'Forecasts, indicators, experiments and ML models',
   },
   {
+    href: '/historical-data',
+    label: 'Historical Data',
+    description: 'Market data acquisition, validation, storage & research',
+  },
+  {
     href: '/copilot',
     label: 'AI Copilot',
     description: 'Streaming copilot, briefings, analysis and trade audit',

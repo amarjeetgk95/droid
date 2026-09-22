@@ -10,19 +10,25 @@ import { useNow } from '@/hooks/useNow';
 import {
   executionEligibility,
   fmtDist,
+  isTodayIST,
+  startOfTodayISTMs,
   type ActiveRow,
   type DeskScope,
 } from '@/lib/signalsNormalize';
 import { SIGNAL_STAGES, matchPosition, stageOf, type SignalStageId } from '@/lib/signalStages';
+import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/errors';
 import { safeNum } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/toast';
-import { SignalGeneratorPanel } from './SignalGeneratorPanel';
+
 import { SignalChecklistCard } from './SignalChecklistCard';
 import { SignalDetailDrawer } from './SignalDetailDrawer';
 import { LedgerPanel } from '@/components/ledger/LedgerPanel';
+import { VortexSnapHUD } from './VortexSnapHUD';
+import { SignalFunnelDiagnostics } from './SignalFunnelDiagnostics';
 
-type ModuleTab = 'pipeline' | 'generate' | 'ledger';
+type ModuleTab = 'today' | 'history' | 'ledger' | 'vortex' | 'funnel';
 type DeskFilter = DeskScope | 'ALL';
 type ViewFilter = 'ALL' | 'LIVE' | 'CLOSED';
 
@@ -34,16 +40,27 @@ const STAGE_WEIGHT: Record<SignalStageId, number> = {
   CLOSED: 4,
 };
 
+/** Compact age text for the scanner badge ("12s ago", "3m ago"). */
+function formatAgeFromMs(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+}
+
 export function SignalsModule() {
   const { instrument } = useInstrument();
   const { isOpen } = useMarketSession();
   const { push } = useToast();
   const now = useNow(1000);
-  const [tab, setTab] = useState<ModuleTab>('pipeline');
+  const [tab, setTab] = useState<ModuleTab>('today');
   const [deskFilter, setDeskFilter] = useState<DeskFilter>('ALL');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [pendingExecute, setPendingExecute] = useState<ActiveRow | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ActiveRow | null>(null);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [busySignalId, setBusySignalId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -55,21 +72,43 @@ export function SignalsModule() {
   const ledger = usePaperLedger({ safetyRefreshMs: isOpen ? 30_000 : null });
 
   const marketClosed = !isOpen;
+  // `now` ticks every second via useNow; isTodayIST falls back to Date.now()
+  // internally while it is still 0 on first paint (keeps render pure).
+  const nowMs = now;
+
+  // Main screen shows today's IST trading day only; older signals live
+  // under the History tab so the operator always sees a fresh book.
+  const { todayRows, historyRows } = useMemo(() => {
+    const today: ActiveRow[] = [];
+    const history: ActiveRow[] = [];
+    for (const row of desk.rows) {
+      if (isTodayIST(row.timeMs, nowMs)) today.push(row);
+      else history.push(row);
+    }
+    return { todayRows: today, historyRows: history };
+  }, [desk.rows, nowMs]);
 
   const stageCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const stage of SIGNAL_STAGES) counts[stage] = 0;
-    for (const row of desk.rows) counts[stageOf(row.state)] += 1;
+    for (const row of todayRows) counts[stageOf(row.state)] += 1;
     return counts;
-  }, [desk.rows]);
+  }, [todayRows]);
 
-  const executableCount = useMemo(
-    () => desk.rows.filter((row) => executionEligibility(row.state, marketClosed).eligible).length,
-    [desk.rows, marketClosed],
+  const liveToday = useMemo(
+    () => todayRows.filter((row) => stageOf(row.state) !== 'CLOSED').length,
+    [todayRows],
   );
 
+  const executableToday = useMemo(
+    () => todayRows.filter((row) => executionEligibility(row.state, marketClosed).eligible).length,
+    [todayRows, marketClosed],
+  );
+
+  const scopeRows = tab === 'history' ? historyRows : todayRows;
+
   const visibleRows = useMemo(() => {
-    const filtered = desk.rows.filter((row) => {
+    const filtered = scopeRows.filter((row) => {
       const stage = stageOf(row.state);
       if (viewFilter === 'LIVE') return stage !== 'CLOSED';
       if (viewFilter === 'CLOSED') return stage === 'CLOSED';
@@ -80,17 +119,29 @@ export function SignalsModule() {
       if (weight !== 0) return weight;
       return (b.timeMs ?? 0) - (a.timeMs ?? 0);
     });
-  }, [desk.rows, viewFilter]);
+  }, [scopeRows, viewFilter]);
 
   const workerRunning = desk.worker.running;
+  // Freshness comes from the desk hook (ageMs/stale); the badge never claims
+  // LIVE when the last payload is stale or its age is unknown.
+  const scanAgeSuffix = ` · last scan ${
+    desk.ageMs !== null ? formatAgeFromMs(desk.ageMs) : 'age unknown'
+  }`;
+  const scannerStale = desk.stale;
   const workerClass =
-    workerRunning === true ? 'b-bull' : workerRunning === false ? 'b-warn' : 'b-neut';
+    workerRunning === true && !scannerStale
+      ? 'b-bull'
+      : workerRunning === false || (workerRunning === true && scannerStale)
+        ? 'b-warn'
+        : 'b-neut';
   const workerLabel =
     workerRunning === true
-      ? 'AUTO SCANNER LIVE'
+      ? scannerStale
+        ? `SCANNER STALE${scanAgeSuffix}`
+        : `AUTO SCANNER LIVE${scanAgeSuffix}`
       : workerRunning === false
-        ? 'WORKER OFFLINE'
-        : 'WORKER UNKNOWN';
+        ? `WORKER OFFLINE${scanAgeSuffix}`
+        : `WORKER UNKNOWN${scanAgeSuffix}`;
 
   const handleScanNow = useCallback(async () => {
     setScanning(true);
@@ -127,30 +178,69 @@ export function SignalsModule() {
     }
   }, [desk, pendingDelete, push]);
 
+  const handleClearHistory = useCallback(async () => {
+    setClearingHistory(true);
+    try {
+      const beforeMs = startOfTodayISTMs(Date.now());
+      const result = await api.bulkDeleteSignals(
+        beforeMs !== null ? { before_ms: beforeMs } : { delete_all: false },
+      );
+      push('success', result.message || `Cleared ${result.deleted_count} old signal(s).`);
+      setConfirmClearHistory(false);
+      await desk.refresh();
+    } catch (err) {
+      push('error', errorMessage(err, 'Clear history failed'));
+    } finally {
+      setClearingHistory(false);
+    }
+  }, [desk, push]);
+
+  const inHistory = tab === 'history';
+  const emptyMessage = desk.loading
+    ? 'Loading signals…'
+    : inHistory
+      ? 'No older signals — everything on the books is from today.'
+      : viewFilter === 'LIVE'
+        ? 'No live signals today — the scanner will populate them on the next candle close while the market is open.'
+        : 'No signals today yet. The automated worker registers them as setups confirm.';
+
   return (
     <div className="flex flex-col gap-3">
       <section className="ds-commandbar">
         <div className="ds-title">
-          <h2>Signal Automation</h2>
-          <span className={`badge ${workerClass}`} title="Backend Automated Signal Worker (scanner + risk loops)">
+          <h2>Signals · Today</h2>
+          <span
+            className={`badge ${workerClass}`}
+            title={
+              workerRunning === true
+                ? scannerStale
+                  ? 'Signal worker is running but its last payload is outside the freshness window — do not treat as live'
+                  : 'Backend Automated Signal Worker (scanner + risk loops) — last payload fresh'
+                : 'Backend Automated Signal Worker (scanner + risk loops)'
+            }
+          >
             {workerLabel}
           </span>
           <span className="card-meta">{instrument}</span>
-        </div>
-        <div className="stat-chips">
-          {SIGNAL_STAGES.map((stage) => (
-            <span key={stage} className="stat-chip" title={`Pipeline stage: ${stage}`}>
-              {stage.toLowerCase()} <b>{stageCounts[stage] ?? 0}</b>
-            </span>
-          ))}
-          <span className="stat-chip">
-            executable <b>{executableCount}</b>
-          </span>
-          <span className="stat-chip" title="Backend cadence: risk loop 3s, scalp scan 10s, intraday scan 30s">
-            cadence <b>3s / 10s / 30s</b>
-          </span>
-          <span className="stat-chip">
+          <span className="card-meta" title={marketClosed ? 'Market closed — paper execution is disabled' : 'Market open'}>
             {marketClosed ? 'market closed' : 'market open'}
+          </span>
+        </div>
+        <div className="stat-chips" title="Counts scoped to today's IST trading day">
+          <span className="stat-chip" title="Signals created today (IST)">
+            today <b>{todayRows.length}</b>
+          </span>
+          <span className="stat-chip" title="Today's signals still live (not closed)">
+            live <b>{liveToday}</b>
+          </span>
+          <span className="stat-chip" title="Today's closed signals">
+            closed <b>{stageCounts.CLOSED ?? 0}</b>
+          </span>
+          <span className="stat-chip" title="Today's signals eligible for paper execution">
+            executable <b>{executableToday}</b>
+          </span>
+          <span className="stat-chip" title="Signals from previous days — see the History tab">
+            history <b>{historyRows.length}</b>
           </span>
         </div>
         <div className="ds-filters">
@@ -167,7 +257,7 @@ export function SignalsModule() {
               </button>
             ))}
           </span>
-          <span className="seg">
+          <span className="seg" title="Desk filter">
             {(['ALL', 'INTRADAY', 'SCALP'] as DeskFilter[]).map((option) => (
               <button
                 key={option}
@@ -205,20 +295,20 @@ export function SignalsModule() {
         <button
           type="button"
           role="tab"
-          aria-selected={tab === 'pipeline'}
-          className={`tab ${tab === 'pipeline' ? 'is-active' : ''}`}
-          onClick={() => setTab('pipeline')}
+          aria-selected={tab === 'today'}
+          className={`tab ${tab === 'today' ? 'is-active' : ''}`}
+          onClick={() => setTab('today')}
         >
-          Pipeline <span className="n">{desk.rows.length}</span>
+          Today <span className="n">{todayRows.length}</span>
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected={tab === 'generate'}
-          className={`tab ${tab === 'generate' ? 'is-active' : ''}`}
-          onClick={() => setTab('generate')}
+          aria-selected={tab === 'history'}
+          className={`tab ${tab === 'history' ? 'is-active' : ''}`}
+          onClick={() => setTab('history')}
         >
-          Generate
+          History <span className="n">{historyRows.length}</span>
         </button>
         <button
           type="button"
@@ -229,27 +319,73 @@ export function SignalsModule() {
         >
           Ledger <span className="n">{ledger.totals.openCount}</span>
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'vortex'}
+          className={`tab ${tab === 'vortex' ? 'is-active' : ''}`}
+          onClick={() => setTab('vortex')}
+        >
+          VORTEX-SNAP HUD
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'funnel'}
+          className={`tab ${tab === 'funnel' ? 'is-active' : ''}`}
+          onClick={() => setTab('funnel')}
+        >
+          Funnel Diagnostics
+        </button>
       </section>
 
       {desk.error ? <p className="sg-err">{desk.error}</p> : null}
 
-      {tab === 'pipeline' ? (
+      {tab === 'today' || tab === 'history' ? (
         <>
           <p className="sg-note">
-            The backend worker scans automatically — SCALP every 10s and INTRADAY every 30s — and the risk loop
-            (3s) arms triggers, confirms entries and auto-executes paper fills. Each signal card ticks its own
-            stage checklist with the transition timestamp; use Scan now to force a pass.
+            {inHistory
+              ? 'Older signals (before today IST) — kept for review. They never mix with the live book.'
+              : 'Today\u2019s book only — SCALP scans every 10s, INTRADAY every 30s, risk loop every 3s. Use Scan now to force a pass.'}
           </p>
-          {visibleRows.length === 0 ? (
-            <div className="panel">
-              <p className="sg-empty">
-                {desk.loading
-                  ? 'Loading signals…'
-                  : viewFilter === 'LIVE'
-                    ? 'No live signals right now — the scanner will populate them on the next candle close while the market is open.'
-                    : 'No signals recorded for this filter yet. The automated worker registers them as setups confirm.'}
+          {inHistory && historyRows.length > 0 ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="sg-note">
+                Showing {visibleRows.length} of {historyRows.length} older signal(s).
               </p>
+              <button
+                type="button"
+                className="btn"
+                disabled={clearingHistory}
+                title="Delete all signals created before today (IST)"
+                onClick={() => setConfirmClearHistory(true)}
+              >
+                {clearingHistory ? 'Clearing…' : 'Clear history'}
+              </button>
             </div>
+          ) : null}
+          {visibleRows.length === 0 ? (
+            tab === 'today' ? (
+              <div className="flex flex-col gap-3">
+                <div className="rounded-lg border border-warn-line bg-warn-wash p-3 text-center">
+                  <div className="text-xs font-bold uppercase tracking-wider text-warn-ink">
+                    No Active Signals On The Books Today
+                  </div>
+                  <p className="mt-1 text-xs text-ink-2">
+                    {emptyMessage} The live diagnostic engine below outlines all scanned opportunities and exactly where setups were filtered.
+                  </p>
+                </div>
+                <SignalFunnelDiagnostics
+                  initialInstrument={instrument}
+                  onRefreshParent={() => void desk.refresh()}
+                  standalone
+                />
+              </div>
+            ) : (
+              <div className="panel">
+                <p className="sg-empty">{emptyMessage}</p>
+              </div>
+            )
           ) : (
             <div className="flex flex-col gap-2">
               {visibleRows.map((row) => (
@@ -270,17 +406,15 @@ export function SignalsModule() {
         </>
       ) : null}
 
-      {tab === 'generate' ? (
-        <>
-          <p className="sg-note">
-            Manual generation registers the same FSM signal the scanner produces — the automated trigger and
-            execution path applies from there.
-          </p>
-          <SignalGeneratorPanel desk={desk} />
-        </>
-      ) : null}
 
       {tab === 'ledger' ? <LedgerPanel ledger={ledger} marketClosed={marketClosed} /> : null}
+      {tab === 'vortex' ? <VortexSnapHUD initialSymbol={instrument} /> : null}
+      {tab === 'funnel' ? (
+        <SignalFunnelDiagnostics
+          initialInstrument={instrument}
+          onRefreshParent={() => void desk.refresh()}
+        />
+      ) : null}
 
       <SignalDetailDrawer signalId={detailId} onClose={() => setDetailId(null)} />
 
@@ -319,6 +453,19 @@ export function SignalsModule() {
         title={`Delete ${pendingDelete?.symbol ?? 'signal'} and square off its paper position?`}
         description="The signal is removed from the FSM and audit ledger. Any open paper position is squared off first."
         onConfirm={handleDelete}
+      />
+
+      <ConfirmDialog
+        open={confirmClearHistory}
+        onOpenChange={(open) => {
+          if (!open) setConfirmClearHistory(false);
+        }}
+        tone="danger"
+        confirmLabel="Clear history"
+        busy={clearingHistory}
+        title={`Delete ${historyRows.length} signal(s) from before today?`}
+        description="Only pre-today signals are removed. Today's book is untouched. This cannot be undone."
+        onConfirm={handleClearHistory}
       />
     </div>
   );

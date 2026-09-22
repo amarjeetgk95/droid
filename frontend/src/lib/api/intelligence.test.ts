@@ -82,6 +82,82 @@ describe('getTacticalBias fallback', () => {
   });
 });
 
+describe('getTacticalBiasBoard', () => {
+  it('builds the board URL with shared-snapshot params', async () => {
+    const { core, calls } = makeCore({
+      '/api/v1/research/tactical-bias/board': async () => ({}),
+    });
+
+    await createIntelligenceApi(core).getTacticalBiasBoard('SENSEX', false, true);
+
+    expect(calls[0]).toBe(
+      '/api/v1/research/tactical-bias/board?instrument=SENSEX&record=false&include_layers=false&include_explain=true',
+    );
+  });
+
+  it('honours record/includeExplain flags on the board URL', async () => {
+    const { core, calls } = makeCore({
+      '/api/v1/research/tactical-bias/board': async () => ({}),
+    });
+
+    await createIntelligenceApi(core).getTacticalBiasBoard('NIFTY 50', true, false);
+
+    expect(calls[0]).toBe(
+      '/api/v1/research/tactical-bias/board?instrument=NIFTY%2050&record=true&include_layers=false&include_explain=false',
+    );
+  });
+
+  it('parses horizons sharing one generated_at and anchor_price', async () => {
+    const generatedAt = '2026-09-21T12:00:00.000Z';
+    const board = {
+      instrument: 'SENSEX',
+      generated_at: generatedAt,
+      anchor_price: 82000,
+      anchor_source: 'spot',
+      anchor_ts: null,
+      cache_age_s: 0,
+      stale: false,
+      horizons: Object.fromEntries(
+        ['1m', '5m', '15m', '30m', '1h'].map((horizon) => [
+          horizon,
+          {
+            instrument: 'SENSEX',
+            generated_at: generatedAt,
+            current_price: 82000,
+            direction: 'NEUTRAL',
+            score: 0,
+            confidence: 50,
+          },
+        ]),
+      ),
+    };
+    const { core } = makeCore({
+      '/api/v1/research/tactical-bias/board': async () => board,
+    });
+
+    const out = await createIntelligenceApi(core).getTacticalBiasBoard('SENSEX', false, true);
+
+    expect(out.generated_at).toBe(generatedAt);
+    for (const horizon of ['1m', '5m', '15m', '30m', '1h'] as const) {
+      expect(out.horizons[horizon].generated_at).toBe(out.generated_at);
+      expect(out.horizons[horizon].current_price).toBe(out.anchor_price);
+    }
+  });
+
+  it('propagates backend failures with no internal fallback (the hook owns the fallback)', async () => {
+    const { core, calls } = makeCore({
+      '/api/v1/research/tactical-bias/board': async () => {
+        throw new ApiError('engine overloaded', 503);
+      },
+    });
+
+    await expect(
+      createIntelligenceApi(core).getTacticalBiasBoard('SENSEX', false, true),
+    ).rejects.toThrow('engine overloaded');
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe('explain param is honoured end to end', () => {
   it('sends include_explain=false when the caller opts out', async () => {
     const { core, calls } = makeCore({ '/api/v1/research/forecast/': async () => ({}) });

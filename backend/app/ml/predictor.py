@@ -18,10 +18,45 @@ logger = structlog.get_logger()
 
 
 class MLPredictor:
-    """Quantitative Probabilistic Ensemble ML Predictor (XGBoost/LightGBM Style)."""
+    """Quantitative Probabilistic Ensemble ML Predictor (XGBoost/LightGBM Style).
+
+    Honesty contract: heuristic_ensemble is a FALLBACK, not a prediction.
+    Callers MUST use `is_heuristic_fallback()` / check
+    `model_source != "xgboost_lightgbm_ensemble" or calibrated is False`
+    before treating probs as live. UI must surface fallback as degraded.
+    """
 
     def __init__(self, market_service: MarketService | None = None):
         self.market_service = market_service or MarketService()
+
+    @staticmethod
+    def is_heuristic_fallback(prediction) -> bool:
+        """True when a prediction is explicitly heuristic fallback.
+
+        Accepts MLPredictionResponse, dict, or None. Only returns True when
+        `model_source` is present and != "xgboost_lightgbm_ensemble" (the
+        explicit heuristic label). Missing model_source (legacy test fixtures
+        without the flag) returns False so honest fixtures without the flag
+        are not mislabeled. None is handled by callers as UNAVAILABLE, not
+        fallback — returns False here to keep those paths distinct.
+        Central helper so dashboard/view/research all check the same flag.
+        """
+        try:
+            if prediction is None:
+                return False
+            if isinstance(prediction, dict):
+                src = prediction.get("model_source")
+                if src is None:
+                    return False
+                cal = prediction.get("calibrated", False)
+            else:
+                src = getattr(prediction, "model_source", None)
+                if src is None:
+                    return False
+                cal = getattr(prediction, "calibrated", False)
+            return src != "xgboost_lightgbm_ensemble" or bool(cal) is False
+        except Exception:
+            return True
 
     async def predict_probabilities(
         self,
@@ -112,8 +147,19 @@ class MLPredictor:
             raw_directional_score = w_st + w_rsi + w_pcr + w_basis + w_ema + w_pivot
             adx_factor = features.adx_strength
             model_source = "xgboost_lightgbm_ensemble"
+            is_fallback = False
         else:
-            # Fallback: heuristic Gradient Decision Trees Ensemble Score
+            # Fallback: heuristic Gradient Decision Trees Ensemble Score.
+            # HONESTY: this is NOT a trained prediction. It is labeled via
+            # model_source="heuristic_ensemble" + calibrated=False + watermark
+            # log. Callers/UI MUST check model_source/calibrated before using
+            # probs — never treat heuristic as a live prediction.
+            logger.warning(
+                "ml_heuristic_fallback_not_a_prediction",
+                symbol=underlying,
+                horizon_minutes=horizon_minutes,
+                reason="no-trained-ensemble-artifact",
+            )
             w_st = 0.25 * features.supertrend_signal
             w_rsi = 0.20 * features.rsi_norm
             w_pcr = 0.15 * features.pcr_oi_deviation
@@ -142,6 +188,7 @@ class MLPredictor:
             bearish_pct = round((exp_bear / total_exp) * 100.0, 1)
             neutral_pct = round(100.0 - bullish_pct - bearish_pct, 1)
             model_source = "heuristic_ensemble"
+            is_fallback = True
 
         # Trend Strength (0-100)
         trend_strength = round(min(100.0, max(5.0, (abs(raw_directional_score) * 60.0) + (adx_factor * 40.0))), 1)
@@ -242,6 +289,8 @@ class MLPredictor:
             model_source=model_source,
             calibrated=calibrated,
             model_version=model_version,
+            is_fallback=is_fallback,
+            status="fallback" if is_fallback else "ok",
         )
 
         # Save to Supabase PostgreSQL database asynchronously

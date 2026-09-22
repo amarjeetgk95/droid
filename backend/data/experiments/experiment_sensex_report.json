@@ -1,0 +1,679 @@
+{
+  "instrument": "SENSEX",
+  "generated_at": "2026-09-21T04:22:28.813408+00:00",
+  "baseline": {
+    "total_trades": 69,
+    "winning_trades": 58,
+    "losing_trades": 11,
+    "scratch_trades": 0,
+    "win_rate_pct": 84.06,
+    "loss_rate_pct": 15.94,
+    "gross_pnl_rupees": 15869.7,
+    "net_pnl_rupees": 8960.04,
+    "total_friction_rupees": 6909.66,
+    "cost_drag_pct": 43.54,
+    "profit_factor": 7.95,
+    "gross_expectancy_points": 23.0,
+    "net_expectancy_points": 12.99,
+    "average_win_rupees": 213.11,
+    "average_loss_rupees": 309.14,
+    "win_loss_ratio": 0.69,
+    "max_drawdown_rupees": 1123.33,
+    "max_drawdown_pct": 0.22,
+    "max_drawdown_duration_bars": 19,
+    "annualized_sharpe": 21.29,
+    "annualized_sortino": 33.76,
+    "calmar_ratio": 8.12,
+    "recovery_factor": 7.98,
+    "avg_holding_minutes": 1.5,
+    "median_holding_minutes": 1.0,
+    "p95_holding_minutes": 4.0,
+    "exit_reasons_breakdown": {
+      "TARGET_2": 8,
+      "STOP_LOSS": 54,
+      "BREAKEVEN_STOP": 6,
+      "SQUARE_OFF": 1
+    },
+    "reason_code_win_rates": {
+      "RESISTANCE_BROKEN": {
+        "count": 8,
+        "wins": 3,
+        "win_rate": 37.5,
+        "net_pnl": -587.42
+      },
+      "PRESSURE_POSITIVE": {
+        "count": 37,
+        "wins": 31,
+        "win_rate": 83.8,
+        "net_pnl": 5441.71
+      },
+      "TRANSLATION_HIGH": {
+        "count": 15,
+        "wins": 10,
+        "win_rate": 66.7,
+        "net_pnl": 793.84
+      },
+      "VACUUM_CONFIRMED": {
+        "count": 16,
+        "wins": 11,
+        "win_rate": 68.8,
+        "net_pnl": 873.46
+      },
+      "FOLLOW_THROUGH_CONFIRMED": {
+        "count": 15,
+        "wins": 10,
+        "win_rate": 66.7,
+        "net_pnl": 793.84
+      },
+      "Regime=RANGE": {
+        "count": 56,
+        "wins": 45,
+        "win_rate": 80.4,
+        "net_pnl": 6593.57
+      },
+      "TranslationRatio=0.91": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 366.88
+      },
+      "ML_Prob=0.56": {
+        "count": 5,
+        "wins": 5,
+        "win_rate": 100.0,
+        "net_pnl": 1243.14
+      },
+      "BREAKOUT_FAILED": {
+        "count": 13,
+        "wins": 13,
+        "win_rate": 100.0,
+        "net_pnl": 2743.5
+      },
+      "TRAP_RECLAIM_CONFIRMED": {
+        "count": 26,
+        "wins": 26,
+        "win_rate": 100.0,
+        "net_pnl": 5487.01
+      },
+      "PRESSURE_NEGATIVE": {
+        "count": 25,
+        "wins": 22,
+        "win_rate": 88.0,
+        "net_pnl": 3321.42
+      },
+      "TranslationRatio=0.12": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 457.55
+      },
+      "ML_Prob=0.52": {
+        "count": 4,
+        "wins": 2,
+        "win_rate": 50.0,
+        "net_pnl": -70.82
+      },
+      "LEVEL_ABSORPTION_CONFIRMED": {
+        "count": 82,
+        "wins": 70,
+        "win_rate": 85.4,
+        "net_pnl": 10845.38
+      },
+      "TRANSLATION_WEAK": {
+        "count": 41,
+        "wins": 35,
+        "win_rate": 85.4,
+        "net_pnl": 5422.69
+      },
+      "TranslationRatio=0.72": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 275.47
+      },
+      "TranslationRatio=0.43": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 269.54
+      },
+      "ML_Prob=0.62": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 773.17
+      },
+      "SUPPORT_BROKEN": {
+        "count": 7,
+        "wins": 7,
+        "win_rate": 100.0,
+        "net_pnl": 1381.26
+      },
+      "TranslationRatio=1.01": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 107.24
+      },
+      "ML_Prob=0.75": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 369.4
+      },
+      "TranslationRatio=0.41": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -420.2
+      },
+      "ML_Prob=0.58": {
+        "count": 4,
+        "wins": 2,
+        "win_rate": 50.0,
+        "net_pnl": -446.05
+      },
+      "TranslationRatio=1.12": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 265.91
+      },
+      "ML_Prob=0.55": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 692.28
+      },
+      "TranslationRatio=3.36": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 161.32
+      },
+      "ML_Prob=0.66": {
+        "count": 4,
+        "wins": 4,
+        "win_rate": 100.0,
+        "net_pnl": 907.92
+      },
+      "TranslationRatio=0.68": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 232.49
+      },
+      "TranslationRatio=0.00": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 251.85
+      },
+      "TranslationRatio=2.24": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 255.63
+      },
+      "ML_Prob=0.57": {
+        "count": 4,
+        "wins": 3,
+        "win_rate": 75.0,
+        "net_pnl": -33.31
+      },
+      "TranslationRatio=1.22": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 262.16
+      },
+      "TranslationRatio=1.81": {
+        "count": 2,
+        "wins": 1,
+        "win_rate": 50.0,
+        "net_pnl": -175.99
+      },
+      "TranslationRatio=2.18": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 244.85
+      },
+      "ML_Prob=0.74": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 412.43
+      },
+      "TranslationRatio=4.81": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 167.58
+      },
+      "TranslationRatio=128.21": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 262.73
+      },
+      "ML_Prob=0.72": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 477.27
+      },
+      "TranslationRatio=0.90": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -32.4
+      },
+      "ML_Prob=0.59": {
+        "count": 4,
+        "wins": 3,
+        "win_rate": 75.0,
+        "net_pnl": 563.06
+      },
+      "TranslationRatio=2.68": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 271.66
+      },
+      "ML_Prob=0.76": {
+        "count": 2,
+        "wins": 1,
+        "win_rate": 50.0,
+        "net_pnl": -146.47
+      },
+      "TranslationRatio=2.56": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 261.24
+      },
+      "ML_Prob=0.51": {
+        "count": 4,
+        "wins": 3,
+        "win_rate": 75.0,
+        "net_pnl": 378.65
+      },
+      "Regime=TREND": {
+        "count": 6,
+        "wins": 6,
+        "win_rate": 100.0,
+        "net_pnl": 891.78
+      },
+      "TranslationRatio=1.80": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 137.05
+      },
+      "ML_Prob=0.54": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 458.84
+      },
+      "TranslationRatio=1.76": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 260.82
+      },
+      "ML_Prob=0.69": {
+        "count": 3,
+        "wins": 1,
+        "win_rate": 33.3,
+        "net_pnl": -102.99
+      },
+      "TranslationRatio=3.19": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 48.33
+      },
+      "TranslationRatio=33.32": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 279.44
+      },
+      "TranslationRatio=3.00": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 263.9
+      },
+      "Regime=EXPANSION": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 454.64
+      },
+      "TranslationRatio=0.65": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 192.4
+      },
+      "TranslationRatio=6.70": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -249.03
+      },
+      "TranslationRatio=8.51": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 166.1
+      },
+      "ML_Prob=0.61": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 562.96
+      },
+      "TranslationRatio=0.47": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 250.2
+      },
+      "TranslationRatio=2.54": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 244.57
+      },
+      "ML_Prob=0.67": {
+        "count": 4,
+        "wins": 3,
+        "win_rate": 75.0,
+        "net_pnl": 233.9
+      },
+      "TranslationRatio=1.23": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 247.04
+      },
+      "ML_Prob=0.63": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 779.68
+      },
+      "TranslationRatio=2.28": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 108.0
+      },
+      "ML_Prob=0.68": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 108.0
+      },
+      "TranslationRatio=2.22": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 243.24
+      },
+      "TranslationRatio=0.63": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 279.07
+      },
+      "TranslationRatio=0.04": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 252.19
+      },
+      "TranslationRatio=3.53": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -328.81
+      },
+      "TranslationRatio=0.06": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 282.88
+      },
+      "Regime=EXHAUSTION": {
+        "count": 4,
+        "wins": 4,
+        "win_rate": 100.0,
+        "net_pnl": 1020.05
+      },
+      "TranslationRatio=0.16": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 87.0
+      },
+      "TranslationRatio=1.57": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 79.62
+      },
+      "TranslationRatio=7.53": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 60.45
+      },
+      "TranslationRatio=0.40": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 214.53
+      },
+      "TranslationRatio=0.62": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 139.71
+      },
+      "TranslationRatio=5.86": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 193.83
+      },
+      "ML_Prob=0.64": {
+        "count": 3,
+        "wins": 3,
+        "win_rate": 100.0,
+        "net_pnl": 540.43
+      },
+      "TranslationRatio=0.09": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 251.44
+      },
+      "TranslationRatio=0.87": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 98.7
+      },
+      "TranslationRatio=0.35": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 409.09
+      },
+      "ML_Prob=0.65": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 409.09
+      },
+      "TranslationRatio=8.27": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 74.42
+      },
+      "ML_Prob=0.50": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 74.42
+      },
+      "TranslationRatio=1.30": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 153.62
+      },
+      "TranslationRatio=0.33": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 95.57
+      },
+      "TranslationRatio=0.45": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 193.4
+      },
+      "TranslationRatio=0.32": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 269.57
+      },
+      "TranslationRatio=1.71": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -429.01
+      },
+      "TranslationRatio=0.31": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 226.21
+      },
+      "TranslationRatio=0.79": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 275.21
+      },
+      "ML_Prob=0.60": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 397.74
+      },
+      "TranslationRatio=0.05": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 244.89
+      },
+      "TranslationRatio=2.71": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 122.53
+      },
+      "TranslationRatio=1.15": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -418.13
+      },
+      "TranslationRatio=0.94": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -303.36
+      },
+      "TranslationRatio=5.29": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -401.85
+      },
+      "TranslationRatio=8.53": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 101.71
+      },
+      "TranslationRatio=0.26": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 266.11
+      },
+      "TranslationRatio=37.91": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 266.53
+      },
+      "TranslationRatio=1.13": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -317.95
+      },
+      "TranslationRatio=1.79": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 33.06
+      },
+      "ML_Prob=0.73": {
+        "count": 2,
+        "wins": 2,
+        "win_rate": 100.0,
+        "net_pnl": 377.29
+      },
+      "TranslationRatio=1.50": {
+        "count": 1,
+        "wins": 0,
+        "win_rate": 0.0,
+        "net_pnl": -60.45
+      },
+      "TranslationRatio=1.20": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 112.11
+      },
+      "TranslationRatio=0.15": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 414.29
+      },
+      "TranslationRatio=0.28": {
+        "count": 1,
+        "wins": 1,
+        "win_rate": 100.0,
+        "net_pnl": 344.23
+      }
+    }
+  },
+  "ablation": null,
+  "walk_forward": null,
+  "robustness": null
+}

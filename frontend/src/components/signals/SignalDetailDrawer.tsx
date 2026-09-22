@@ -206,6 +206,24 @@ export function SignalDetailDrawer({
   const riskReward1 = levels ? pickNum(levels, 'risk_reward_t1') : signal ? pickNum(signal, 'risk_reward_t1') : null;
   const riskReward2 = levels ? pickNum(levels, 'risk_reward_t2') : signal ? pickNum(signal, 'risk_reward_t2') : null;
 
+  // Payoff inputs must be real payload values — 0 / 100 / 25 are never used as
+  // stand-ins. Missing strike, premium or lot size => "Unavailable", no chart.
+  const payoffStrike = pickNum(contract ?? {}, 'strike') ?? pickNum(signal ?? {}, 'strike');
+  const payoffPremium =
+    pickNum(signal ?? {}, 'actual_fill_price') ??
+    pickNum(signal ?? {}, 'option_premium') ??
+    pickNum(contract ?? {}, 'last_price');
+  const payoffLotSize = pickNum(contract ?? {}, 'lot_size') ?? pickNum(signal ?? {}, 'lot_size');
+  const missingPayoffInputs = [
+    payoffStrike === null ? 'strike' : null,
+    payoffPremium === null ? 'premium' : null,
+    payoffLotSize === null ? 'lot size' : null,
+  ].filter((v): v is string => v !== null);
+  const payoffInputs =
+    payoffStrike !== null && payoffPremium !== null && payoffLotSize !== null
+      ? { strike: payoffStrike, entryPremium: payoffPremium, lotSize: payoffLotSize }
+      : null;
+
   return (
     <div className="sg-ovl" role="presentation" onClick={handleBackdrop}>
       <aside className="sg-drawer" role="dialog" aria-modal="true" aria-label="Signal dossier">
@@ -352,19 +370,25 @@ export function SignalDetailDrawer({
             </section>
           ) : null}
 
-          {contract || (signal && pickNum(signal, 'strike')) ? (
+          {contract || signal ? (
             <section className="flex flex-col gap-1.5">
               <h3 className="sg-sect">Payoff Curve (Expiry)</h3>
-              <OptionPayoffDiagram
-                direction={pickStr(contract ?? {}, 'option_type') ?? pickStr(signal ?? {}, 'direction') ?? 'LONG_CALL'}
-                strike={pickNum(contract ?? {}, 'strike') ?? pickNum(signal ?? {}, 'strike') ?? 0}
-                entryPremium={pickNum(signal ?? {}, 'actual_fill_price') ?? pickNum(signal ?? {}, 'option_premium') ?? pickNum(contract ?? {}, 'last_price') ?? 100}
-                lotSize={pickNum(contract ?? {}, 'lot_size') ?? pickNum(signal ?? {}, 'lot_size') ?? 25}
-                currentSpot={data?.current_market_price ?? pickNum(signal ?? {}, 'spot_price')}
-                target1Spot={pickNum(levels ?? signal ?? {}, 'target_1')}
-                target2Spot={pickNum(levels ?? signal ?? {}, 'target_2')}
-                stopLossSpot={pickNum(levels ?? signal ?? {}, 'stop_loss')}
-              />
+              {payoffInputs ? (
+                <OptionPayoffDiagram
+                  direction={pickStr(contract ?? {}, 'option_type') ?? pickStr(signal ?? {}, 'direction') ?? 'LONG_CALL'}
+                  strike={payoffInputs.strike}
+                  entryPremium={payoffInputs.entryPremium}
+                  lotSize={payoffInputs.lotSize}
+                  currentSpot={data?.current_market_price ?? pickNum(signal ?? {}, 'spot_price')}
+                  target1Spot={pickNum(levels ?? signal ?? {}, 'target_1')}
+                  target2Spot={pickNum(levels ?? signal ?? {}, 'target_2')}
+                  stopLossSpot={pickNum(levels ?? signal ?? {}, 'stop_loss')}
+                />
+              ) : (
+                <p className="sg-note">
+                  Unavailable — {missingPayoffInputs.join(', ')} missing; payoff not drawn.
+                </p>
+              )}
             </section>
           ) : null}
 

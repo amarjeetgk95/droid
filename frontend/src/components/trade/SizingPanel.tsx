@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useToast } from '@/components/ui/toast';
 import {
   buildSizingPayload,
@@ -10,12 +10,15 @@ import {
 import type { SizingPreviewResult } from '@/hooks/useTradeOps';
 import { safeNum } from '@/lib/utils';
 
+// No prefilled wallet numbers: risk budget / lot size / multiplier are
+// examples only, and available capital is prefilled solely from a connected
+// account snapshot (synced below when that snapshot arrives).
 const EMPTY_FORM: SizingFormState = {
   entryPrice: '',
   stopPrice: '',
-  riskBudget: '500',
-  lotSize: '1',
-  contractMultiplier: '1',
+  riskBudget: '',
+  lotSize: '',
+  contractMultiplier: '',
   maxCapitalPerTrade: '',
   maxPositionSize: '',
   availableCapital: '',
@@ -67,8 +70,24 @@ export function SizingPanel({
     ...EMPTY_FORM,
     availableCapital: defaultAvailable !== null ? String(defaultAvailable) : '',
   });
+  const [lastDefault, setLastDefault] = useState<number | null>(defaultAvailable);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<SizingPreview | null>(null);
+
+  // Track the connected account snapshot: re-prefill available capital when it
+  // changes (e.g. stream arrives after mount), but never clobber a user edit.
+  useEffect(() => {
+    if (defaultAvailable === lastDefault) return;
+    const previousDefault = lastDefault !== null ? String(lastDefault) : '';
+    setLastDefault(defaultAvailable);
+    setForm((prev) =>
+      prev.availableCapital === previousDefault
+        ? { ...prev, availableCapital: defaultAvailable !== null ? String(defaultAvailable) : '' }
+        : prev,
+    );
+  }, [defaultAvailable, lastDefault]);
+
+  const hasAccountSource = defaultAvailable !== null;
 
   const set = (key: keyof SizingFormState) => (next: string) =>
     setForm((prev) => ({ ...prev, [key]: next }));
@@ -100,16 +119,26 @@ export function SizingPanel({
         Computes the risk-based quantity for an entry price and stop. Nothing is submitted —
         the result is advisory only.
       </p>
+      <p className="sg-note">
+        {hasAccountSource
+          ? 'Available capital is prefilled from the connected account snapshot. Risk budget, lot size and multiplier placeholders are examples — confirm each value before use.'
+          : 'No connected account snapshot is available — all capital inputs are manual and advisory. Risk budget / lot size placeholders are examples, not live wallet values.'}
+      </p>
       <form onSubmit={(e) => void handleSubmit(e)}>
         <div className="flex flex-wrap items-end gap-2">
-          <Field label="Entry price" value={form.entryPrice} onChange={set('entryPrice')} placeholder="120.5" required />
-          <Field label="Stop price" value={form.stopPrice} onChange={set('stopPrice')} placeholder="110" />
-          <Field label="Risk budget" value={form.riskBudget} onChange={set('riskBudget')} placeholder="500" />
-          <Field label="Lot size" value={form.lotSize} onChange={set('lotSize')} placeholder="1" />
-          <Field label="Contract mult" value={form.contractMultiplier} onChange={set('contractMultiplier')} placeholder="1" />
-          <Field label="Max capital/trade" value={form.maxCapitalPerTrade} onChange={set('maxCapitalPerTrade')} placeholder="1000" />
-          <Field label="Max position size" value={form.maxPositionSize} onChange={set('maxPositionSize')} placeholder="500" />
-          <Field label="Available capital" value={form.availableCapital} onChange={set('availableCapital')} placeholder="3000" />
+          <Field label="Entry price" value={form.entryPrice} onChange={set('entryPrice')} placeholder="e.g. 120.5" required />
+          <Field label="Stop price" value={form.stopPrice} onChange={set('stopPrice')} placeholder="e.g. 110" />
+          <Field label="Risk budget (example)" value={form.riskBudget} onChange={set('riskBudget')} placeholder="e.g. 500" />
+          <Field label="Lot size (example)" value={form.lotSize} onChange={set('lotSize')} placeholder="e.g. 1" />
+          <Field label="Contract mult (example)" value={form.contractMultiplier} onChange={set('contractMultiplier')} placeholder="e.g. 1" />
+          <Field label="Max capital/trade" value={form.maxCapitalPerTrade} onChange={set('maxCapitalPerTrade')} placeholder="e.g. 1000" />
+          <Field label="Max position size" value={form.maxPositionSize} onChange={set('maxPositionSize')} placeholder="e.g. 500" />
+          <Field
+            label={hasAccountSource ? 'Available capital (account)' : 'Available capital (manual)'}
+            value={form.availableCapital}
+            onChange={set('availableCapital')}
+            placeholder="e.g. 3000"
+          />
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? 'Computing…' : 'Preview sizing'}
           </button>

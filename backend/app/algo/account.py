@@ -1,7 +1,7 @@
 """
 Account & State Orchestration — §2-4, §79-82, §87-88
 
-System modes OFF/PAPER/LIVE, consent, kill switch, live entry gate §81
+System modes OFF/PAPER/LIVE, consent, live entry gate §81
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import structlog
 logger = structlog.get_logger()
 
 SystemMode = Literal["OFF", "PAPER", "LIVE"]
-KillLevel = Literal["NONE","STOP_NEW_ENTRIES","CANCEL_ENTRY_ORDERS","EXIT_ALL_POSITIONS","FULL_EXECUTION_STOP"]
 
 
 def live_entry_gate(checks: dict) -> tuple[bool, str | None]:
@@ -43,7 +42,6 @@ def live_entry_gate(checks: dict) -> tuple[bool, str | None]:
         "no_duplicate_signal": "DUPLICATE_SIGNAL",
         "no_duplicate_order": "DUPLICATE_ORDER",
         "conflict_resolved": "STRATEGY_CONFLICT_UNRESOLVED",
-        "kill_switch_inactive": "KILL_SWITCH_ACTIVE",
         "execution_safety_pass": "EXECUTION_SAFETY_FAILED",
     }
     for key, reason in required.items():
@@ -52,7 +50,7 @@ def live_entry_gate(checks: dict) -> tuple[bool, str | None]:
         if val is None:
             # Missing risk data never means zero risk (§88.33)
             # For gate: missing required check → block
-            if key in ("data_healthy","clock_healthy","broker_healthy","reconciliation_healthy","trade_risk_pass","portfolio_risk_pass","kill_switch_inactive","execution_safety_pass"):
+            if key in ("data_healthy","clock_healthy","broker_healthy","reconciliation_healthy","trade_risk_pass","portfolio_risk_pass","execution_safety_pass"):
                 return False, f"MISSING_CHECK_{key}"
             continue
         if val is False or val == "FAIL" or val == "REJECTED":
@@ -61,24 +59,20 @@ def live_entry_gate(checks: dict) -> tuple[bool, str | None]:
     # Special: data_health stale → block even if other checks passed
     if checks.get("data_health_state") == "STALE":
         return False, "DATA_HEALTH_STALE"
-    if checks.get("kill_switch_active"):
-        return False, "KILL_SWITCH_ACTIVE"
     if checks.get("is_orphaned_alert"):
         return False, "ORPHANED_ALERT_ACTIVE"
-    if checks.get("is_full_execution_stop"):
-        return False, "FULL_EXECUTION_STOP"
 
     return True, None
 
 
 # Interaction of critical states §80
-CRITICAL_STATES = {"FULL_EXECUTION_STOP","ORPHANED_ALERT","CRITICAL_RECONCILIATION_FAILURE","CRITICAL_DATA_FAILURE","CRITICAL_BROKER_FAILURE","GLOBAL_KILL_SWITCH"}
+CRITICAL_STATES = {"ORPHANED_ALERT","CRITICAL_RECONCILIATION_FAILURE","CRITICAL_DATA_FAILURE","CRITICAL_BROKER_FAILURE"}
 
-def critical_state_snapshot(global_state: str, kill_level: KillLevel, has_orphaned: bool) -> dict:
-    is_critical = global_state in CRITICAL_STATES or kill_level == "FULL_EXECUTION_STOP" or has_orphaned
+def critical_state_snapshot(global_state: str, has_orphaned: bool) -> dict:
+    is_critical = global_state in CRITICAL_STATES or has_orphaned
     return {
         "is_critical": is_critical,
-        "new_entries_blocked": is_critical or kill_level != "NONE",
+        "new_entries_blocked": is_critical,
         "ai_canary_influence_zero": is_critical,
         "normal_triggers_blocked": is_critical,
         "portfolio_risk_active": True,

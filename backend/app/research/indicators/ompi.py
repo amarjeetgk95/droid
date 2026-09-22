@@ -163,7 +163,10 @@ class OMPIIndicator(BuiltinIndicator):
         # Vector 4: Volatility Regime Pressure (P_vol) [-100, +100]
         # -------------------------------------------------------------
         _, _, _, _, bb_pct_b = calculate_bollinger_bands(closes, 20, 2.0)
-        atm_iv = float(opt_ctx.get("atm_iv", 15.0) or 15.0)
+        # Honesty: IV default 15.0 is an ASSUMPTION when options unavailable.
+        _iv_raw = opt_ctx.get("atm_iv")
+        _iv_assumed = _iv_raw is None
+        atm_iv = float(_iv_raw if _iv_raw is not None else 15.0)
 
         # High IV + expanding bands amplifies momentum; low IV + squeeze dampens
         iv_deviation = (atm_iv - 14.5) * 4.0  # Centered at typical 14.5 NIFTY IV
@@ -174,8 +177,12 @@ class OMPIIndicator(BuiltinIndicator):
         # -------------------------------------------------------------
         # Vector 5: Cost / Decay Pressure (P_decay) [-100, +100]
         # -------------------------------------------------------------
-        dte = float(opt_ctx.get("days_to_expiry", 2.0) or 2.0)
-        atm_theta = float(opt_ctx.get("atm_theta", -10.0) or -10.0)
+        # Honesty: DTE/theta defaults are ASSUMPTIONS when options unavailable.
+        _dte_raw = opt_ctx.get("days_to_expiry")
+        _theta_raw = opt_ctx.get("atm_theta")
+        _decay_assumed = (_dte_raw is None) or (_theta_raw is None)
+        dte = float(_dte_raw if _dte_raw is not None else 2.0)
+        atm_theta = float(_theta_raw if _theta_raw is not None else -10.0)
 
         # On expiry day (DTE <= 0.5) and high theta, decay heavily penalizes trend continuation
         decay_severity = abs(atm_theta) / (dte + 0.2)
@@ -223,10 +230,16 @@ class OMPIIndicator(BuiltinIndicator):
                 "pcr_oi": pcr_oi,
                 "relative_volume": round(rel_vol, 2),
                 "atm_iv": atm_iv,
+                "atm_iv_assumed": bool(_iv_assumed),
                 "days_to_expiry": dte,
+                "days_to_expiry_assumed": bool(_decay_assumed),
                 "call_wall": call_wall,
                 "put_wall": put_wall,
                 "max_pain": max_pain,
+                "assumptions": [
+                    *(["atm_iv-assumed-15.0"] if _iv_assumed else []),
+                    *(["dte-theta-assumed"] if _decay_assumed else []),
+                ],
                 "weights": {
                     "w_dir": w_dir,
                     "w_opt": w_opt,
@@ -234,6 +247,7 @@ class OMPIIndicator(BuiltinIndicator):
                     "w_vol": w_vol,
                     "w_decay": w_decay,
                 },
+                "weights_version": "fixed-v1-assumption",
             },
             target_price=target_price,
             invalidation_price=invalidation_price,

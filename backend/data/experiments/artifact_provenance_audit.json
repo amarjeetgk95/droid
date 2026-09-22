@@ -1,0 +1,263 @@
+{
+  "generated_by": "scripts/audit_artifact_provenance.py",
+  "artifacts": [
+    {
+      "artifact": "app\\ml\\artifacts\\daily_settlement_report.json",
+      "trained_at": null,
+      "n_samples": 1669,
+      "model_version": null,
+      "target_spec_version": null,
+      "resolved_dataset": "data\\ml_datasets\\candidates_v3.parquet",
+      "dataset_source": "unknown",
+      "dataset_fidelity": {
+        "SYNTHETIC": 1669
+      },
+      "verdict": "SYNTHETIC",
+      "status": "STABLE",
+      "action_taken": "MAINTAIN_CHAMPION",
+      "retrain_recommended": false
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\meta.json",
+      "trained_at": "2026-09-17T11:56:23.890852+00:00",
+      "n_samples": 1669,
+      "model_version": "XGBoost-LightGBM-Ensemble-v2.0-h15",
+      "target_spec_version": "v1-atr-band",
+      "resolved_dataset": "data\\ml_datasets\\candidates_v3.parquet",
+      "dataset_source": "unknown",
+      "dataset_fidelity": {
+        "SYNTHETIC": 1669
+      },
+      "verdict": "SYNTHETIC",
+      "n_features": 10,
+      "horizon_minutes": 15
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\archive\\20260920_112435\\breakout_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "breakout_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\archive\\20260920_112435\\direction_h15_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "direction_h15_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE",
+      "horizon_minutes": 15
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\archive\\20260920_112435\\regime_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "regime_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\archive\\20260920_112435\\trade_outcome_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "trade_outcome_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\challenger\\breakout_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "breakout_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\challenger\\direction_h15_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "direction_h15_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE",
+      "horizon_minutes": 15
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\challenger\\regime_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "regime_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\challenger\\trade_outcome_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "trade_outcome_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\champion\\breakout_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "breakout_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\champion\\direction_h15_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "direction_h15_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE",
+      "horizon_minutes": 15
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\champion\\regime_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "regime_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\champion\\trade_outcome_meta.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": "trade_outcome_v1_challenger",
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\env_manifest.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": null,
+      "target_spec_version": "v2-atr-em-session",
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE",
+      "feature_schema_version": "f28-v3"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\meta_h60.json",
+      "trained_at": "2026-09-19T16:53:31.984233+00:00",
+      "n_samples": 120,
+      "model_version": "XGBoost-LightGBM-Ensemble-v2.0-h60",
+      "target_spec_version": "v2-atr-em-session",
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE",
+      "n_features": 15,
+      "horizon_minutes": 60
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\xgb_model.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": null,
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    },
+    {
+      "artifact": "app\\ml\\artifacts\\xgb_model_h60.json",
+      "trained_at": null,
+      "n_samples": null,
+      "model_version": null,
+      "target_spec_version": null,
+      "resolved_dataset": null,
+      "dataset_source": null,
+      "dataset_fidelity": null,
+      "verdict": "UNVERIFIABLE"
+    }
+  ],
+  "verdict_counts": {
+    "SYNTHETIC": 2,
+    "UNVERIFIABLE": 16
+  },
+  "datasets": [
+    {
+      "path": "data\\ml_datasets\\candidates_v3.parquet",
+      "rows": 1669,
+      "fidelity": {
+        "SYNTHETIC": 1669
+      },
+      "admissible": false,
+      "source": "unknown",
+      "reasons": [
+        "no_sidecar",
+        "screen_failed: Simulation screen missing required columns: ['close', 'high', 'low', 'open', 'timestamp']"
+      ],
+      "synthetic": true
+    },
+    {
+      "path": "data\\fixtures\\sensex\\1m.parquet",
+      "rows": 67500,
+      "fidelity": {},
+      "admissible": false,
+      "source": "unknown",
+      "reasons": [
+        "no_sidecar",
+        "simulation_screen(5/2): no_intraday_gaps,open_equals_prior_close,gaussian_returns,no_zero_wicks,non_integer_volume"
+      ],
+      "synthetic": true
+    },
+    {
+      "path": "data\\fixtures\\sensex\\1m.raw.parquet",
+      "rows": 67500,
+      "fidelity": {},
+      "admissible": false,
+      "source": "synthetic_fixture",
+      "reasons": [
+        "fixture_source: synthetic_fixture",
+        "simulation_screen(5/2): no_intraday_gaps,open_equals_prior_close,gaussian_returns,no_zero_wicks,non_integer_volume"
+      ],
+      "synthetic": true
+    }
+  ],
+  "note": "SYNTHETIC means the artifact's sample count resolves uniquely to a dataset whose provenance is a fixture or whose data_fidelity is SYNTHETIC. UNVERIFIABLE means no dataset could be resolved with confidence \u2014 that is not a clean bill of health."
+}

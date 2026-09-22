@@ -1,5 +1,5 @@
 """
-Hierarchical 15-Check Final Execution Guard
+Hierarchical 14-Check Final Execution Guard
 Cost-ordered checks immediately prior to paper dispatch or broker order transmission.
 Fails closed on any ambiguity or safety violation.
 """
@@ -18,7 +18,6 @@ from app.signals.safety.decimal_types import (
     validate_quantity,
 )
 from app.signals.safety.feed_circuit import feed_circuit
-from app.signals.safety.kill_switch import kill_switch
 
 logger = structlog.get_logger()
 
@@ -83,17 +82,6 @@ def final_execution_guard(
     # ═════════════════════════════════════════════════════════════════════
     # LEVEL 1: Zero-cost in-memory invariants
     # ═════════════════════════════════════════════════════════════════════
-
-    # 1. Global Kill Switch
-    evaluated.append("1_KILL_SWITCH")
-    if kill_switch.is_active():
-        return GuardCheckResult(
-            passed=False,
-            failed_check="1_KILL_SWITCH",
-            reason=f"GUARD_FAIL: Global kill switch ACTIVE ({kill_switch.status().get('reason')})",
-            level=1,
-            checks_evaluated=evaluated,
-        )
 
     # 2. TTL Validity
     evaluated.append("2_TTL_VALIDITY")

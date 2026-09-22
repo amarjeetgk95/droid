@@ -1,0 +1,16 @@
+{
+  "run_id": "run_S6T_SENSEX_S6A_T1_ae1fec178d_1790064775",
+  "trial_id": "S6T_SENSEX_S6A_T1_ae1fec178d",
+  "strategy_id": "S6",
+  "spec_version": "S6SPEC_v1.3",
+  "strategy_version": "S6A_v1.0",
+  "variant": "S6-A",
+  "instrument": "SENSEX",
+  "track": "S6A_T1",
+  "parameter_hash": "8688894444be6a76",
+  "dataset_hash": "df30a84e79dab7eb",
+  "code_sha": "local_dev",
+  "created_at": "2026-09-22T08:12:55.970712+00:00",
+  "trial_budget_consumed": 12,
+  "trial_budget_limit": 400
+}

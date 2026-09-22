@@ -20,6 +20,7 @@ import type {
 import type { FuturesBuildup, FuturesOverviewData, FuturesRollover, FuturesTermStructure } from '@/lib/api/options';
 import type { BuiltTemplateStrategy, StrategyLegInput, StrategyScannerData } from '@/lib/api/strategy';
 import { normalizeInstrumentKey, pickRegimeStreamEntry, type InstrumentKey } from '@/lib/optionsDesk';
+import { maxPayloadTimestampMs } from '@/lib/signalsNormalize';
 import { useSmartInterval } from './useSmartInterval';
 
 export type ToolOutcome = {
@@ -289,7 +290,41 @@ export function useOptionsDesk(
     }
 
     setError(failures.length > 0 ? failures[0] : null);
-    setUpdatedAt(Date.now());
+    // Honest freshness: backend meta timestamps win; a fully-failed load keeps
+    // the last age instead of bumping to now.
+    const settled = [
+      chainResult,
+      analyticsResult,
+      maxPainResult,
+      flowResult,
+      regimeResult,
+      pivotsResult,
+      indicatorsResult,
+      vixResult,
+      futOverviewResult,
+      futTermResult,
+      futBuildupResult,
+      futRolloverResult,
+      templatesResult,
+      scannerResult,
+      greeksResult,
+      researchResult,
+    ];
+    const anySuccess = settled.some((r) => r.status === 'fulfilled');
+    if (anySuccess) {
+      const payloadTs = maxPayloadTimestampMs(
+        settled.flatMap((r) => {
+          if (r.status !== 'fulfilled') return [];
+          const v = r.value as unknown;
+          const metaTs =
+            v !== null && typeof v === 'object' && 'meta' in (v as Record<string, unknown>)
+              ? ((v as Record<string, unknown>).meta as Record<string, unknown> | undefined)?.timestamp
+              : undefined;
+          return [v, metaTs ?? null];
+        }),
+      );
+      setUpdatedAt(payloadTs ?? Date.now());
+    }
     setLoading(false);
     if (showSpinner) setRefreshing(false);
   }, []);

@@ -112,45 +112,51 @@ async def test_event_bus_publish_sync_with_running_loop():
 
 
 @pytest.mark.asyncio
-async def test_fsm_emits_event_on_transition():
+async def test_fsm_emits_event_on_transition(monkeypatch):
+    """The FSM must publish a TRANSITIONED event for each accepted transition.
+
+    `publish_sync` schedules the dispatch as a task on the running loop, and the
+    global bus also carries the app's own TRANSITIONED handlers (audit ledger,
+    persistence, Telegram, SSE), some of which touch the DB/network. Racing that
+    chain against a fixed `asyncio.sleep(0.01)` made this test depend on handler
+    speed and on what other tests had imported. Capture the publish call
+    instead: this asserts the FSM's emission contract directly and
+    deterministically.
+    """
     fsm = SignalFSMManager()
-    events_received = []
+    published: list[SignalEvent] = []
 
-    async def on_transition(event: SignalEvent):
-        if event.signal_id == "SIG-FSM-EVENT-TEST":
-            events_received.append(event)
+    monkeypatch.setattr(signal_event_bus, "publish_sync", published.append, raising=True)
 
-    signal_event_bus.subscribe(SignalEventType.TRANSITIONED, on_transition)
+    sig = SignalInstance(
+        signal_id="SIG-FSM-EVENT-TEST",
+        underlying="NIFTY",
+        strategy="BREAKOUT",
+        direction="LONG_CALL",
+        timeframe="5M",
+        spot_price=Decimal("25000.0"),
+        entry_min=Decimal("25010.0"),
+        entry_max=Decimal("25020.0"),
+        trigger=Decimal("25015.0"),
+        stop_loss=Decimal("24980.0"),
+        target_1=Decimal("25050.0"),
+        target_2=Decimal("25100.0"),
+        risk_points=Decimal("35.0"),
+        risk_reward_t1=1.5,
+        risk_reward_t2=3.0,
+        confidence=80.0,
+        fsm_state="DETECTED",
+    )
+    fsm.register(sig)
+    fsm.transition(sig.signal_id, "VALIDATED", market_price=Decimal("25010.0"))
 
-    try:
-        sig = SignalInstance(
-            signal_id="SIG-FSM-EVENT-TEST",
-            underlying="NIFTY",
-            strategy="BREAKOUT",
-            direction="LONG_CALL",
-            timeframe="5M",
-            spot_price=Decimal("25000.0"),
-            entry_min=Decimal("25010.0"),
-            entry_max=Decimal("25020.0"),
-            trigger=Decimal("25015.0"),
-            stop_loss=Decimal("24980.0"),
-            target_1=Decimal("25050.0"),
-            target_2=Decimal("25100.0"),
-            risk_points=Decimal("35.0"),
-            risk_reward_t1=1.5,
-            risk_reward_t2=3.0,
-            confidence=80.0,
-            fsm_state="DETECTED",
-        )
-        fsm.register(sig)
-        fsm.transition(sig.signal_id, "VALIDATED", market_price=Decimal("25010.0"))
-
-        await asyncio.sleep(0.01)
-
-        assert len(events_received) >= 1
-        last_ev = events_received[-1]
-        assert last_ev.signal_id == "SIG-FSM-EVENT-TEST"
-        assert last_ev.payload["from_state"] == "DETECTED"
-        assert last_ev.payload["to_state"] == "VALIDATED"
-    finally:
-        signal_event_bus.unsubscribe(SignalEventType.TRANSITIONED, on_transition)
+    transitions = [
+        ev
+        for ev in published
+        if ev.event_type == SignalEventType.TRANSITIONED
+        and ev.signal_id == "SIG-FSM-EVENT-TEST"
+    ]
+    assert len(transitions) == 1
+    last_ev = transitions[-1]
+    assert last_ev.payload["from_state"] == "DETECTED"
+    assert last_ev.payload["to_state"] == "VALIDATED"

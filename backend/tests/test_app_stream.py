@@ -147,25 +147,6 @@ async def test_sections_emit_only_on_version_or_content_change(make_hub):
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_section_is_p0(make_hub):
-    hub = make_hub()
-    queue = hub.subscribe()
-    try:
-        await hub.broadcast_section_changes(
-            {"kill_switch": _section({"active": False}, version=1)}, now=1000.0
-        )
-        await hub.broadcast_section_changes(
-            {"kill_switch": _section({"active": True}, version=2)}, now=1001.0
-        )
-        frames = _frames(queue)
-        assert len(frames) == 1
-        assert frames[0]["data"]["section"] == "kill_switch"
-        assert frames[0]["priority"] == "P0"
-    finally:
-        await hub.stop()
-
-
-@pytest.mark.asyncio
 async def test_coalescing_caps_one_frame_per_window(make_hub):
     hub = make_hub(section_coalesce_s=1.0)
     queue = hub.subscribe()
@@ -227,14 +208,14 @@ async def test_backpressure_drops_p1_p2_before_p0(make_hub):
 
         # P0 is accepted again the moment the consumer drains the queue.
         await hub.publish(
-            "view.section.changed", {"section": "kill_switch"}, priority="P0"
+            "view.section.changed", {"section": "market"}, priority="P0"
         )
         delivered = _raw(queue)
         assert len(delivered) == 1
         assert delivered[0][1] == "view.section.changed"
         payload = json.loads(delivered[0][2])
         assert payload["priority"] == "P0"
-        assert payload["data"] == {"section": "kill_switch"}
+        assert payload["data"] == {"section": "market"}
     finally:
         await hub.stop()
 
@@ -294,7 +275,7 @@ async def test_signal_broadcast_reeemitted_as_signal_event(make_hub):
         assert len(frames) == 1
         assert frames[0]["event"] == "signal.event"
         # signal.event is P1 in the unified stream (P0 reservation is
-        # kill_switch + action-required hints); the source priority is kept
+        # action-required hints); the source priority is kept
         # inside the payload for the UI.
         assert frames[0]["priority"] == "P1"
         assert frames[0]["data"]["event"] == "fsm_transition"

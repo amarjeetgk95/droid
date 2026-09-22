@@ -15,6 +15,7 @@ import structlog
 from app.services.calendar_service import calendar_service
 
 from app.signals.orthogonal_confluence import orthogonal_confluence_engine
+from app.signals.pipeline.contract_greeks import attach_chain_implied_greeks
 from app.signals.participation.oi_volume_engine import participation_engine
 from app.signals.risk.friction_gate import friction_gate
 from app.signals.scalp_confirmation import scalp_confirmation_engine
@@ -52,6 +53,22 @@ def run_strategies(
             candidate.vwap_coverage_pct = ctx.vwap_coverage_pct
             candidate.vix_percentile = getattr(ctx, "vix_percentile", None)
             candidate.lunch_session = getattr(ctx, "lunch_session", False)
+
+            # Chain-implied Greeks for fallback contracts: detectors resolve
+            # via resolve_option_contract (no chain quotes reach the
+            # quantitative selector, so it fail-closes to None) leaving
+            # greeks=None, which the friction gate hard-fails (NO_LIVE_IV).
+            # Solve IV from the live chain premium — market-implied, never
+            # defaulted. Best-effort: failure keeps greeks=None and the
+            # candidate stays subject to the usual fail-closed gates.
+            greeks_gap = attach_chain_implied_greeks(candidate)
+            if greeks_gap:
+                logger.debug(
+                    "candidate_no_chain_greeks",
+                    strategy=strat_name,
+                    underlying=getattr(ctx, "underlying", "UNKNOWN"),
+                    reason=greeks_gap,
+                )
 
             # Pre-market gap filter: suppress if gap > 0.5% within first 15m of session (except gap-exempt strategies).
             # Gap window is resolved from the exchange calendar (IST session open), not manual minute math,

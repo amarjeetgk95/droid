@@ -40,20 +40,54 @@ def build_stacker_row(
     iv_rank: Optional[float] = None,
     missing_count: int = 0,
 ) -> List[float]:
+    """Build 18-wide stacker row. Honesty: iv_rank=None -> 0.5 ASSUMPTION and
+    dte_days=None -> 2.0 ASSUMPTION, each bumps missing_count so downstream
+    knows a placeholder was used. Callers MUST check missing_count/assumptions;
+    predict_stacker itself is fail-closed (None when artifact missing).
+    """
     layers = [float(layer_scores.get(k, 0.0) or 0.0) / 100.0 for k in ("mtf", "indicators", "ml", "options", "structure")]
+    _assumed_missing = 0
     try:
-        dte_b = 0.0 if (dte_days is not None and float(dte_days) <= 1.0) else (1.0 if dte_days is not None and float(dte_days) <= 5 else 2.0)
+        if dte_days is None:
+            dte_b = 2.0  # ASSUMPTION: unknown expiry bucket
+            _assumed_missing += 1
+        else:
+            dte_b = 0.0 if float(dte_days) <= 1.0 else (1.0 if float(dte_days) <= 5 else 2.0)
     except Exception:
         dte_b = 2.0
+        _assumed_missing += 1
     try:
-        ivr = min(1.0, max(0.0, float(iv_rank))) if iv_rank is not None else 0.5
+        if iv_rank is None:
+            ivr = 0.5  # ASSUMPTION: mid-rank placeholder, not measured
+            _assumed_missing += 1
+        else:
+            ivr = min(1.0, max(0.0, float(iv_rank)))
     except Exception:
         ivr = 0.5
+        _assumed_missing += 1
     try:
-        mc = min(5.0, max(0.0, float(missing_count))) / 5.0
+        mc = min(5.0, max(0.0, float(missing_count) + float(_assumed_missing))) / 5.0
     except Exception:
         mc = 0.0
     return layers + _onehot(regime, REGIMES) + _onehot(session, SESSIONS) + [dte_b / 2.0, ivr, mc]
+
+
+def build_stacker_row_with_meta(
+    layer_scores: Dict[str, float],
+    regime: str = "UNKNOWN",
+    session: str = "MID",
+    dte_days: Optional[float] = None,
+    iv_rank: Optional[float] = None,
+    missing_count: int = 0,
+) -> Dict[str, Any]:
+    """Row + explicit assumption list for honest callers."""
+    assumptions: List[str] = []
+    if dte_days is None:
+        assumptions.append("dte_days-assumed-2.0-bucket")
+    if iv_rank is None:
+        assumptions.append("iv_rank-assumed-0.5-mid")
+    row = build_stacker_row(layer_scores, regime, session, dte_days, iv_rank, missing_count)
+    return {"row": row, "assumptions": assumptions, "missing_count": int(missing_count) + len(assumptions)}
 
 
 def load_stacker() -> Optional[Dict[str, Any]]:
@@ -71,7 +105,11 @@ def load_stacker() -> Optional[Dict[str, Any]]:
 
 
 def predict_stacker(row: List[float]) -> Optional[Dict[str, float]]:
-    """Softmax over stored coef. None when artifact missing/invalid."""
+    """Softmax over stored coef. None when artifact missing/invalid (fail-closed).
+
+    Unfitted (no artifact) returns None with status unfitted — never 0.5-style
+    fake probs. Callers MUST treat None as unavailable, not neutral.
+    """
     m = load_stacker()
     if m is None or len(row) != STACKER_WIDTH:
         return None
@@ -113,7 +151,9 @@ def train_stacker(
         y = _np.array(labels, dtype=int)
         # chronological 80/20 (no shuffle) for time-series honesty
         cut = int(len(X) * 0.8)
-        clf = _LR(multi_class="multinomial", solver="lbfgs", C=1.0, max_iter=500)
+        # `lbfgs` is multinomial for a multi-class target; the explicit
+        # `multi_class` kwarg was removed in scikit-learn 1.7.
+        clf = _LR(solver="lbfgs", C=1.0, max_iter=500)
         clf.fit(X[:cut], y[:cut])
         meta = {"backend": "sklearn", "train_n": cut, "test_n": len(X) - cut}
         coef, intercept = clf.coef_.tolist(), clf.intercept_.tolist()

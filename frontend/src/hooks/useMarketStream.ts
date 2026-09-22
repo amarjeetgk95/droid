@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { TickEvent } from '@/lib/types';
-import { API_BASE } from '@/lib/api';
+import { API_BASE, api } from '@/lib/api';
 
 
 export type StreamConnectionState = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING';
@@ -28,7 +28,35 @@ export function useMarketStream() {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef<number>(MIN_BACKOFF_MS);
   const lastMessageAtRef = useRef<number>(0);
-  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Guards async ticket minting against unmount / newer connections: only
+    // the latest connection sequence may open a socket.
+    const connectionSeqRef = useRef(0);
+
+    /**
+     * Mint a single-use WS ticket for header-less transports.
+     * Returns null when tickets are unavailable (auth disabled backend answers
+     * 401/404, or the fetch fails) — the caller then falls back to the
+     * pre-ticket ticketless URL, which the backend still accepts when
+     * AUTH_REQUIRED=false.
+     */
+    const mintStreamTicket = async (): Promise<string | null> => {
+      try {
+        const base = API_BASE.replace(/\/+$/, '');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        const token = api.getToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const res = await fetch(`${base}/api/v1/stream/ticket`, {
+          method: 'POST',
+          headers,
+        });
+        if (!res.ok) return null;
+        const body = (await res.json().catch(() => null)) as { ticket?: unknown } | null;
+        return typeof body?.ticket === 'string' && body.ticket ? body.ticket : null;
+      } catch {
+        return null;
+      }
+    };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -123,15 +151,26 @@ export function useMarketStream() {
       // Never leak the previous socket: close it *before* opening a new one.
       closeCurrentSocket();
 
-      const apiUrl = API_BASE.replace(/\/+$/, '');
-      const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
-      const wsHost = apiUrl.replace(/^https?:\/\//, '');
-      const wsUrl = `${wsProtocol}://${wsHost}/api/v1/ws/market-feed`;
+      const seq = ++connectionSeqRef.current;
+      void (async () => {
+        if (isUnmounted || connectionSeqRef.current !== seq) return;
+        // Single-use ticket per connection: browsers cannot set an
+        // Authorization header on a WS upgrade, so the backend mints a
+        // 60s ticket via POST /api/v1/stream/ticket. Null keeps the
+        // pre-ticket behavior (accepted when AUTH_REQUIRED=false).
+        const ticket = await mintStreamTicket();
+        if (isUnmounted || connectionSeqRef.current !== seq) return;
 
+        const apiUrl = API_BASE.replace(/\/+$/, '');
+        const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
+        const wsHost = apiUrl.replace(/^https?:\/\//, '');
+        const wsUrl = ticket
+          ? `${wsProtocol}://${wsHost}/api/v1/ws/market-feed?ticket=${encodeURIComponent(ticket)}`
+          : `${wsProtocol}://${wsHost}/api/v1/ws/market-feed`;
 
-      try {
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+        try {
+          const ws = new WebSocket(wsUrl);
+          wsRef.current = ws;
 
         ws.onopen = () => {
           if (isUnmounted || wsRef.current !== ws) return;
@@ -199,11 +238,14 @@ export function useMarketStream() {
         ws.onclose = () => {
           if (wsRef.current === ws) wsRef.current = null;
           if (isUnmounted) return;
+          // Close code 4401 = ticket rejected (expired/single-use consumed):
+          // scheduleReconnect mints a fresh ticket, so retry is correct.
           scheduleReconnect();
         };
-      } catch {
-        if (!isUnmounted) scheduleReconnect();
-      }
+        } catch {
+          if (!isUnmounted) scheduleReconnect();
+        }
+      })();
     };
 
     createConnection();

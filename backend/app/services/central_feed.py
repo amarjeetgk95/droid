@@ -169,6 +169,15 @@ class CentralMarketDataFeed:
         self.last_tick_at = datetime.now(timezone.utc)
         self.total_ingested_ticks += 1
 
+        # Fold the validated tick into live 1m candles (VORTEX live HUD source
+        # of truth). Additive and non-throwing: candle aggregation must never
+        # break feed ingestion.
+        try:
+            from app.services.live_candles import live_candles
+            live_candles.on_tick(tick)
+        except Exception as e:
+            logger.debug("live_candle_aggregation_failed", symbol=tick.symbol, error=str(e)[:150])
+
         # Asynchronously forward to batch write pipeline (non-blocking)
         from app.services.write_pipeline import write_pipeline
         await write_pipeline.enqueue_tick(tick)
@@ -188,6 +197,34 @@ class CentralMarketDataFeed:
             "symbols_cached": len(self._latest_ticks),
             "total_ingested_ticks": self.total_ingested_ticks,
         }
+
+    # --- Additive honesty helpers (do not rewrite feed) ---
+    def feed_age_status(self) -> dict[str, Any]:
+        """Additive: expose age/status for honest stale handling.
+
+        Returns {"status": LIVE/STALE/DOWN/UNKNOWN, "age_s": float|None,
+        "is_running": bool}. Never mutates feed state; callers use it to
+        carry status+age instead of assuming fresh.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            age_s = (now - self.last_tick_at).total_seconds() if self.last_tick_at else None
+            if not self._running:
+                status = "DOWN"
+            elif age_s is None:
+                status = "UNKNOWN"
+            elif age_s <= 15.0:
+                status = "LIVE"
+            else:
+                status = "STALE"
+            return {
+                "status": status,
+                "age_s": round(age_s, 2) if age_s is not None else None,
+                "is_running": bool(self._running),
+                "last_tick_at": self.last_tick_at.isoformat() if self.last_tick_at else None,
+            }
+        except Exception:
+            return {"status": "UNKNOWN", "age_s": None, "is_running": False, "last_tick_at": None}
 
     def get_latest_tick(self, symbol: str) -> TickEvent | None:
         """Return latest tick for symbol if ingested within last 60s."""

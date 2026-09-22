@@ -28,6 +28,8 @@ export type SwingDeskState = {
   refreshing: boolean;
   error: string | null;
   updatedAt: number | null;
+  source: 'rest';
+  liveSource: 'rest';
   refresh: () => Promise<void>;
   runScan: () => Promise<SwingDeskOutcome>;
   enterPosition: (setupId: string) => Promise<SwingDeskOutcome>;
@@ -98,7 +100,24 @@ export function useSwingDesk(
     }
 
     setError(failures.length > 0 ? failures[0] : null);
-    setUpdatedAt(Date.now());
+    // Prefer the backend scan instant; fully-failed loads keep the last age.
+    if (
+      regimeResult.status === 'fulfilled' ||
+      setupsResult.status === 'fulfilled' ||
+      positionsResult.status === 'fulfilled'
+    ) {
+      const scanTs =
+        regimeResult.status === 'fulfilled'
+          ? ((): number | null => {
+              const ts = (regimeResult.value?.data as { scan_timestamp_utc?: unknown } | undefined)?.scan_timestamp_utc;
+              if (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) {
+                return ts < 1e12 ? Math.round(ts * 1000) : Math.round(ts);
+              }
+              return null;
+            })()
+          : null;
+      setUpdatedAt(scanTs ?? Date.now());
+    }
     setLoading(false);
     if (showSpinner) setRefreshing(false);
   }, []);
@@ -202,6 +221,8 @@ export function useSwingDesk(
     refreshing,
     error,
     updatedAt,
+    source: 'rest' as const,
+    liveSource: 'rest' as const,
     refresh,
     runScan,
     enterPosition,

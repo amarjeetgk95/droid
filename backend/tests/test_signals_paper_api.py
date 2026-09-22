@@ -13,8 +13,25 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_paper(mock_market_open):
+def reset_paper(mock_market_open, monkeypatch):
     paper_service.reset_portfolio()
+    # A test process has no broker feed, so the real monitor reports DOWN and the
+    # execution guard rejects with check=10_FEED_HEALTH — a machine-dependent
+    # failure. Pin a healthy feed so these tests exercise the paper-execution
+    # path they are actually about (same pattern as
+    # tests/test_paper_sizing_idempotency.py).
+    from app.signals.safety.feed_health_monitor import feed_health_monitor
+
+    monkeypatch.setattr(
+        feed_health_monitor,
+        "get_telemetry",
+        lambda *a, **k: {
+            "status": "LIVE",
+            "is_healthy_for_trading": True,
+            "market_session": {"is_open": True, "reason": "MARKET_OPEN"},
+            "spot_feed": {"tick_age_seconds": 0.0},
+        },
+    )
 
 
 class TestSignalsPaperIntegration:

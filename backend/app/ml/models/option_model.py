@@ -36,6 +36,8 @@ class OptionsIntelligenceModel:
     """
 
     def __init__(self):
+        # Defaults are ASSUMPTIONS (not measured IV). Callers MUST check
+        # iv_available/dte_available in evaluate_strikes output.
         self.default_iv = 0.14
         self.default_r = 0.065
         self.default_q = 0.012
@@ -70,8 +72,8 @@ class OptionsIntelligenceModel:
         p_target: float,
         p_stop: float,
         p_timeout: float,
-        dte_days: float = 3.0,
-        atm_iv: float = 0.14,
+        dte_days: float | None = None,
+        atm_iv: float | None = None,
         expected_bars_held: int = 15,
     ) -> Dict[str, Any]:
         """
@@ -116,9 +118,15 @@ class OptionsIntelligenceModel:
             spot_move_t1 = -abs(spot_price - target_1)  # Drop in spot benefits PUT
             spot_move_sl = abs(stop_loss - spot_price)   # Rise in spot hurts PUT
 
+        # Honesty: None IV/DTE are assumptions (never silent concrete numbers).
+        _iv_assumed = (atm_iv is None)
+        _dte_assumed = (dte_days is None)
+        _atm_iv = float(atm_iv) if atm_iv is not None else float(self.default_iv)
+        _dte_days = float(dte_days) if dte_days is not None else 3.0
+
         # Time elapsed in years for theta decay calculation
         holding_time_years = max(1e-5, (expected_bars_held / 375.0) / 252.0)
-        t_years = max(1e-4, dte_days / 365.0)
+        t_years = max(1e-4, _dte_days / 365.0)
 
         evaluations: List[StrikeEvaluation] = []
         best_strike_eval: Optional[StrikeEvaluation] = None
@@ -129,7 +137,7 @@ class OptionsIntelligenceModel:
                 spot=spot_price,
                 strike=strike,
                 time_to_expiry_years=t_years,
-                volatility=max(0.05, atm_iv),
+                volatility=max(0.05, _atm_iv),
                 option_type=option_type,
                 risk_free_rate=self.default_r,
                 dividend_yield=self.default_q,
@@ -209,6 +217,9 @@ class OptionsIntelligenceModel:
 
         chosen = best_strike_eval or evaluations[1]  # Fallback to ATM
 
+        # Honesty: default IV/DTE are assumptions when caller uses defaults.
+        # Callers pass explicit atm_iv/dte_days when measured; otherwise output
+        # is marked assumption, never silent concrete numbers.
         return {
             "underlying": underlying,
             "direction": direction,
@@ -223,6 +234,12 @@ class OptionsIntelligenceModel:
             "expected_loss_at_sl": chosen.expected_loss_at_sl,
             "gross_ev_per_share": chosen.gross_ev_per_share,
             "evaluations": marked_evaluations,
+            "iv_available": not _iv_assumed,
+            "dte_available": not _dte_assumed,
+            "assumptions": [
+                *(["atm_iv-assumed-0.14-default"] if _iv_assumed else []),
+                *(["dte-assumed-3.0-default"] if _dte_assumed else []),
+            ],
         }
 
 

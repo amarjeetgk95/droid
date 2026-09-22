@@ -1,7 +1,6 @@
 """
 Confirmation Gates & Gate Chain for Signal Processing (Phase 3)
 Provides modular, independently testable confirmation gates:
-  - KillSwitchGate
   - FeedCircuitGate
   - FNOIntegrityGate
   - DeskConcurrencyGate
@@ -23,7 +22,6 @@ from app.signals.contract_resolver import has_chain_mark
 from app.signals.fsm import signal_fsm
 from app.signals.risk.cross_desk_arbiter import cross_desk_arbiter
 from app.signals.safety.feed_circuit import feed_circuit
-from app.signals.safety.kill_switch import kill_switch
 from app.signals.strategies.base import SignalCandidate
 from app.signals.trigger_gate import check_trigger_integrity
 
@@ -41,13 +39,6 @@ class GateResult(BaseModel):
 class Gate(Protocol):
     def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
         ...
-
-
-class KillSwitchGate:
-    def evaluate(self, candidate: SignalCandidate, **kwargs: Any) -> GateResult:
-        if kill_switch.is_active():
-            return GateResult(passed=False, gate_name="KillSwitchGate", reason_code="GLOBAL_KILL_SWITCH_ACTIVE")
-        return GateResult(passed=True, gate_name="KillSwitchGate")
 
 
 class FeedCircuitGate:
@@ -289,7 +280,6 @@ class GateChain:
     """Evaluates candidates through an ordered chain of gates."""
     def __init__(self, gates: list[Gate] | None = None):
         self.gates: list[Gate] = gates or [
-            KillSwitchGate(),
             FeedCircuitGate(),
             FNOIntegrityGate(),
             DeskConcurrencyGate(),

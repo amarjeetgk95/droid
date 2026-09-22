@@ -29,20 +29,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useStreamStatus } from '@/context/AppStreamContext';
+import { useSignalEvents } from '@/context/AppStreamContext';
 import { useMarketSession } from '@/context/MarketSessionContext';
-import { useNow } from '@/hooks/useNow';
-import { feedPillTone } from '@/lib/feedState';
 import { MODULE_NAV, isActivePath } from './nav';
 import { InstrumentPicker } from './InstrumentPicker';
-import { KillSwitchControl } from './KillSwitchControl';
 import { BrokerAuthControl } from './BrokerAuthControl';
-import { SessionBadge } from './SessionBadge';
-import { StreamStatusPill } from './StreamStatusPill';
 import { AudioControl } from './AudioControl';
-import { useSignalEvents } from '@/context/AppStreamContext';
 import { scalpAudio } from '@/lib/scalpAudio';
-import { SESSION_PHASE_LABELS, STREAM_STATE_LABELS, streamFeedState } from './status';
+import { SESSION_PHASE_LABELS } from './status';
 
 const NAV_ICONS: Record<string, LucideIcon> = {
   '/': LayoutDashboard,
@@ -86,35 +80,53 @@ function NavList({ items, label }: { items: typeof MODULE_NAV; label: string }) 
   );
 }
 
-function SystemRail() {
-  const { phase, isOpen, sessionTimeIST, nextSessionChange } = useMarketSession();
-  const status = useStreamStatus();
-  const now = useNow(5000);
+function shortNextLabel(next: string): string {
+  return next
+    .replace(/\s*IST\s*$/, '')
+    .replace('Monday', 'Mon')
+    .replace('Tuesday', 'Tue')
+    .replace('Wednesday', 'Wed')
+    .replace('Thursday', 'Thu')
+    .replace('Friday', 'Fri')
+    .replace('Opens next trading day', 'Next')
+    .replace('Market Open in', 'Opens in');
+}
 
-  const state = streamFeedState(status, now);
-  const tone = feedPillTone(state);
-  const streamClass = tone === 'on' ? ' on' : tone === 'down' ? ' down' : tone === 'idle' ? '' : ' warn';
-  const clock = sessionTimeIST.replace(/\s*IST$/, '');
+function shortClockLabel(sessionTimeIST: string): string {
+  const t = sessionTimeIST.replace(/\s*IST$/, '');
+  if (t.startsWith('--')) return '--:--';
+  return t.slice(0, 5);
+}
+
+/**
+ * Market-hours status for the top rail.
+ *
+ * Session chip + IST clock + next change only. Feed health used to sit here
+ * as a second green pill next to the broker pill and ate the room the index
+ * deck needs — it now lives in tooltips / the ops module instead.
+ */
+function RailStatus() {
+  const { phase, isOpen, sessionTimeIST, nextSessionChange } = useMarketSession();
+
+  const sessionTone = isOpen ? 'on' : phase === 'PRE_OPEN' || phase === 'POST_CLOSE' ? 'warn' : 'idle';
+  const clockShort = shortClockLabel(sessionTimeIST);
+  const nextShort = shortNextLabel(nextSessionChange);
 
   return (
-    <div className="rail-sys" aria-label="System status">
-      <span className="rail-sys__cell">
-        <span className="rail-sys__k">Session</span>
-        <span className={`rail-sys__v${isOpen ? ' on' : ''}`}>{SESSION_PHASE_LABELS[phase]}</span>
+    <div className="rail-meta" aria-label="Market session status">
+      <span
+        className={`rail-chip rail-chip--${sessionTone}`}
+        title={`Session ${SESSION_PHASE_LABELS[phase]} · ${nextSessionChange}`}
+      >
+        <i aria-hidden="true" />
+        <span className="rail-chip__label">{SESSION_PHASE_LABELS[phase]}</span>
       </span>
-      <span className="rail-sys__cell">
-        <span className="rail-sys__k">IST clock</span>
-        <span className="rail-sys__v">{clock}</span>
+      <span className="rail-meta__clock" title={sessionTimeIST}>
+        {clockShort}
+        <span className="rail-meta__suffix"> IST</span>
       </span>
-      <span className="rail-sys__cell">
-        <span className="rail-sys__k">Next</span>
-        <span className="rail-sys__v">{nextSessionChange}</span>
-      </span>
-      <span className="rail-sys__cell" title={`Stream reconnects: ${status.reconnects}`}>
-        <span className="rail-sys__k">Stream</span>
-        <span className={`rail-sys__v${streamClass}`}>
-          {STREAM_STATE_LABELS[state].replace(/^STREAM\s+/, '')}
-        </span>
+      <span className="rail-meta__next" title={nextSessionChange}>
+        → {nextShort}
       </span>
     </div>
   );
@@ -217,71 +229,63 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-dvh bg-background text-foreground">
       <header className="app-rail" role="banner">
         <div className="app-rail__inner">
-          <button
-            ref={menuButtonRef}
-            type="button"
-            className="btn icon-btn rail-menu"
-            aria-label="Open navigation"
-            aria-expanded={navOpen}
-            aria-controls="app-nav-drawer"
-            onClick={() => setNavOpen(true)}
-          >
-            <Menu size={16} />
-          </button>
+          <div className="rail-left">
+            <button
+              ref={menuButtonRef}
+              type="button"
+              className="btn icon-btn rail-menu"
+              aria-label="Open navigation"
+              aria-expanded={navOpen}
+              aria-controls="app-nav-drawer"
+              onClick={() => setNavOpen(true)}
+            >
+              <Menu size={16} />
+            </button>
 
-          <Link href="/" className="rail-brand" aria-label="DROID F&O Terminal — dashboard">
-            <span className="rail-brand__mark" aria-hidden="true">
-              D
-            </span>
-            <span className="rail-brand__text">
-              <span className="rail-brand__name">DROID</span>
-              <span className="rail-brand__sub">F&amp;O Terminal</span>
-            </span>
-          </Link>
+            <Link href="/" className="rail-brand" aria-label="DROID F&O Terminal — dashboard">
+              <span className="rail-brand__mark" aria-hidden="true">
+                D
+              </span>
+              <span className="rail-brand__text">
+                <span className="rail-brand__name">DROID</span>
+                <span className="rail-brand__sub">F&amp;O Terminal</span>
+              </span>
+            </Link>
+          </div>
 
-          <div className="rail-instruments">
+          <div className="rail-deck">
             <InstrumentPicker />
           </div>
 
-          <div className="rail-pills">
-            <SessionBadge />
-            <StreamStatusPill />
-            <AudioControl />
-            <KillSwitchControl />
+          <div className="rail-right">
+            <RailStatus />
+            <div className="rail-actions">
+              <BrokerAuthControl />
+              <AudioControl />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="btn icon-btn rail-account"
+                    aria-label="Account menu"
+                    title={user?.email ?? 'Account'}
+                  >
+                    <CircleUser size={15} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  <DropdownMenuLabel className="truncate text-xs text-ink-2">
+                    {user?.email ?? 'Local operator'}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => void signOut()}>
+                    <LogOut size={13} />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-
-          <SystemRail />
-
-          <div className="rail-auth">
-            <BrokerAuthControl />
-          </div>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="btn icon-btn rail-account"
-                aria-label="Account menu"
-                title={user?.email ?? 'Account'}
-              >
-                <CircleUser size={15} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60">
-              <DropdownMenuLabel className="truncate text-xs text-ink-2">
-                {user?.email ?? 'Local operator'}
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => void signOut()}>
-                <LogOut size={13} />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        <div className="app-rail__sub">
-          <InstrumentPicker />
         </div>
       </header>
 

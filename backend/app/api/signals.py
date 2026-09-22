@@ -35,7 +35,9 @@ from app.signals.scanner import scanner_engine
 from app.signals.sse import signal_sse_hub
 from app.signals.strategies import (
     INTRADAY_STRATEGY_NAMES,
+    REGISTRY_VERSION,
     SCALP_STRATEGY_NAMES,
+    STRATEGY_ENABLED,
 )
 
 logger = structlog.get_logger()
@@ -55,13 +57,12 @@ def _operator_email(user: AuthUser | None) -> str:
 
 
 def _require_closed_market_privilege(user: AuthUser | None, allow_closed: bool, confirm: bool) -> None:
-    """P0-5: allow_closed_market=True requires confirm=True + operator role.
+    """Closed-market mint is fail-closed in every env (dev included).
 
-    Dev/test convenience: when running non-production with the loopback dev
-    identity (dev@localhost), legacy callers without `confirm` are allowed with
-    a warning so existing paper-trading tests keep passing. Production
-    (auth_required or app_env/mode=production) is strict: missing confirm or
-    non-operator role => 403.
+    allow_closed_market=True requires confirm=True + operator role
+    (admin/operator). No legacy no-confirm bypass: unconfirmed closed-market
+    mint is 403. Confirmed closed-market mints are watermarked DEMO/CLOSED-MARKET
+    downstream and are never plain live.
     """
     if not allow_closed:
         return
@@ -69,30 +70,6 @@ def _require_closed_market_privilege(user: AuthUser | None, allow_closed: bool, 
     email = _operator_email(user)
     if role in _OPERATOR_ROLES and confirm:
         logger.info("closed_market_generation_authorized", user_email=email, role=role)
-        return
-    # Strict in production / when auth is enforced.
-    try:
-        from app.core.config import settings as _settings
-
-        _strict = bool(getattr(_settings, "auth_required", False)) or (
-            "production" in {str(getattr(_settings, "app_env", "")), str(getattr(_settings, "app_mode", ""))}
-        )
-    except Exception:
-        _strict = False
-    if _strict:
-        raise HTTPException(
-            status_code=403,
-            detail="Closed-market generation requires confirm=true + operator role (admin/operator).",
-        )
-    # Non-strict (local dev / TestClient as dev@localhost admin): allow legacy
-    # callers but log loudly so the bypass is visible in audit.
-    if role in _OPERATOR_ROLES:
-        logger.warning(
-            "closed_market_generation_legacy_no_confirm",
-            user_email=email,
-            role=role,
-            hint="pass confirm=true; legacy path allowed only in non-production dev",
-        )
         return
     raise HTTPException(
         status_code=403,
@@ -122,7 +99,7 @@ class GenerateSignalRequest(BaseModel):
     stop_loss: float | None = None
     target_1: float | None = None
     target_2: float | None = None
-    confidence: float | None = 80.0
+    confidence: float | None = Field(default=None, description="Measured confidence only; None when unmeasured (UNVETTED, never 80.0 default)")
     execute_paper: bool = Field(default=False, description="Auto-execute paper order")
     lots: int | None = Field(default=None, description="Optional custom lots")
     notify_telegram: bool = Field(default=True, description="Enqueue Telegram notification")
@@ -361,6 +338,22 @@ def get_performance_stats():
     return outcome_tracker.get_performance_metrics().model_dump()
 
 
+@router.get("/analytics/funnel")
+def get_signal_funnel_analytics(
+    strategy: str | None = Query(None, description="Optional strategy filter"),
+    underlying: str | None = Query(None, description="Optional underlying filter (NIFTY, BANKNIFTY, SENSEX)"),
+):
+    """
+    Returns real-time and daily aggregated Signal Funnel metrics, top gate blockers,
+    and per-strategy conversion metrics to explain zero-signal periods.
+    """
+    try:
+        return scanner_engine.get_funnel_analytics(strategy_filter=strategy, underlying_filter=underlying)
+    except Exception as e:
+        logger.error("signal_funnel_analytics_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to fetch funnel analytics: {str(e)[:150]}")
+
+
 # ── 4. SIGNAL DEEP-DIVE TECHNICAL BREAKDOWN ───────────────────────────
 
 @router.get("/{signal_id}/deep-dive")
@@ -383,7 +376,8 @@ async def get_signal_deep_dive(signal_id: str):
     sizing_5l = calculate_position_sizing(500000.0, 2.0, sig.spot_price, sig.stop_loss, lot_size)
 
     # Immutable explain bundle — build on-the-fly for old signals so UI never gets null
-    # P0-5: thresholds/weights are single-sourced from scoring_weights.json (armed 78.0).
+    # Thresholds/weights are single-sourced from scoring_weights.json. A missing
+    # config yields threshold_armed=None + INSUFFICIENT_DATA (never a silent 78.0).
     try:
         import json as _json
         from pathlib import Path as _Path
@@ -396,11 +390,16 @@ async def get_signal_deep_dive(signal_id: str):
             if _p.exists():
                 _sw = _json.loads(_p.read_text(encoding="utf-8"))
                 break
-        _armed_thr = float((_sw.get("thresholds", {}) or {}).get("armed", 78.0))
+        _armed_raw = ((_sw.get("thresholds", {}) or {}).get("armed"))
+        _armed_thr = float(_armed_raw) if _armed_raw is not None else None
+        _threshold_status = "MEASURED" if _armed_thr is not None else "INSUFFICIENT_DATA"
         _wver = (_sw.get("version", 2))
         _wf = dict((_sw.get("weights_fraction", {}) or {})) or None
+        if _armed_thr is None or _wf is None:
+            _threshold_status = "INSUFFICIENT_DATA"
     except Exception:
-        _armed_thr, _wver, _wf = 78.0, 2, None
+        _armed_thr, _wver, _wf = None, 2, None
+        _threshold_status = "INSUFFICIENT_DATA"
     explain = getattr(sig, "explain", None)
     if not explain:
         try:
@@ -419,19 +418,25 @@ async def get_signal_deep_dive(signal_id: str):
                 "mtf": {},
             }
             data_health = {"fno_degraded": bool(cb.get("fno_degraded", False)), "vwap_degraded": False, "vwap_coverage_pct": 100.0}
+            _sig_conf = float(sig.confidence) if getattr(sig, "confidence", None) is not None else None
             explain = build_signal_explain(
-                sig, float(sig.confidence), ai_adv, ml_p, None,
+                sig, _sig_conf, ai_adv, ml_p, None,
                 {"weights_fraction": (_wf or dict(DEFAULT_WEIGHTS)), "version": _wver},
                 {"armed": _armed_thr}, [], inputs_snapshot, data_health,
             )
         except Exception:
             explain = None
 
+    _conf_val = getattr(sig, "confidence", None)
+    _conf_status = cb.get("confidence_status") if isinstance(cb, dict) and cb.get("confidence_status") else ("UNVETTED" if _conf_val is None else "MEASURED")
     return {
         "signal": sig.model_dump(),
         "explain": explain,
         "weights_version": _wver,
         "threshold_armed": _armed_thr,
+        "threshold_status": _threshold_status,
+        "confidence": _conf_val,
+        "confidence_status": _conf_status,
         "current_market_price": curr_price,
         "confluence": sig.confluence_breakdown,
         "option_contract": sig.option_contract,
@@ -469,6 +474,16 @@ async def get_signals_audit(
     """
     from app.signals.audit_ledger import signal_audit_ledger
     from app.signals.contract_resolver import APPROVED_UNDERLYINGS
+
+    # Lazy-restore if ledger is empty in memory (e.g. startup timeout or cold start)
+    if len(signal_audit_ledger._trades) == 0:
+        try:
+            from app.signals.signals_persistence import restore_signals_state_local, restore_signals_from_db
+            restored = restore_signals_state_local()
+            if restored == 0:
+                await restore_signals_from_db()
+        except Exception as lz_err:
+            logger.debug("audit_ledger_lazy_restore_skipped", error=str(lz_err)[:150])
 
     # Sync with FSM and Paper Service
     signal_audit_ledger.sync_with_fsm()
@@ -859,7 +874,8 @@ async def auto_detect_setup(
 ):
     """
     Evaluates live candles and indicators to automatically pre-fill realistic Entry, SL, and Target levels.
-    Returns detected=False with baseline levels when no setup triggers (never 500s on empty).
+    Fail-closed: detected=False carries no entry/stop/target (null) and
+    confidence=None + INSUFFICIENT_DATA — never a tradable baseline.
     """
     _email = _operator_email(user)
     logger.info("auto_detect_requested", underlying=req.underlying, user_email=_email)
@@ -899,10 +915,14 @@ async def auto_detect_setup(
                 detail=f"Live price for {u} is unavailable (feed degraded). Auto-detect needs a live quote.",
             )
 
+        _baseline = manual_signal_service.build_baseline_candidate(u, req.strategy, req.timeframe, spot)
         return {
             "detected": False,
-            "candidate": manual_signal_service.build_baseline_candidate(u, req.strategy, req.timeframe, spot),
-            "message": "No active setup triggered; populated baseline levels from spot price.",
+            "candidate": _baseline,
+            "confidence": None,
+            "confidence_status": "INSUFFICIENT_DATA",
+            "tradable": False,
+            "message": "No active setup triggered; no tradable levels (fail-closed, INSUFFICIENT_DATA).",
         }
     except HTTPException:
         # A degraded feed raises 503 above — never downgrade it to 400.
@@ -945,10 +965,29 @@ async def generate_signal(
         result = await manual_signal_service.generate(req, idempotency_key=header_key or req.idempotency_key)
         # P0-5: audit + SSE payload carry the operator identity (manual service owns
         # drift math; we only annotate provenance here via imports).
+        # Closed-market mints are watermarked DEMO/CLOSED-MARKET, never plain live.
         try:
             result["created_by"] = _email
             _sig = (result.get("signal") or {})
             _sid = _sig.get("signal_id", "unknown")
+            if bool(req.allow_closed_market):
+                result["watermark"] = "DEMO/CLOSED-MARKET"
+                result["market_session"] = "CLOSED-MARKET"
+                result["live"] = False
+                try:
+                    _sig["watermark"] = "DEMO/CLOSED-MARKET"
+                    _sig["market_session"] = "CLOSED-MARKET"
+                    _sig["live"] = False
+                except Exception:
+                    pass
+            # Surface explicit confidence status: None means UNVETTED, never 80.0.
+            try:
+                if _sig.get("confidence") is None and "confidence_status" not in _sig:
+                    _sig["confidence_status"] = "UNVETTED"
+                if "confidence_status" not in result and _sig.get("confidence_status"):
+                    result["confidence_status"] = _sig.get("confidence_status")
+            except Exception:
+                pass
         except Exception:
             _sid = "unknown"
         logger.info("signal_generated", signal_id=_sid, user_email=_email)
@@ -1085,38 +1124,31 @@ async def set_signals_paper_wallet(
 
 @router.get("/portfolio-strategies")
 def get_portfolio_strategies():
-    """Returns the official 11-Strategy Portfolio grouped by desk."""
+    """Returns the strategy universe grouped by desk, plus the auto-scan freeze.
+
+    Legacy fields (scalp_desk/intraday_desk/all_active_strategies/strategy_count)
+    describe the full known universe and are unchanged. New fields expose the
+    institutional freeze: auto_scan_strategies (STRATEGY_ENABLED=True) vs
+    research_only_strategies, enforced fail-closed by the scanner.
+    """
+    universe = sorted(SCALP_STRATEGY_NAMES | INTRADAY_STRATEGY_NAMES)
+    auto_scan = sorted(n for n in universe if STRATEGY_ENABLED.get(n, False) is True)
+    # BREAKOUT alias follows VOLATILITY_BREAKOUT when enabled.
+    if STRATEGY_ENABLED.get("VOLATILITY_BREAKOUT") is True and STRATEGY_ENABLED.get("BREAKOUT") is True:
+        auto_scan = sorted(set(auto_scan) | {"BREAKOUT"})
+    research_only = sorted(n for n in universe if n not in auto_scan)
     return {
         "scalp_desk": sorted(SCALP_STRATEGY_NAMES),
         "intraday_desk": sorted(INTRADAY_STRATEGY_NAMES),
-        "all_active_strategies": sorted(SCALP_STRATEGY_NAMES | INTRADAY_STRATEGY_NAMES),
-        "strategy_count": len(SCALP_STRATEGY_NAMES) + len(INTRADAY_STRATEGY_NAMES),
+        "all_active_strategies": universe,
+        "strategy_count": len(universe),
+        "auto_scan_strategies": auto_scan,
+        "research_only_strategies": research_only,
+        "registry_version": REGISTRY_VERSION,
     }
 
 
 # ── 12.6 SAFETY & GOVERNANCE CONTROLS (v3.0) ──────────────────────────
-
-class KillSwitchToggleRequest(BaseModel):
-    active: bool
-    reason: str = "Operator manual control"
-
-
-@router.get("/kill-switch")
-def get_kill_switch_status():
-    """Returns the current state of the global emergency execution kill switch."""
-    from app.signals.safety.kill_switch import kill_switch
-    return kill_switch.status()
-
-
-@router.post("/kill-switch")
-def toggle_kill_switch(req: KillSwitchToggleRequest, user: AuthUser = Depends(get_current_user)):
-    """Toggles the global emergency execution kill switch."""
-    from app.signals.safety.kill_switch import kill_switch
-    by = getattr(user, "email", "operator") or "operator"
-    if req.active:
-        return kill_switch.activate(reason=req.reason, by=by)
-    return kill_switch.deactivate(by=by)
-
 
 @router.get("/feed-health")
 def get_feed_health():

@@ -36,7 +36,6 @@ from app.algo.capital import capital_engine
 from app.algo.money import D
 from app.algo.models import (
     AlgoCapitalConfig,
-    AlgoKillSwitch,
     AlgoConsent,
     AlgoAuditLog,
     AlgoOrderDB,
@@ -69,7 +68,6 @@ _uid = parse_user_uuid
 
 # Module-level aliases for backward compatibility
 _synthetic_account_cache = algo_account_service._synthetic_account_cache
-_kill_cache = algo_order_service._kill_cache
 _synthetic_account = algo_account_service.create_synthetic_account
 _get_or_create_account = algo_account_service.get_or_create_account
 
@@ -107,11 +105,6 @@ class ConsentAcknowledge(BaseModel):
 
 class ModeUpdate(BaseModel):
     mode: str = Field(description="OFF | PAPER | LIVE")
-
-
-class KillSwitchUpdate(BaseModel):
-    kill_level: str = Field(default="FULL_EXECUTION_STOP")
-    reason: Optional[str] = None
 
 
 class StrategyUpsert(BaseModel):
@@ -225,7 +218,6 @@ async def get_account(
     uid = require_user_uuid(user)
     acct = await get_or_create_account(session, uid)
     capital = None
-    kill = None
     consent_ok = False
     if session is not None:
         cfg = await get_capital_config(session, acct.id)
@@ -234,9 +226,6 @@ async def get_account(
             "max_capital_per_trade": str(cfg.max_capital_per_trade) if cfg else "1000",
             "max_daily_loss": str(cfg.max_daily_loss) if cfg else "500",
         } if cfg else None
-        kres = await session.execute(select(AlgoKillSwitch).where(AlgoKillSwitch.account_id == acct.id))
-        ks = kres.scalar_one_or_none()
-        kill = {"is_killed": ks.is_killed, "kill_level": ks.kill_level} if ks else None
         cres = await session.execute(select(AlgoConsent).where(AlgoConsent.account_id == acct.id, AlgoConsent.is_revoked == False).order_by(AlgoConsent.created_at.desc()))
         consents = cres.scalars().all()
         for c in consents:
@@ -251,7 +240,6 @@ async def get_account(
             "mode": acct.mode,
             "is_active": acct.is_active,
             "capital": capital,
-            "kill_switch": kill,
             "consent_ok": consent_ok,
             "disclosure_version": DISCLOSURE_VERSION,
         },
@@ -722,29 +710,6 @@ async def exit_all_positions(
 ):
     uid = require_user_uuid(user)
     data = await algo_order_service.exit_all_positions(session, uid)
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
-
-
-# ─── Kill Switch (§79) ───────────────────────────────────────────────
-
-@router.post("/kill-switch")
-async def set_kill_switch(
-    payload: KillSwitchUpdate,
-    user: Optional[AuthUser] = Depends(get_current_user),
-    session: Optional[AsyncSession] = Depends(get_db_session),
-):
-    uid = require_user_uuid(user)
-    data = await algo_governance_service.set_kill_switch(session, uid, payload.kill_level, payload.reason)
-    return {"data": data, "error": None, "meta": _meta().model_dump()}
-
-
-@router.get("/kill-switch")
-async def get_kill_switch(
-    user: Optional[AuthUser] = Depends(get_current_user),
-    session: Optional[AsyncSession] = Depends(get_db_session),
-):
-    uid = require_user_uuid(user)
-    data = await algo_governance_service.get_kill_switch(session, uid)
     return {"data": data, "error": None, "meta": _meta().model_dump()}
 
 

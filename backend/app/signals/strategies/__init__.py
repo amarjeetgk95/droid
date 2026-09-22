@@ -1,32 +1,23 @@
 """
-The 13-key Strategy Portfolio (P1 overhaul, §3, §67).
+Institutional freeze (2026-09-20): auto-scan runs ONLY the 3 strategies with
+quant falsification counterparts (S1 ORB / S2 momentum-breakout /
+S3 VWAP-reclaim in ``app/quant/strategies/strategies.py``).
 
-Active scan portfolio (11 strategies):
-Scalp Desk (5):
-  S1: VWAP_SCALP
-  S2: LIQUIDITY_SWEEP_RECLAIM
-  S3: MICRO_MOMENTUM
-  S4: MOMENTUM_REACCELERATION
-  S5: GAMMA_SPIKE
+  KEEP auto-scan (3 + BREAKOUT alias):
+    ORB, VOLATILITY_BREAKOUT (+ BREAKOUT alias), VWAP_SCALP
+  RESEARCH-ONLY (importable, manual override allowed, NOT auto-scanned):
+    REGIME_ADAPTIVE_TREND, TREND_PULLBACK, MEAN_REVERSION, GAMMA_SQUEEZE,
+    LIQUIDITY_SWEEP_RECLAIM, MICRO_MOMENTUM, MOMENTUM_REACCELERATION,
+    GAMMA_SPIKE, EMA_RIBBON (demoted), ABSORPTION_REVERSAL, IV_REGIME,
+    VORTEX_SNAP
 
-Intraday Desk (6):
-  I1: REGIME_ADAPTIVE_TREND
-  I2: VOLATILITY_BREAKOUT
-  I3: TREND_PULLBACK
-  I4: ORB
-  I5: MEAN_REVERSION
-  I6: GAMMA_SQUEEZE
+Re-enabling a research-only strategy requires a Gate-G2 PASSED report
+(``app/quant/validation/promotion_gate.py``: trades>=25, PF>=1.10,
+DD<=20%, DSR>=0.40, 1.5x cost-survival). See STRATEGY_ENABLED below;
+``app/signals/scanner.py`` enforces it fail-closed.
 
-Compatibility keys (2, not auto-scanned by default):
-  - BREAKOUT: pointer to the shared VOLATILITY_BREAKOUT instance (duplicate
-    BreakoutStrategy logic retired; single logic lives in
-    volatility_breakout.py).
-  - EMA_RIBBON: demoted legacy scalp (importable for back-compat, disabled by
-    default, NOT in STRATEGY_REGISTRY auto-scan; scalp entry folded into
-    TREND_PULLBACK context where applicable).
-
-Full key universe = 13 keys (11 active + BREAKOUT alias + EMA_RIBBON demoted).
-STRATEGY_REGISTRY (auto-scan set) = 12 keys (11 active + BREAKOUT alias).
+Full key universe = 16 keys (12 registry + EMA_RIBBON demoted + 3 quant expansion).
+Auto-scan set = 4 keys (3 keepers + BREAKOUT alias).
 """
 from app.signals.strategies.base import Strategy, SignalCandidate, StrategyContext
 from app.signals.strategies.breakout import BreakoutStrategy
@@ -80,22 +71,27 @@ DEMOTED_STRATEGIES: dict[str, Strategy] = {
 # in VolatilityBreakoutStrategy; BreakoutStrategy delegates to it).
 LEGACY_BREAKOUT_CLASS = BreakoutStrategy
 
-# Per-strategy enable flags (P1). Scanner / callers should consult this;
-# EMA_RIBBON is disabled by default (demoted).
+# Per-strategy enable flags. Scanner enforces this fail-closed: a name missing
+# here or set False is NEVER auto-scanned. Flip False->True only with a
+# Gate-G2 PASSED report (see app/quant/validation/promotion_gate.py).
+# Freeze 2026-09-20: 3 keepers with falsification backing; rest research-only.
 STRATEGY_ENABLED: dict[str, bool] = {
-    "REGIME_ADAPTIVE_TREND": True,
+    "REGIME_ADAPTIVE_TREND": False,
     "VOLATILITY_BREAKOUT": True,
     "BREAKOUT": True,
     "TREND_PULLBACK": True,
     "ORB": True,
     "MEAN_REVERSION": True,
-    "GAMMA_SQUEEZE": True,
+    "GAMMA_SQUEEZE": False,
     "VWAP_SCALP": True,
-    "LIQUIDITY_SWEEP_RECLAIM": True,
-    "MICRO_MOMENTUM": True,
-    "MOMENTUM_REACCELERATION": True,
-    "GAMMA_SPIKE": True,
+    "LIQUIDITY_SWEEP_RECLAIM": False,
+    "MICRO_MOMENTUM": False,
+    "MOMENTUM_REACCELERATION": False,
+    "GAMMA_SPIKE": False,
     "EMA_RIBBON": False,
+    "ABSORPTION_REVERSAL": False,
+    "IV_REGIME": False,
+    "VORTEX_SNAP": False,
 }
 
 # All known keys (active + alias + demoted) = 13.
@@ -106,9 +102,26 @@ ALL_KNOWN_STRATEGIES: dict[str, Strategy] = {
 
 # Versioned registry contract — bump on any add/rename/remove so tests and
 # consumers detect drift instead of silently trading a changed portfolio.
-REGISTRY_VERSION = "2026.09.17-11+1alias-p2"
+REGISTRY_VERSION = "2026.09.20-freeze3+g2gate"
 EXPECTED_INTRADAY_STRATEGIES = frozenset(INTRADAY_STRATEGIES.keys())
 EXPECTED_SCALP_STRATEGIES = frozenset(SCALP_STRATEGIES.keys())
 
+from app.signals.strategies.absorption_reversal import AbsorptionReversalStrategy
+from app.signals.strategies.iv_regime import IVRegimeStrategy
+from app.signals.strategies.vortex_snap.strategy import VortexSnapStrategy
+
+# Quant Expansion Strategies (S7 Absorption Reversal, S8 IV Regime, S9 VORTEX-SNAP)
+QUANT_EXPANSION_STRATEGIES: dict[str, Strategy] = {
+    "ABSORPTION_REVERSAL": AbsorptionReversalStrategy(),
+    "IV_REGIME": IVRegimeStrategy(),
+    "VORTEX_SNAP": VortexSnapStrategy(),
+}
+
+EXTENDED_STRATEGY_REGISTRY: dict[str, Strategy] = {
+    **STRATEGY_REGISTRY,
+    **QUANT_EXPANSION_STRATEGIES,
+}
+
 SCALP_STRATEGY_NAMES = set(SCALP_STRATEGIES.keys())
 INTRADAY_STRATEGY_NAMES = set(INTRADAY_STRATEGIES.keys())
+

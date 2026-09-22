@@ -153,7 +153,9 @@ async def _build_dashboard(sym: str) -> DashboardData:
         logger.exception("dashboard.quote_failed", symbol=sym)
         errors["quote"] = "Quote unavailable"
 
-    # Regime
+    # Regime — single-TF observation only. Honesty: do NOT duplicate one TF's
+    # regime across all TFs (that fabricates alignment). Show the observed TF
+    # and UNKNOWN for the rest so UI cannot mistake it for MTF agreement.
     regime_val = "UNKNOWN"
     mtf_placeholder: dict[str, str] = {}
     vwap: Optional[float] = None
@@ -161,10 +163,12 @@ async def _build_dashboard(sym: str) -> DashboardData:
     try:
         regime = await regime_service.classify_market_regime(sym)
         regime_val = regime.regime_state
+        # Single-TF honest placeholder: only the TF actually classified is
+        # populated; others are UNKNOWN (not duplicated).
         mtf_placeholder = {
-            "1m": regime.regime_state,
-            "5m": regime.regime_state,
-            "15m": regime.regime_state,
+            "1m": "UNKNOWN",
+            "5m": "UNKNOWN",
+            "15m": "UNKNOWN",
             "1h": regime.regime_state,
         }
         if hasattr(regime, "key_levels"):
@@ -174,6 +178,13 @@ async def _build_dashboard(sym: str) -> DashboardData:
     except Exception:
         logger.exception("dashboard.regime_failed", symbol=sym)
         errors["regime"] = "Regime classification unavailable"
+        # Honest unknown placeholder when classification fails.
+        mtf_placeholder = {
+            "1m": "UNKNOWN",
+            "5m": "UNKNOWN",
+            "15m": "UNKNOWN",
+            "1h": "UNKNOWN",
+        }
 
     # Futures/options quick
     fno_available = False
@@ -400,11 +411,23 @@ async def _compute_summary() -> DashboardSummary:
     if status_val is None or status_val.status == "UNAVAILABLE" or status_dict is None:
         errors["status"] = "Market status unavailable"
 
-    # Process ml
+    # Process ml — heuristic fallback must never look live. Force callers/UI
+    # to check: heuristic (model_source != ensemble or calibrated False) is
+    # surfaced as degraded with an explicit reason.
     ml_val = results.get("ml")
     ml_dict = _to_dict(ml_val.data) if ml_val else None
     if ml_val is None or ml_val.status == "UNAVAILABLE" or ml_dict is None:
         errors["ml"] = "ML prediction unavailable"
+    elif isinstance(ml_dict, dict):
+        try:
+            from app.ml.predictor import MLPredictor as _MLP
+
+            if _MLP.is_heuristic_fallback(ml_dict):
+                errors["ml_fallback"] = "ML heuristic fallback — not a trained prediction (uncalibrated)"
+        except Exception:
+            # If the helper is unavailable, fall back to direct flag check.
+            if ml_dict.get("model_source") != "xgboost_lightgbm_ensemble" or not ml_dict.get("calibrated", False):
+                errors["ml_fallback"] = "ML heuristic fallback — not a trained prediction (uncalibrated)"
 
     # Process fii_dii
     fii_val = results.get("fii_dii")

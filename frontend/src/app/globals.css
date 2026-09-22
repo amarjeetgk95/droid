@@ -1520,10 +1520,10 @@ select.input { cursor: pointer; }
 }
 
 /* ============ terminal shell: top rail + side nav ============
-   Institutional chrome for the persistent frame. One 48px rail carries the
-   brand block, live instrument quotes, session clock and stream health; a
-   dense side nav carries module routing and the session/stream status block.
-   Flat surfaces, hairline dividers, tabular numerals, one accent. Tokens only. */
+   Single responsive command rail: [menu + brand] [instrument deck]
+   [session · clock · next] [broker · audio · account].
+   One cluster at every width — labels shed as space tightens, but broker
+   never hides. Flat surfaces, hairline dividers, tabular numerals. */
 
 .app-rail {
   position: sticky;
@@ -1536,22 +1536,21 @@ select.input { cursor: pointer; }
 .app-rail__inner {
   position: relative;
   display: flex;
-  align-items: stretch;
-  height: var(--rail-h);
+  align-items: center;
+  gap: 12px;
+  min-height: var(--rail-h);
   max-width: var(--ds-page-w);
   margin: 0 auto;
   padding: 0 12px;
 }
-.app-rail__sub {
+
+/* Left — menu + brand lock together, never shrink. */
+.rail-left {
   display: flex;
-  align-items: stretch;
-  height: var(--rail-sub-h);
-  max-width: var(--ds-page-w);
-  margin: 0 auto;
-  padding: 0 4px;
-  background: var(--ds-surface-subtle);
-  border-top: 1px solid var(--ds-border-subtle);
-  overflow-x: auto;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 /* Brand — monogram + stacked wordmark, divided from the instrument deck. */
@@ -1560,7 +1559,7 @@ select.input { cursor: pointer; }
   align-items: center;
   gap: 9px;
   padding-right: 14px;
-  margin-right: 4px;
+  margin-right: 2px;
   border-right: 1px solid var(--ds-border);
   text-decoration: none;
   min-width: 0;
@@ -1601,17 +1600,20 @@ select.input { cursor: pointer; }
   color: var(--ds-ink-3);
   white-space: nowrap;
 }
-.rail-menu { align-self: center; margin-right: 8px; }
-.rail-account { align-self: center; margin-left: 6px; }
+.rail-menu { align-self: center; margin-right: 4px; }
+.rail-account { align-self: center; }
 
-/* Instrument deck — tabs carry symbol + live quote, active gets an underline. */
-.rail-instruments { display: none; }
-@media (min-width: 768px) {
-  .rail-instruments { display: flex; align-items: stretch; min-width: 0; overflow: hidden; }
+/* Instrument deck — single instance, scrolls instead of wrapping. */
+.rail-deck {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-@media (min-width: 768px) {
-  .app-rail__sub { display: none; }
-}
+.rail-deck::-webkit-scrollbar { display: none; }
 
 .instrument-tabs {
   display: flex;
@@ -1639,6 +1641,8 @@ select.input { cursor: pointer; }
 .instrument-tab:hover { background: var(--ds-hover); color: var(--ds-ink); }
 .instrument-tab[aria-selected="true"] {
   background: var(--ds-accent-wash);
+}
+.instrument-tab[aria-selected="true"] .instrument-tab__sym {
   color: var(--ds-accent);
 }
 .instrument-tab[aria-selected="true"]::after {
@@ -1668,49 +1672,116 @@ select.input { cursor: pointer; }
   color: var(--ds-ink-3);
   font-variant-numeric: tabular-nums lining-nums;
 }
-.instrument-tab[aria-selected="true"] .instrument-tab__quote { color: var(--ds-accent); }
+/* Active tab keeps direction colour — symbol alone takes the accent. */
+.instrument-tab[aria-selected="true"] .instrument-tab__quote { color: var(--ds-ink-3); }
 
-/* Status cluster — session clock and stream health, right-aligned in the rail. */
-.rail-pills {
+/* Display-only index readouts (FINNIFTY, INDIAVIX) — same type scale as the
+   tabs so the deck reads as one strip, but no pointer, no active underline.
+   Change colour is neutral for VIX (VIX-up is not "bullish"). */
+.instrument-quote {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 12px;
+  border-left: 1px solid var(--ds-border-subtle);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.instrument-quote .instrument-tab__sym { color: var(--ds-ink-3); }
+
+/* Right cluster — status meta + safety actions, always visible. */
+.rail-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.rail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 10px;
+  border-right: 1px solid var(--ds-border-subtle);
+  min-width: 0;
+}
+.rail-meta__clock {
+  font-family: var(--ds-mono);
+  font-size: var(--ds-fs-xs);
+  font-weight: 600;
+  color: var(--ds-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.rail-meta__suffix {
+  color: var(--ds-ink-3);
+  font-weight: 500;
+}
+.rail-meta__next {
+  font-family: var(--ds-mono);
+  font-size: var(--ds-fs-label);
+  font-weight: 500;
+  color: var(--ds-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.rail-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
-  padding-left: 10px;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
-/* Token auth — the daily Fyers re-auth control must stay in the rail at every
-   width; the compact pill cluster that otherwise carries it is hidden ≥lg. */
-.rail-auth {
-  display: flex;
+/* Rail chips — session vs feed, one vocabulary, dot + short label. */
+.rail-chip {
+  display: inline-flex;
   align-items: center;
-  padding: 0 6px;
-  border-left: 1px solid var(--ds-border-subtle);
+  gap: 5px;
+  font-family: var(--ds-mono);
+  font-size: var(--ds-fs-label);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  border: 1px solid var(--ds-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--ds-surface-subtle);
+  color: var(--ds-ink-2);
 }
-
-/* Header pills summarize; the side panel prints the full state. Meta text is
-   the first thing dropped as width tightens. */
-@media (max-width: 1099px) {
-  .instrument-tab__quote { display: none; }
-  .feed-pill--stream .feed-pill__meta { display: none; }
+.rail-chip > i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  display: block;
+  flex: 0 0 auto;
 }
-@media (max-width: 639px) {
-  .rail-brand__sub { display: none; }
-  .feed-pill--session .feed-pill__meta { display: none; }
-  .rail-pills { gap: 4px; }
+.rail-chip--on {
+  color: var(--ds-bull-strong);
+  border-color: var(--ds-bull-line);
+  background: var(--ds-bull-wash);
 }
-@media (max-width: 399px) {
-  .rail-brand__text { display: none; }
+.rail-chip--warn {
+  color: var(--ds-warn-strong);
+  border-color: var(--ds-warn-line);
+  background: var(--ds-warn-wash);
 }
-
-/* Live pulse — only healthy feeds breathe. Reduced-motion kills it globally. */
-.feed-pill--on > i { animation: rail-pulse 2.4s ease-out infinite; }
-@keyframes rail-pulse {
-  0% { box-shadow: 0 0 0 0 var(--ds-bull-line); }
-  70% { box-shadow: 0 0 0 4px rgba(22, 163, 74, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+.rail-chip--down {
+  color: var(--ds-bear-strong);
+  border-color: var(--ds-bear-line);
+  background: var(--ds-bear-wash);
 }
+.rail-chip--degraded {
+  color: var(--ds-warn-ink);
+  border-color: var(--ds-warn-line);
+  background: var(--ds-warn-wash);
+}
+.rail-chip--idle { color: var(--ds-ink-2); }
+.rail-chip--on > i { animation: rail-pulse 2.4s ease-out infinite; }
 
 /* Body frame — side rail + content. */
 .app-body {
@@ -1788,48 +1859,53 @@ select.input { cursor: pointer; }
 }
 .rail-nav__item svg { flex: 0 0 auto; }
 
-/* System status rail — session, IST clock, next event and stream health
-   pinned in the header. Below lg the compact pills stand in. */
-.rail-sys { display: none; }
-@media (min-width: 1024px) {
-  .rail-sys {
-    display: flex;
-    align-items: stretch;
-    margin-left: auto;
-    border-left: 1px solid var(--ds-border);
+/* Rail responsive — one cluster sheds labels as space tightens.
+   Broker never hides; deck drops to a second row on mobile. */
+@keyframes rail-pulse {
+  0% { box-shadow: 0 0 0 0 var(--ds-bull-line); }
+  70% { box-shadow: 0 0 0 4px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+@media (max-width: 1279px) {
+  .rail-meta__next { display: none; }
+}
+@media (max-width: 1099px) {
+  .rail-meta__suffix { display: none; }
+  .rail-meta { gap: 8px; }
+}
+@media (max-width: 899px) {
+  .instrument-tab { padding: 0 10px; }
+  .instrument-quote { padding: 0 10px; }
+}
+@media (max-width: 767px) {
+  .app-rail__inner {
+    flex-wrap: wrap;
+    gap: 0 10px;
+    padding: 0 10px;
   }
-  .rail-pills { display: none; }
+  .rail-left { min-height: var(--rail-h); }
+  .rail-right { min-height: var(--rail-h); }
+  .rail-deck {
+    order: 3;
+    flex: 1 0 100%;
+    align-self: stretch;
+    min-height: var(--rail-sub-h);
+    margin: 0 -10px;
+    padding: 0 6px;
+    border-top: 1px solid var(--ds-border-subtle);
+    background: var(--ds-surface-subtle);
+  }
+  .rail-meta { border-right: 0; padding-right: 0; }
 }
-.rail-sys__cell {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 0 12px;
-  border-right: 1px solid var(--ds-border-subtle);
-  min-width: 0;
+@media (max-width: 639px) {
+  .rail-brand__sub { display: none; }
+  .rail-meta__clock { display: none; }
+  .rail-actions { gap: 4px; }
 }
-.rail-sys__cell:last-child { border-right: 0; }
-.rail-sys__k {
-  font-size: var(--ds-fs-micro);
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  line-height: 1;
-  color: var(--ds-ink-3);
-  white-space: nowrap;
+@media (max-width: 399px) {
+  .rail-brand__text { display: none; }
+  .rail-brand { padding-right: 10px; }
 }
-.rail-sys__v {
-  font-family: var(--ds-mono);
-  font-size: var(--ds-fs-xs);
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--ds-ink);
-  white-space: nowrap;
-}
-.rail-sys__v.on { color: var(--ds-bull-strong); }
-.rail-sys__v.warn { color: var(--ds-warn-strong); }
-.rail-sys__v.down { color: var(--ds-bear-strong); }
 
 /* Mobile navigation drawer. */
 .rail-ovl {

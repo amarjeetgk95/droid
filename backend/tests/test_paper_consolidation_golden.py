@@ -58,9 +58,8 @@ def _isolate_paper_state(mock_market_open, monkeypatch, tmp_path):
     monkeypatch.setattr(_intent_mod, "_INTENT_LEDGER_FILE", tmp_path / "intent_ledger.json")
 
     # An offline test process has no broker feed, so the real monitor reports
-    # DOWN and auto-activates the global kill switch (guard check 1). Pin a
-    # healthy feed so these tests exercise the execution path instead of the
-    # environment's broker connectivity.
+    # DOWN. Pin a healthy feed so these tests exercise the execution path
+    # instead of the environment's broker connectivity.
     monkeypatch.setattr(
         feed_health_monitor,
         "get_telemetry",

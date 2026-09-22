@@ -4,7 +4,6 @@ Verifies service layer isolation from HTTP transport:
 - Deterministic synthetic account generation
 - Trading mode transitions and gate checks
 - Consent recording and automatic mode revocation
-- Kill switch activation and cache state
 - Order creation pipeline and idempotency
 - Position sizing preview math
 """
@@ -15,12 +14,11 @@ from fastapi import HTTPException
 from app.algo.algo_service import (
     algo_account_service,
     algo_order_service,
-    algo_governance_service,
     algo_signals_service,
     reset_algo_caches,
     DISCLOSURE_VERSION,
 )
-from app.api.algo import OrderCreate, KillSwitchUpdate
+from app.api.algo import OrderCreate
 
 
 @pytest.fixture(autouse=True)
@@ -70,39 +68,6 @@ async def test_consent_workflow():
     revoked = await algo_account_service.revoke_consent(session=None, user_id=uid)
     assert revoked["revoked"] is True
     assert revoked["mode"] == "OFF"
-
-
-@pytest.mark.asyncio
-async def test_kill_switch_state_and_caching():
-    uid = uuid4()
-    # Initially not killed
-    initial = await algo_governance_service.get_kill_switch(session=None, user_id=uid)
-    assert initial["is_killed"] is False
-
-    # Engage kill switch
-    res = await algo_governance_service.set_kill_switch(
-        session=None, user_id=uid, kill_level="FULL_EXECUTION_STOP", reason="Testing kill switch"
-    )
-    assert res["is_killed"] is True
-    assert res["kill_level"] == "FULL_EXECUTION_STOP"
-
-    # Verify cached status
-    status = await algo_governance_service.get_kill_switch(session=None, user_id=uid)
-    assert status["is_killed"] is True
-    assert status["kill_level"] == "FULL_EXECUTION_STOP"
-
-    # Verify orders are blocked when kill switch active
-    order_payload = OrderCreate(
-        symbol="NIFTY24DEC24000CE",
-        side="BUY",
-        quantity=50,
-        price=120.0,
-        order_type="LIMIT",
-    )
-    with pytest.raises(HTTPException) as exc:
-        await algo_order_service.create_order(session=None, user_id=uid, payload=order_payload)
-    assert exc.value.status_code == 403
-    assert "KILL_SWITCH_ACTIVE" in exc.value.detail
 
 
 @pytest.mark.asyncio

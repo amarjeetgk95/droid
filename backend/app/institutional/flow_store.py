@@ -96,6 +96,9 @@ class InstitutionalFlowSnapshot:
     live_available: bool = False
     source: str = SOURCE
     futures_status: str = "UNAVAILABLE"  # never synthesized
+    # Honesty: static seed rows are assumptions, not live feed.
+    is_static_seed: bool = True
+    assumptions: List[str] = field(default_factory=lambda: ["fii-dii-static-seed-not-live", "futures-unavailable"])
 
 
 def _zscore(latest: float, window: List[float]) -> Optional[float]:

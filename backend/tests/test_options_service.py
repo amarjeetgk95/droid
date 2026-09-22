@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 import pytest
 from app.services.options_service import OptionsService
@@ -7,7 +7,11 @@ from app.models.market import NormalizedOptionQuote, NormalizedQuote, DataStatus
 
 def _create_sample_chain(underlying: str = "NIFTY", base: float = 24000.0) -> list[NormalizedOptionQuote]:
     now = datetime.now(timezone.utc)
-    exp = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    # Expiry must stay in the FUTURE: the service solves IV -> Greeks off this
+    # date, so a hardcoded expiry silently becomes a time bomb the day it
+    # passes (T <= 0 -> no IV -> greeks stay None) and the test fails for a
+    # reason that has nothing to do with the code under test.
+    exp = now + timedelta(days=7)
     quotes = []
     for offset in (-100.0, -50.0, 0.0, 50.0, 100.0):
         strike = base + offset

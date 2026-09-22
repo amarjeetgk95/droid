@@ -58,9 +58,9 @@ DEFAULT_WEIGHTS = {
     "regime": float(_WF.get("regime", 0.10)),
     "ai": float(_WF.get("ai", 0.10)),
 }
-# P0-2: ARMED bar is 78.0, hardcoded. The config file must exist (checked
-# above) but the bar itself is not negotiable via config drift.
-ARMED_THRESHOLD = 78.0
+# ARMED bar is single-sourced from scoring_weights.json thresholds.armed
+# (validated present at import; fail-closed if missing — never a silent 78.0).
+ARMED_THRESHOLD = float(_THRESH.get("armed"))
 AI_UNAVAILABLE_HAIRCUT = float(_PEN.get("ai_unavailable_haircut", 8.0))
 FNODEGRADED_HAIRCUT = float(_PEN.get("fno_degraded_haircut", 10.0))
 VWAPDEGRADED_HAIRCUT = float(_PEN.get("vwap_degraded_haircut", 10.0))
@@ -108,10 +108,23 @@ class ConfluenceEngine:
             else:
                 regime_dir = Direction.NEUTRAL
 
+            # Fail-closed: missing regime_score is INSUFFICIENT_DATA (neutral 50),
+            # never a silent 70 presented as measured.
+            _regime_raw = getattr(candidate, "regime_score", None)
+            if _regime_raw is None:
+                _regime_strength = 50
+                _regime_status = "INSUFFICIENT_DATA"
+            else:
+                try:
+                    _regime_strength = int(_regime_raw)
+                    _regime_status = "MEASURED"
+                except Exception:
+                    _regime_strength = 50
+                    _regime_status = "INSUFFICIENT_DATA"
             regime_obj = RegimeObject(
                 regime=regime_enum,
                 direction=regime_dir,
-                strength=int(candidate.regime_score or 70),
+                strength=_regime_strength,
                 volatility=VolatilityLevel.HIGH if "VOL" in regime_str else VolatilityLevel.MEDIUM,
             )
 
@@ -183,7 +196,24 @@ class ConfluenceEngine:
             is_call = "CALL" in candidate.direction
             aligned = (is_call and signal.decision == Decision.LONG) or (not is_call and signal.decision == Decision.SHORT)
 
-            base_confidence = float(signal.calibrated_confidence or signal.raw_confidence or 70.0)
+            # Fail-closed: unmeasured AI confidence is UNAVAILABLE (None), never 70.0.
+            _cal = getattr(signal, "calibrated_confidence", None)
+            _raw = getattr(signal, "raw_confidence", None)
+            _base_raw = _cal if _cal is not None else _raw
+            if _base_raw is None:
+                return AIAdviceResult(
+                    status="UNAVAILABLE",
+                    latency_ms=latency,
+                    rationale="AI confidence unmeasured (calibrated/raw both None) — INSUFFICIENT_DATA, no 70.0 fallback",
+                )
+            try:
+                base_confidence = float(_base_raw)
+            except Exception:
+                return AIAdviceResult(
+                    status="UNAVAILABLE",
+                    latency_ms=latency,
+                    rationale="AI confidence unparseable — INSUFFICIENT_DATA",
+                )
             if aligned:
                 score = min(95.0, max(50.0, base_confidence))
             else:
@@ -257,9 +287,15 @@ class ConfluenceEngine:
             scores["ai"] = ai_result.score  # type: ignore[union-attr]
 
         if ml_prediction and ml_prediction.get("is_available"):
-            active_weights["ml"] = 0.07
             is_call = "CALL" in candidate.direction
-            scores["ml"] = float(ml_prediction.get("bullish_pct", 50.0) if is_call else ml_prediction.get("bearish_pct", 50.0))
+            _ml_raw = ml_prediction.get("bullish_pct") if is_call else ml_prediction.get("bearish_pct")
+            # Fail-closed: missing ML pct is INSUFFICIENT_DATA (no ML weight), never silent 50.0.
+            if _ml_raw is not None:
+                try:
+                    scores["ml"] = float(_ml_raw)
+                    active_weights["ml"] = 0.07
+                except Exception:
+                    pass
 
         # Quality-aware weighting (P0-2): only domains scoring > 55 earn full
         # weight. 45-55 neutral contributes HALF weight (weak agreement is not
@@ -269,11 +305,15 @@ class ConfluenceEngine:
         penalty_count = 0
         contributing_domains = 0
         for domain, w in active_weights.items():
-            s = scores.get(domain, 50.0)
+            # Missing (None) domain scores are INSUFFICIENT_DATA: excluded from
+            # fused (no weight), never a silent 50.0 presented as measured.
+            _raw_s = scores.get(domain, None)
+            if _raw_s is None:
+                continue
             try:
-                s = float(s)
+                s = float(_raw_s)
             except Exception:
-                s = 50.0
+                continue
             if s >= 55.0:
                 fused += s * w
                 total_w += w
@@ -288,7 +328,9 @@ class ConfluenceEngine:
         if total_w > 0:
             fused = fused / total_w
         else:
-            fused = 50.0
+            # INSUFFICIENT_DATA: no measurable domains — fail-closed minimum,
+            # never a silent 50.0 neutral presented as measured.
+            fused = 15.0
 
         if penalty_count >= 2:
             fused -= 10.0

@@ -3,6 +3,7 @@
 import type { AISettings, AIConnectionMode, DirectProviderId, AIRoutingMode } from '@/lib/settingsTypes';
 import { getFieldError, type ValidationError } from '@/lib/settingsSchema';
 import { SelectField, TextField, ToggleField } from './fields';
+import { AiModelPicker } from './AiModelPicker';
 
 const CONNECTION_MODES: AIConnectionMode[] = ['OpenRouter', 'Direct Provider', 'Local Ollama'];
 const DIRECT_PROVIDERS: DirectProviderId[] = [
@@ -15,7 +16,6 @@ const DIRECT_PROVIDERS: DirectProviderId[] = [
 const ROUTING_MODES: AIRoutingMode[] = ['Manual', 'Task Optimized', 'Best Available', 'Cost Optimized'];
 const PROVIDERS: AISettings['provider'][] = ['openrouter', 'gemini', 'openai', 'novita', 'nvidia', 'ollama', 'custom'];
 const PERSONAS: AISettings['persona'][] = ['INSTITUTIONAL', 'MOMENTUM', 'OPTION_SELLER'];
-const PRICING_FILTERS: Array<NonNullable<AISettings['openRouterPricingFilter']>> = ['FREE', 'PAID', 'ALL'];
 
 export function AiSettingsSection({
   value,
@@ -52,38 +52,43 @@ export function AiSettingsSection({
       </div>
 
       {mode === 'OpenRouter' ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <TextField
-            label="OpenRouter API key"
-            type="password"
-            value={value.openRouterApiKey}
-            placeholder="sk-or-…"
-            hint="Stored locally and in your settings blob; empty keeps the existing key."
-            error={getFieldError(errors, 'ai.openRouterApiKey')}
-            onChange={(next) => onChange({ openRouterApiKey: next })}
-          />
-          <TextField
-            label="OpenRouter model"
-            value={value.openRouterModel}
-            placeholder="auto"
-            onChange={(next) => onChange({ openRouterModel: next })}
-          />
-          <SelectField
-            label="Pricing filter"
-            value={value.openRouterPricingFilter ?? 'FREE'}
-            options={PRICING_FILTERS}
-            onChange={(next) => onChange({ openRouterPricingFilter: next })}
-          />
-          <ToggleField
-            label="Allow paid models"
-            checked={value.openRouterAllowPaid ?? false}
-            onChange={(next) => onChange({ openRouterAllowPaid: next })}
-            hint="When off, only zero-cost models are routed."
-          />
-          <ToggleField
-            label="Free models only"
-            checked={value.openRouterFreeOnly ?? true}
-            onChange={(next) => onChange({ openRouterFreeOnly: next })}
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <TextField
+              label="OpenRouter API key"
+              type="password"
+              value={value.openRouterApiKey}
+              placeholder="sk-or-…"
+              hint="Stored locally and in your settings blob; empty keeps the existing key."
+              error={getFieldError(errors, 'ai.openRouterApiKey')}
+              onChange={(next) => onChange({ openRouterApiKey: next })}
+            />
+            <ToggleField
+              label="Allow paid models"
+              checked={value.openRouterAllowPaid ?? false}
+              onChange={(next) =>
+                onChange({
+                  openRouterAllowPaid: next,
+                  openRouterFreeOnly: !next,
+                  openRouterPricingFilter: next ? 'ALL' : 'FREE',
+                })
+              }
+              hint="When off, only zero-cost models are routed. Picking a paid model turns this on."
+            />
+          </div>
+          <AiModelPicker
+            apiKey={value.openRouterApiKey ?? ''}
+            selectedModel={(value.openRouterSelectedModel || value.openRouterModel || 'auto').trim() || 'auto'}
+            allowPaid={value.openRouterAllowPaid ?? false}
+            onPick={(pick) =>
+              onChange({
+                openRouterSelectedModel: pick.model,
+                openRouterModel: pick.model,
+                ...(pick.isFree === false
+                  ? { openRouterAllowPaid: true, openRouterFreeOnly: false, openRouterPricingFilter: 'ALL' as const }
+                  : null),
+              })
+            }
           />
         </div>
       ) : null}

@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAiChat } from '@/hooks/useCopilot';
+import { CopilotAnswer } from './CopilotAnswer';
 import { sortModelOptions, type ModelOption } from '@/lib/copilot';
 import { useToast } from '@/components/ui/toast';
 
@@ -86,13 +87,29 @@ export function ChatPanel({
             {chat.messages.map((m) => (
               <div key={m.id}>
                 <span className="sg-sym">{m.role === 'user' ? 'you' : 'copilot'}</span>
-                {m.reasoning ? <p className="sg-note">reasoning: {m.reasoning}</p> : null}
-                {m.toolNotes.map((note, i) => (
-                  <p key={i} className="sg-note">
-                    {note}
-                  </p>
-                ))}
-                {m.content ? <p style={PRE_WRAP}>{m.content}</p> : null}
+                {m.role === 'user' ? (
+                  m.content ? <p style={PRE_WRAP}>{m.content}</p> : null
+                ) : (
+                  <>
+                    {m.reasoning || m.toolNotes.length > 0 ? (
+                      <details>
+                        <summary>Why + tools</summary>
+                        {m.reasoning ? <p className="sg-note">reasoning: {m.reasoning}</p> : null}
+                        {m.toolNotes.map((note, i) => (
+                          <p key={i} className="sg-note">
+                            {note}
+                          </p>
+                        ))}
+                      </details>
+                    ) : null}
+                    {m.content ? (
+                      <CopilotAnswer
+                        raw={m.content}
+                        providerLabel={m.provider || m.model ? `${m.provider ?? '—'} · ${m.model ?? '—'}` : null}
+                      />
+                    ) : null}
+                  </>
+                )}
                 {!m.content && m.pending ? <p className="sg-note">thinking…</p> : null}
                 {m.role === 'assistant' && (m.provider || m.model) ? (
                   <p className="card-meta">

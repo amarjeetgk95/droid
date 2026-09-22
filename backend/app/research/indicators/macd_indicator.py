@@ -48,6 +48,8 @@ class MACDIndicator(BuiltinIndicator):
         ema_slow = calculate_ema(closes, slow_p) or current_price
         macd_line = round(ema_fast - ema_slow, 3)
 
+        # Honesty: signal is an EMA9 approximation via 0.85 factor
+        # (ASSUMPTION, not a true EMA9). Surfaced in outputs, never silent.
         signal_line = round(macd_line * 0.85, 3)
         histogram = round(macd_line - signal_line, 3)
 
@@ -71,8 +73,10 @@ class MACDIndicator(BuiltinIndicator):
                 "fast_period": fast_p,
                 "slow_period": slow_p,
                 "signal_period": sig_p,
+                "signal_method": "ema9-approx-0.85-assumption",
+                "assumptions": ["signal-0.85-approx-not-true-EMA9"],
             },
             target_price=target_price,
             invalidation_price=invalidation_price,
-            metadata={"source": "research.indicators.macd_indicator"},
+            metadata={"source": "research.indicators.macd_indicator", "signal_method": "ema9-approx-0.85-assumption"},
         )

@@ -43,8 +43,18 @@ class AIOptionsStrategyService:
             logger.warning("strategy_options_fetch_failed", error=str(e))
 
         spot = regime.spot_price
+        # Honesty: IV/PCR defaults are ASSUMPTIONS when chain unavailable.
+        _iv_assumed = analytics is None
+        _pcr_assumed = analytics is None
         atm_iv = analytics.atm_iv if analytics else 14.5
         pcr = analytics.pcr_oi if analytics else 1.0
+        if _iv_assumed or _pcr_assumed:
+            logger.warning(
+                "strategy_iv_pcr_assumed_not_measured",
+                atm_iv=atm_iv,
+                pcr=pcr,
+                reason="options-chain-unavailable",
+            )
         r1 = regime.key_levels.classic_pivots.r1
         s1 = regime.key_levels.classic_pivots.s1
         poc = regime.key_levels.poc
@@ -91,14 +101,14 @@ RULES:
 """
 
         provider_name = (request.provider or "openrouter").lower()
-        provider = create_provider_for_test(
-            provider_name,
-            model=request.model,
-            openRouterApiKey=request.openrouter_api_key,
-            geminiApiKey=request.gemini_api_key,
-        )
-
         try:
+            provider = create_provider_for_test(
+                provider_name,
+                model=request.model,
+                openRouterApiKey=request.openrouter_api_key,
+                geminiApiKey=request.gemini_api_key,
+            )
+
             # We use analyze or direct inference
             market_state = {
                 "symbol": symbol,
@@ -197,11 +207,12 @@ RULES:
 
         except Exception as e:
             logger.error("strategy_recommendation_failed", error=str(e))
-            # Graceful deterministic fallback
+            # Deterministic fallback: LABELED degraded + non-actionable.
+            # Never silent: requires explicit user confirmation before use.
             return AIOptionsStrategyRecommendation(
                 symbol=symbol,
-                strategy_name="Bull Put Spread (Deterministic Fallback)",
-                market_outlook="Bullish Support Defense",
+                strategy_name="Bull Put Spread (Deterministic Fallback — DEGRADED, requires user confirmation)",
+                market_outlook="Bullish Support Defense (DEGRADED fallback — LLM unavailable, non-actionable until confirmed)",
                 legs=[
                     AIOptionLeg(strike=round(spot - 100, -1), option_type="PE", action="SELL", estimated_premium=60.0),
                     AIOptionLeg(strike=round(spot - 300, -1), option_type="PE", action="BUY", estimated_premium=20.0),
@@ -211,12 +222,12 @@ RULES:
                 risk_reward_ratio="1:4",
                 breakevens=[round(spot - 60, 2)],
                 net_debit_credit_pts=40.0,
-                rationale=f"Automated fallback strategy based on S1 support ₹{s1} and Spot ₹{spot}.",
-                entry_rules=["Enter when price tests S1 support"],
+                rationale=f"[DEGRADED FALLBACK — LLM failed, non-actionable without user confirmation] Automated fallback based on S1 support ₹{s1} and Spot ₹{spot}. IV assumed {atm_iv} (available={not _iv_assumed}).",
+                entry_rules=["Enter when price tests S1 support (DEGRADED — confirm manually)"],
                 exit_rules=["Exit on 50% premium decay or break of S2"],
-                risk_management="Defined risk spread.",
+                risk_management="Defined risk spread. DEGRADED fallback — do not execute without explicit user confirmation.",
                 timestamp=datetime.now(timezone.utc),
-                provider_used="deterministic_fallback",
+                provider_used="deterministic_fallback-degraded-nonactionable",
             )
 
 

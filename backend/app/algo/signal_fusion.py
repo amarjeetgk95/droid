@@ -92,15 +92,22 @@ class Signal:
     fo_state: dict
     regime: str | None
     ai_result: dict | None
-    score: Decimal
-    confidence: Decimal
+    score: Decimal | None
+    confidence: Decimal | None
     invalidation_conditions: dict
     # P0-5: decorrelation + version provenance. Defaults keep old call sites working.
     weights_version: int | str = 2
     correlation_penalty: Decimal = Decimal("0")
     subscores: dict = field(default_factory=dict)
+    # Fail-closed provenance: MEASURED vs INSUFFICIENT_DATA/UNVETTED/fallback.
+    # None confidence/score means unmeasured — never a 0.5/0.75 placeholder.
+    fusion_status: str = "MEASURED"
 
     def is_actionable(self) -> bool:
+        if self.confidence is None or self.score is None:
+            return False
+        if str(getattr(self, "fusion_status", "MEASURED")) in ("INSUFFICIENT_DATA", "UNVETTED"):
+            return False
         return self.direction in ("LONG", "SHORT")
 
 
@@ -116,34 +123,112 @@ class SignalFusion:
         total_w = sum(D(v) for v in weights.values()) or D(100)
         def w(k): return D(weights.get(k, DEFAULT_WEIGHTS.get(k, 0))) / total_w * D(100)
 
-        # Extract normalized sub-scores (0-100)
-        tech_score = D(inputs.technical.get("technical_score", 50))
-        mtf_score = D(inputs.mtf.get("score", 50))  # caller may provide bias-derived score
-        # derive mtf score from bias
-        if "score" not in inputs.mtf and "overall_bias" in inputs.mtf:
+        # Fail-closed input accounting: None means unmeasured (INSUFFICIENT_DATA),
+        # never a silent 50 / 0.5 placeholder presented as measured.
+        def _num_or_none(d: dict, *keys: str) -> Decimal | None:
+            for _k in keys:
+                try:
+                    _v = d.get(_k)
+                except Exception:
+                    _v = None
+                if _v is not None:
+                    try:
+                        return D(_v)
+                    except Exception:
+                        continue
+            return None
+
+        _tech_raw = _num_or_none(inputs.technical, "technical_score")
+        _mtf_raw = _num_or_none(inputs.mtf, "score")
+        _fno_raw = _num_or_none(inputs.fno, "score")
+        _reg_raw = _num_or_none(inputs.regime, "score")
+        _evt_raw = _num_or_none(inputs.event_risk, "score")
+        _ai_conf_raw = _num_or_none(inputs.ai, "confidence")
+
+        # Extract normalized sub-scores (0-100); missing -> None (unmeasured).
+        tech_score = _tech_raw
+        mtf_score = _mtf_raw
+        # derive mtf score from bias only when score unmeasured but bias explicit.
+        if mtf_score is None and "overall_bias" in inputs.mtf:
             bias = inputs.mtf.get("overall_bias")
             if bias == "BULLISH": mtf_score = D(75)
             elif bias == "BEARISH": mtf_score = D(25)
 
-        fno_score = D(inputs.fno.get("score", 50))
-        regime_score = D(inputs.regime.get("score", 50))
-        if "regime" in inputs.regime and "score" not in inputs.regime:
-            # regime -> bias mapping
-            r = inputs.regime.get("regime", "RANGE")
-            if r in ("STRONG_BULL","BULL"): regime_score = D(75)
-            elif r in ("STRONG_BEAR","BEAR"): regime_score = D(25)
+        fno_score = _fno_raw
+        regime_score = _reg_raw
+        if regime_score is None and "regime" in inputs.regime:
+            # regime -> bias mapping only off an explicit regime label.
+            r = inputs.regime.get("regime")
+            if r in ("STRONG_BULL", "BULL"): regime_score = D(75)
+            elif r in ("STRONG_BEAR", "BEAR"): regime_score = D(25)
             elif r == "RANGE": regime_score = D(50)
 
-        ai_conf = D(inputs.ai.get("confidence", 0.5))
-        ai_bias = inputs.ai.get("bias", "NEUTRAL")
-        if ai_bias == "LONG": ai_score = ai_conf * D(100)
-        elif ai_bias == "SHORT": ai_score = (D(1) - ai_conf) * D(100)
-        else: ai_score = D(50)  # NEUTRAL/NO_TRADE
+        ai_bias = inputs.ai.get("bias", "NEUTRAL") if isinstance(inputs.ai, dict) else "NEUTRAL"
+        if _ai_conf_raw is None:
+            # Unmeasured AI confidence: neutral 50 for math, but flagged insufficient.
+            ai_score = D(50)
+            _ai_insufficient = True
+        else:
+            ai_conf = _ai_conf_raw
+            if ai_bias == "LONG": ai_score = ai_conf * D(100)
+            elif ai_bias == "SHORT": ai_score = (D(1) - ai_conf) * D(100)
+            else: ai_score = D(50)  # NEUTRAL/NO_TRADE
+            _ai_insufficient = False
 
-        event_score = D(inputs.event_risk.get("score", 50))
+        event_score = _evt_raw if _evt_raw is not None else D(50)
+        _evt_insufficient = _evt_raw is None and not inputs.event_risk.get("event_pending")
         # event_risk 5% usually penalizes if event pending
         if inputs.event_risk.get("event_pending"):
             event_score = D(30)
+
+        # Fail-closed: no measurable domains at all => NO_TRADE + nulls, never
+        # 0.5/50 placeholders presented as measured.
+        _measured = [s for s in (tech_score, mtf_score, fno_score, regime_score) if s is not None]
+        _any_ai_measured = not _ai_insufficient
+        if not _measured and not _any_ai_measured:
+            return Signal(
+                signal_id=uuid4(),
+                strategy_id=strategy_id,
+                instrument_id=instrument_id,
+                symbol=symbol,
+                direction="NO_TRADE",
+                timestamp=datetime.now(timezone.utc),
+                market_snapshot_id=inputs.technical.get("market_snapshot_id") if isinstance(inputs.technical, dict) else None,
+                technical_state=inputs.technical,
+                mtf_state=inputs.mtf,
+                fo_state=inputs.fno,
+                regime=inputs.regime.get("regime") if isinstance(inputs.regime, dict) else None,
+                ai_result=inputs.ai,
+                score=None,
+                confidence=None,
+                invalidation_conditions={},
+                weights_version=WEIGHTS_VERSION,
+                correlation_penalty=D("0"),
+                subscores={
+                    "technical": None,
+                    "mtf": None,
+                    "fno": None,
+                    "regime": None,
+                    "ai": None,
+                    "event_risk": None,
+                },
+                fusion_status="INSUFFICIENT_DATA",
+            )
+        # Partial missing: substitute neutral 50 for math but flag fallback
+        # (never silent). Thin fusion is capped below thresholds downstream.
+        _partial_missing = (
+            tech_score is None or mtf_score is None or fno_score is None or regime_score is None
+            or _ai_insufficient or _evt_insufficient
+        )
+        _fusion_status = "fallback" if _partial_missing else "MEASURED"
+        if tech_score is None:
+            tech_score = D(50)
+        if mtf_score is None:
+            mtf_score = D(50)
+        if fno_score is None:
+            fno_score = D(50)
+        if regime_score is None:
+            regime_score = D(50)
 
         # ── P0-5 de-correlation: tech/mtf/regime triple-count the same trend. ──
         # trend_cluster = mean(tech_trend01, mtf_bias01, regime01) on 0-1 scale,
@@ -230,17 +315,29 @@ class SignalFusion:
 
         # Confidence: agreement + distance from 50, capped at 0.90 (§35).
         # 0.07/agreement (not 0.10) + /200 (not /100) prevents borderline 62 → 0.92 inflation.
+        # Base 0.5 is an explicit neutral prior (not a measured 0.5); unmeasured
+        # fusion returns None above, never a silent 0.5.
         agreement = 0
         if inputs.technical.get("trend") == "BULLISH" and direction == "LONG": agreement += 1
         if inputs.technical.get("trend") == "BEARISH" and direction == "SHORT": agreement += 1
         if inputs.mtf.get("overall_bias") == "BULLISH" and direction == "LONG": agreement += 1
         if inputs.mtf.get("overall_bias") == "BEARISH" and direction == "SHORT": agreement += 1
         if ai_bias == direction: agreement += 1
-        confidence = D("0.5") + D(agreement) * D("0.07") + (abs(fused - D(50)) / D(200))
+        confidence: Decimal | None = D("0.5") + D(agreement) * D("0.07") + (abs(fused - D(50)) / D(200))
         # Haircut when AI unavailable (no AI key or NEUTRAL with low confidence)
         if not inputs.ai or inputs.ai.get("bias", "NEUTRAL") == "NEUTRAL":
             confidence -= D("0.08")
         confidence = max(D("0.1"), min(D("0.90"), confidence))
+        # Partial-missing fusion is explicitly fallback and non-actionable when
+        # thin: never present a fallback 0.5-derived confidence as measured edge.
+        # _measured holds the pre-substitution measured count (fail-closed).
+        try:
+            _measured_ct = len(_measured)
+        except Exception:
+            _measured_ct = 0
+        if _fusion_status == "fallback" and _measured_ct < 2:
+            direction = "NO_TRADE"  # type: ignore[assignment]
+            confidence = None
 
         subscores = {
             "technical": float(tech_score),
@@ -265,12 +362,13 @@ class SignalFusion:
             fo_state=inputs.fno,
             regime=inputs.regime.get("regime"),
             ai_result=inputs.ai,
-            score=fused.quantize(D("0.01")),
-            confidence=confidence.quantize(D("0.0001")),
+            score=fused.quantize(D("0.01")) if fused is not None else None,
+            confidence=confidence.quantize(D("0.0001")) if confidence is not None else None,
             invalidation_conditions=inputs.ai.get("suggested_invalidation", {}) if isinstance(inputs.ai.get("suggested_invalidation"), dict) else {"raw": inputs.ai.get("suggested_invalidation")},
             weights_version=WEIGHTS_VERSION,
             correlation_penalty=correlation_penalty.quantize(D("0.01")),
             subscores=subscores,
+            fusion_status=_fusion_status,
         )
 
 

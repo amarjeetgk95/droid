@@ -37,17 +37,33 @@ export interface StrategyPayoffPoint {
   pnl: number;
 }
 
-/** Built template as served by `POST /api/v1/strategy/build-template`. */
+/**
+ * Built template as served by `POST /api/v1/strategy/build-template`.
+ *
+ * `max_profit` / `max_loss` are null when the structure's tail is uncapped
+ * (`defined_risk === false`) or when the payoff model does not apply to it
+ * (`payoff_model === 'UNMODELLED'`, e.g. calendar spreads) — never a
+ * sampled-grid number standing in for an unbounded loss.
+ */
 export interface BuiltTemplateStrategy {
   template_id: string;
+  template_name?: string | null;
   underlying: string;
   spot_price: number;
+  expiry?: string | null;
+  expiry_type?: string | null;
+  far_expiry?: string | null;
   legs: StrategyLegInput[];
   premium_note: string;
-  max_profit: number;
-  max_loss: number;
+  premium_source?: string | null;
+  payoff_model?: 'EXPIRY_INTRINSIC' | 'UNMODELLED';
+  defined_risk?: boolean | null;
+  max_profit: number | null;
+  max_loss: number | null;
   risk_reward: number | null;
   payoff_curve: StrategyPayoffPoint[];
+  lot_size?: number | null;
+  limitation?: string | null;
 }
 
 /** Honest scanner payload — `scans` is empty until live analytics wire it. */
@@ -102,6 +118,13 @@ export function createStrategyApi(core: ApiCore) {
           spot_price: number;
           payoff_curve: StrategyPayoffPoint[];
           legs_count: number;
+          /** Lot size applied to legs that omitted one (per-underlying, never a blanket 75). */
+          default_lot_size?: number;
+          max_profit?: number | null;
+          max_loss?: number | null;
+          risk_reward?: number | null;
+          defined_risk?: boolean;
+          limitation?: string | null;
         };
         error: string | null;
         meta: unknown;

@@ -55,7 +55,6 @@ from app.core.security import SIGNAL_BOOK_USER_ID
 from app.event_engine.service import event_engine_service
 from app.services.paper_service import paper_service
 from app.signals.portfolio_greeks import portfolio_greeks_ledger
-from app.signals.safety.kill_switch import kill_switch
 
 logger = structlog.get_logger(__name__)
 
@@ -65,14 +64,13 @@ VIEW_NAME = "command"
 VIEW_VERSION = 1
 
 #: Frozen section set for CommandView v1 — the contract snapshot.
-#: P3: the original seven names/order are untouched; `paper`, `forecast` and
+#: P3: the original names/order are untouched; `paper`, `forecast` and
 #: `algo` are appended so the stream can replace their remaining REST pollers.
 SECTION_KEYS: tuple[str, ...] = (
     "market",
     "regime",
     "signals",
     "feed_health",
-    "kill_switch",
     "ml",
     "risk_events",
     "paper",
@@ -502,9 +500,23 @@ async def _leg_regime() -> _Leg:
 async def _leg_ml() -> _Leg:
     summary = await _get_summary()
     by_symbol = await _get_ml_by_symbol()
-    leg_errors = {"ml": summary.errors["ml"]} if "ml" in summary.errors else {}
+    # Honesty: nulls set degraded=true with reason; heuristic fallback also
+    # degrades (callers/UI must check model_source/calibrated).
+    leg_errors: dict[str, str] = {}
+    if "ml" in summary.errors:
+        leg_errors["ml"] = summary.errors["ml"]
+    if "ml_fallback" in summary.errors:
+        leg_errors["ml_fallback"] = summary.errors["ml_fallback"]
     if summary.ml_prediction is None and not leg_errors:
         leg_errors["ml"] = "ML prediction unavailable"
+    elif isinstance(summary.ml_prediction, dict):
+        try:
+            from app.ml.predictor import MLPredictor as _MLP
+
+            if _MLP.is_heuristic_fallback(summary.ml_prediction) and "ml_fallback" not in leg_errors:
+                leg_errors["ml_fallback"] = "ML heuristic fallback — not a trained prediction"
+        except Exception:
+            pass
     return _Leg(
         value={"ml_prediction": summary.ml_prediction, "by_symbol": by_symbol},
         updated_at=_parse_time(summary.generated_at),
@@ -583,11 +595,6 @@ async def _leg_feed_health() -> _Leg:
         degraded=bool(leg_errors),
         error=_join_errors(leg_errors),
     )
-
-
-async def _leg_kill_switch() -> _Leg:
-    # Same call the `/api/v1/signals/kill-switch` endpoint serves.
-    return _Leg(value=kill_switch.status(), updated_at=_now())
 
 
 async def _leg_paper() -> _Leg:
@@ -777,7 +784,6 @@ _LEGS: dict[str, Callable[[], Awaitable[_Leg]]] = {
     "regime": _leg_regime,
     "signals": _leg_signals,
     "feed_health": _leg_feed_health,
-    "kill_switch": _leg_kill_switch,
     "ml": _leg_ml,
     "risk_events": _leg_risk_events,
     "paper": _leg_paper,
@@ -799,14 +805,21 @@ async def _compose_command_view() -> dict[str, Any]:
     for name, result in zip(names, results):
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
-                raise result
-            logger.warning("command_view_leg_failed", section=name, error=str(result)[:200])
-            leg = _Leg(
-                value=None,
-                updated_at=now,
-                degraded=True,
-                error=f"{type(result).__name__}: {str(result)[:150]}",
-            )
+                logger.warning("command_view_leg_cancelled", section=name)
+                leg = _Leg(
+                    value=None,
+                    updated_at=now,
+                    degraded=True,
+                    error="CancelledError: leg timed out or cancelled",
+                )
+            else:
+                logger.warning("command_view_leg_failed", section=name, error=str(result)[:200])
+                leg = _Leg(
+                    value=None,
+                    updated_at=now,
+                    degraded=True,
+                    error=f"{type(result).__name__}: {str(result)[:150]}",
+                )
         else:
             leg = result
 

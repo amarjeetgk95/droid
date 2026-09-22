@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { getObj } from '@/lib/signalsNormalize';
+import { getObj, dataFreshness, maxPayloadTimestampMs } from '@/lib/signalsNormalize';
 import {
   summarizeDataHealth,
   summarizeFeedHealth,
@@ -61,6 +61,12 @@ export type InstitutionalDeskState = {
   refreshing: boolean;
   error: string | null;
   updatedAt: number | null;
+  /** Age of `updatedAt` in ms. Null when the payload carried no instant. */
+  ageMs: number | null;
+  /** True when `updatedAt` is missing or older than the staleness window. */
+  stale: boolean;
+  source: 'rest';
+  liveSource: 'rest';
   refresh: () => Promise<void>;
   loadSignalDetail: (signalId: string) => Promise<InstSignalDetail | null>;
   loadFeedDetail: (instrumentId: string) => Promise<Record<string, unknown> | null>;
@@ -146,7 +152,21 @@ export function useInstitutionalDesk(
     else firstError = firstError ?? errorMessage(feedRes.reason, 'Feed health unavailable');
 
     setError(firstError);
-    setUpdatedAt(Date.now());
+    // Payload instants only — a failed or undated batch keeps the last age.
+    // Never bump to Date.now() to mask an outage.
+    const payloadTs = maxPayloadTimestampMs([
+      miRes.status === 'fulfilled' ? miRes.value : null,
+      healthRes.status === 'fulfilled' ? healthRes.value : null,
+      cpRes.status === 'fulfilled' ? cpRes.value : null,
+      fullRes.status === 'fulfilled' ? fullRes.value : null,
+      sigRes.status === 'fulfilled' ? sigRes.value : null,
+      histRes.status === 'fulfilled' ? histRes.value : null,
+      auditRes.status === 'fulfilled' ? auditRes.value : null,
+      feedRes.status === 'fulfilled' ? feedRes.value : null,
+    ]);
+    if (payloadTs !== null) {
+      setUpdatedAt(payloadTs);
+    }
     setLoading(false);
     if (showSpinner) setRefreshing(false);
   }, []);
@@ -293,6 +313,8 @@ export function useInstitutionalDesk(
     [],
   );
 
+  const freshness = dataFreshness(updatedAt);
+
   return {
     mi,
     miRaw,
@@ -308,6 +330,10 @@ export function useInstitutionalDesk(
     refreshing,
     error,
     updatedAt,
+    ageMs: freshness.ageMs,
+    stale: freshness.stale,
+    source: 'rest' as const,
+    liveSource: 'rest' as const,
     refresh,
     loadSignalDetail,
     loadFeedDetail,
@@ -348,6 +374,12 @@ export type EventsDeskState = {
   refreshing: boolean;
   error: string | null;
   updatedAt: number | null;
+  /** Age of `updatedAt` in ms. Null when the payload carried no instant. */
+  ageMs: number | null;
+  /** True when `updatedAt` is missing or older than the staleness window. */
+  stale: boolean;
+  source: 'rest';
+  liveSource: 'rest';
   detail: EventDetailBundle | null;
   detailLoading: boolean;
   selectedId: string | null;
@@ -425,7 +457,18 @@ export function useEventsDesk(
     }
 
     setError(firstError);
-    setUpdatedAt(Date.now());
+    // Payload instants only — a failed or undated batch keeps the last age.
+    const payloadTs = maxPayloadTimestampMs([
+      todayRes.status === 'fulfilled' ? todayRes.value : null,
+      upRes.status === 'fulfilled' ? upRes.value : null,
+      trackRes.status === 'fulfilled' ? trackRes.value : null,
+      srcRes.status === 'fulfilled' ? srcRes.value : null,
+      shadowRes.status === 'fulfilled' ? shadowRes.value : null,
+      overlayRes.status === 'fulfilled' ? overlayRes.value : null,
+    ]);
+    if (payloadTs !== null) {
+      setUpdatedAt(payloadTs);
+    }
     setLoading(false);
     if (showSpinner) setRefreshing(false);
   }, []);
@@ -535,6 +578,8 @@ export function useEventsDesk(
     setDetailLoading(false);
   }, []);
 
+  const freshness = dataFreshness(updatedAt);
+
   return {
     today,
     upcoming,
@@ -548,6 +593,10 @@ export function useEventsDesk(
     refreshing,
     error,
     updatedAt,
+    ageMs: freshness.ageMs,
+    stale: freshness.stale,
+    source: 'rest' as const,
+    liveSource: 'rest' as const,
     detail,
     detailLoading,
     selectedId,

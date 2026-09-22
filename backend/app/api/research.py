@@ -241,8 +241,16 @@ async def get_forecast(
 _tactical_bias_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _tactical_bias_locks: dict[str, asyncio.Lock] = {}
 _tactical_bias_tasks: dict[str, asyncio.Task] = {}
-TACTICAL_BIAS_FRESH_TTL = 10.0
-TACTICAL_BIAS_MAX_AGE = 60.0
+# SWR windows for the tactical-bias board, tuned against the dashboard's 60s
+# auto-refresh cadence (see useForecastBoard). A payload reads FRESH (no stale
+# flag) while younger than the fresh TTL, so a healthy 60s poller reads fresh
+# verdicts instead of a permanent "N stale". PREWARM_AFTER_S re-arms the cache
+# ahead of expiry: a fresh hit older than that still serves fresh, but kicks a
+# background refresh so the *next* tick reads fresh too. Past MAX_AGE the
+# cached payload is never served — regenerate below or fail loud.
+TACTICAL_BIAS_FRESH_TTL = 75.0
+TACTICAL_BIAS_MAX_AGE = 180.0
+TACTICAL_BIAS_PREWARM_AFTER_S = 30.0
 
 
 def _get_bias_lock(key: str) -> asyncio.Lock:
@@ -253,6 +261,26 @@ def _get_bias_lock(key: str) -> asyncio.Lock:
 
 def _bias_generated_at_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _force_bias_regenerate(
+    record: bool,
+    cached_age: Optional[float],
+    cached_payload: Optional[Dict[str, Any]],
+) -> bool:
+    """Whether a request must bypass the SWR cache and regenerate synchronously.
+
+    The dashboard's "Generate forecast" button (record=true) promises to
+    regenerate every horizon and persist immutable predictions. A cached
+    payload — even a fresh one — may be a record=false read that persisted
+    nothing, so serving it would silently break that promise. Force a live
+    run whenever the cache is missing, stale, or carries an unpersisted run.
+    """
+    if not record:
+        return False
+    if cached_age is None or cached_age >= TACTICAL_BIAS_FRESH_TTL:
+        return True
+    return not bool((cached_payload or {}).get("persisted"))
 
 
 def _stamp_tactical_bias(data: Dict[str, Any], cache_age_s: float) -> Dict[str, Any]:
@@ -328,6 +356,149 @@ def _trigger_bias_refresh(
         pass
 
 
+_tactical_bias_board_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_tactical_bias_board_locks: dict[str, asyncio.Lock] = {}
+_tactical_bias_board_tasks: dict[str, asyncio.Task] = {}
+
+
+def _get_board_lock(key: str) -> asyncio.Lock:
+    if key not in _tactical_bias_board_locks:
+        _tactical_bias_board_locks[key] = asyncio.Lock()
+    return _tactical_bias_board_locks[key]
+
+
+async def _run_board(
+    instrument: str,
+    record: bool,
+    include_layers: bool,
+    include_explain: bool,
+) -> Dict[str, Any]:
+    """Execute one board run: all horizons off a single shared snapshot + anchor.
+
+    Each horizon gets its own DB session (one AsyncSession cannot be shared
+    across the concurrent fan-out). ``generated_at`` is the engine's single
+    board instant — the API layer must NOT overwrite it, or the header would
+    diverge from the per-card stamps again.
+    """
+    from app.research.trend_forecast import tactical_horizon_engine
+    from app.core.database import get_async_session_factory
+
+    return await tactical_horizon_engine.forecast_board(
+        instrument=instrument,
+        record=record,
+        session_factory=get_async_session_factory(),
+        include_layers=include_layers,
+        include_explain=include_explain,
+    )
+
+
+def _stamp_board(data: Dict[str, Any], cache_age_s: float) -> Dict[str, Any]:
+    """Copy a board payload with honest cache metadata (same contract as _stamp_tactical_bias)."""
+    stamped = dict(data)
+    age = max(0.0, float(cache_age_s))
+    stamped["cache_age_s"] = round(age, 3)
+    stamped["stale"] = age >= TACTICAL_BIAS_FRESH_TTL
+    return stamped
+
+
+def _trigger_board_refresh(
+    cache_key: str,
+    instrument: str,
+    record: bool,
+    include_layers: bool,
+    include_explain: bool,
+) -> None:
+    task = _tactical_bias_board_tasks.get(cache_key)
+    if task and not task.done():
+        return
+
+    async def _refresh():
+        try:
+            res = await _run_board(instrument, record, include_layers, include_explain)
+            _tactical_bias_board_cache[cache_key] = (time.monotonic(), res)
+            logger.debug("tactical_bias_board_bg_refreshed", key=cache_key)
+        except Exception as e:
+            logger.warning("tactical_bias_board_bg_refresh_failed", key=cache_key, error=str(e)[:150])
+
+    try:
+        loop = asyncio.get_running_loop()
+        _tactical_bias_board_tasks[cache_key] = loop.create_task(_refresh())
+    except RuntimeError:
+        pass
+
+
+# -------------------------------------------------------------
+# 2c-1. Tactical board: all horizons, ONE shared snapshot + anchor
+# -------------------------------------------------------------
+# NOTE: registered BEFORE /tactical-bias/{horizon} so "board" is not
+# captured as a horizon path param.
+@router.get("/tactical-bias/board")
+async def get_tactical_bias_board(
+    instrument: str = Query("NIFTY 50", description="Trading instrument"),
+    record: bool = Query(True, description="Persist each horizon as an immutable prediction"),
+    include_layers: bool = Query(
+        False,
+        description="Include the heavy debug layers (mtf_features, indicator_outputs, options_context)",
+    ),
+    include_explain: bool = Query(
+        True,
+        description="Include the explain bundle (persisted recordings keep it either way)",
+    ),
+):
+    """Generate the whole tactical board from a single shared snapshot.
+
+    Unlike five independent /tactical-bias/{horizon} calls, every horizon
+    resolves the same MTF candles, the same anchor spot and the same
+    ``generated_at`` — the board header is a true single instant. SWR
+    windows mirror the single-horizon endpoint (fresh 75s, serve-stale 180s).
+    """
+    from app.research.trend_forecast import ForecastDeadlineExceeded
+
+    cache_key = f"{instrument.strip().upper()}:{bool(include_layers)}:{bool(include_explain)}"
+    cached = _tactical_bias_board_cache.get(cache_key)
+    cached_age = (time.monotonic() - cached[0]) if cached is not None else None
+    if cached is not None and not _force_bias_regenerate(record, cached_age, cached[1]):
+        if cached_age < TACTICAL_BIAS_FRESH_TTL:
+            if cached_age >= TACTICAL_BIAS_PREWARM_AFTER_S:
+                _trigger_board_refresh(cache_key, instrument, record, include_layers, include_explain)
+            return _stamp_board(cached[1], cached_age)
+        if cached_age < TACTICAL_BIAS_MAX_AGE:
+            _trigger_board_refresh(cache_key, instrument, record, include_layers, include_explain)
+            return _stamp_board(cached[1], cached_age)
+
+    lock = _get_board_lock(cache_key)
+    async with lock:
+        cached = _tactical_bias_board_cache.get(cache_key)
+        cached_age = (time.monotonic() - cached[0]) if cached is not None else None
+        if (
+            cached is not None
+            and cached_age is not None
+            and cached_age < TACTICAL_BIAS_FRESH_TTL
+            and not _force_bias_regenerate(record, cached_age, cached[1])
+        ):
+            return _stamp_board(cached[1], cached_age)
+
+        try:
+            res = await _run_board(instrument, record, include_layers, include_explain)
+            _tactical_bias_board_cache[cache_key] = (time.monotonic(), res)
+            return _stamp_board(res, 0.0)
+        except ForecastDeadlineExceeded as e:
+            if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_MAX_AGE:
+                logger.warning("tactical_bias_board_deadline_serving_stale", instrument=instrument)
+                return _stamp_board(cached[1], cached_age)
+            logger.warning("tactical_bias_board_deadline_exceeded", instrument=instrument, error=str(e))
+            raise HTTPException(status_code=503, detail=f"deadline_exceeded: {e}")
+        except ValueError as e:
+            logger.warning("tactical_bias_board_insufficient_data", instrument=instrument, error=str(e))
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_MAX_AGE:
+                logger.warning("tactical_bias_board_error_serving_stale", instrument=instrument, error=str(e))
+                return _stamp_board(cached[1], cached_age)
+            logger.error("tactical_bias_board_failed", instrument=instrument, error=str(e))
+            raise HTTPException(status_code=500, detail=f"Tactical board failed: {e}")
+
+
 # -------------------------------------------------------------
 # 2c. Tactical Horizon Bias (60m primary; aliases /forecast/{horizon})
 # -------------------------------------------------------------
@@ -362,9 +533,13 @@ async def get_tactical_bias(
 
     cache_key = f"{instrument.strip().upper()}:{h}:{bool(include_layers)}:{bool(include_explain)}"
     cached = _tactical_bias_cache.get(cache_key)
-    if cached is not None:
-        cached_age = time.monotonic() - cached[0]
+    cached_age = (time.monotonic() - cached[0]) if cached is not None else None
+    if cached is not None and not _force_bias_regenerate(record, cached_age, cached[1]):
         if cached_age < TACTICAL_BIAS_FRESH_TTL:
+            if cached_age >= TACTICAL_BIAS_PREWARM_AFTER_S:
+                # Fresh hit nearing expiry: serve it, but re-arm the cache in
+                # the background so the next 60s tick still reads fresh.
+                _trigger_bias_refresh(cache_key, instrument, h, record, include_layers, include_explain)
             return _stamp_tactical_bias(cached[1], cached_age)
         if cached_age < TACTICAL_BIAS_MAX_AGE:
             _trigger_bias_refresh(cache_key, instrument, h, record, include_layers, include_explain)
@@ -376,7 +551,16 @@ async def get_tactical_bias(
     async with lock:
         cached = _tactical_bias_cache.get(cache_key)
         cached_age = (time.monotonic() - cached[0]) if cached is not None else None
-        if cached is not None and cached_age is not None and cached_age < TACTICAL_BIAS_FRESH_TTL:
+        # A parallel request may have regenerated while we waited: serve its
+        # fresh persisted payload instead of redoing the whole run, but never
+        # downgrade a forced (record=true) regeneration to a
+        # stale/unpersisted replay.
+        if (
+            cached is not None
+            and cached_age is not None
+            and cached_age < TACTICAL_BIAS_FRESH_TTL
+            and not _force_bias_regenerate(record, cached_age, cached[1])
+        ):
             return _stamp_tactical_bias(cached[1], cached_age)
 
         try:
@@ -623,41 +807,9 @@ async def create_snapshot(
         data_quality=req.data_quality,
         created_at=now,
     )
-    _memory_snapshots[snap_id] = snapshot
+    from app.research.predictions import SnapshotService
 
-    if session is not None:
-        try:
-            import json
-            stmt = text("""
-                INSERT INTO research_snapshots (
-                    snapshot_id, instrument, timeframe, timestamp,
-                    price, regime, session, features, options_context,
-                    data_quality, created_at
-                ) VALUES (
-                    :id, :inst, :tf, :ts, :p, :reg, :sess,
-                    CAST(:feat AS jsonb), CAST(:opt AS jsonb), :dq, :created
-                );
-            """)
-            await session.execute(
-                stmt,
-                {
-                    "id": snap_id,
-                    "inst": req.instrument,
-                    "tf": req.timeframe,
-                    "ts": now,
-                    "p": req.price,
-                    "reg": req.regime,
-                    "sess": req.session,
-                    "feat": json.dumps(req.features),
-                    "opt": json.dumps(req.options_context) if req.options_context else None,
-                    "dq": req.data_quality.value if isinstance(req.data_quality, DataQualityStatus) else req.data_quality,
-                    "created": now,
-                }
-            )
-            await session.commit()
-        except Exception as e:
-            await session.rollback()
-            logger.warning("save_snapshot_db_failed_memory_cached", error=str(e))
+    await SnapshotService.record_snapshot(snapshot, session=session, strict=session is not None)
 
     return snapshot
 
@@ -666,12 +818,52 @@ async def create_snapshot(
 async def list_snapshots(
     instrument: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    session: Optional[AsyncSession] = Depends(get_db_session),
 ):
-    """List recent research snapshots."""
-    snaps = list(_memory_snapshots.values())
+    """List recent research snapshots (durable: DB with memory fallback)."""
+    from app.research.predictions import SnapshotService
+
+    if session is not None:
+        try:
+            query = "SELECT * FROM research_snapshots WHERE 1=1"
+            params: Dict[str, Any] = {"limit": limit}
+            if instrument:
+                query += " AND instrument = :inst"
+                params["inst"] = instrument
+            query += " ORDER BY timestamp DESC LIMIT :limit"
+            result = await session.execute(text(query), params)
+            rows = result.mappings().all()
+            if rows:
+                return [ResearchSnapshot(**dict(r)) for r in rows]
+        except Exception as e:
+            logger.warning("db_list_snapshots_failed_fallback_memory", error=str(e))
+
+    from app.research.predictions import SnapshotService
+
+    snaps = list(SnapshotService._memory_snapshots.values()) + list(_memory_snapshots.values())
+    # Deduplicate by snapshot_id (SnapshotService cache may shadow module cache)
+    seen: Dict[str, ResearchSnapshot] = {}
+    for s in snaps:
+        if s.snapshot_id not in seen:
+            seen[s.snapshot_id] = s
+    snaps = list(seen.values())
     if instrument:
         snaps = [s for s in snaps if s.instrument == instrument]
     return sorted(snaps, key=lambda x: x.timestamp, reverse=True)[:limit]
+
+
+@router.get("/snapshots/{snapshot_id}", response_model=ResearchSnapshot)
+async def get_snapshot(
+    snapshot_id: str,
+    session: Optional[AsyncSession] = Depends(get_db_session),
+):
+    """Fetch a snapshot by ID (DB with in-memory fallback)."""
+    from app.research.predictions import SnapshotService
+
+    snap = await SnapshotService.get_snapshot(snapshot_id, session=session)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return snap
 
 
 @router.post("/annotations", response_model=ResearchAnnotation)
@@ -696,3 +888,37 @@ async def list_annotations(
     if instrument:
         anns = [a for a in anns if a.instrument == instrument]
     return sorted(anns, key=lambda x: x.timestamp, reverse=True)
+
+
+# -------------------------------------------------------------
+# 7. Champion/Challenger Promotion (§30)
+# -------------------------------------------------------------
+
+class PromoteRequest(BaseModel):
+    model_prefixes: Optional[List[str]] = Field(default=None, description="Only promote artifacts matching these prefixes")
+
+
+@router.post("/promote")
+async def promote_challenger(req: PromoteRequest):
+    """Promote validated challenger artifacts to champion status.
+
+    Implements Section 30 of the DROID ML Production & Research Specification.
+    Archives the current champion, copies the challenger in, and appends an
+    audit entry to ``promotion_audit.jsonl``. This is a blocking call — the
+    file I/O is bounded and fails fast.
+    """
+    try:
+        from backend.scripts.promote_challenger import promote_challengers
+    except ImportError:
+        try:
+            from scripts.promote_challenger import promote_challengers
+        except ImportError:
+            from app.scripts.promote_challenger import promote_challengers
+
+    try:
+        promoted = promote_challengers(model_prefixes=req.model_prefixes)
+    except Exception as e:
+        logger.error("promote_challenger_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Promotion failed: {e}")
+
+    return {"promoted": promoted, "count": len(promoted)}

@@ -34,6 +34,9 @@ StrategyName = Literal[
     "MOMENTUM_REACCELERATION",
     "EMA_RIBBON",
     "GAMMA_SPIKE",
+    "ABSORPTION_REVERSAL",
+    "IV_REGIME",
+    "VORTEX_SNAP",
 ]
 TradeDirection = Literal["LONG_CALL", "LONG_PUT"]
 Timeframe = Literal["1M", "3M", "5M", "15M", "1H", "1D"]

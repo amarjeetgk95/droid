@@ -14,11 +14,14 @@ import { ForecastPanel } from './ForecastPanel';
 import { IndicatorsPanel } from './IndicatorsPanel';
 import { ExperimentsPanel } from './ExperimentsPanel';
 import { MlPanel } from './MlPanel';
+import { PapResearchPanel } from './PapResearchPanel';
+import { QuantFalsificationPanel } from './QuantFalsificationPanel';
+import { VortexResearchPanel } from './VortexResearchPanel';
 
 export function LabModule() {
   const { instrument } = useInstrument();
   const { isOpen } = useMarketSession();
-  const [tab, setTab] = useState<LabTab>('forecasts');
+  const [tab, setTab] = useState<LabTab>('quant');
 
   const lab = useResearchLab(instrument, isOpen);
   const ml = useMlDesk(instrument, isOpen && tab === 'ml');
@@ -113,6 +116,9 @@ export function LabModule() {
         ))}
       </section>
 
+      {tab === 'quant' ? <QuantFalsificationPanel /> : null}
+      {tab === 'pap' ? <PapResearchPanel /> : null}
+      {tab === 'vortex' ? <VortexResearchPanel symbol={instrument} /> : null}
       {tab === 'forecasts' ? <ForecastPanel lab={lab} /> : null}
       {tab === 'indicators' ? <IndicatorsPanel lab={lab} /> : null}
       {tab === 'experiments' ? <ExperimentsPanel lab={lab} /> : null}

@@ -129,7 +129,6 @@ class RejectionReason(str, Enum):
     MAX_DAILY_LOSS_HIT = "MAX_DAILY_LOSS_HIT"
     SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"
     CIRCUIT_BREAKER = "CIRCUIT_BREAKER"
-    KILL_SWITCH = "KILL_SWITCH"
     TIMEFRAME_MISMATCH = "TIMEFRAME_MISMATCH"
     SYMBOL_MISMATCH = "SYMBOL_MISMATCH"
     CONFLICTING_SIGNALS = "CONFLICTING_SIGNALS"
@@ -188,7 +187,6 @@ class MarketContext(BaseModel):
             "spread_pct": 0.05,
             "max_spread_pct": 0.5,
             "circuit_breaker": False,
-            "kill_switch": False,
             "symbol": self.symbol,
             "existing_position": None,
         }

@@ -55,30 +55,19 @@ class RegimeModel:
     def predict_regime(self, feature_vector: List[float]) -> Dict[str, Any]:
         """
         Predicts regime distribution and primary regime.
+
+        Fail-closed honesty: unfitted returns status="fallback" with NULL
+        regime/probabilities (never 50/10 heuristic). Callers MUST check
+        `status`/`is_fallback` — a fallback is not a prediction.
         """
         if self.model is None:
-            # Safe deterministic baseline
-            # Infer from ema/supertrend/volatility features in vector
-            # index 11: ema_alignment, 12: supertrend, 13: adx, 17: vix_norm
-            ema_align = feature_vector[11] if len(feature_vector) > 11 else 0.0
-            adx = feature_vector[13] if len(feature_vector) > 13 else 20.0
-            vol_exp = feature_vector[18] if len(feature_vector) > 18 else 0.0
-
-            if vol_exp > 0.5:
-                regime = "VOL_EXPANSION"
-            elif adx >= 25.0:
-                regime = "TREND_UP" if ema_align > 0 else "TREND_DOWN"
-            elif adx < 18.0:
-                regime = "RANGE"
-            else:
-                regime = "LOW_VOL"
-
-            probs = {rc: 0.10 for rc in REGIME_CLASSES}
-            probs[regime] = 0.50
+            # No trained model: fail-closed, never fabricate 50/10 probs.
             return {
-                "regime": regime,
-                "probabilities": probs,
+                "regime": None,
+                "probabilities": None,
                 "is_fallback": True,
+                "status": "fallback",
+                "reason": "regime-model-unfitted-no-artifact",
                 "model_version": "heuristic_baseline",
             }
 

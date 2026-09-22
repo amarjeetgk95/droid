@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from tests.conftest import seed_chain_mark
 
 client = TestClient(app)
 
@@ -19,7 +20,16 @@ class TestPaperTradingEndpoints:
         assert "virtual_capital" in body["data"]
         assert "available_margin" in body["data"]
 
-    def test_place_order_api(self):
+    def test_place_order_api(self, paper_fills_from_marks):
+        # A MARKET order fills only against a broker-sourced quote, and an
+        # offline test process has none — so this test passed or failed on
+        # whatever ambient chain state the process happened to hold. Publish the
+        # mark the chain would have returned instead (the pinned feed refuses
+        # option symbols on purpose, to keep an index level off an option leg).
+        seed_chain_mark(
+            "BANKNIFTY52000CE", 280.0, underlying="BANKNIFTY",
+            strike=52000.0, option_type="CE",
+        )
         payload = {
             "symbol": "BANKNIFTY52000CE",
             "underlying": "BANKNIFTY",

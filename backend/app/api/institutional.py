@@ -648,8 +648,30 @@ def await_data_health_proxy():
         elif age > 5000: st = "STALE"
         elif age > 2000: st = "RECENT"
         else: st = "LIVE"
-        clock_sync = "VALID"
-        seq_valid = "VALID"
+        # Honesty: clock/sequence/snapshot validity must be measured, never
+        # hardcoded VALID. Use real drift when available, else UNKNOWN.
+        try:
+            from app.algo.clock import clock_authority as _ca
+
+            _drift = _ca.metrics().server_drift_ms
+        except Exception:
+            _drift = None
+        if _drift is None:
+            clock_sync = "UNKNOWN"
+        elif _drift >= 2000.0:
+            clock_sync = "STALE"
+        elif _drift >= 500.0:
+            clock_sync = "DEGRADED"
+        else:
+            clock_sync = "VALID"
+        try:
+            from app.institutional.sequence import get_sequence_validator as _gsv
+
+            _seq = _gsv(iid)
+            _gap = bool(getattr(_seq, "_gap_detected", False))
+            seq_valid = "INVALID" if _gap else "VALID"
+        except Exception:
+            seq_valid = "UNKNOWN"
         snap_valid = st == "LIVE"
         contract_valid = asset_registry.get(iid).contract_spec is not None
         out[iid] = {"status": st, "feed": fc.health}

@@ -22,10 +22,25 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_all():
+def reset_all(monkeypatch):
     paper_service.reset_portfolio()
     signal_fsm._signals.clear()
     signal_audit_ledger._trades.clear()
+    # A test process has no broker feed, so the real monitor reports DOWN and the
+    # execution guard rejects with check=10_FEED_HEALTH. Pin a healthy feed so
+    # these tests exercise the automated paper-execution path they are about.
+    from app.signals.safety.feed_health_monitor import feed_health_monitor
+
+    monkeypatch.setattr(
+        feed_health_monitor,
+        "get_telemetry",
+        lambda *a, **k: {
+            "status": "LIVE",
+            "is_healthy_for_trading": True,
+            "market_session": {"is_open": True, "reason": "MARKET_OPEN"},
+            "spot_feed": {"tick_age_seconds": 0.0},
+        },
+    )
     from app.services.calendar_service import calendar_service, MarketSessionPermission
     from unittest.mock import patch
     import zoneinfo

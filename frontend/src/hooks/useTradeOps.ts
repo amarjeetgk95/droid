@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { useCommandSection } from '@/context/AppStreamContext';
-import { getObj, pickNum, pickStr } from '@/lib/signalsNormalize';
+import { getObj, pickNum, pickStr, maxPayloadTimestampMs } from '@/lib/signalsNormalize';
 import { toNumber } from '@/lib/coerce';
 import { useSmartInterval } from './useSmartInterval';
 import {
@@ -100,23 +100,6 @@ function toTradeConsent(input: unknown): TradeConsent | null {
   };
 }
 
-export type TradeKillSwitch = {
-  isKilled: boolean | null;
-  killLevel: string | null;
-  reason: string | null;
-};
-
-function toTradeKillSwitch(input: unknown): TradeKillSwitch | null {
-  const data = getObj(getObj(input)?.data ?? input);
-  if (!data) return null;
-  if (data.is_killed === undefined && data.kill_level === undefined) return null;
-  return {
-    isKilled: typeof data.is_killed === 'boolean' ? data.is_killed : null,
-    killLevel: pickStr(data, 'kill_level'),
-    reason: pickStr(data, 'reason'),
-  };
-}
-
 function toRecordList(input: unknown): unknown[] {
   const data = getObj(input)?.data;
   return Array.isArray(data) ? data : [];
@@ -142,12 +125,13 @@ export type TradeOpsState = {
   slo: Record<string, unknown> | null;
   brokerCaps: Record<string, unknown> | null;
   greeks: Record<string, unknown> | null;
-  killSwitch: TradeKillSwitch | null;
   audit: TradeAuditRow[];
   loading: boolean;
   refreshing: boolean;
   error: string | null;
   updatedAt: number | null;
+  source: 'stream' | 'rest';
+  liveSource: 'stream' | 'rest';
   refresh: () => Promise<void>;
   cancelOrder: (clientOrderId: string) => Promise<TradeOpsActionResult>;
   reconcileOrder: (clientOrderId: string) => Promise<TradeOpsActionResult>;
@@ -179,7 +163,6 @@ export function useTradeOps(
   const [drift, setDrift] = useState<Record<string, unknown> | null>(null);
   const [slo, setSlo] = useState<Record<string, unknown> | null>(null);
   const [brokerCaps, setBrokerCaps] = useState<Record<string, unknown> | null>(null);
-  const [killSwitch, setKillSwitch] = useState<TradeKillSwitch | null>(null);
   const [audit, setAudit] = useState<TradeAuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -203,7 +186,6 @@ export function useTradeOps(
         driftResult,
         sloResult,
         capsResult,
-        killResult,
         auditResult,
       ] = await Promise.allSettled([
         api.getAlgoAccount(),
@@ -217,7 +199,6 @@ export function useTradeOps(
         api.getAlgoAiDrift(),
         api.getAlgoSloDashboard(),
         api.getBrokerCapabilities(),
-        api.getAlgoKillSwitch(),
         api.getAlgoAudit(auditLimit),
       ]);
       if (requestIdRef.current !== requestId) return;
@@ -295,11 +276,6 @@ export function useTradeOps(
       } else {
         failures.push(errorMessage(capsResult.reason, 'Broker capabilities unavailable'));
       }
-      if (killResult.status === 'fulfilled') {
-        setKillSwitch(toTradeKillSwitch(killResult.value));
-      } else {
-        failures.push(errorMessage(killResult.reason, 'Kill-switch status unavailable'));
-      }
       if (auditResult.status === 'fulfilled') {
         setAudit(
           toRecordList(auditResult.value)
@@ -311,7 +287,35 @@ export function useTradeOps(
       }
 
       setError(failures.length > 0 ? failures[0] : null);
-      setUpdatedAt(Date.now());
+      // Honest freshness: backend instants win; fully-failed loads keep last age.
+      const settled = [
+        accountResult,
+        capitalResult,
+        exposureResult,
+        ordersResult,
+        positionsResult,
+        consentResult,
+        strategiesResult,
+        aiModelsResult,
+        driftResult,
+        sloResult,
+        capsResult,
+        auditResult,
+      ];
+      if (settled.some((r) => r.status === 'fulfilled')) {
+        const payloadTs = maxPayloadTimestampMs(
+          settled.flatMap((r) => {
+            if (r.status !== 'fulfilled') return [];
+            const v = r.value as unknown;
+            const metaTs =
+              v !== null && typeof v === 'object' && 'meta' in (v as Record<string, unknown>)
+                ? ((v as Record<string, unknown>).meta as Record<string, unknown> | undefined)?.timestamp
+                : undefined;
+            return [v, metaTs ?? null];
+          }),
+        );
+        setUpdatedAt(payloadTs ?? Date.now());
+      }
       setLoading(false);
       if (showSpinner) setRefreshing(false);
     },
@@ -472,12 +476,13 @@ export function useTradeOps(
     slo,
     brokerCaps,
     greeks,
-    killSwitch,
     audit,
     loading,
     refreshing,
     error,
     updatedAt,
+    source: ordersSource,
+    liveSource: ordersSource,
     refresh,
     cancelOrder,
     reconcileOrder,

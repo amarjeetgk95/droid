@@ -508,22 +508,6 @@ export function createSignalsApi(core: ApiCore) {
       }>(`/api/v1/signals/portfolio-strategies`);
     },
 
-    async getSignalsKillSwitch() {
-      return core.request<{
-        active: boolean;
-        triggered_at?: string;
-        reason?: string;
-        by?: string;
-      }>(`/api/v1/signals/kill-switch`);
-    },
-
-    async toggleSignalsKillSwitch(active: boolean, reason = 'Operator manual control') {
-      return core.request<Record<string, unknown>>(`/api/v1/signals/kill-switch`, {
-        method: 'POST',
-        body: JSON.stringify({ active, reason }),
-      });
-    },
-
     async getSignalsFeedHealth() {
       return core.request<{
         states: Record<string, string>;
@@ -542,7 +526,63 @@ export function createSignalsApi(core: ApiCore) {
         body: JSON.stringify({ signal_ids: signalIds, reason }),
       });
     },
+
+    async getFunnelAnalytics(params?: { strategy?: string; underlying?: string }) {
+      const q = new URLSearchParams();
+      if (params?.strategy) q.set('strategy', params.strategy);
+      if (params?.underlying) q.set('underlying', params.underlying);
+      const qs = q.toString() ? `?${q.toString()}` : '';
+      return core.request<SignalFunnelData>(`/api/v1/signals/analytics/funnel${qs}`);
+    },
   };
+}
+
+export interface FunnelStageCounts {
+  evaluated: number;
+  candidates: number;
+  strategy_qualified: number;
+  pre_risk_passed: number;
+  risk_passed: number;
+  post_risk_passed: number;
+  enrichment_passed: number;
+  confirmed: number;
+}
+
+export interface FunnelBlocker {
+  name: string;
+  description: string;
+  count: number;
+  percentage: number;
+  sample_code?: string;
+}
+
+export interface StrategyPerformanceRow {
+  strategy: string;
+  desk: string;
+  enabled: boolean;
+  evaluated: number;
+  candidates: number;
+  strategy_qualified: number;
+  risk_passed: number;
+  confirmed: number;
+  total_trades: number;
+  wins: number;
+  losses: number;
+  win_rate_pct: number;
+}
+
+export interface SignalFunnelData {
+  date: string;
+  data_since: string;
+  opportunities_evaluated: number;
+  total_candidates_found: number;
+  total_confirmed: number;
+  conversion_rate_pct: number;
+  stages: FunnelStageCounts;
+  top_blockers: FunnelBlocker[];
+  raw_rejections: Array<{ code: string; count: number }>;
+  strategy_performance: StrategyPerformanceRow[];
+  underlying_stats: Record<string, { evaluated: number; candidates: number; confirmed: number }>;
 }
 
 export type SignalsApi = ReturnType<typeof createSignalsApi>;

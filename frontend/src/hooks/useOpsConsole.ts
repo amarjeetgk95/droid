@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
+import { dataFreshness, maxPayloadTimestampMs } from '@/lib/signalsNormalize';
 import { useMarketSession } from '@/hooks/useMarketSession';
 import { useSmartInterval } from './useSmartInterval';
 
@@ -100,7 +101,15 @@ export function useOpsConsole() {
     if (settledData(summaryRes)) setSummary((settledData(summaryRes) as any)?.data ?? null);
     if (settledData(quotesRes)) setQuotes(((settledData(quotesRes) as any)?.data ?? []) as any[]);
     if (settledData(statusRes)) setMarketStatus((settledData(statusRes) as any)?.data ?? null);
-    setOverviewUpdatedAt(Date.now());
+    // Payload instants only — a failed or undated batch keeps the last age.
+    const payloadTs = maxPayloadTimestampMs([
+      summaryRes.status === 'fulfilled' ? summaryRes.value : null,
+      quotesRes.status === 'fulfilled' ? quotesRes.value : null,
+      statusRes.status === 'fulfilled' ? statusRes.value : null,
+    ]);
+    if (payloadTs !== null) {
+      setOverviewUpdatedAt(payloadTs);
+    }
     setOverviewLoading(false);
     if (showSpinner) setOverviewRefreshing(false);
   }, []);
@@ -127,7 +136,19 @@ export function useOpsConsole() {
       feed: { data: settledData(feedRes), error: settledError(feedRes, 'Feed health unavailable') },
       forecastConfig: { data: settledData(forecastRes), error: settledError(forecastRes, 'Forecast config unavailable') },
     });
-    setHealthUpdatedAt(Date.now());
+    // Payload instants only — a failed or undated batch keeps the last age.
+    const payloadTs = maxPayloadTimestampMs([
+      liveRes.status === 'fulfilled' ? liveRes.value : null,
+      readyRes.status === 'fulfilled' ? readyRes.value : null,
+      subsystemsRes.status === 'fulfilled' ? subsystemsRes.value : null,
+      marketDataRes.status === 'fulfilled' ? marketDataRes.value : null,
+      dbRes.status === 'fulfilled' ? dbRes.value : null,
+      feedRes.status === 'fulfilled' ? feedRes.value : null,
+      forecastRes.status === 'fulfilled' ? forecastRes.value : null,
+    ]);
+    if (payloadTs !== null) {
+      setHealthUpdatedAt(payloadTs);
+    }
     setHealthLoading(false);
   }, []);
 
@@ -280,6 +301,9 @@ export function useOpsConsole() {
     [runMutation],
   );
 
+  const overviewFreshness = dataFreshness(overviewUpdatedAt);
+  const healthFreshness = dataFreshness(healthUpdatedAt);
+
   return {
     isOpen,
     summary,
@@ -289,12 +313,18 @@ export function useOpsConsole() {
     overviewLoading,
     overviewRefreshing,
     overviewUpdatedAt,
+    overviewAgeMs: overviewFreshness.ageMs,
+    overviewStale: overviewFreshness.stale,
+    source: 'rest' as const,
+    liveSource: 'rest' as const,
     symbolDash,
     symbolLoading,
     symbolError,
     probes,
     healthLoading,
     healthUpdatedAt,
+    healthAgeMs: healthFreshness.ageMs,
+    healthStale: healthFreshness.stale,
     cacheStats,
     breaker,
     orders,

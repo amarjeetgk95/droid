@@ -45,14 +45,12 @@ describe('toTradeAccount', () => {
       mode: 'PAPER',
       is_active: true,
       capital: { investment_limit: '3000', max_capital_per_trade: '1000', max_daily_loss: '500' },
-      kill_switch: { is_killed: false, kill_level: 'NONE' },
       consent_ok: true,
     });
     expect(account?.mode).toBe('PAPER');
     expect(account?.investmentLimit).toBe(3000);
     expect(account?.maxCapitalPerTrade).toBe(1000);
     expect(account?.available).toBeNull();
-    expect(account?.killed).toBe(false);
     expect(account?.consentOk).toBe(true);
     expect(account?.unavailable).toBe(false);
   });
@@ -72,7 +70,6 @@ describe('toTradeAccount', () => {
         daily_loss_limit: '2000',
         is_breached: false,
       },
-      kill_switch: { is_killed: false, kill_level: 'NONE' },
       consent: { acknowledged: true },
     });
     expect(account?.mode).toBe('LIVE');

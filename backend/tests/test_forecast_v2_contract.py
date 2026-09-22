@@ -18,6 +18,7 @@ from app.research.options_context import ResearchOptionsContext
 from app.research.predictions import PredictionService, SnapshotService
 from app.research.trend_forecast import (
     TrendForecast1H,
+    clear_forecast_idempotency,
     score_to_probabilities_v2,
     validate_forecast_v2,
 )
@@ -187,6 +188,56 @@ def test_valid_v2_contract():
     assert result["prediction_id"] is None
     assert result["snapshot_id"] is None
     assert validate_forecast_v2(result) == []
+
+
+def _neutral_mtf():
+    return {
+        "instrument": "NIFTY 50",
+        "per_timeframe": {
+            "1h": {"features": {
+                "quant": {"supertrend_dir": "NEUTRAL", "rsi_14": 50.0, "atr_14": 50.0},
+                "regime": "RANGING",
+                "session": "MID",
+            }},
+        },
+        "alignment": {"overall_bias": "NEUTRAL", "alignment_score": 0.0},
+    }
+
+
+def test_neutral_ensemble_carries_expected_range():
+    """The v1 neutral band must reach the response: the UI's Expected move
+    reads expected_range, and it was computed but never attached."""
+    fc = TrendForecast1H.__new__(TrendForecast1H)
+    result = fc.ensemble_forecast(
+        mtf_features=_neutral_mtf(),
+        indicator_outputs=[],
+        ml_forecast=None,
+        options_ctx=_healthy_options(),
+        current_price=25000.0,
+        horizon="1h",
+    )
+    assert result["direction"] == "NEUTRAL"
+    assert result["target_price"] is None
+    assert result["invalidation_price"] is None
+    assert result["expected_range"] == {
+        "lower": 24962.5, "mid": 25000.0, "upper": 25037.5,
+    }
+
+
+def test_directional_ensemble_keeps_expected_range_none():
+    """Directional verdicts carry prices, not a range (risk_v2 contract)."""
+    fc = TrendForecast1H.__new__(TrendForecast1H)
+    result = fc.ensemble_forecast(
+        mtf_features=_minimal_mtf(),
+        indicator_outputs=[],
+        ml_forecast=_heuristic_ml(),
+        options_ctx=_healthy_options(),
+        current_price=25000.0,
+        horizon="1h",
+    )
+    assert result["direction"] in {"BULLISH", "BEARISH"}
+    assert result["target_price"] is not None
+    assert result["expected_range"] is None
 
 
 def test_softmax_mapping_direction_aligned():
@@ -360,6 +411,91 @@ async def test_snapshot_failure_degrades_without_prediction(mock_options_healthy
     assert result["prediction_id"] is None  # never persist prediction without snapshot
     assert result["status"] == "DEGRADED"
     assert "snapshot-unavailable" in result["limitations"]
+
+
+# ---------------------------------------------------------------------------
+# P0-3b: indicator-definition FK self-healing (record=True with a real session)
+# ---------------------------------------------------------------------------
+
+class _FakeResult:
+    def mappings(self):
+        return self
+
+    def first(self):
+        return None
+
+
+class _FakeSession:
+    """Minimal AsyncSession double: records statements, emulates an empty
+    minute bucket, optionally fails statements containing a marker."""
+
+    def __init__(self, fail_on=()):
+        self.statements = []
+        self.fail_on = tuple(fail_on)
+        self.commits = 0
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.statements.append((sql, params))
+        for marker in self.fail_on:
+            if marker in sql:
+                raise RuntimeError(f"fake-db-failure:{marker}")
+        return _FakeResult()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_record_with_session_seeds_indicator_definition_first(mock_options_healthy):
+    """The trend_forecast_* ids are never seeded, so the persist path must
+    upsert the definition row BEFORE the prediction insert (FK), and the run
+    must report persisted."""
+    PredictionService._memory_predictions.clear()
+    SnapshotService._memory_snapshots.clear()
+    clear_forecast_idempotency()
+    with patch("app.ml.sessions.classify_window", return_value=_settle_ok()):
+        fc = _forecaster(_full_market(), _heuristic_ml())
+        sess = _FakeSession()
+        result = await fc.forecast(instrument="NIFTY 50", record=True, session=sess)
+    assert result["prediction_id"] is not None
+    assert result["snapshot_id"] is not None
+    assert result["persisted"] is True
+    assert not any("persistence-failed" in lim for lim in result["limitations"])
+    kinds = [
+        "definition" if "research_indicator_definitions" in sql else
+        "prediction" if "INSERT INTO research_predictions" in sql else
+        "snapshot" if "INSERT INTO research_snapshots" in sql else "other"
+        for sql, _ in sess.statements
+    ]
+    assert "definition" in kinds and "prediction" in kinds
+    assert kinds.index("definition") < kinds.index("prediction")
+    def_params = next(
+        params for sql, params in sess.statements
+        if "research_indicator_definitions" in sql
+    )
+    assert def_params["indicator_id"] == "trend_forecast_1h"
+
+
+@pytest.mark.asyncio
+async def test_prediction_insert_failure_degrades_without_prediction(mock_options_healthy):
+    """A failed prediction insert keeps the snapshot, drops the prediction id,
+    and degrades honestly instead of claiming a record."""
+    PredictionService._memory_predictions.clear()
+    SnapshotService._memory_snapshots.clear()
+    clear_forecast_idempotency()
+    with patch("app.ml.sessions.classify_window", return_value=_settle_ok()):
+        fc = _forecaster(_full_market(), _heuristic_ml())
+        sess = _FakeSession(fail_on=("INSERT INTO research_predictions",))
+        result = await fc.forecast(instrument="NIFTY 50", record=True, session=sess)
+    assert result["prediction_id"] is None
+    assert result["snapshot_id"] is not None
+    assert result["persisted"] is False
+    assert result["status"] == "DEGRADED"
+    assert "persistence-failed:prediction" in result["limitations"]
 
 
 # ---------------------------------------------------------------------------

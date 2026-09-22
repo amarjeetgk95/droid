@@ -1,0 +1,16 @@
+{
+  "run_id": "run_S6T_NIFTY_S6A_T1_f681168dec_1789881137",
+  "trial_id": "S6T_NIFTY_S6A_T1_f681168dec",
+  "strategy_id": "S6",
+  "spec_version": "S6SPEC_v1.3",
+  "strategy_version": "S6A_v1.0",
+  "variant": "S6-A",
+  "instrument": "NIFTY",
+  "track": "S6A_T1",
+  "parameter_hash": "ebbdd63f0933c284",
+  "dataset_hash": "2688a8946d7680c8",
+  "code_sha": "local_dev",
+  "created_at": "2026-09-20T05:12:17.526906+00:00",
+  "trial_budget_consumed": 2,
+  "trial_budget_limit": 400
+}

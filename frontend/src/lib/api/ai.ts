@@ -1,5 +1,40 @@
 import type { ApiCore } from './client';
 
+/** MOCK provider flag — demo responses, not live AI. Preserve, never silently rewrite. */
+export const MOCK_AI_SOURCE_LABEL = 'MOCK — demo responses, not live AI';
+
+/** True for the legacy mock provider id. UI must show the MOCK badge when true. */
+export function isMockAiProvider(provider: unknown): boolean {
+  return provider === 'mock_ai' || provider === 'mock';
+}
+
+export type AiMockProvenance = {
+  isMock: boolean;
+  label: string | null;
+  reason: 'provider' | 'response-flag' | null;
+};
+
+/**
+ * MOCK provenance for an AI result. Provider ids are preserved verbatim
+ * (mock_ai is never rewritten), so the mock flag must be derived here and
+ * from the backend's `is_mock` response flag — never dropped in transport.
+ */
+export function aiMockProvenance(
+  provider: unknown,
+  data?: { is_mock?: unknown } | null,
+): AiMockProvenance {
+  const providerMock = isMockAiProvider(provider);
+  const responseMock = data?.is_mock === true;
+  if (providerMock || responseMock) {
+    return {
+      isMock: true,
+      label: MOCK_AI_SOURCE_LABEL,
+      reason: providerMock ? 'provider' : 'response-flag',
+    };
+  }
+  return { isMock: false, label: null, reason: null };
+}
+
 async function streamChat(
   core: ApiCore,
   payload: import('../types').AIChatRequest,
@@ -116,8 +151,10 @@ export function createAiApi(core: ApiCore) {
       [key: string]: unknown;
     },
   ) {
-    // compat: mock_ai -> openrouter
-    const normProvider = provider === 'mock_ai' ? 'openrouter' : provider;
+    // Provider id is preserved verbatim — mock_ai is NEVER rewritten here.
+    // The backend normalizes it itself, and MOCK provenance travels via
+    // isMockAiProvider() / aiMockProvenance() plus the `is_mock` response flag.
+    const normProvider = provider;
     // For any non-openrouter via legacy endpoint, route via unified model-aware endpoint to ensure keys forwarded (gemini/ollama/direct providers)
     if (normProvider !== 'openrouter') {
       const payload: Record<string, unknown> = {
@@ -133,7 +170,7 @@ export function createAiApi(core: ApiCore) {
     if (opts?.geminiApiKey) headers['X-Gemini-Key'] = opts.geminiApiKey as string;
     const qp = opts?.openRouterApiKey ? `&openRouterApiKey=${encodeURIComponent(opts.openRouterApiKey as string)}` : '';
     const body = opts && Object.keys(opts).length > 0 ? JSON.stringify(opts) : undefined;
-    return core.request<{ data: import('../types').AIInsightResponse; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${normProvider}${qp}`, {
+    return core.request<{ data: import('../types').AIInsightResponse & { is_mock?: boolean }; error: string | null; meta: import('../types').ApiMeta }>(`/api/v1/ai/analyze/${encodeURIComponent(symbol)}?provider=${normProvider}${qp}`, {
       method: 'POST',
       headers,
       body,
@@ -168,11 +205,11 @@ export function createAiApi(core: ApiCore) {
     customBaseUrl?: string;
     [key: string]: unknown;
   }) {
-    // compat: mock_ai -> openrouter for unified path
+    // Provider id preserved verbatim: mock_ai must never be rewritten.
+    // MOCK provenance is exposed via isMockAiProvider()/aiMockProvenance().
     const norm = { ...payload };
-    if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
     // Ollama local-only hint: if base_url is localhost, inform caller but still attempt (backend will gate with clear message)
-    return core.request<{ data: import('../types').AIInsightResponse; error: string | null; meta: import('../types').ApiMeta; model_used?: string; latency_ms?: number; hint?: string }>('/api/v1/ai/analyze', {
+    return core.request<{ data: import('../types').AIInsightResponse & { is_mock?: boolean }; error: string | null; meta: import('../types').ApiMeta; model_used?: string; latency_ms?: number; hint?: string }>('/api/v1/ai/analyze', {
       method: 'POST',
       body: JSON.stringify(norm),
     });
@@ -322,11 +359,11 @@ export function createAiApi(core: ApiCore) {
       apiKey: string;
       base_url: string;
       [key: string]: unknown;
-    }> = {}) {
+    }> = {    }) {
       const norm: Record<string, unknown> = { ...payload };
       if (!norm.provider) norm.provider = 'openrouter';
-      if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
-      return core.request<{ data: { success: boolean; provider: string; model?: string; latency_ms?: number; schema_valid?: boolean; error?: string; hint?: string }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ai/test', {
+      // Provider id preserved verbatim — mock_ai is not rewritten (MOCK flag via isMockAiProvider).
+      return core.request<{ data: { success: boolean; provider: string; model?: string; latency_ms?: number; schema_valid?: boolean; is_mock?: boolean; error?: string; hint?: string }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ai/test', {
         method: 'POST',
         body: JSON.stringify(norm),
       });
@@ -359,9 +396,8 @@ export function createAiApi(core: ApiCore) {
     customBaseUrl?: string;
     [key: string]: unknown;
   }) {
-    // compat mock_ai -> openrouter
+    // Provider id preserved verbatim — mock_ai is not rewritten (MOCK flag via isMockAiProvider).
     const norm = { ...payload };
-    if (norm.provider === 'mock_ai') norm.provider = 'openrouter';
     return core.request<{ data: { success: boolean; provider: string; model: string; latency_ms: number; schema_valid: boolean; is_mock?: boolean; message?: string; error?: string; hint?: string; insight?: import('../types').AIInsightResponse }; error: string | null; meta: import('../types').ApiMeta }>('/api/v1/ai/test', {
       method: 'POST',
       body: JSON.stringify(norm),

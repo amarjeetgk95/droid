@@ -1,9 +1,12 @@
 import { toNumber } from '@/lib/coerce';
 import { getObj, pickNum, pickStr } from '@/lib/signalsNormalize';
 
-export type LabTab = 'forecasts' | 'indicators' | 'experiments' | 'ml';
+export type LabTab = 'forecasts' | 'indicators' | 'experiments' | 'ml' | 'pap' | 'quant' | 'vortex';
 
 export const LAB_TABS: Array<{ id: LabTab; label: string }> = [
+  { id: 'quant', label: 'Quant & Falsification' },
+  { id: 'pap', label: 'PAP Research' },
+  { id: 'vortex', label: 'VORTEX-SNAP Research' },
   { id: 'forecasts', label: 'Forecasts' },
   { id: 'indicators', label: 'Indicators' },
   { id: 'experiments', label: 'Experiments' },

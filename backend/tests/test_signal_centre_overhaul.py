@@ -84,7 +84,9 @@ class TestInstitutionalSignalCentre:
     def test_5_strategies_detection(self):
         # Versioned registry contract: renames must update this test + REGISTRY_VERSION,
         # never silently change the traded portfolio.
-        assert REGISTRY_VERSION == "2026.09.17-11+1alias-p2"
+        # Freeze 2026-09-20: registry SHAPE unchanged (11+alias), auto-scan
+        # restricted to 3 keepers via STRATEGY_ENABLED (scanner enforces).
+        assert REGISTRY_VERSION == "2026.09.20-freeze3+g2gate"
         assert set(INTRADAY_STRATEGIES.keys()) == set(EXPECTED_INTRADAY_STRATEGIES) == {
             "REGIME_ADAPTIVE_TREND",
             "VOLATILITY_BREAKOUT",
@@ -157,10 +159,24 @@ class TestInstitutionalSignalCentre:
         assert "win_rate_pct" in data
         assert "strategy_breakdown" in data
 
+    def test_funnel_analytics_endpoint(self, client):
+        res = client.get("/api/v1/signals/analytics/funnel")
+        assert res.status_code == 200
+        data = res.json()
+        assert "opportunities_evaluated" in data
+        assert "stages" in data
+        assert "evaluated" in data["stages"]
+        assert "candidates" in data["stages"]
+        assert "confirmed" in data["stages"]
+        assert "top_blockers" in data
+        assert "strategy_performance" in data
+        assert len(data["strategy_performance"]) > 0
+        assert "conversion_rate_pct" in data
+
     def test_generate_and_execute_paper_signal(self, client, mock_market_feed, paper_fills_from_marks, monkeypatch):
         # Isolation: pin feed-monitor telemetry so a live market session with no
-        # test broker feed cannot auto-activate the kill switch mid-test (which
-        # would make the 1-click paper execute fail its execution guard).
+        # test broker feed still passes the execution guard for the 1-click
+        # paper execute.
         from app.signals.safety.feed_health_monitor import feed_health_monitor
 
         monkeypatch.setattr(

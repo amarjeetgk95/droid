@@ -1,0 +1,28 @@
+[
+  {
+    "candidate_id": "S6CAND_F_S6FE_S6BE_S6CE_SENSEX_5m_1784790300_LONG_5m_1784791200_1784792100_1784792400",
+    "strategy_id": "S6",
+    "variant": "S6-F",
+    "instrument": "SENSEX",
+    "direction": -1,
+    "signal_time": "2026-07-23T07:35:00+00:00",
+    "entry_time": "2026-07-23T07:40:00+00:00",
+    "entry_reference_price": 86293.01050510578,
+    "execution_timeframe": "5m",
+    "context_timeframe": "5m",
+    "atr5": 144.46845132868992,
+    "stop_distance": 256.51992515378464,
+    "target_distance": 288.93690265737985,
+    "episode_id": "S6BE_S6CE_SENSEX_5m_1784790300_LONG_5m_1784791200",
+    "event_id": "S6FE_S6BE_S6CE_SENSEX_5m_1784790300_LONG_5m_1784791200_1784792100",
+    "regime": "REVERSAL",
+    "volume_ratio": 1.0,
+    "close_location": 0.5,
+    "room_atr": 2.0,
+    "reason_codes": [
+      "FAILED_REENTRY_ATR_0.22",
+      "BARS_3",
+      "STOP_1.78ATR"
+    ]
+  }
+]

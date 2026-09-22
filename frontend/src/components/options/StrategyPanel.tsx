@@ -188,6 +188,11 @@ function TemplatesCard({ desk }: { desk: OptionsDeskState }) {
   };
 
   const stats = useMemo(() => payoffStats(built?.payoff_curve), [built]);
+  // A null bound is only "unbounded" when the backend flagged the tail as
+  // uncapped; unmodelled structures (calendar) stay '—' with their limitation.
+  const unboundedBound = built?.defined_risk === false;
+  const boundLabel = (value: number | null | undefined, digits: number) =>
+    value !== null && value !== undefined ? safeNum(value, '—', digits) : unboundedBound ? 'unbounded' : '—';
 
   return (
     <Card title="Strategy templates" meta={`${desk.templates.length} templates`}>
@@ -237,11 +242,12 @@ function TemplatesCard({ desk }: { desk: OptionsDeskState }) {
         <div className="flex flex-col gap-3">
           <p className="sg-note">
             Built {built.template_id} off live spot {safeNum(built.spot_price)} — {built.legs.length} leg(s).
-            Max profit {safeNum(built.max_profit, '—', 0)} · max loss {safeNum(built.max_loss, '—', 0)} ·
+            Max profit {boundLabel(built.max_profit, 0)} · max loss {boundLabel(built.max_loss, 0)} ·
             R/R {built.risk_reward !== null ? safeNum(built.risk_reward) : '—'} · breakevens{' '}
             {stats.breakevens.length > 0 ? stats.breakevens.map((b) => safeNum(b, '—', 0)).join(' / ') : '—'}.
           </p>
           <p className="sg-note">{safeStr(built.premium_note, '')}</p>
+          {built.limitation ? <p className="sg-note">{built.limitation}</p> : null}
           <div className="tbl-scroll">
             <table className="sg-table">
               <thead>

@@ -194,6 +194,32 @@ def detect_market_regime(ta_analysis: dict[str, Any]) -> str:
     return "RANGE"
 
 
+def reconcile_pit_volume(ta_analysis: dict[str, Any], feat_snap: Any) -> float | None:
+    """Reconcile legacy TA volume_ratio with the PIT snapshot's rvol.
+
+    Legacy TA (analyze_volume) runs on the raw pool INCLUDING the forming
+    bar, whose partial print reads ~0.1-0.4x mid-bar and would fail every
+    volume gate (1.2x/1.3x/1.5x) on ~90% of scans. The snapshot's rvol is
+    measured on the last CLOSED bar vs the prior 20 (forming bar dropped as
+    lookahead) — the honest participation measure the gates intend.
+    Returns the applied rvol, or None when the snapshot carries no usable
+    value (TA surface left untouched, gates fail closed as before).
+    """
+    if not isinstance(ta_analysis, dict) or feat_snap is None:
+        return None
+    try:
+        pit_rvol = float(getattr(feat_snap, "rvol", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if pit_rvol <= 0:
+        return None
+    ta_analysis["volume_ratio"] = pit_rvol
+    vol_section = ta_analysis.get("volume")
+    if isinstance(vol_section, dict):
+        vol_section["relative_volume"] = pit_rvol
+    return pit_rvol
+
+
 async def acquire_market_context(
     underlying: str,
     timeframe: str,
@@ -497,6 +523,11 @@ async def acquire_market_context(
         diag.reasons.append(f"Feature snapshot unavailable ({str(_fs_err)[:100]}) — strategies skipped")
         diag.duration_ms = int((time.time() - started) * 1000)
         return None, diag
+
+    # PIT reconciliation (see reconcile_pit_volume): align the TA surface
+    # with the closed-bar rvol so detect() gates and breakout-pressure agree
+    # with the participation engine downstream.
+    reconcile_pit_volume(ta_analysis, feat_snap)
 
     ctx = StrategyContext(
         underlying=u,  # type: ignore

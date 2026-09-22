@@ -10,6 +10,31 @@ from app.swing.strategies.stage2_breakout import Stage2OptionsStrategy, Stage2Br
 from app.swing.strategies.iv_directional import IVDirectionalStrategy
 
 
+@pytest.fixture(autouse=True)
+def _pinned_selector_clock(monkeypatch):
+    """Pin the contract selector's clock for this module.
+
+    Selection economics are priced against hours-to-expiry, so these fixtures
+    only clear the class theta-drag ceilings mid-cycle (~5 days out). With an
+    unpinned clock this module is a calendar time bomb: near/at expiry every
+    candidate correctly fails closed and the strategies abstain, which the
+    tests misread as a regression.
+    """
+    from datetime import datetime
+
+    import app.signals.options_intelligence.selector as selector_mod
+    from app.signals.safety.clocks import IST
+
+    fixed = datetime(2026, 10, 1, 10, 0, tzinfo=IST)
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(selector_mod, "datetime", _FixedDateTime)
+
+
 def _generate_synthetic_candles(
     count: int = 50,
     base_price: float = 24000.0,

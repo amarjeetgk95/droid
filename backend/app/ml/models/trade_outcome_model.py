@@ -66,21 +66,22 @@ class TradeOutcomeModel:
     ) -> Dict[str, Any]:
         """
         Predicts calibrated probability of Target 1 hit vs Stop Loss hit.
+
+        Fail-closed honesty: unfitted returns status="fallback" with NULL
+        probs (never blended heuristic). Callers MUST check
+        `status`/`is_fallback`.
         """
         if self.classifier is None:
-            # Deterministic heuristic fallback
-            base_p = 0.50 + (direction_prob - 0.50) * 0.4 + (breakout_prob - 0.50) * 0.3
-            p_t1 = max(0.15, min(0.85, base_p))
-            p_sl = max(0.10, min(0.80, 1.0 - p_t1 - 0.15))
-            p_timeout = max(0.05, 1.0 - p_t1 - p_sl)
-
+            # No trained model: fail-closed, never blend from direction/breakout.
             return {
-                "p_target_before_stop": round(p_t1, 4),
-                "p_stop_before_target": round(p_sl, 4),
-                "p_timeout": round(p_timeout, 4),
-                "expected_mfe_r": round(max(0.5, p_t1 * 2.0), 2),
-                "expected_mae_r": round(max(0.3, p_sl * 1.0), 2),
+                "p_target_before_stop": None,
+                "p_stop_before_target": None,
+                "p_timeout": None,
+                "expected_mfe_r": None,
+                "expected_mae_r": None,
                 "is_fallback": True,
+                "status": "fallback",
+                "reason": "trade-outcome-model-unfitted-no-artifact",
                 "model_version": "heuristic_outcome_baseline",
             }
 

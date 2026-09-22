@@ -44,16 +44,24 @@ class ResearchOptionsContext:
                     "timestamp": timestamp,
                     "available": False,
                     "data_quality": DataQualityStatus.EMPTY.value,
-                    "pcr_oi": 1.0,
-                    "pcr_vol": 1.0,
-                    "atm_iv": 15.0,
+                    # Honesty: no silent concrete numbers when unavailable.
+                    # Nulls + explicit assumptions, never 1.0/15.0 as if measured.
+                    "pcr_oi": None,
+                    "pcr_vol": None,
+                    "atm_iv": None,
                     "call_wall": None,
                     "put_wall": None,
                     "max_pain": None,
-                    "days_to_expiry": 1.0,
-                    "atm_theta": -10.0,
-                    "atm_gamma": 0.001,
-                    "atm_vega": 10.0,
+                    "days_to_expiry": None,
+                    "atm_theta": None,
+                    "atm_gamma": None,
+                    "atm_vega": None,
+                    "synthetic": False,
+                    "assumptions": [
+                        "pcr_oi-unavailable-no-default",
+                        "atm_iv-unavailable-no-default",
+                        "dte-unavailable-no-default",
+                    ],
                 }
 
             # If data is synthetic or missing major fields, flag DEGRADED
@@ -63,15 +71,38 @@ class ResearchOptionsContext:
             call_wall = fno_data.get("call_wall")
             put_wall = fno_data.get("put_wall")
             max_pain = fno_data.get("max_pain")
-            pcr_oi = float(fno_data.get("pcr", 1.0) or 1.0)
-            pcr_vol = float(fno_data.get("pcr_vol", 1.0) or 1.0)
-            atm_iv = float(fno_data.get("atm_iv", 15.0) or 15.0)
-            days_to_expiry = float(fno_data.get("near_days", 1.0) or 1.0)
+            # Honesty: track when upstream omits a field (assumption, not measured).
+            assumptions: list[str] = []
+            _pcr_raw = fno_data.get("pcr")
+            _pcr_vol_raw = fno_data.get("pcr_vol")
+            _iv_raw = fno_data.get("atm_iv")
+            _dte_raw = fno_data.get("near_days")
+            if _pcr_raw is None:
+                assumptions.append("pcr_oi-assumed-1.0-missing-upstream")
+            if _pcr_vol_raw is None:
+                assumptions.append("pcr_vol-assumed-1.0-missing-upstream")
+            if _iv_raw is None:
+                assumptions.append("atm_iv-assumed-15.0-missing-upstream")
+            if _dte_raw is None:
+                assumptions.append("dte-assumed-1.0-missing-upstream")
+            pcr_oi = float(_pcr_raw if _pcr_raw is not None else 1.0)
+            pcr_vol = float(_pcr_vol_raw if _pcr_vol_raw is not None else 1.0)
+            atm_iv = float(_iv_raw if _iv_raw is not None else 15.0)
+            days_to_expiry = float(_dte_raw if _dte_raw is not None else 1.0)
 
             atm_greeks = fno_data.get("atm_greeks") or {}
-            atm_theta = float(atm_greeks.get("theta", -12.5) or -12.5)
-            atm_gamma = float(atm_greeks.get("gamma", 0.0015) or 0.0015)
-            atm_vega = float(atm_greeks.get("vega", 12.0) or 12.0)
+            _th_raw = atm_greeks.get("theta")
+            _ga_raw = atm_greeks.get("gamma")
+            _ve_raw = atm_greeks.get("vega")
+            if _th_raw is None:
+                assumptions.append("atm_theta-assumed-missing-upstream")
+            if _ga_raw is None:
+                assumptions.append("atm_gamma-assumed-missing-upstream")
+            if _ve_raw is None:
+                assumptions.append("atm_vega-assumed-missing-upstream")
+            atm_theta = float(_th_raw if _th_raw is not None else -12.5)
+            atm_gamma = float(_ga_raw if _ga_raw is not None else 0.0015)
+            atm_vega = float(_ve_raw if _ve_raw is not None else 12.0)
 
             return {
                 "instrument": instrument,
@@ -90,6 +121,8 @@ class ResearchOptionsContext:
                 "atm_theta": round(atm_theta, 2),
                 "atm_gamma": round(atm_gamma, 6),
                 "atm_vega": round(atm_vega, 2),
+                "synthetic": bool(fno_data.get("synthetic", False)),
+                "assumptions": assumptions,
                 "raw_fno": {
                     k: v for k, v in fno_data.items()
                     if k not in ("chain", "full_strikes") and not callable(v)
@@ -104,14 +137,21 @@ class ResearchOptionsContext:
                 "available": False,
                 "data_quality": DataQualityStatus.FAILED.value,
                 "error": str(e),
-                "pcr_oi": 1.0,
-                "pcr_vol": 1.0,
-                "atm_iv": 15.0,
+                # Honesty: nulls + assumptions, never silent 1.0/15.0.
+                "pcr_oi": None,
+                "pcr_vol": None,
+                "atm_iv": None,
                 "call_wall": None,
                 "put_wall": None,
                 "max_pain": None,
-                "days_to_expiry": 1.0,
-                "atm_theta": -10.0,
-                "atm_gamma": 0.001,
-                "atm_vega": 10.0,
+                "days_to_expiry": None,
+                "atm_theta": None,
+                "atm_gamma": None,
+                "atm_vega": None,
+                "synthetic": False,
+                "assumptions": [
+                    "pcr_oi-unavailable-no-default",
+                    "atm_iv-unavailable-no-default",
+                    "dte-unavailable-no-default",
+                ],
             }

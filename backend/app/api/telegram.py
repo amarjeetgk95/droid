@@ -133,6 +133,8 @@ def bulk_preferences(updates: dict, user: AuthUser = Depends(require_auth)):
 
 
 # ── §30 Test message — through the queue + rate limiter ─────────────
+# Honesty: enqueued != delivered. This endpoint only enqueues; delivery is
+# observed via /audit (delivered/failed). Never report "sent/delivered" here.
 @router.post("/test")
 async def send_test_message(user: AuthUser = Depends(require_auth)):
     chat_id = telegram_link_manager.chat_for_user(user.user_id)
@@ -143,7 +145,7 @@ async def send_test_message(user: AuthUser = Depends(require_auth)):
     notification_id = await telegram_notification_queue.enqueue_test_message(user.user_id, chat_id)
     if not notification_id:
         raise HTTPException(500, "Failed to enqueue test message")
-    return {"status": "enqueued", "notification_id": notification_id}
+    return {"status": "enqueued", "delivery": "pending-not-delivered", "notification_id": notification_id}
 
 
 # ── §39 Notification audit trail ─────────────────────────────────────
@@ -192,14 +194,17 @@ def telegram_commands():
 
 
 # ── Test/dev helper: publish an authoritative signal event ──────────
+# DEV watermark: keep dev path but never silent success — watermark + log.
 @router.post("/dev/publish-event")
 async def dev_publish_event(event: SignalEvent, user: AuthUser = Depends(require_auth)):
     """
     DEV/TEST ONLY — pushes an already-authoritative signal event through the
     notification pipeline. Never generates or modifies a signal itself.
+    Enqueued only (not delivered); watermarked as dev.
     """
+    logger.warning("telegram_dev_publish_event_watermark", user_id=user.user_id, dev=True)
     notification_ids = await telegram_notification_queue.publish_signal_event(event)
-    return {"status": "published", "notification_ids": notification_ids}
+    return {"status": "enqueued-dev", "delivery": "pending-not-delivered", "notification_ids": notification_ids, "dev_watermark": True, "non_actionable_without_confirmation": False}
 
 
 @router.post("/dev/preview")
@@ -207,11 +212,13 @@ def dev_preview(event: SignalEvent, user: AuthUser = Depends(require_auth)):  # 
     """
     Preview rendered Telegram message for a SignalEvent without enqueuing.
     Used by Settings → Telegram → Testing to show exactly what will be sent.
+    DEV watermark: preview only, never enqueued/delivered.
     """
     from app.institutional.telegram_templates import render_event_message
 
+    logger.warning("telegram_dev_preview_watermark", user_id=user.user_id, dev=True)
     text = render_event_message(event)
-    return {"event_type": event.event_type, "instrument": event.instrument, "preview": text}
+    return {"event_type": event.event_type, "instrument": event.instrument, "preview": text, "dev_watermark": True, "enqueued": False}
 
 
 @router.post("/dev/quick-test")
@@ -308,11 +315,12 @@ async def dev_quick_test(
             kwargs["result"] = "TARGET_HIT" if direction == "BULLISH" else "STOP_HIT"
 
     event = SignalEvent(**kwargs)
+    logger.warning("telegram_dev_quick_test_watermark", user_id=user.user_id, dev=True, instrument=instrument)
     ids = await telegram_notification_queue.publish_signal_event(event)
     # Also return preview for immediate UI feedback
     from app.institutional.telegram_templates import render_event_message
     preview = render_event_message(event)
-    return {"status": "published", "notification_ids": ids, "signal_id": sig_id, "preview": preview, "event": event.model_dump()}
+    return {"status": "enqueued-dev", "delivery": "pending-not-delivered", "notification_ids": ids, "signal_id": sig_id, "preview": preview, "event": event.model_dump(), "dev_watermark": True}
 
 
 @router.get("/stats")

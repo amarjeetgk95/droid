@@ -5,6 +5,7 @@ import {
   isNiftySymbol,
   normalizeDashboardSymbol,
   resolveCardSymbol,
+  resolveIndexSymbol,
 } from './symbols';
 
 describe('dashboard symbol mapping', () => {
@@ -38,6 +39,28 @@ describe('dashboard symbol mapping', () => {
   });
 });
 
+describe('index quote mapping', () => {
+  it('resolves every feed index symbol explicitly, most specific first', () => {
+    expect(resolveIndexSymbol('NIFTY 50')).toBe('NIFTY');
+    expect(resolveIndexSymbol('NSE:NIFTY50-INDEX')).toBe('NIFTY');
+    expect(resolveIndexSymbol('BANKNIFTY')).toBe('BANKNIFTY');
+    expect(resolveIndexSymbol('NIFTY BANK')).toBe('BANKNIFTY');
+    expect(resolveIndexSymbol('FINNIFTY')).toBe('FINNIFTY');
+    expect(resolveIndexSymbol('Nifty Fin Service')).toBe('FINNIFTY');
+    expect(resolveIndexSymbol('BSE:SENSEX-INDEX')).toBe('SENSEX');
+    expect(resolveIndexSymbol('INDIA VIX')).toBe('INDIAVIX');
+    expect(resolveIndexSymbol('NSE:INDIAVIX-INDEX')).toBe('INDIAVIX');
+  });
+
+  it('returns null instead of defaulting unknown symbols to NIFTY', () => {
+    expect(resolveIndexSymbol('BTCUSDT')).toBeNull();
+    expect(resolveIndexSymbol('RELIANCE')).toBeNull();
+    expect(resolveIndexSymbol('USDINR')).toBeNull();
+    expect(resolveIndexSymbol('')).toBeNull();
+    expect(resolveIndexSymbol(null)).toBeNull();
+  });
+});
+
 describe('shared card helpers', () => {
   it('flags crypto cards by provider or symbol suffix', () => {
     expect(isCryptoCard({ symbol: 'BTCUSDT', provider: 'binance' })).toBe(true);
@@ -50,11 +73,13 @@ describe('shared card helpers', () => {
       { symbol: 'NSE:BANKNIFTY-INDEX' },
       { symbol: 'NIFTY 50' },
       { symbol: 'BSE:SENSEX-INDEX' },
+      { symbol: 'NSE:INDIAVIX-INDEX' },
     ];
     expect(findInstrumentCard(cards, 'NIFTY 50')?.symbol).toBe('NIFTY 50');
     expect(findInstrumentCard(cards, 'NIFTY')?.symbol).toBe('NIFTY 50');
     expect(findInstrumentCard(cards, 'BANKNIFTY')?.symbol).toBe('NSE:BANKNIFTY-INDEX');
     expect(findInstrumentCard(cards, 'SENSEX')?.symbol).toBe('BSE:SENSEX-INDEX');
+    expect(findInstrumentCard(cards, 'INDIAVIX')?.symbol).toBe('NSE:INDIAVIX-INDEX');
     expect(findInstrumentCard([], 'NIFTY')).toBeUndefined();
   });
 

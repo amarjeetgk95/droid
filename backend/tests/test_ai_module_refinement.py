@@ -185,7 +185,6 @@ class TestDeterministicTradeValidator:
             "current_price": 24150.0,
             "spread_pct": 0.1,
             "circuit_breaker": False,
-            "kill_switch": False,
         }
         defaults.update(kwargs)
         return defaults
@@ -282,15 +281,6 @@ class TestDeterministicTradeValidator:
         risk = self._make_risk_state()
         decision = deterministic_trade_validator.validate(signal, market, risk)
         assert decision.decision == "REJECT"
-
-    def test_kill_switch_active(self):
-        """19. Kill switch active triggers rejection."""
-        signal = self._make_signal()
-        market = self._make_market_state(kill_switch=True)
-        risk = self._make_risk_state()
-        decision = deterministic_trade_validator.validate(signal, market, risk)
-        assert decision.decision == "REJECT"
-        assert decision.reason_code == RejectionReason.KILL_SWITCH
 
 
 class TestSignalScorer:
@@ -484,7 +474,6 @@ class TestConcurrency:
             "current_price": 24150.0,
             "spread_pct": 0.1,
             "circuit_breaker": False,
-            "kill_switch": False,
             "last_signal": None,
         }
         risk_state = {

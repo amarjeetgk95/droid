@@ -3,11 +3,13 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useMarketSession } from '@/context/MarketSessionContext';
 import { useTradeOps } from '@/hooks/useTradeOps';
+import { useNow } from '@/hooks/useNow';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/toast';
 import { fmtInr, pnlClass } from '@/lib/ledger';
 import { safeNum, safeStr } from '@/lib/utils';
-import { shortId } from '@/lib/signalsNormalize';
+import { dataFreshness, shortId } from '@/lib/signalsNormalize';
+import { ageLabel } from '@/lib/feedState';
 import { modeBadgeClass, type TradeOrder, type TradePosition } from '@/lib/tradeOps';
 import { OrdersPanel } from './OrdersPanel';
 import { PositionsPanel } from './PositionsPanel';
@@ -29,11 +31,19 @@ export function TradeModule() {
 
   // Read-only polling: 20s while the market is open, idle otherwise.
   const ops = useTradeOps({ safetyRefreshMs: isOpen ? 20_000 : null });
+  const now = useNow(1000);
 
   const openPositions = useMemo(
     () => ops.positions.filter((position) => position.isOpen !== false),
     [ops.positions],
   );
+
+  // Snapshot freshness: age of the last successful payload (backend instant
+  // preferred). Unknown age can never be presented as live. `useNow` starts at
+  // 0; dataFreshness falls back to a real clock internally.
+  const freshness = dataFreshness(ops.updatedAt, { nowMs: now });
+  const snapshotAge = now > 0 ? ageLabel(ops.updatedAt, now) : null;
+  const sourceLabel = ops.ordersSource === 'stream' ? 'stream' : 'rest fallback';
 
   const handleCancel = useCallback(async () => {
     if (!pendingCancel) return;
@@ -91,15 +101,14 @@ export function TradeModule() {
           <h2>Trade Ops</h2>
           <span
             className={modeBadge}
-            title="Broker account mode. LIVE touches a real broker account — every action asks for confirmation."
+            title={
+              ops.mode === 'UNKNOWN'
+                ? 'Broker mode was not reported (or was unrecognized) — treat every action as unverified and confirm on the broker.'
+                : 'Broker account mode. LIVE touches a real broker account — every action asks for confirmation.'
+            }
           >
             {ops.mode === 'UNKNOWN' ? 'MODE UNKNOWN' : `${ops.mode} MODE`}
           </span>
-          {ops.account?.killed === true ? (
-            <span className="badge b-bear" title={`Kill switch active: ${ops.account.killLevel ?? 'unknown level'}`}>
-              KILL ACTIVE
-            </span>
-          ) : null}
           <span className="card-meta">
             {safeStr(ops.account?.displayName, ops.account?.accountId ? shortId(ops.account.accountId) : '—')}
           </span>
@@ -117,8 +126,21 @@ export function TradeModule() {
           <span className="stat-chip">
             buying power <b>{fmtInr(ops.account?.available)}</b>
           </span>
-          <span className="stat-chip" title="algo command section: live stream vs REST fallback">
-            {ops.ordersSource === 'stream' ? 'stream ~2s' : 'rest fallback'}
+          <span
+            className="stat-chip"
+            title={
+              freshness.timeUnknown
+                ? 'No successful data payload yet — source age is unconfirmed, so no figure is presented as live.'
+                : freshness.stale
+                  ? `Last successful payload ${snapshotAge ?? 'at an unknown time'} ago — showing last known values, not live.`
+                  : `Last successful payload ${snapshotAge ?? 'just now'}.`
+            }
+          >
+            {sourceLabel} ·{' '}
+            <b className={freshness.stale ? 'text-warn-strong' : undefined}>
+              {freshness.timeUnknown ? 'age unknown' : snapshotAge ?? 'just now'}
+            </b>
+            {freshness.timeUnknown ? ' · not confirmed live' : freshness.stale ? ' · stale' : ''}
           </span>
           <span className="stat-chip">{isOpen ? 'market open' : 'market closed'}</span>
         </div>
@@ -170,6 +192,18 @@ export function TradeModule() {
           </span>
         </span>
       </div>
+
+      {freshness.timeUnknown && !ops.loading ? (
+        <p className="sg-note">
+          Snapshot age unknown — no successful payload timestamp yet. Capital, exposure and order
+          figures are last known and not confirmed live.
+        </p>
+      ) : freshness.stale ? (
+        <p className="sg-note">
+          Snapshot stale ({snapshotAge ?? 'age unknown'}) — capital, exposure and order figures are
+          last known, not live.
+        </p>
+      ) : null}
 
       {ops.account?.unavailable ? (
         <p className="sg-err">
@@ -245,7 +279,6 @@ export function TradeModule() {
           slo={ops.slo}
           brokerCaps={ops.brokerCaps}
           greeks={ops.greeks}
-          killSwitch={ops.killSwitch}
         />
       ) : null}
 

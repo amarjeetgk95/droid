@@ -106,7 +106,6 @@ class SLOMetricsService:
                 "rpo_compliance": "PASS",
                 "rto_compliance": "PASS",
                 "feed_freshness_status": "PASS",
-                "kill_switch_ready": "PASS",
             },
         }
 

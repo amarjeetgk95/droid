@@ -243,6 +243,7 @@ class AIService:
         model: str | None = None,
         base_url: str | None = None,
         customBaseUrl: str | None = None,
+        allow_paid: bool | None = None,
     ) -> dict:
         """Strict connectivity + prompt + schema test. Returns latency and detailed result."""
         # Real providers – instantiate with supplied keys and do strict test
@@ -278,8 +279,11 @@ class AIService:
         if provider.lower() == "openrouter":
             from app.services.openrouter_catalog import validate_model_or_raise
             from app.core.config import settings as _cfg
-            # Derive free_only from server setting (single source of truth for strict mode)
-            effective_free_only = getattr(_cfg, "openrouter_free_only", True)
+            # Payload allow_paid overrides the server default; None falls back to strict mode
+            if allow_paid is not None:
+                effective_free_only = not allow_paid
+            else:
+                effective_free_only = getattr(_cfg, "openrouter_free_only", True)
             # Resolve model_id: 'auto' or None -> best free; otherwise validate supplied id
             raw_model = (openRouterModel or "auto").strip()
             if raw_model.lower() in ("auto", "auto — best free for trading", "auto-best-free-for-trading", ""):

@@ -54,6 +54,10 @@ export function useResearchLab(instrument: string, marketOpen: boolean) {
   const [annotations, setAnnotations] = useState<AnnotationSummary[]>([]);
   const [annError, setAnnError] = useState<string | null>(null);
   const [mutating, setMutating] = useState(false);
+  const [snapshotDetail, setSnapshotDetail] = useState<Record<string, unknown> | null>(null);
+  const [snapshotDetailError, setSnapshotDetailError] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteResult, setPromoteResult] = useState<{ promoted: string[]; count: number } | null>(null);
 
   const reqRef = useRef(0);
 
@@ -262,6 +266,31 @@ export function useResearchLab(instrument: string, marketOpen: boolean) {
     }
   }, [loadAnnotations]);
 
+  const openSnapshot = useCallback(async (id: string) => {
+    setSnapshotDetailError(null);
+    try {
+      const res = await api.getResearchSnapshot(id);
+      setSnapshotDetail(res as unknown as Record<string, unknown>);
+    } catch {
+      setSnapshotDetail(null);
+      setSnapshotDetailError('Snapshot unavailable');
+    }
+  }, []);
+
+  const promoteChallenger = useCallback(async (prefixes?: string[]): Promise<ResearchLabAction> => {
+    setPromoting(true);
+    setPromoteResult(null);
+    try {
+      const res = await api.promoteChallenger(prefixes);
+      setPromoteResult(res);
+      return { ok: true, message: `Promoted ${res.count} artifact(s) to champion.` };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err, 'Promotion failed') };
+    } finally {
+      setPromoting(false);
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
     await Promise.all([loadPredictions(), loadIndicators(), loadMonitoring(), loadSnapshots(), loadAnnotations()]);
     await board.refresh({ record: false });
@@ -276,7 +305,9 @@ export function useResearchLab(instrument: string, marketOpen: boolean) {
     health, healthError, config, configError,
     indicators, indLoading, indError, indicatorDetail, calcResult, calcBusy, openIndicator, calculateIndicator,
     experiment, expBusy, expError, runExperiment,
-    snapshots, snapError, annotations, annError, mutating, createSnapshot, createAnnotation,
+    snapshots, snapError, snapshotDetail, snapshotDetailError, openSnapshot,
+    annotations, annError, mutating, createSnapshot, createAnnotation,
+    promoting, promoteChallenger, promoteResult,
     refreshAll,
   };
 }

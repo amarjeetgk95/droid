@@ -5,8 +5,7 @@ Provides:
   - Clocks & Time Integrity (get_event_clock, get_session_clock, get_monotonic_clock)
   - Sequence Validation (get_sequence_validator)
   - Exact Decimal Arithmetic (Price, Quantity, Money, normalize_price_to_tick, validate_quantity, D)
-  - Global Emergency Kill Switch (kill_switch)
-  - Hierarchical 15-Check Execution Guard (final_execution_guard, GuardCheckResult)
+  - Hierarchical 14-Check Execution Guard (final_execution_guard, GuardCheckResult)
 """
 from app.signals.safety.decimal_types import (
     D,
@@ -52,10 +51,6 @@ from app.signals.safety.feed_health_monitor import (
     FeedHealthMonitor,
     feed_health_monitor,
 )
-from app.signals.safety.kill_switch import (
-    GlobalKillSwitch,
-    kill_switch,
-)
 from app.signals.safety.execution_guard import (
     GuardCheckResult,
     final_execution_guard,
@@ -96,8 +91,6 @@ __all__ = [
     "get_event_clock",
     "get_session_clock",
     "get_monotonic_clock",
-    "GlobalKillSwitch",
-    "kill_switch",
     "GuardCheckResult",
     "final_execution_guard",
 ]

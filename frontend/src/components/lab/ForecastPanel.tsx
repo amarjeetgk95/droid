@@ -38,7 +38,7 @@ export function ForecastPanel({ lab }: { lab: Lab }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmMeasureId, setConfirmMeasureId] = useState<string | null>(null);
   const [recordOpen, setRecordOpen] = useState(false);
-  const [form, setForm] = useState({ indicator_id: '', direction: 'BULLISH', score: '10', confidence: '0.6', current_price: '' });
+  const [form, setForm] = useState({ indicator_id: '', direction: 'BULLISH', score: '', confidence: '', current_price: '' });
 
   const handleGenerate = useCallback(async () => {
     try {
@@ -63,14 +63,22 @@ export function ForecastPanel({ lab }: { lab: Lab }) {
 
   const handleRecord = useCallback(async () => {
     const price = toNumber(form.current_price, { rejectBlankString: true });
-    const score = toNumber(form.score, { rejectBlankString: true }) ?? 0;
-    const conf = toNumber(form.confidence, { rejectBlankString: true }) ?? 0.5;
+    const score = toNumber(form.score, { rejectBlankString: true });
+    const confPct = toNumber(form.confidence, { rejectBlankString: true });
     if (!form.indicator_id.trim()) {
       push('error', 'indicator_id is required.');
       return;
     }
     if (price === null) {
       push('error', 'current_price is required.');
+      return;
+    }
+    if (score === null) {
+      push('error', 'score is required (enter a number between -100 and 100).');
+      return;
+    }
+    if (confPct === null) {
+      push('error', 'confidence % is required (enter a number between 0 and 100).');
       return;
     }
     const pid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -86,7 +94,7 @@ export function ForecastPanel({ lab }: { lab: Lab }) {
       current_price: price,
       direction: form.direction,
       score,
-      confidence: Math.max(0, Math.min(1, conf > 1 ? conf / 100 : conf)),
+      confidence: Math.max(0, Math.min(1, confPct / 100)),
       horizon_candles: 5,
     });
     push(res.ok ? 'success' : 'error', res.message);
@@ -245,11 +253,15 @@ export function ForecastPanel({ lab }: { lab: Lab }) {
       {recordOpen ? (
         <section className="card" aria-label="Record prediction form">
           <div className="card-bd grid gap-3 sm:grid-cols-2">
-            <label className="field"><span className="field-l">indicator_id</span><input className="input mono" value={form.indicator_id} onChange={(e) => setForm((f) => ({ ...f, indicator_id: e.target.value }))} placeholder="rsi_momentum" /></label>
+            <label className="field"><span className="field-l">indicator_id</span><input className="input mono" value={form.indicator_id} onChange={(e) => setForm((f) => ({ ...f, indicator_id: e.target.value }))} placeholder="e.g. rsi_momentum" /></label>
             <label className="field"><span className="field-l">direction</span><select className="input" value={form.direction} onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value }))}><option>BULLISH</option><option>BEARISH</option><option>NEUTRAL</option></select></label>
-            <label className="field"><span className="field-l">score (-100..100)</span><input className="input num" value={form.score} onChange={(e) => setForm((f) => ({ ...f, score: e.target.value }))} /></label>
-            <label className="field"><span className="field-l">confidence (0..1)</span><input className="input num" value={form.confidence} onChange={(e) => setForm((f) => ({ ...f, confidence: e.target.value }))} /></label>
-            <label className="field"><span className="field-l">current_price</span><input className="input num" value={form.current_price} onChange={(e) => setForm((f) => ({ ...f, current_price: e.target.value }))} placeholder="24900" /></label>
+            <label className="field"><span className="field-l">score (-100..100, required)</span><input className="input num" value={form.score} onChange={(e) => setForm((f) => ({ ...f, score: e.target.value }))} placeholder="e.g. 10" /></label>
+            <label className="field"><span className="field-l">confidence % (0..100, required)</span><input className="input num" value={form.confidence} onChange={(e) => setForm((f) => ({ ...f, confidence: e.target.value }))} placeholder="e.g. 60" /></label>
+            <label className="field"><span className="field-l">current_price (required)</span><input className="input num" value={form.current_price} onChange={(e) => setForm((f) => ({ ...f, current_price: e.target.value }))} placeholder="e.g. 24900" /></label>
+            <p className="sg-note sm:col-span-2">
+              Fields are recorded verbatim beside the prediction — blank score/confidence are rejected,
+              never silently replaced. Confidence is entered as a percent (60 = 0.60 in the ledger).
+            </p>
           </div>
         </section>
       ) : null}

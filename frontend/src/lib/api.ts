@@ -17,6 +17,9 @@ import { createMlApi, type MlApi } from './api/ml';
 import { createStrategyApi, type StrategyApi } from './api/strategy';
 import { createTelegramApi, type TelegramApi } from './api/telegram';
 import { createTokensApi, type TokensApi } from './api/tokens';
+import { createQuantApi, type QuantApi } from './api/quant';
+import { createVortexApi, type VortexApi } from './api/vortex';
+import { createHistoricalApi, type HistoricalApi } from './api/historical';
 
 export type Api = ApiCore &
   MarketsApi &
@@ -34,7 +37,10 @@ export type Api = ApiCore &
   MlApi &
   StrategyApi &
   TelegramApi &
-  TokensApi;
+  TokensApi &
+  QuantApi &
+  VortexApi &
+  HistoricalApi;
 
 const core = new ApiCore(API_BASE);
 
@@ -56,6 +62,9 @@ export const api: Api = Object.assign(
   createStrategyApi(core),
   createTelegramApi(core),
   createTokensApi(core),
+  createQuantApi(core),
+  createVortexApi(core),
+  createHistoricalApi(core),
 );
 
 /** Back-compat alias — no code constructs ApiClient directly (singleton `api` is the entrypoint). */

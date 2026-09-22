@@ -344,7 +344,12 @@ def _wf_direction_to_class(direction: Any) -> str:
 
 
 def _wf_probs_for_direction(direction: Direction) -> Dict[str, float]:
-    """Default deterministic 3-class probabilities for a direction."""
+    """Default deterministic 3-class probabilities for a direction.
+
+    Honesty: 0.6/0.2/0.2 and 0.25/0.5/0.25 are PLACEHOLDER assumptions for the
+    naive-momentum default path (no trained model). Callers surface them with
+    calibrated=false + assumption fields, never as calibrated risk.
+    """
     if direction == Direction.BULLISH:
         return {"bullish": 0.6, "neutral": 0.2, "bearish": 0.2}
     if direction == Direction.BEARISH:
@@ -791,6 +796,8 @@ class WalkForwardGate:
                     try:
                         if isinstance(out, Direction):
                             direction = out
+                            # Honesty: 0.6/0.34 are placeholder confidences for the
+                            # naive default path (assumption, not calibrated).
                             confidence = 0.6 if direction != Direction.NEUTRAL else 0.34
                             probs = _wf_probs_for_direction(direction)
                             score = 50.0 if direction == Direction.BULLISH else (
@@ -832,6 +839,7 @@ class WalkForwardGate:
                         direction = Direction.NEUTRAL
                     if direction not in (Direction.BULLISH, Direction.BEARISH, Direction.NEUTRAL):
                         direction = Direction.NEUTRAL
+                    # Honesty: placeholder confidence/probs (assumption).
                     confidence = 0.6 if direction != Direction.NEUTRAL else 0.34
                     probs = _wf_probs_for_direction(direction)
                     score = 50.0 if direction == Direction.BULLISH else (
@@ -855,7 +863,11 @@ class WalkForwardGate:
                     direction=direction,
                     score=float(score),
                     confidence=float(confidence),
-                    component_values={"probabilities": dict(probs)},
+                    component_values={
+                        "probabilities": dict(probs),
+                        "assumptions": ["validation-probs-0.6-0.34-placeholder-not-calibrated"],
+                        "available": False,
+                    },
                     forecast_horizon=ForecastHorizon.HORIZON_1H,
                     horizon_candles=h_candles,
                 )

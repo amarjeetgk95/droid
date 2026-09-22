@@ -65,6 +65,17 @@ function Rationale({ items }: { items: unknown }) {
   );
 }
 
+/** Provenance line for a tool result: exactly what was submitted, and its source. */
+function AssumptionNote({ items, note }: { items: Array<string | null>; note: string }) {
+  const lines = items.filter((line): line is string => typeof line === 'string' && line.length > 0);
+  if (lines.length === 0) return null;
+  return (
+    <p className="sg-note">
+      Inputs at submit — {lines.join(' · ')}. {note}
+    </p>
+  );
+}
+
 type OptionType = 'CE' | 'PE';
 
 function GreeksForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | null; atm: number | null }) {
@@ -75,6 +86,13 @@ function GreeksForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number 
   const [optionType, setOptionType] = useState<OptionType>('CE');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    spot: number;
+    strike: number;
+    strikeSource: string;
+    dte: number;
+    ivPct: number;
+  } | null>(null);
 
   const submit = async () => {
     const strikeNum = parseNum(strike) ?? atm;
@@ -84,6 +102,8 @@ function GreeksForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number 
       push('error', 'Spot, strike, DTE and volatility (IV %) are all required.');
       return;
     }
+    const strikeSource = strike.trim() === '' ? 'chain ATM fallback' : 'user input';
+    setSubmitted({ spot, strike: strikeNum, strikeSource, dte: dteNum, ivPct: volPct });
     setBusy(true);
     try {
       const outcome = await desk.calcGreeks({
@@ -156,9 +176,22 @@ function GreeksForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number 
             <div className="sg-kv"><span className="l">Rho</span><span className="v">{safeNum(pickNum(result, 'rho'))}</span></div>
             <div className="sg-kv"><span className="l">Moneyness</span><span className="v">{safeNum(pickNum(result, 'moneyness'))}</span></div>
           </div>
+          <AssumptionNote
+            items={
+              submitted
+                ? [
+                    `spot ${safeNum(submitted.spot)} (chain)`,
+                    `strike ${safeNum(submitted.strike, '—', 0)} (${submitted.strikeSource})`,
+                    `DTE ${safeNum(submitted.dte)}d (user)`,
+                    `IV ${safeNum(submitted.ivPct)}% (user)`,
+                  ]
+                : []
+            }
+            note="Black-Scholes computed on submit — not a live quote."
+          />
         </div>
       ) : (
-        <p className="sg-note">Pure Black-Scholes math — no chain state is touched.</p>
+        <p className="sg-note">Pure Black-Scholes math — no chain state is touched. IV is required; it is never assumed.</p>
       )}
     </Card>
   );
@@ -172,6 +205,13 @@ function IvForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | nu
   const [optionType, setOptionType] = useState<OptionType>('CE');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    spot: number;
+    marketPrice: number;
+    strike: number;
+    strikeSource: string;
+    dte: number;
+  } | null>(null);
 
   const submit = async () => {
     const priceNum = parseNum(price);
@@ -181,6 +221,8 @@ function IvForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | nu
       push('error', 'Market price, strike and DTE are required (spot comes from the chain).');
       return;
     }
+    const strikeSource = strike.trim() === '' ? 'chain ATM fallback' : 'user input';
+    setSubmitted({ spot, marketPrice: priceNum, strike: strikeNum, strikeSource, dte: dteNum });
     setBusy(true);
     try {
       const outcome = await desk.solveIv({
@@ -225,9 +267,24 @@ function IvForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | nu
         </button>
       </div>
       {result ? (
-        <div className="sg-kvlist">
-          <div className="sg-kv"><span className="l">Implied volatility</span><span className="v">{safeNum(pickNum(result, 'iv_percent'), '—', 2)}%</span></div>
-          <div className="sg-kv"><span className="l">IV (decimal)</span><span className="v">{safeNum(pickNum(result, 'implied_volatility'))}</span></div>
+        <div className="flex flex-col gap-3">
+          <div className="sg-kvlist">
+            <div className="sg-kv"><span className="l">Implied volatility</span><span className="v">{safeNum(pickNum(result, 'iv_percent'), '—', 2)}%</span></div>
+            <div className="sg-kv"><span className="l">IV (decimal)</span><span className="v">{safeNum(pickNum(result, 'implied_volatility'))}</span></div>
+          </div>
+          <AssumptionNote
+            items={
+              submitted
+                ? [
+                    `market premium ${safeNum(submitted.marketPrice)} (user)`,
+                    `spot ${safeNum(submitted.spot)} (chain)`,
+                    `strike ${safeNum(submitted.strike, '—', 0)} (${submitted.strikeSource})`,
+                    `DTE ${safeNum(submitted.dte)}d (user)`,
+                  ]
+                : []
+            }
+            note="Solved from the submitted premium — not a chain-quoted IV."
+          />
         </div>
       ) : (
         <p className="sg-note">Inverts the market premium into an annualized volatility.</p>
@@ -253,10 +310,20 @@ function SimForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | n
   const [iv, setIv] = useState('');
   const [target, setTarget] = useState('');
   const [stop, setStop] = useState('');
-  const [qty, setQty] = useState('75');
+  const [qty, setQty] = useState('');
   const [optionType, setOptionType] = useState<OptionType>('CE');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    spot: number;
+    strike: number;
+    strikeSource: string;
+    dte: number;
+    ivPct: number;
+    target: number;
+    stop: number;
+    qty: number;
+  } | null>(null);
 
   const submit = async () => {
     const strikeNum = parseNum(strike) ?? atm;
@@ -269,6 +336,17 @@ function SimForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | n
       push('error', 'Strike, DTE, IV %, target, stop and quantity are all required.');
       return;
     }
+    const strikeSource = strike.trim() === '' ? 'chain ATM fallback' : 'user input';
+    setSubmitted({
+      spot,
+      strike: strikeNum,
+      strikeSource,
+      dte: dteNum,
+      ivPct: ivNum,
+      target: targetNum,
+      stop: stopNum,
+      qty: Math.round(qtyNum),
+    });
     setBusy(true);
     try {
       const outcome = await desk.simulatePath({
@@ -309,8 +387,8 @@ function SimForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | n
         <Field label="Stop spot">
           <input className="input num" type="number" value={stop} onChange={(e) => setStop(e.target.value)} placeholder="23250" />
         </Field>
-        <Field label="Quantity">
-          <input className="input num" type="number" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="75" />
+        <Field label="Quantity (required)">
+          <input className="input num" type="number" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="e.g. 75" />
         </Field>
         <span className="sg-lab">
           <span>Type</span>
@@ -336,6 +414,21 @@ function SimForm({ desk, spot, atm }: { desk: OptionsDeskState; spot: number | n
             <span className="card-meta num">entry {safeNum(pickNum(result, 'entry_premium'))}</span>
           </div>
           <Rationale items={result.viability_rationale} />
+          <AssumptionNote
+            items={
+              submitted
+                ? [
+                    `spot ${safeNum(submitted.spot)} (chain)`,
+                    `strike ${safeNum(submitted.strike, '—', 0)} (${submitted.strikeSource})`,
+                    `DTE ${safeNum(submitted.dte)}d (user)`,
+                    `IV ${safeNum(submitted.ivPct)}% (user)`,
+                    `target ${safeNum(submitted.target, '—', 0)} / stop ${safeNum(submitted.stop, '—', 0)} (user)`,
+                    `qty ${safeNum(submitted.qty, '—', 0)} (user)`,
+                  ]
+                : []
+            }
+            note="Pure model output — no order is placed."
+          />
           {SIM_SCENARIOS.map((key) => {
             const scenario = getObj(result[key]);
             if (!scenario) return null;
@@ -362,12 +455,24 @@ function ExpectedMoveForm({ desk, spot }: { desk: OptionsDeskState; spot: number
   const [atr, setAtr] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    spot: number;
+    ivPct: number;
+    atr: number | null;
+  } | null>(null);
 
   const submit = async () => {
     if (spot === null) {
       push('error', 'Chain spot unavailable — expected move needs a live spot.');
       return;
     }
+    const ivPct = parseNum(iv);
+    if (ivPct === null) {
+      push('error', 'Current IV % is required — blank no longer assumes 15%.');
+      return;
+    }
+    const atrNum = parseNum(atr);
+    setSubmitted({ spot, ivPct, atr: atrNum });
     setBusy(true);
     try {
       const outcome = await desk.projectExpectedMove({
@@ -375,8 +480,8 @@ function ExpectedMoveForm({ desk, spot }: { desk: OptionsDeskState; spot: number
         spot,
         direction,
         horizon,
-        current_iv: parseNum(iv) !== null ? (parseNum(iv) as number) / 100 : 0.15,
-        atr: parseNum(atr),
+        current_iv: ivPct / 100,
+        atr: atrNum,
       });
       push(outcome.ok ? 'success' : 'error', outcome.message);
       setResult(outcome.value);
@@ -408,11 +513,11 @@ function ExpectedMoveForm({ desk, spot }: { desk: OptionsDeskState; spot: number
             ))}
           </span>
         </span>
-        <Field label="Current IV % (blank 15)">
-          <input className="input num" type="number" value={iv} onChange={(e) => setIv(e.target.value)} placeholder="12" />
+        <Field label="Current IV % (required)">
+          <input className="input num" type="number" value={iv} onChange={(e) => setIv(e.target.value)} placeholder="e.g. 12" />
         </Field>
         <Field label="ATR (optional)">
-          <input className="input num" type="number" value={atr} onChange={(e) => setAtr(e.target.value)} placeholder="60" />
+          <input className="input num" type="number" value={atr} onChange={(e) => setAtr(e.target.value)} placeholder="e.g. 60" />
         </Field>
         <button type="button" className="btn btn-primary btn-ic" disabled={busy} onClick={() => void submit()}>
           <Calculator size={13} />
@@ -432,9 +537,21 @@ function ExpectedMoveForm({ desk, spot }: { desk: OptionsDeskState; spot: number
           </div>
           <Rationale items={result.forecast_rationale ?? pickStr(result, 'velocity_assessment')} />
           {typeof result.velocity_assessment === 'string' ? <p className="sg-note">{result.velocity_assessment}</p> : null}
+          <AssumptionNote
+            items={
+              submitted
+                ? [
+                    `spot ${safeNum(submitted.spot)} (chain)`,
+                    `IV ${safeNum(submitted.ivPct)}% (user input)`,
+                    submitted.atr !== null ? `ATR ${safeNum(submitted.atr)} (user input)` : 'ATR not provided (omitted)',
+                  ]
+                : []
+            }
+            note="Calibration confidence is derived from these submitted inputs — it is not a live measurement."
+          />
         </div>
       ) : (
-        <p className="sg-note">Magnitude, timing and velocity versus option theta.</p>
+        <p className="sg-note">Magnitude, timing and velocity versus option theta. IV is required; no hidden 15% assumption.</p>
       )}
     </Card>
   );
@@ -443,28 +560,44 @@ function ExpectedMoveForm({ desk, spot }: { desk: OptionsDeskState; spot: number
 function SelectorForm({ desk, spot }: { desk: OptionsDeskState; spot: number | null }) {
   const { push } = useToast();
   const [direction, setDirection] = useState<'LONG_CALL' | 'LONG_PUT'>('LONG_CALL');
-  const [stopLoss, setStopLoss] = useState('30');
-  const [horizonHrs, setHorizonHrs] = useState('1');
+  const [stopLoss, setStopLoss] = useState('');
+  const [horizonHrs, setHorizonHrs] = useState('');
   const [iv, setIv] = useState('');
   const [move, setMove] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    spot: number;
+    ivPct: number;
+    stop: number;
+    horizon: number;
+    move: number | null;
+  } | null>(null);
 
   const submit = async () => {
     if (spot === null) {
       push('error', 'Chain spot unavailable — contract selection needs a live spot.');
       return;
     }
+    const ivPct = parseNum(iv);
+    const stopNum = parseNum(stopLoss);
+    const horizonNum = parseNum(horizonHrs);
+    if (ivPct === null || stopNum === null || horizonNum === null) {
+      push('error', 'Stop (pts), horizon (hrs) and current IV % are required — none are assumed.');
+      return;
+    }
+    const moveNum = parseNum(move);
+    setSubmitted({ spot, ivPct, stop: stopNum, horizon: horizonNum, move: moveNum });
     setBusy(true);
     try {
       const outcome = await desk.selectContract({
         underlying: desk.instrument,
         spot_price: spot,
         direction,
-        expected_move_points: parseNum(move),
-        stop_loss_points: parseNum(stopLoss) ?? 30,
-        target_horizon_hours: parseNum(horizonHrs) ?? 1,
-        current_iv: parseNum(iv) !== null ? (parseNum(iv) as number) / 100 : 0.16,
+        expected_move_points: moveNum,
+        stop_loss_points: stopNum,
+        target_horizon_hours: horizonNum,
+        current_iv: ivPct / 100,
       });
       push(outcome.ok ? 'success' : 'error', outcome.message);
       setResult(outcome.value);
@@ -488,17 +621,17 @@ function SelectorForm({ desk, spot }: { desk: OptionsDeskState; spot: number | n
             ))}
           </span>
         </span>
-        <Field label="Stop (pts)">
-          <input className="input num" type="number" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="30" />
+        <Field label="Stop (pts, required)">
+          <input className="input num" type="number" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="e.g. 30" />
         </Field>
-        <Field label="Horizon (hrs)">
-          <input className="input num" type="number" value={horizonHrs} onChange={(e) => setHorizonHrs(e.target.value)} placeholder="1" />
+        <Field label="Horizon (hrs, required)">
+          <input className="input num" type="number" value={horizonHrs} onChange={(e) => setHorizonHrs(e.target.value)} placeholder="e.g. 1" />
         </Field>
-        <Field label="Current IV % (blank 16)">
-          <input className="input num" type="number" value={iv} onChange={(e) => setIv(e.target.value)} placeholder="16" />
+        <Field label="Current IV % (required)">
+          <input className="input num" type="number" value={iv} onChange={(e) => setIv(e.target.value)} placeholder="e.g. 16" />
         </Field>
         <Field label="Expected move (optional)">
-          <input className="input num" type="number" value={move} onChange={(e) => setMove(e.target.value)} placeholder="80" />
+          <input className="input num" type="number" value={move} onChange={(e) => setMove(e.target.value)} placeholder="e.g. 80" />
         </Field>
         <button type="button" className="btn btn-primary btn-ic" disabled={busy} onClick={() => void submit()}>
           <Calculator size={13} />
@@ -514,6 +647,22 @@ function SelectorForm({ desk, spot }: { desk: OptionsDeskState; spot: number | n
           </div>
           <ResultKV value={result} exclude={['ranked_candidates', 'candidates', 'rationale', 'selection_rationale']} />
           <Rationale items={result.selection_rationale ?? result.rationale} />
+          <AssumptionNote
+            items={
+              submitted
+                ? [
+                    `spot ${safeNum(submitted.spot)} (chain)`,
+                    `stop ${safeNum(submitted.stop, '—', 0)} pts (user)`,
+                    `horizon ${safeNum(submitted.horizon)}h (user)`,
+                    `IV ${safeNum(submitted.ivPct)}% (user)`,
+                    submitted.move !== null
+                      ? `expected move ${safeNum(submitted.move, '—', 0)} pts (user)`
+                      : 'expected move not provided (omitted)',
+                  ]
+                : []
+            }
+            note="Ranking mixes these inputs with live chain quotes — no hidden defaults."
+          />
           {Array.isArray(candidates) && candidates.length > 0 ? (
             <div className="tbl-scroll">
               <table className="sg-table">
@@ -565,7 +714,9 @@ export function QuantToolsPanel({
       <p className="sg-note">
         On-demand quant tools. Every calculation runs only when you submit its form and reports
         through a toast — nothing here polls or places orders. Spot and ATM prefill from the chain
-        ladder above; leave a field blank to fall back to the chain mark where shown.
+        ladder above; a blank strike may fall back to the chain ATM mark (labelled per result), but
+        IV, stop, horizon and size inputs are never assumed — blanks are rejected instead of
+        silently replaced with placeholder values.
       </p>
       <GreeksForm desk={desk} spot={spot} atm={atm} />
       <IvForm desk={desk} spot={spot} atm={atm} />

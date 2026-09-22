@@ -47,6 +47,17 @@ async def _call(horizon="1m"):
     )
 
 
+async def _call_record(horizon="1m"):
+    return await research_api.get_tactical_bias(
+        horizon=horizon,
+        instrument="NIFTY 50",
+        record=True,
+        include_layers=False,
+        include_explain=True,
+        session=None,
+    )
+
+
 def test_stamp_marks_fresh_payload():
     stamped = research_api._stamp_tactical_bias(_payload(), 0.0)
     assert stamped["stale"] is False
@@ -120,5 +131,91 @@ async def test_deadline_past_max_age_returns_503():
             with pytest.raises(HTTPException) as exc:
                 await _call(horizon="1h")
         assert exc.value.status_code == 503
+    finally:
+        _cleanup(key)
+
+
+# ---------------------------------------------------------------------------
+# record=true ("Generate forecast") honours the regenerate + persist promise
+# ---------------------------------------------------------------------------
+
+async def test_record_true_forces_regeneration_on_stale_cache():
+    """A stale cache hit must not serve stale data to a manual regeneration:
+    the engine runs synchronously and the response is fresh."""
+    key = "NIFTY 50:30m:False:True"
+    _seed(key, research_api.TACTICAL_BIAS_FRESH_TTL + 1)
+    engine = AsyncMock(
+        return_value=_payload(direction="BULLISH", persisted=True, limitations=[])
+    )
+    try:
+        with patch("app.research.trend_forecast.tactical_horizon_engine.forecast", new=engine):
+            res = await _call_record(horizon="30m")
+        assert engine.await_count == 1  # inline, not a background task
+        assert res["stale"] is False
+        assert "served-stale-cache" not in res["limitations"]
+        assert res["generated_at"]
+    finally:
+        _cleanup(key)
+
+
+async def test_record_true_serves_fresh_persisted_cache():
+    """A fresh cache entry that already persisted is not recomputed."""
+    key = "NIFTY 50:5m:False:True"
+    _seed(key, 1.0, payload=_payload(persisted=True))
+    engine = AsyncMock(side_effect=AssertionError("must not regenerate"))
+    try:
+        with patch("app.research.trend_forecast.tactical_horizon_engine.forecast", new=engine):
+            res = await _call_record(horizon="5m")
+        assert engine.await_count == 0
+        assert res["stale"] is False
+    finally:
+        _cleanup(key)
+
+
+async def test_record_true_regenerates_fresh_unpersisted_cache():
+    """A fresh cache entry from a record=false read persisted nothing, so a
+    manual regeneration must redo the run to actually persist it."""
+    key = "NIFTY 50:15m:False:True"
+    _seed(key, 1.0, payload=_payload())
+    engine = AsyncMock(
+        return_value=_payload(direction="BULLISH", persisted=True, limitations=[])
+    )
+    try:
+        with patch("app.research.trend_forecast.tactical_horizon_engine.forecast", new=engine):
+            res = await _call_record(horizon="15m")
+        assert engine.await_count == 1
+        assert res["stale"] is False
+    finally:
+        _cleanup(key)
+
+
+# ---------------------------------------------------------------------------
+# Prewarm: fresh hits nearing expiry re-arm the cache for the next tick
+# ---------------------------------------------------------------------------
+
+async def test_fresh_hit_past_prewarm_arms_background_refresh():
+    key = "NIFTY 50:1m:False:True"
+    _seed(key, research_api.TACTICAL_BIAS_PREWARM_AFTER_S + 1)
+    engine = AsyncMock(side_effect=RuntimeError("feed down"))
+    try:
+        with patch("app.research.trend_forecast.tactical_horizon_engine.forecast", new=engine):
+            res = await _call()
+            await asyncio.sleep(0.05)
+        assert res["stale"] is False  # still served fresh...
+        assert engine.await_count == 1  # ...but the cache is re-armed behind it
+    finally:
+        _cleanup(key)
+
+
+async def test_fresh_hit_before_prewarm_skips_background_refresh():
+    key = "NIFTY 50:1m:False:True"
+    _seed(key, 1.0)
+    engine = AsyncMock(side_effect=RuntimeError("feed down"))
+    try:
+        with patch("app.research.trend_forecast.tactical_horizon_engine.forecast", new=engine):
+            res = await _call()
+            await asyncio.sleep(0.05)
+        assert res["stale"] is False
+        assert engine.await_count == 0
     finally:
         _cleanup(key)

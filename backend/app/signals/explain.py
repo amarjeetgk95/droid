@@ -4,7 +4,7 @@ Pure functions only: no I/O, never throw — every helper degrades gracefully on
 None / malformed input.
 
 The ARMED bar is single-sourced from ``app.signals.confluence`` (which reads
-``config/scoring_weights.json``); the confluence import chain does not import
+``backend/config/scoring_weights.json``); the confluence import chain does not import
 this module, so there is no cycle.
 """
 from __future__ import annotations
@@ -452,18 +452,13 @@ def build_signal_explain(
         except Exception:
             pass
 
-        # Provenance {feed, chain, drift, seq, kill}.
+        # Provenance {feed, chain, drift, seq}.
         try:
             provenance = dict(data_health.get("provenance", {}) if isinstance(data_health.get("provenance"), dict) else {})
             provenance.setdefault("feed", str(data_health.get("feed_status", data_health.get("status", "UNKNOWN"))))
             provenance.setdefault("chain", str(data_health.get("chain_mark_status", "UNKNOWN")))
             provenance.setdefault("drift", str(data_health.get("clock_drift_ms", "UNKNOWN")))
             provenance.setdefault("seq", str(data_health.get("seq", inputs_snapshot.get("seq", "UNKNOWN"))))
-            try:
-                from app.signals.safety.kill_switch import kill_switch as _ks
-                provenance.setdefault("kill", "ACTIVE" if _ks.is_active() else "OFF")
-            except Exception:
-                provenance.setdefault("kill", "UNKNOWN")
             data_health["provenance"] = provenance
         except Exception:
             pass
@@ -714,18 +709,13 @@ def build_forecast_explain(
         except Exception:
             pass
 
-        # Provenance {feed, chain, drift, seq, kill} + gates from real layers.
+        # Provenance {feed, chain, drift, seq} + gates from real layers.
         try:
             _prov = dict(data_health.get("provenance", {}) if isinstance(data_health.get("provenance"), dict) else {})
             _prov.setdefault("feed", "UNKNOWN")
             _prov.setdefault("chain", "UNKNOWN")
             _prov.setdefault("drift", "UNKNOWN")
             _prov.setdefault("seq", "UNKNOWN")
-            try:
-                from app.signals.safety.kill_switch import kill_switch as _ks2
-                _prov.setdefault("kill", "ACTIVE" if _ks2.is_active() else "OFF")
-            except Exception:
-                _prov.setdefault("kill", "UNKNOWN")
             data_health["provenance"] = _prov
         except Exception:
             pass

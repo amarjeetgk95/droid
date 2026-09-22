@@ -42,7 +42,9 @@ def macd(prices):
     # build ema12_full and ema26_full aligned to original prices
     # simplified approach: use last values only
     macd_val = ema12[-1] - ema26[-1]
-    signal = macd_val * 0.9  # placeholder smoothing
+    # Honesty: signal is a 0.9-factor placeholder smoothing (ASSUMPTION, not a
+    # true EMA9). Callers must treat signal/hist as approximate.
+    signal = macd_val * 0.9  # placeholder smoothing (assumption)
     hist = macd_val - signal
     return round(macd_val,3), round(signal,3), round(hist,3)
 
@@ -109,6 +111,8 @@ def analyze_momentum(candles: list[dict]) -> dict:
     return {
         "rsi": round(r,2),
         "macd": macd_l, "macd_signal": sig, "macd_histogram": hist,
+        "macd_signal_method": "placeholder-0.9-assumption-not-true-EMA9",
+        "assumptions": ["macd-signal-0.9-approx"],
         "stoch_k": stoch_k, "stoch_d": stoch_d,
         "williams_r": round(wr,2),
         "roc": round(roc,2),

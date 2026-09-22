@@ -236,6 +236,9 @@ export type CopilotModelsState = {
   loading: boolean;
   refreshing: boolean;
   error: string | null;
+  updatedAt: number | null;
+  source: 'rest';
+  liveSource: 'rest';
   refresh: () => Promise<void>;
 };
 
@@ -249,6 +252,7 @@ export function useCopilotModels(): CopilotModelsState {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const requestIdRef = useRef(0);
 
   const applyCatalog = useCallback(
@@ -289,6 +293,8 @@ export function useCopilotModels(): CopilotModelsState {
       applyCatalog((catalogResult.value as { data?: unknown }).data as never);
       const envelopeError = (catalogResult.value as { error?: unknown }).error;
       setError(typeof envelopeError === 'string' && envelopeError ? envelopeError : null);
+      // Honest mark: successful catalog load. Failures keep the last age.
+      setUpdatedAt(Date.now());
     } else {
       setError(errorMessage(catalogResult.reason, 'Model catalog unavailable'));
     }
@@ -315,9 +321,11 @@ export function useCopilotModels(): CopilotModelsState {
       if (requestIdRef.current !== requestId) return;
       applyCatalog((result as { data?: unknown }).data as never);
       setError(null);
+      setUpdatedAt(Date.now());
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       setError(errorMessage(err, 'Model refresh failed'));
+      // Keep last age on failure.
     } finally {
       if (requestIdRef.current === requestId) setRefreshing(false);
     }
@@ -334,6 +342,9 @@ export function useCopilotModels(): CopilotModelsState {
     loading,
     refreshing,
     error,
+    updatedAt,
+    source: 'rest' as const,
+    liveSource: 'rest' as const,
     refresh,
   };
 }
@@ -349,6 +360,9 @@ export type CopilotBriefingState = {
   loading: boolean;
   refreshing: boolean;
   error: string | null;
+  updatedAt: number | null;
+  source: 'rest';
+  liveSource: 'rest';
   session: string;
   setSession: (s: string) => void;
   refresh: () => Promise<void>;
@@ -362,6 +376,7 @@ export function useCopilotBriefing(symbol: string): CopilotBriefingState {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [session, setSession] = useState('PRE_MARKET');
   const requestIdRef = useRef(0);
 
@@ -377,9 +392,16 @@ export function useCopilotBriefing(symbol: string): CopilotBriefingState {
       const card = normalizeBriefing((briefingResult.value as { data?: unknown }).data);
       setBriefing(card);
       setError(card ? null : 'Briefing payload was empty or unparseable.');
+      if (card) {
+        // Backend briefing carries a timestamp string — prefer it over now.
+        const raw = (card as { timestamp?: unknown }).timestamp;
+        const ts = typeof raw === 'string' && raw.trim() ? Date.parse(raw) : NaN;
+        setUpdatedAt(Number.isFinite(ts) ? ts : Date.now());
+      }
     } else {
       setBriefing(null);
       setError(errorMessage(briefingResult.reason, 'Briefing unavailable'));
+      // Keep last age on failure.
     }
     if (deepResult.status === 'fulfilled') {
       const envelope = deepResult.value as { data?: unknown; error?: unknown };
@@ -399,7 +421,7 @@ export function useCopilotBriefing(symbol: string): CopilotBriefingState {
     void refresh();
   }, [refresh]);
 
-  return { briefing, deepRows, deepError, loading, refreshing, error, session, setSession, refresh };
+  return { briefing, deepRows, deepError, loading, refreshing, error, updatedAt, source: 'rest' as const, liveSource: 'rest' as const, session, setSession, refresh };
 }
 
 // ---------------------------------------------------------------------------

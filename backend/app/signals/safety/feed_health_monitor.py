@@ -73,19 +73,6 @@ class FeedHealthMonitor:
             payload["hysteresis_pending"] = raw
         _TELEMETRY_CACHE["ts_ns"] = now_ns
         _TELEMETRY_CACHE["payload"] = dict(payload)
-        # Wire auto-kill: DOWN or STALE>60s activates the global kill switch.
-        try:
-            from app.signals.safety.kill_switch import kill_switch
-            st = str(payload.get("status") or "")
-            age = None
-            try:
-                age = payload.get("spot_feed", {}).get("tick_age_seconds")
-            except Exception:
-                age = None
-            kill_switch.auto_activate_from_monitor(st, age)
-            kill_switch.auto_recover_from_monitor(st)
-        except Exception:
-            pass
         return payload
 
     def _compute_telemetry(self) -> dict[str, Any]:

@@ -50,8 +50,6 @@ export type TradeAccount = {
   breached: boolean | null;
   maxCapitalPerTrade: number | null;
   maxDailyLoss: number | null;
-  killed: boolean | null;
-  killLevel: string | null;
   consentOk: boolean | null;
 };
 
@@ -59,17 +57,16 @@ export type TradeAccount = {
  * Accept both shapes:
  * - REST GET /api/v1/algo/account: {account_id, mode, is_active,
  *   capital: {investment_limit, max_capital_per_trade, max_daily_loss} | null,
- *   kill_switch: {is_killed, kill_level} | null, consent_ok}
+ *   consent_ok}
  * - stream `algo.account` (get_account_detail): {account_id, mode, is_active,
  *   display_name, unavailable?, capital: {investment_limit, available,
  *   reserved, deployed, daily_loss, daily_loss_limit, is_breached},
- *   kill_switch: {is_killed, kill_level}, consent: {acknowledged}}
+ *   consent: {acknowledged}}
  */
 export function toTradeAccount(input: unknown): TradeAccount | null {
   const o = getObj(input);
   if (!o) return null;
   const capital = getObj(o.capital);
-  const kill = getObj(o.kill_switch);
   const consent = getObj(o.consent);
   const consentRaw = o.consent_ok ?? o.current_ok ?? consent?.acknowledged ?? null;
   return {
@@ -90,8 +87,6 @@ export function toTradeAccount(input: unknown): TradeAccount | null {
     breached: capital && typeof capital.is_breached === 'boolean' ? capital.is_breached : null,
     maxCapitalPerTrade: capital ? pickNum(capital, 'max_capital_per_trade') : null,
     maxDailyLoss: capital ? pickNum(capital, 'max_daily_loss') : null,
-    killed: kill && typeof kill.is_killed === 'boolean' ? kill.is_killed : null,
-    killLevel: kill ? pickStr(kill, 'kill_level') : null,
     consentOk: typeof consentRaw === 'boolean' ? consentRaw : null,
   };
 }

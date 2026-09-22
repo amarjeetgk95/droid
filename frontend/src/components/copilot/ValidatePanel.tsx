@@ -9,6 +9,7 @@ import { useInstrument } from '@/context/InstrumentContext';
 import { useCopilotValidate, type ModelsCache } from '@/hooks/useCopilot';
 import { biasTone, copilotErrorHint } from '@/lib/copilot';
 import { useToast } from '@/components/ui/toast';
+import { CopilotAnswer } from './CopilotAnswer';
 
 function parseNum(raw: string): number | null {
   const n = Number(raw.trim());
@@ -17,6 +18,83 @@ function parseNum(raw: string): number | null {
 
 const OUTLOOKS = ['BULLISH', 'BEARISH', 'NEUTRAL', 'HIGH_VOLATILITY', 'LOW_VOLATILITY', 'DIRECTIONAL_RANGE'] as const;
 const RISKS = ['LOW', 'MODERATE', 'AGGRESSIVE'] as const;
+
+const KV_CLAMP = 140;
+
+function clamp140(value: string): string {
+  return value.length > KV_CLAMP ? `${value.slice(0, KV_CLAMP)}…` : value;
+}
+
+function KvClamped({ label, value }: { label: string; value: string }) {
+  const long = value.length > KV_CLAMP;
+  return (
+    <div className="sg-kv">
+      <span className="l">{label}</span>
+      <span className="v" title={long ? value : undefined}>
+        {clamp140(value)}
+        {long ? (
+          <details>
+            <summary>Show full</summary>
+            <span>{value}</span>
+          </details>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+function CappedBullets({ label, items }: { label: string; items: string[] }) {
+  if (items.length === 0) return null;
+  const head = items.slice(0, 3);
+  const rest = items.slice(3);
+  return (
+    <div className="sg-note">
+      <span>
+        {label}:{' '}
+      </span>
+      <ul>
+        {head.map((t, i) => (
+          <li key={i}>{t}</li>
+        ))}
+      </ul>
+      {rest.length > 0 ? (
+        <details>
+          <summary>Show all ({items.length})</summary>
+          <ul>
+            {rest.map((t, i) => (
+              <li key={i + 3}>{t}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function RiskClamped({ text }: { text: string }) {
+  const long = text.length > 160;
+  return (
+    <div className="sg-note">
+      <span>Risk: </span>
+      <span
+        style={{
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {text}
+      </span>
+      {long ? (
+        <details>
+          <summary>Show full</summary>
+          <span>{text}</span>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 export function ValidatePanel({
   totalCount,
@@ -160,31 +238,18 @@ export function ValidatePanel({
             </span>
           </div>
           <div className="card-bd">
-            <p>{desk.verdict.verdict}</p>
+            <CopilotAnswer raw={desk.verdict.verdict} providerLabel={desk.verdict.provider} />
             <div className="sg-kvlist">
-              <div className="sg-kv">
-                <span className="l">technical</span>
-                <span className="v">{desk.verdict.technical}</span>
-              </div>
-              <div className="sg-kv">
-                <span className="l">derivatives</span>
-                <span className="v">{desk.verdict.derivatives}</span>
-              </div>
-              <div className="sg-kv">
-                <span className="l">volatility</span>
-                <span className="v">{desk.verdict.volatility}</span>
-              </div>
+              <KvClamped label="technical" value={desk.verdict.technical} />
+              <KvClamped label="derivatives" value={desk.verdict.derivatives} />
+              <KvClamped label="volatility" value={desk.verdict.volatility} />
               <div className="sg-kv">
                 <span className="l">provider</span>
                 <span className="v">{desk.verdict.provider}</span>
               </div>
             </div>
-            {desk.verdict.invalidations.length > 0 ? (
-              <p className="sg-note">Invalidation: {desk.verdict.invalidations.join(' · ')}</p>
-            ) : null}
-            {desk.verdict.warnings.length > 0 ? (
-              <p className="sg-note">Traps: {desk.verdict.warnings.join(' · ')}</p>
-            ) : null}
+            <CappedBullets label="Invalidation" items={desk.verdict.invalidations} />
+            <CappedBullets label="Traps" items={desk.verdict.warnings} />
           </div>
         </section>
       ) : null}
@@ -233,7 +298,7 @@ export function ValidatePanel({
             </span>
           </div>
           <div className="card-bd">
-            <p>{desk.strategy.rationale}</p>
+            <CopilotAnswer raw={desk.strategy.rationale} />
             {desk.strategy.legs.length > 0 ? (
               <div className="tbl-scroll">
                 <table className="sg-table">
@@ -278,9 +343,9 @@ export function ValidatePanel({
                 <span className="v num">{desk.strategy.breakevens.join(', ') || '—'}</span>
               </div>
             </div>
-            {desk.strategy.entry.length > 0 ? <p className="sg-note">Entry: {desk.strategy.entry.join(' · ')}</p> : null}
-            {desk.strategy.exit.length > 0 ? <p className="sg-note">Exit: {desk.strategy.exit.join(' · ')}</p> : null}
-            <p className="sg-note">Risk: {desk.strategy.risk}</p>
+            {desk.strategy.entry.length > 0 ? <CappedBullets label="Entry" items={desk.strategy.entry} /> : null}
+            {desk.strategy.exit.length > 0 ? <CappedBullets label="Exit" items={desk.strategy.exit} /> : null}
+            <RiskClamped text={desk.strategy.risk} />
           </div>
         </section>
       ) : null}

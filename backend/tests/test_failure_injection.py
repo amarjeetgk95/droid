@@ -7,7 +7,6 @@ Covers:
 - Redis failure & in-memory fallback
 - Process crash mid-order & idempotency recovery
 - Leadership fencing & split-brain prevention
-- Kill switch emergency override
 """
 from __future__ import annotations
 

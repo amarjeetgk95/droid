@@ -3,8 +3,10 @@
 import type { HourForecast } from '@/lib/types';
 import {
   HORIZON_LABELS,
+  confidenceFallbackLabel,
   confidencePct,
   directionLabel,
+  expectedMoveFallbackLabel,
   expectedMovePct,
   forecastTone,
   layerRows,
@@ -78,9 +80,11 @@ export function ForecastHorizonCard({
   const tone = forecastTone(forecast);
   const status = getForecastStatusLabel(forecast);
   const confidence = confidencePct(forecast);
+  const confidenceFallback = confidenceFallbackLabel(forecast);
   const bars = probabilityBars(forecast);
   const layers = layerRows(forecast);
   const movePct = expectedMovePct(forecast);
+  const moveFallback = expectedMoveFallbackLabel(forecast);
   const quality = getDataQualityLabel(forecast);
   const settlement = getSettlementLabel(forecast);
   const predictionId = shortForecastId(forecast.prediction_id);
@@ -113,7 +117,7 @@ export function ForecastHorizonCard({
               {confidence !== null ? `${confidence}%` : '—'}
             </div>
             <div className="mt-0.5 text-[11px] font-semibold tracking-wide text-ink-3">
-              confidence
+              confidence{confidenceFallback ? ` · ${confidenceFallback}` : ''}
             </div>
           </div>
         </div>
@@ -148,8 +152,8 @@ export function ForecastHorizonCard({
           </div>
           <div>
             <div className="stat-l">Expected move</div>
-            <div className="mono text-[13px] font-semibold">
-              {movePct !== null ? `${movePct.toFixed(2)}%` : '—'}
+            <div className="mono text-[13px] font-semibold" title={moveFallback ?? undefined}>
+              {movePct !== null ? `${movePct.toFixed(2)}%${moveFallback ? ' · fallback' : ''}` : '—'}
             </div>
           </div>
         </div>

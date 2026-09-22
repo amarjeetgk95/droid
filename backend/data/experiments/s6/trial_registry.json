@@ -1,0 +1,185 @@
+{
+  "trial_count": 18,
+  "trials": {
+    "S6T_NIFTY_S6A_T1_f681168dec": {
+      "trial_id": "S6T_NIFTY_S6A_T1_f681168dec",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "NIFTY",
+      "track": "S6A_T1",
+      "parameter_hash": "ebbdd63f0933c284",
+      "dataset_hash": "2688a8946d7680c8",
+      "registered_at": "2026-09-20T05:11:18.674020+00:00"
+    },
+    "S6T_NIFTY_S6F_T1_7cb1767df3": {
+      "trial_id": "S6T_NIFTY_S6F_T1_7cb1767df3",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "NIFTY",
+      "track": "S6F_T1",
+      "parameter_hash": "2eb9a0e16ef3f270",
+      "dataset_hash": "2688a8946d7680c8",
+      "registered_at": "2026-09-20T05:11:18.736598+00:00"
+    },
+    "S6T_NIFTY_S6A_T1_fffb96e6d6": {
+      "trial_id": "S6T_NIFTY_S6A_T1_fffb96e6d6",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "NIFTY",
+      "track": "S6A_T1",
+      "parameter_hash": "ebbdd63f0933c284",
+      "dataset_hash": "36613c75d71b644c",
+      "registered_at": "2026-09-20T05:15:05.841040+00:00"
+    },
+    "S6T_NIFTY_S6A_T4_ad12d9418a": {
+      "trial_id": "S6T_NIFTY_S6A_T4_ad12d9418a",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "NIFTY",
+      "track": "S6A_T4",
+      "parameter_hash": "5d8a29ec98a6adea",
+      "dataset_hash": "36613c75d71b644c",
+      "registered_at": "2026-09-20T05:15:05.868344+00:00"
+    },
+    "S6T_NIFTY_S6F_T1_053de9992b": {
+      "trial_id": "S6T_NIFTY_S6F_T1_053de9992b",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "NIFTY",
+      "track": "S6F_T1",
+      "parameter_hash": "2eb9a0e16ef3f270",
+      "dataset_hash": "36613c75d71b644c",
+      "registered_at": "2026-09-20T05:15:05.894079+00:00"
+    },
+    "S6T_NIFTY_S6F_T4_248f735553": {
+      "trial_id": "S6T_NIFTY_S6F_T4_248f735553",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "NIFTY",
+      "track": "S6F_T4",
+      "parameter_hash": "1fff1d797894dd37",
+      "dataset_hash": "36613c75d71b644c",
+      "registered_at": "2026-09-20T05:15:05.918536+00:00"
+    },
+    "S6T_SENSEX_S6A_T1_ae1fec178d": {
+      "trial_id": "S6T_SENSEX_S6A_T1_ae1fec178d",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "SENSEX",
+      "track": "S6A_T1",
+      "parameter_hash": "8688894444be6a76",
+      "dataset_hash": "df30a84e79dab7eb",
+      "registered_at": "2026-09-20T05:20:35.477253+00:00"
+    },
+    "S6T_SENSEX_S6A_T4_d2e604f496": {
+      "trial_id": "S6T_SENSEX_S6A_T4_d2e604f496",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "SENSEX",
+      "track": "S6A_T4",
+      "parameter_hash": "02c8d96daef9b60b",
+      "dataset_hash": "df30a84e79dab7eb",
+      "registered_at": "2026-09-20T05:20:35.672480+00:00"
+    },
+    "S6T_SENSEX_S6F_T1_2dac405998": {
+      "trial_id": "S6T_SENSEX_S6F_T1_2dac405998",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "SENSEX",
+      "track": "S6F_T1",
+      "parameter_hash": "3102e5345848038f",
+      "dataset_hash": "df30a84e79dab7eb",
+      "registered_at": "2026-09-20T05:20:36.108217+00:00"
+    },
+    "S6T_SENSEX_S6F_T4_1bf2adf9ac": {
+      "trial_id": "S6T_SENSEX_S6F_T4_1bf2adf9ac",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "SENSEX",
+      "track": "S6F_T4",
+      "parameter_hash": "f89376af7c7685a0",
+      "dataset_hash": "df30a84e79dab7eb",
+      "registered_at": "2026-09-20T05:20:36.326878+00:00"
+    },
+    "S6T_NIFTY_S6A_T1_56fbb68a81": {
+      "trial_id": "S6T_NIFTY_S6A_T1_56fbb68a81",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "NIFTY",
+      "track": "S6A_T1",
+      "parameter_hash": "ebbdd63f0933c284",
+      "dataset_hash": "2006c8fae7106849",
+      "registered_at": "2026-09-21T04:27:09.292727+00:00"
+    },
+    "S6T_NIFTY_S6F_T1_cd95f81657": {
+      "trial_id": "S6T_NIFTY_S6F_T1_cd95f81657",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "NIFTY",
+      "track": "S6F_T1",
+      "parameter_hash": "2eb9a0e16ef3f270",
+      "dataset_hash": "2006c8fae7106849",
+      "registered_at": "2026-09-21T04:27:09.342009+00:00"
+    },
+    "S6T_NIFTY_S6A_T1_049cc1eeaa": {
+      "trial_id": "S6T_NIFTY_S6A_T1_049cc1eeaa",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "NIFTY",
+      "track": "S6A_T1",
+      "parameter_hash": "ebbdd63f0933c284",
+      "dataset_hash": "d2b94346f106210d",
+      "registered_at": "2026-09-22T08:13:02.394520+00:00"
+    },
+    "S6T_NIFTY_S6F_T1_e453fffdff": {
+      "trial_id": "S6T_NIFTY_S6F_T1_e453fffdff",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "NIFTY",
+      "track": "S6F_T1",
+      "parameter_hash": "2eb9a0e16ef3f270",
+      "dataset_hash": "d2b94346f106210d",
+      "registered_at": "2026-09-22T08:13:02.497410+00:00"
+    },
+    "S6T_SENSEX_S6A_T1_d4424dcd53": {
+      "trial_id": "S6T_SENSEX_S6A_T1_d4424dcd53",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "SENSEX",
+      "track": "S6A_T1",
+      "parameter_hash": "8688894444be6a76",
+      "dataset_hash": "199eff5db1581781",
+      "registered_at": "2026-09-22T10:53:03.915969+00:00"
+    },
+    "S6T_SENSEX_S6F_T1_11eb6fb00f": {
+      "trial_id": "S6T_SENSEX_S6F_T1_11eb6fb00f",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "SENSEX",
+      "track": "S6F_T1",
+      "parameter_hash": "3102e5345848038f",
+      "dataset_hash": "199eff5db1581781",
+      "registered_at": "2026-09-22T10:53:03.954040+00:00"
+    },
+    "S6T_SENSEX_S6A_T1_285eed06aa": {
+      "trial_id": "S6T_SENSEX_S6A_T1_285eed06aa",
+      "strategy_version": "S6A_v1.0",
+      "variant": "S6-A",
+      "instrument": "SENSEX",
+      "track": "S6A_T1",
+      "parameter_hash": "8688894444be6a76",
+      "dataset_hash": "99576802f02b360a",
+      "registered_at": "2026-09-22T10:53:27.766945+00:00"
+    },
+    "S6T_SENSEX_S6F_T1_e6ddf3bb55": {
+      "trial_id": "S6T_SENSEX_S6F_T1_e6ddf3bb55",
+      "strategy_version": "S6F_v1.0",
+      "variant": "S6-F",
+      "instrument": "SENSEX",
+      "track": "S6F_T1",
+      "parameter_hash": "3102e5345848038f",
+      "dataset_hash": "99576802f02b360a",
+      "registered_at": "2026-09-22T10:53:27.838912+00:00"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { useInstrument } from '@/context/InstrumentContext';
 import { useCopilotAnalyze } from '@/hooks/useCopilot';
 import { biasTone, copilotErrorHint } from '@/lib/copilot';
 import { useToast } from '@/components/ui/toast';
+import { CopilotAnswer } from './CopilotAnswer';
 
 export function AnalyzePanel() {
   const { instrument } = useInstrument();
@@ -88,21 +89,14 @@ export function AnalyzePanel() {
               </span>
             </div>
             <div className="card-bd">
-              <p>{desk.report.summary}</p>
-              <p className="card-meta">
-                {desk.report.timestamp} · {desk.report.provider}
-              </p>
+              <CopilotAnswer raw={desk.report.summary} confidence={desk.report.confidence} providerLabel={`${desk.report.timestamp} · ${desk.report.provider}${desk.modelUsed ? ` · ${desk.modelUsed}` : ''}`} />
             </div>
           </section>
-          {desk.report.sections.map((s) => (
-            <section key={s.label} className="card" aria-label={s.label}>
-              <div className="card-hd">
-                <h2 className="card-title">{s.label}</h2>
-              </div>
-              <div className="card-bd">
-                <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{s.text}</p>
-              </div>
-            </section>
+          {desk.report.sections.map((s, i) => (
+            <details key={s.label} className="card" aria-label={s.label} open={i === 0 ? true : undefined}>
+              <summary>{s.label}</summary>
+              <CopilotAnswer raw={s.text} />
+            </details>
           ))}
         </>
       ) : (

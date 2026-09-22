@@ -75,7 +75,13 @@ class ExpectedValueEngine:
         spread_points: float = 0.80,
         slippage_points: float = 0.40,
     ) -> FrictionBreakdown:
-        """Computes granular statutory, brokerage, and microstructure frictions."""
+        """Computes granular statutory, brokerage, and microstructure frictions.
+
+        Honesty: spread/slippage points are PLACEHOLDER assumptions (not
+        measured spread). Outputs carry assumption provenance via
+        calculate_trade_ev's assumptions field; callers must not treat them
+        as calibrated costs.
+        """
         buy_turnover = entry_premium * quantity
         sell_turnover = max(0.05, expected_exit_premium) * quantity
         total_turnover = buy_turnover + sell_turnover

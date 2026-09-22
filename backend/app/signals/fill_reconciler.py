@@ -76,14 +76,13 @@ class FillReconciliationRecord(BaseModel):
     reconciliation_notes: Optional[str] = None
 
 
-def resolve_signal_lot_size(sig: SignalInstance) -> int:
-    """Authoritative lot size for a signal's option contract.
+def resolve_signal_lot_size_with_provenance(sig: SignalInstance) -> tuple[int, bool]:
+    """Authoritative lot size + fallback provenance.
 
-    Prefers the contract's own ``lot_size`` (chain/resolver truth, the same
-    value that sized the traded quantity). The legacy underlying defaults
-    (75/30/10) remain only as a last-resort fallback for rows that predate
-    contract metadata — using them for a non-default contract silently splits
-    staged exits into non-lot quantities.
+    Returns (lot_size, used_fallback). Contract lot is truth; 75/30/10 are
+    last-resort only for rows predating contract metadata. Fallback usage is
+    never silent — callers must set synthetic=True + surfaced
+    reconciliation_status.
     """
     contract = getattr(sig, "option_contract", None)
     contract_lot = 0
@@ -95,13 +94,33 @@ def resolve_signal_lot_size(sig: SignalInstance) -> int:
     except Exception:
         contract_lot = 0
     if contract_lot > 0:
-        return contract_lot
+        return contract_lot, False
     underlying = str(getattr(sig, "underlying", "") or "").upper()
     if underlying == "NIFTY":
-        return 75
-    if underlying == "BANKNIFTY":
-        return 30
-    return 10
+        _lot = 75
+    elif underlying == "BANKNIFTY":
+        _lot = 30
+    else:
+        _lot = 10
+    logger.warning(
+        "fill_lot_fallback_last_resort",
+        signal_id=getattr(sig, "signal_id", "?"),
+        underlying=underlying,
+        fallback_lot=_lot,
+        note="contract lot_size missing; 75/30/10 last-resort only, synthetic=true required",
+    )
+    return _lot, True
+
+
+def resolve_signal_lot_size(sig: SignalInstance) -> int:
+    """Authoritative lot size for a signal's option contract.
+
+    Prefers the contract's own ``lot_size`` (chain/resolver truth). The legacy
+    underlying defaults (75/30/10) remain only as a last-resort fallback —
+    never silent (warning logged; callers must flag synthetic=true).
+    """
+    _lot, _fallback = resolve_signal_lot_size_with_provenance(sig)
+    return _lot
 
 
 class OptionFillReconciler:
@@ -158,10 +177,15 @@ class OptionFillReconciler:
         Idempotent on (signal, stage=ENTRY, fill_ts bucket).
 
         ``lot_size`` defaults to the signal contract's own lot size (falling back
-        to the legacy underlying default) so staged-exit quantities always land
-        on real lot boundaries.
+        to the legacy underlying default only as last-resort with synthetic=true
+        + surfaced reconciliation_status, never silent).
         """
-        lot_size = int(lot_size or 0) or resolve_signal_lot_size(sig)
+        _explicit_lot = int(lot_size or 0)
+        if _explicit_lot > 0:
+            lot_size = _explicit_lot
+            _lot_fallback = False
+        else:
+            lot_size, _lot_fallback = resolve_signal_lot_size_with_provenance(sig)
         # Guard: an option fill can NEVER be an index spot price (>5000 pts).
         # FAIL CLOSED: do not repair it with a Black-76 estimate — that would
         # manufacture the very premium we are trying to verify. Record the raw
@@ -238,8 +262,14 @@ class OptionFillReconciler:
             updated_at_utc=now_ms,
             execution_intent_id=getattr(sig, "execution_intent_id", None),
             position_id=getattr(sig, "position_id", None),
-            reconciliation_status="RECONCILED",
-            reconciliation_notes=None,
+            # Last-resort 75/30/10 lot fallback is synthetic + surfaced, never silent.
+            synthetic=bool(_lot_fallback),
+            reconciliation_status=("PARTIAL" if _lot_fallback else "RECONCILED"),
+            reconciliation_notes=(
+                "lot_size fallback 75/30/10 last-resort (contract lot missing); synthetic=true"
+                if _lot_fallback
+                else None
+            ),
         )
         self._records[sig.signal_id] = rec
         logger.info(
@@ -248,6 +278,8 @@ class OptionFillReconciler:
             fill_price=fill_price,
             qty=quantity,
             t1_qty=t1_qty,
+            synthetic=rec.synthetic,
+            reconciliation_status=rec.reconciliation_status,
         )
         return rec
 
@@ -293,13 +325,24 @@ class OptionFillReconciler:
             return rec_bad
         rec = existing
         if not rec:
-            # Create synthetic record if entry wasn't explicitly registered
-            lot_sz = resolve_signal_lot_size(sig)
+            # Create synthetic record if entry wasn't explicitly registered.
+            # Fallback lots are last-resort + synthetic (surfaced, never silent).
+            lot_sz, _lot_fb = resolve_signal_lot_size_with_provenance(sig)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
             if rec is None:
                 # Corrupted entry → quarantine record already stored; return it.
                 return self._records[sig.signal_id]
+            if _lot_fb:
+                try:
+                    rec.synthetic = True
+                    if rec.reconciliation_status == "RECONCILED":
+                        rec.reconciliation_status = "PARTIAL"
+                        rec.reconciliation_notes = (
+                            "lot_size fallback 75/30/10 last-resort (contract lot missing); synthetic=true"
+                        )
+                except Exception:
+                    pass
 
         # Quantity to close
         close_qty = rec.t1_qty
@@ -366,11 +409,21 @@ class OptionFillReconciler:
         now_ms = exit_time_ms or int(time.time() * 1000)
         rec = self._records.get(sig.signal_id)
         if not rec:
-            lot_sz = resolve_signal_lot_size(sig)
+            lot_sz, _lot_fb2 = resolve_signal_lot_size_with_provenance(sig)
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
             if rec is None:
                 return self._records[sig.signal_id]
+            if _lot_fb2:
+                try:
+                    rec.synthetic = True
+                    if rec.reconciliation_status == "RECONCILED":
+                        rec.reconciliation_status = "PARTIAL"
+                        rec.reconciliation_notes = (
+                            "lot_size fallback 75/30/10 last-resort (contract lot missing); synthetic=true"
+                        )
+                except Exception:
+                    pass
         # Idempotency (signal, stage, fill_ts): same final already booked → noop.
         try:
             for f in rec.fills:

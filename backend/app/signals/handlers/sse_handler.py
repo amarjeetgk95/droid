@@ -23,17 +23,6 @@ _VALID_STATES = {
 _sse_fail_count: int = 0
 
 
-def _kill_skip(event: SignalEvent) -> bool:
-    try:
-        p = event.payload or {}
-        if p.get("kind") == "KILL" or p.get("kill"):
-            return False
-        from app.signals.safety.kill_switch import kill_switch
-        return bool(kill_switch.is_active())
-    except Exception:
-        return False
-
-
 def _envelope(event: SignalEvent, extra: dict) -> dict:
     try:
         seq = int(getattr(event, "seq", 0) or 0)
@@ -59,8 +48,6 @@ async def handle_signal_transitioned_sse(event: SignalEvent) -> None:
     """Broadcasts signal state transition to SSE subscribers."""
     global _sse_fail_count
     try:
-        if _kill_skip(event):
-            return
         from app.signals.sse import signal_sse_hub
 
         payload = event.payload or {}
@@ -91,8 +78,6 @@ async def handle_breakeven_activated_sse(event: SignalEvent) -> None:
     """Broadcasts breakeven ratchet to SSE subscribers."""
     global _sse_fail_count
     try:
-        if _kill_skip(event):
-            return
         from app.signals.sse import signal_sse_hub
 
         payload = event.payload or {}
@@ -113,8 +98,6 @@ async def handle_breakeven_activated_sse(event: SignalEvent) -> None:
 async def handle_signal_registered_sse(event: SignalEvent) -> None:
     global _sse_fail_count
     try:
-        if _kill_skip(event):
-            return
         from app.signals.sse import signal_sse_hub
         await signal_sse_hub.broadcast(
             "signal_registered", _envelope(event, dict(event.payload or {})), priority="P1")
@@ -126,8 +109,6 @@ async def handle_signal_registered_sse(event: SignalEvent) -> None:
 async def handle_signal_expired_sse(event: SignalEvent) -> None:
     global _sse_fail_count
     try:
-        if _kill_skip(event):
-            return
         from app.signals.sse import signal_sse_hub
         await signal_sse_hub.broadcast(
             "signal_expired", _envelope(event, dict(event.payload or {})), priority="P1")
@@ -139,10 +120,6 @@ async def handle_signal_expired_sse(event: SignalEvent) -> None:
 async def handle_signal_deleted_sse(event: SignalEvent) -> None:
     global _sse_fail_count
     try:
-        # DELETED (tombstone) is delivered even when kill active? No — kill
-        # skips notify except KILL; DELETED is not KILL, so skip when active.
-        if _kill_skip(event):
-            return
         from app.signals.sse import signal_sse_hub
         await signal_sse_hub.broadcast(
             "signal_deleted", _envelope(event, {"signal_id": event.signal_id}), priority="P1")

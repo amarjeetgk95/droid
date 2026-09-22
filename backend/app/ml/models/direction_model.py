@@ -48,28 +48,24 @@ class DirectionModel:
     def predict_direction(self, feature_vector: List[float]) -> Dict[str, Any]:
         """
         Predicts directional probabilities for the configured horizon.
+
+        Fail-closed honesty: when no trained artifact is loaded this returns
+        status="fallback" with NULL probabilities (never 60/25/15-style
+        heuristic numbers). Callers MUST check `status`/`is_fallback` before
+        using p_* — a fallback is not a prediction.
         """
         if self.lgb_model is None:
-            # Deterministic indicator-based fallback
-            ret_5m = feature_vector[2] if len(feature_vector) > 2 else 0.0
-            st_dir = feature_vector[12] if len(feature_vector) > 12 else 0.0
-
-            if st_dir > 0 and ret_5m > 0:
-                probs = [0.15, 0.25, 0.60]
-            elif st_dir < 0 and ret_5m < 0:
-                probs = [0.60, 0.25, 0.15]
-            else:
-                probs = [0.25, 0.50, 0.25]
-
-            bias = DIRECTIONS[int(np.argmax(probs))]
+            # No trained model: fail-closed, never fabricate 60/25/15 probs.
             return {
                 "horizon_minutes": self.horizon_minutes,
-                "p_down": round(probs[0], 3),
-                "p_neutral": round(probs[1], 3),
-                "p_up": round(probs[2], 3),
-                "predicted_bias": bias,
-                "confidence": round(float(np.max(probs)), 3),
+                "p_down": None,
+                "p_neutral": None,
+                "p_up": None,
+                "predicted_bias": None,
+                "confidence": None,
                 "is_fallback": True,
+                "status": "fallback",
+                "reason": "direction-model-unfitted-no-artifact",
                 "model_version": "heuristic_direction_baseline",
             }
 

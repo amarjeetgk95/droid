@@ -32,7 +32,10 @@ def compute_composite(
 ) -> Dict[str, Any]:
     reasons: list[str] = []
     parts: Dict[str, float] = {}
+    # Fixed v1 weights are an ASSUMPTION (learned stacker later). Surfaced in
+    # output as weights_version + assumptions, never silent.
     weights = {"flow": 0.35, "write": 0.25, "breadth": 0.15, "pcr": 0.15, "vix": 0.10}
+    weights_version = "fixed-v1-assumption"
 
     # Flow domain: z-mean + lsr tilt, -1..+1 -> 0..100.
     try:
@@ -98,11 +101,15 @@ def compute_composite(
 
     if len(parts) < 2:
         return {"score": None, "sentiment": "INSUFFICIENT", "domains": parts,
-                "status": "INSUFFICIENT", "reasons": reasons + ["need>=2-domains"]}
+                "status": "INSUFFICIENT", "reasons": reasons + ["need>=2-domains"],
+                "weights": dict(weights), "weights_version": weights_version,
+                "assumptions": ["weights-fixed-v1-not-learned"]}
     wsum = sum(weights[k] for k in parts)
     score = sum(parts[k] * weights[k] for k in parts) / wsum
     score = round(score, 1)
     sent = "BULLISH" if score >= 60 else ("BEARISH" if score <= 40 else "NEUTRAL")
     status = "LIVE" if len(parts) >= 4 else "DEGRADED"
     return {"score": score, "sentiment": sent, "domains": parts, "status": status,
-            "reasons": reasons, "regime": str(regime or "UNKNOWN")}
+            "reasons": reasons, "regime": str(regime or "UNKNOWN"),
+            "weights": dict(weights), "weights_version": weights_version,
+            "assumptions": ["weights-fixed-v1-not-learned"]}

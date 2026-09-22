@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
 import { unwrapMlData } from '@/lib/labDesk';
+import { dataFreshness, payloadTimestampMs } from '@/lib/signalsNormalize';
 import { useSmartInterval } from './useSmartInterval';
 
 export type MlAction = { ok: boolean; message: string };
@@ -43,7 +44,12 @@ export function useMlDesk(symbol: string, pollWhileOpen: boolean) {
       if (reqRef.current !== id) return;
       setPrediction(data);
       setPredError(null);
-      setUpdatedAt(Date.now());
+      // Prefer the backend prediction instant; keep last age when absent.
+      // Never bump to Date.now() — an undated payload stays undated.
+      const ts = payloadTimestampMs(data);
+      if (ts !== null) {
+        setUpdatedAt(ts);
+      }
       if (data === null) setPredError('No prediction for this symbol yet');
     } catch (err) {
       if (reqRef.current !== id) return;
@@ -134,8 +140,12 @@ export function useMlDesk(symbol: string, pollWhileOpen: boolean) {
     }
   }, [symbol, loadPrediction]);
 
+  const freshness = dataFreshness(updatedAt);
+
   return {
     prediction, predError, predLoading, updatedAt,
+    ageMs: freshness.ageMs, stale: freshness.stale,
+    source: 'rest' as const, liveSource: 'rest' as const,
     modelInfo, modelError, regime, regimeError,
     challenger, champion, manifestError,
     shadow, shadowError, targets, targetsError,

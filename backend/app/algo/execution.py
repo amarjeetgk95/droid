@@ -161,7 +161,9 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
     provider_name = "fyers"
 
     async def submit_order(self, record: OrderRecord) -> dict:
-        """Place live order via Fyers Open API v3 endpoint with safe simulation fallback."""
+        """Place live order via Fyers Open API v3 endpoint. Fail-closed: never
+        simulate a live fill. Missing creds or transport failure returns
+        REJECTED so paper/live divergence is loud, not disguised."""
         from app.core.broker_runtime import get_config
         import httpx
 
@@ -169,10 +171,16 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
         app_id = cfg.credentials.get("app_id") or ""
         token = cfg.credentials.get("access_token") or cfg.credentials.get("token") or ""
 
-        # If live credentials not active or paper mode, gracefully route through simulation safely
+        # Fail-closed: no live credentials means no live order. Callers route
+        # paper flow through PaperBrokerAdapter explicitly; the live adapter
+        # must never invent a fill.
         if not app_id or not token or token in ("", "mock-demo-token"):
-            logger.info("fyers_execution_fallback_to_safe_simulation", symbol=record.symbol)
-            return await PaperBrokerAdapter().submit_order(record)
+            logger.warning("fyers_live_rejected_no_credentials", symbol=record.symbol)
+            return {
+                "broker_order_id": None,
+                "status": "REJECTED",
+                "reason": "LIVE_CREDENTIALS_MISSING",
+            }
 
         try:
             side_code = 1 if record.side.upper() in ("BUY", "LONG") else -1
@@ -219,8 +227,20 @@ class FyersLiveBrokerAdapter(BrokerAdapter):
                         }
         except Exception as e:
             logger.error("fyers_order_submission_failed", error=str(e))
+            return {
+                "broker_order_id": None,
+                "status": "REJECTED",
+                "reason": f"LIVE_SUBMISSION_FAILED: {e}",
+            }
 
-        return await PaperBrokerAdapter().submit_order(record)
+        # Transport completed without a decisive broker answer: reconcile,
+        # never simulate.
+        logger.warning("fyers_live_no_decisive_answer", symbol=record.symbol)
+        return {
+            "broker_order_id": None,
+            "status": "REJECTED",
+            "reason": "LIVE_NO_DECISIVE_ANSWER",
+        }
 
     async def query_order(self, broker_order_id: str) -> dict:
         return {"broker_order_id": broker_order_id, "status": "UNKNOWN"}
@@ -270,7 +290,7 @@ class ExecutionSafety:
         """
         current_snapshot keys: data_health, clock_health, broker_health, instrument_tradable,
         price, spread_pct, slippage, has_circuit, capital_available, margin_available,
-        position_state, portfolio_risk, kill_switch
+        position_state, portfolio_risk
         """
         from app.services.calendar_service import calendar_service
         is_market_open = calendar_service.can_trade_now().allowed if not current_snapshot.get("allow_closed_market") else True
@@ -282,7 +302,6 @@ class ExecutionSafety:
             ("broker_health", current_snapshot.get("broker_health") not in ("CRITICAL","DISCONNECTED"), "BROKER_UNHEALTHY"),
             ("instrument", current_snapshot.get("instrument_tradable", True), "INSTRUMENT_NOT_TRADABLE"),
             ("circuit", not current_snapshot.get("has_circuit"), "CIRCUIT_ACTIVE"),
-            ("kill_switch", not current_snapshot.get("kill_switch"), "KILL_SWITCH_ACTIVE"),
         ]
         # Price deviation: if current price moved > max_deviation from expected
         expected = intent.price

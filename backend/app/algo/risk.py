@@ -65,7 +65,6 @@ class OrderIntent:
     clock_health: str = "HEALTHY"
     broker_health: str = "HEALTHY"
     reconciliation_health: str = "HEALTHY"
-    kill_switch_active: bool = False
     is_tradable: bool = True
     has_circuit: bool = False
     has_gap: bool = False
@@ -101,10 +100,6 @@ class TradeRiskEngine:
             return passed
 
         try:
-            # Kill switch first (§79 / §88.36)
-            if not chk("kill_switch", not intent.kill_switch_active, "KILL_SWITCH_ACTIVE"):
-                return RiskDecision(stage="TRADE_RISK", result="REJECTED", reason="KILL_SWITCH_ACTIVE", failed_check="kill_switch", checks=checks)
-
             # Data health (§82)
             if not chk("data_health", intent.data_health != "STALE", f"DATA_HEALTH_{intent.data_health}", value=intent.data_health):
                 return RiskDecision(stage="TRADE_RISK", result="REJECTED", reason="STALE_DATA", failed_check="data_health", checks=checks)

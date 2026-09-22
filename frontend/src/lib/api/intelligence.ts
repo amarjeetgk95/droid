@@ -9,6 +9,25 @@ import type { HourForecast, PortfolioGreeksSummary } from '@/lib/types';
 export type HourForecastV2 = HourForecast;
 export type TacticalHorizonBias = HourForecast;
 
+/**
+ * Single-snapshot forecast board contract:
+ * GET /api/v1/research/tactical-bias/board — one shared anchor_price and
+ * generated_at for all five horizons. Each horizons entry has the exact same
+ * shape as the single-horizon tactical-bias response.
+ */
+export type TacticalBiasBoardHorizon = '1m' | '5m' | '15m' | '30m' | '1h';
+
+export type ForecastBoardResponse = {
+  instrument: string;
+  generated_at: string;
+  anchor_price: number;
+  anchor_source: string;
+  anchor_ts: string | null;
+  cache_age_s: number;
+  stale: boolean;
+  horizons: Record<TacticalBiasBoardHorizon, HourForecastV2>;
+};
+
 export function createIntelligenceApi(core: ApiCore) {
   return {
     async calculateGreeks(params: { spot: number; strike: number; dte_days: number; volatility: number; option_type: 'CE' | 'PE' }) {
@@ -44,6 +63,19 @@ export function createIntelligenceApi(core: ApiCore) {
     async getForecast(instrument: string, horizon: string = '1h', record = true, includeExplain = true): Promise<HourForecastV2> {
     return core.request<HourForecastV2>(
       `/api/v1/research/forecast/${encodeURIComponent(horizon)}?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}&include_explain=${includeExplain ? 'true' : 'false'}`,
+    );
+  },
+
+    /**
+     * Single-snapshot board for all five horizons. Cold runs can take ~15s,
+     * so this call alone carries an explicit generous timeout. Errors (503/
+     * 500/404/network) propagate untouched — the useForecastBoard hook owns
+     * the fallback to the legacy 5-call path, not this client.
+     */
+    async getTacticalBiasBoard(instrument: string, record = false, includeExplain = true): Promise<ForecastBoardResponse> {
+    return core.request<ForecastBoardResponse>(
+      `/api/v1/research/tactical-bias/board?instrument=${encodeURIComponent(instrument)}&record=${record ? 'true' : 'false'}&include_layers=false&include_explain=${includeExplain ? 'true' : 'false'}`,
+      { timeoutMs: 120_000 },
     );
   },
 
@@ -95,6 +127,10 @@ export function createIntelligenceApi(core: ApiCore) {
     return core.request<any>(`/api/v1/research/predictions/${encodeURIComponent(predictionId)}`);
     },
 
+    async getResearchSnapshot(snapshotId: string) {
+    return core.request<any>(`/api/v1/research/snapshots/${encodeURIComponent(snapshotId)}`);
+    },
+
     async createResearchPrediction(params: Record<string, unknown>) {
     return core.request<any>('/api/v1/research/predictions', {
       method: 'POST',
@@ -144,6 +180,16 @@ export function createIntelligenceApi(core: ApiCore) {
       method: 'POST',
       body: JSON.stringify(params),
     });
+    },
+
+    async promoteChallenger(modelPrefixes?: string[]) {
+    return core.request<{ promoted: string[]; count: number }>(
+      '/api/v1/research/promote',
+      {
+        method: 'POST',
+        body: JSON.stringify({ model_prefixes: modelPrefixes ?? null }),
+      },
+    );
     },
 
     async listResearchAnnotations(instrument?: string) {

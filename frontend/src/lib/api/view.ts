@@ -16,7 +16,6 @@ export const COMMAND_VIEW_SECTIONS = [
   'regime',
   'signals',
   'feed_health',
-  'kill_switch',
   'ml',
   'risk_events',
   'paper',

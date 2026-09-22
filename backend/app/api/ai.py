@@ -66,6 +66,8 @@ class AITestRequest(BaseModel):
     model: str | None = None
     base_url: str | None = None
     customBaseUrl: str | None = None
+    # Overrides server free-only gate when explicitly set (Settings > Allow paid models)
+    allow_paid: bool | None = None
 
 
 @router.post("/test")
@@ -105,6 +107,7 @@ async def test_ai_provider(
             model=payload.model,
             base_url=payload.base_url,
             customBaseUrl=payload.customBaseUrl,
+            allow_paid=payload.allow_paid,
         )
         # Always return 200 with success flag, so frontend can show detailed diagnostics
         return _ai_envelope(result, error=None if result.get("success") else result.get("error"))

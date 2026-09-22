@@ -94,6 +94,15 @@ async def _reconfigure_provider(res: UserSettingsResponse | None, previous_app_s
         logger.warning("settings_provider_stream_start_failed", error=str(e)[:200])
 
 async def _get_settings_dev_fallback(user: AuthUser, session: AsyncSession | None, data: UserSettingsUpdate | None = None):
+    # DEV fallback: keep dev path but watermark + log — never silent success.
+    # Watermark ensures UI/dev callers cannot mistake in-memory dev settings
+    # for durable DB settings.
+    logger.warning(
+        "settings_dev_fallback_watermark",
+        user_id=getattr(user, "user_id", "unknown"),
+        dev_mode=True,
+        durable=False,
+    )
     # Try DB first, fall back to in-memory on any DB error (FK, UUID, connection)
     if session is not None:
         try:
@@ -116,6 +125,9 @@ async def _get_settings_dev_fallback(user: AuthUser, session: AsyncSession | Non
         if "app_settings" in patch and isinstance(patch["app_settings"], dict):
             existing_app = existing.get("app_settings", {}) or {}
             patch["app_settings"] = _deep_merge(existing_app if isinstance(existing_app, dict) else {}, patch["app_settings"])
+        # Watermark dev-memory writes so they are identifiable as non-durable.
+        if isinstance(patch.get("app_settings"), dict):
+            patch["app_settings"]["_dev_watermark"] = "dev-memory-fallback-non-durable"
         _dev_settings_store[user.user_id] = _deep_merge(existing, patch)
     return _get_dev_settings(user.user_id)
 

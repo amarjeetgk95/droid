@@ -94,12 +94,78 @@ def test_api_select_contract(client, monkeypatch):
         lambda: _FakeMarketService(),
     )
 
+    # Pin the selector's clock: candidate economics are priced against
+    # hours-to-expiry, so an unpinned clock turns this test into a calendar
+    # time bomb (a near-expiry DTE lifts theta drag past the 20% ceiling and
+    # the selector correctly fails closed with a 400).
+    import app.signals.options_intelligence.selector as selector_mod
+    from app.signals.safety.clocks import IST
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 24, 10, 0, tzinfo=tz or IST)
+
+    monkeypatch.setattr(selector_mod, "datetime", _FixedDateTime)
+
     resp = client.post("/api/v1/options-intelligence/select-contract", json=payload)
     assert resp.status_code == 200
     data = resp.json()
     assert data["underlying"] == "NIFTY"
     assert data["selected_strike_type"] in ("ITM_1", "ATM", "OTM_1")
     assert len(data["all_candidates"]) == 3
+
+
+def test_api_select_contract_fails_closed_near_expiry(client, monkeypatch):
+    """Expiry-day economics cannot clear the guards: the desk stands down (400).
+
+    Same chain quotes as the happy path, but the clock sits at 10:00 IST on
+    expiry day (~5.5h to close), where theta drag / 0DTE gamma veto reject every
+    candidate. The selector must return None (never a non-viable "best") and the
+    API must surface that as a fail-closed 400, not a 200 with a bad contract.
+    """
+    payload = {
+        "underlying": "NIFTY",
+        "spot_price": 24920.0,
+        "direction": "LONG_CALL",
+        "expected_move_points": 70.0,
+        "stop_loss_points": 25.0,
+        "current_iv": 0.15,
+    }
+
+    from datetime import datetime, timedelta, timezone
+    from app.models.market import NormalizedOptionQuote
+
+    expiry = datetime.now(timezone.utc) + timedelta(days=3)
+
+    def _quote(strike: float, ltp: float) -> NormalizedOptionQuote:
+        return NormalizedOptionQuote(
+            timestamp=datetime.now(timezone.utc), provider="test", instrument="NIFTY",
+            contract_id=f"NSE:NIFTY-TEST-{int(strike)}CE", underlying="NIFTY",
+            expiry=expiry, strike=strike, option_type="CE", ltp=ltp,
+        )
+
+    class _FakeMarketService:
+        async def get_option_chain(self, symbol, expiry=None):
+            return [_quote(24850.0, 170.0), _quote(24900.0, 135.0), _quote(24950.0, 100.0)]
+
+    monkeypatch.setattr(
+        "app.services.market_service.MarketService",
+        lambda: _FakeMarketService(),
+    )
+
+    import app.signals.options_intelligence.selector as selector_mod
+    from app.signals.safety.clocks import IST
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 22, 10, 0, tzinfo=tz or IST)
+
+    monkeypatch.setattr(selector_mod, "datetime", _FixedDateTime)
+
+    resp = client.post("/api/v1/options-intelligence/select-contract", json=payload)
+    assert resp.status_code == 400
 
 
 def test_api_expected_move(client):

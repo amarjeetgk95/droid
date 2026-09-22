@@ -57,7 +57,6 @@ class DeterministicTradeValidator:
                 - spread_pct: float
                 - max_spread_pct: float
                 - circuit_breaker: bool
-                - kill_switch: bool
                 - symbol: str
                 - existing_position: dict (optional)
             risk_state: Current risk state dict with keys:
@@ -183,14 +182,6 @@ class DeterministicTradeValidator:
             return ExecutionDecision(
                 decision="REJECT",
                 reason_code=RejectionReason.CIRCUIT_BREAKER,
-                reason_detail=err,
-                signal_id=signal.signal_id,
-            )
-
-        if err := self._validate_kill_switch(market_state):
-            return ExecutionDecision(
-                decision="REJECT",
-                reason_code=RejectionReason.KILL_SWITCH,
                 reason_detail=err,
                 signal_id=signal.signal_id,
             )
@@ -356,11 +347,6 @@ class DeterministicTradeValidator:
     def _validate_circuit_breaker(self, market_state: dict) -> Optional[str]:
         if market_state.get("circuit_breaker", False):
             return "Circuit breaker is active"
-        return None
-
-    def _validate_kill_switch(self, market_state: dict) -> Optional[str]:
-        if market_state.get("kill_switch", False):
-            return "Kill switch is active"
         return None
 
     def _validate_confidence_threshold(self, signal: AISignal, config: dict) -> Optional[str]:

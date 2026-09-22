@@ -42,5 +42,10 @@ try {
     } catch { }
 }
 
-& $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+# NOTE: no --reload. On Windows the uvicorn reloader deadlocks on restart:
+# the supervisor sends CTRL_C_EVENT and then blocks in Process.join() forever
+# (the asyncio worker never exits), while still holding port 8000 — every
+# request then hangs and the dashboard goes permanently stale. Relaunch via
+# this script after code changes instead (the port is auto-recycled above).
+& $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 

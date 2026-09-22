@@ -6,8 +6,10 @@ spec (``v2-atr-em-session``). Small, auditable, reproducible.
 Backend selection:
 - If scikit-learn is installed (``backend/pyproject.toml`` ``ml`` extra
   declares ``scikit-learn>=1.5.0``), training delegates to
-  ``LogisticRegression(multi_class='multinomial', solver='lbfgs', C=1.0,
-  max_iter=500)`` on standardized features.
+  ``LogisticRegression(solver='lbfgs', C=1.0, max_iter=500)`` on standardized
+  features. ``lbfgs`` is multinomial for a multi-class target on every
+  supported version; the explicit ``multi_class`` argument is deliberately
+  omitted because scikit-learn removed it in 1.7.
 - Otherwise a small full-batch gradient-descent multinomial logistic with L2
   (pure numpy, documented below) is used so unit tests and offline runs never
   require sklearn. Both paths share the same artifact schema and the same
@@ -242,8 +244,11 @@ def train_logistic_v2(
     if HAS_SKLEARN:
         from sklearn.linear_model import LogisticRegression
 
+        # NOTE: `multi_class` was deprecated in scikit-learn 1.5 and removed in
+        # 1.7. `solver="lbfgs"` is multinomial for a multi-class target on every
+        # version we support, so omitting the argument is both correct and
+        # version-proof (passing it raises TypeError on 1.7+).
         clf = LogisticRegression(
-            multi_class="multinomial",
             solver="lbfgs",
             C=float(C),
             max_iter=int(max(100, max_iter)),
