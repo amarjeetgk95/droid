@@ -18,6 +18,7 @@ from app.signals.strategies.base import (
     Strategy,
     StrategyContext,
     SignalCandidate,
+    extract_volume_ratio,
     has_closed_1m_candle,
     VOLUME_MICRO_MIN,
 )
@@ -82,20 +83,26 @@ class MicroMomentumStrategy(Strategy):
         if consol_range <= Decimal("0"):
             return None
 
-        # P1 volume: volume >= 1.5x 20-period MA, fail-closed if missing.
-        cur_vol = float(last_c.get("volume", 0) or 0)
-        if cur_vol <= 0:
-            return None
-        vol_ma = ctx.volume_ma_20
-        if vol_ma is None:
-            vols = [float(c.get("volume", 0)) for c in candles[-21:-1]] if len(candles) >= 21 else []
-            vols = [v for v in vols if v > 0]
-            if not vols:
-                return None  # fail-closed: no measured MA
-            vol_ma = sum(vols) / len(vols)
-        if vol_ma is None or vol_ma <= 0:
-            return None
-        vol_ratio = cur_vol / vol_ma
+        # P1 volume gate.
+        #
+        # MUST read the PIT-reconciled ratio, not a ratio rebuilt from the raw
+        # pool. This strategy used to compute cur_vol / ctx.volume_ma_20, where
+        # cur_vol is the FORMING bar's partial print and volume_ma_20 is the
+        # mean of the last 20 bars INCLUDING that same forming bar. Measured on
+        # the live feed that ratio is a sawtooth that only reaches ~1.0 at the
+        # final second of each minute (0.00 -> 0.26 -> 0.44 -> 0.56 -> 0.68 as
+        # the bar fills), so a >= VOLUME_MICRO_MIN gate on it was impossible to
+        # clear: the strategy could never emit a candidate, for any market.
+        #
+        # reconcile_pit_volume() already overwrites indicators["volume_ratio"]
+        # with the snapshot rvol measured on the last CLOSED bar against the
+        # prior 20 (forming bar dropped, no lookahead) — the honest
+        # participation measure, and what every sibling volume-gated strategy
+        # (VWAP_SCALP, ORB, VOLATILITY_BREAKOUT, MOMENTUM_REACCELERATION)
+        # already consumes via extract_volume_ratio.
+        vol_ratio = extract_volume_ratio(ctx.indicators)
+        if vol_ratio is None:
+            return None  # fail-closed: participation not measured
         if vol_ratio < VOLUME_MICRO_MIN:
             return None
 
@@ -181,7 +188,7 @@ class MicroMomentumStrategy(Strategy):
                 overall_confidence=conf_score,
                 rationale=[
                     f"5-bar micro consolidation range ({float(consolidation_low):.1f} - {float(consolidation_high):.1f}) broken bullish",
-                    f"Volume explosion: {int(cur_vol)} (>{float(vol_ma*1.5):.0f}, 1.5x MA threshold satisfied)",
+                    f"Relative volume {vol_ratio:.2f}x on the last closed 1M bar (>= {VOLUME_MICRO_MIN:.1f}x gate)",
                     f"RSI expansion at {rsi_val:.1f}; anti-chase fraction within {max_chase}R ceiling",
                 ],
                 option_contract=contract,
@@ -241,7 +248,7 @@ class MicroMomentumStrategy(Strategy):
                 overall_confidence=conf_score,
                 rationale=[
                     f"5-bar micro consolidation range ({float(consolidation_low):.1f} - {float(consolidation_high):.1f}) broken bearish",
-                    f"Volume explosion: {int(cur_vol)} (>{float(vol_ma*1.5):.0f}, 1.5x MA threshold satisfied)",
+                    f"Relative volume {vol_ratio:.2f}x on the last closed 1M bar (>= {VOLUME_MICRO_MIN:.1f}x gate)",
                     f"RSI contraction at {rsi_val:.1f}; anti-chase fraction within {max_chase}R ceiling",
                 ],
                 option_contract=contract,

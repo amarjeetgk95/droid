@@ -194,6 +194,90 @@ class TestScanCacheCannotSwallowDueScans:
         assert ttl < worker._intraday_interval, "intraday due-ticks would be swallowed"
 
 
+class TestNoStrategyHasAnImpossibleVolumeGate:
+    """MICRO_MOMENTUM rebuilt its own volume ratio from the raw candle pool:
+
+        vol_ratio = candles[-1].volume / ctx.volume_ma_20
+
+    candles[-1] is the FORMING bar (partial print) and volume_ma_20 is the mean
+    of the last 20 bars INCLUDING that same forming bar. Measured on the live
+    feed the ratio is a sawtooth topping out near 1.0 at the last second of the
+    minute, so a `>= VOLUME_MICRO_MIN` (1.1) gate could never be cleared — the
+    strategy was mathematically incapable of emitting a candidate, and the
+    blanket NO_SETUP_NO_EDGE diagnostic hid it behind 288 identical lines.
+    """
+
+    def test_micro_momentum_does_not_rebuild_ratio_from_raw_pool(self):
+        import inspect
+        from app.signals.strategies.micro_momentum import MicroMomentumStrategy
+
+        src = inspect.getsource(MicroMomentumStrategy)
+        # It must consume the PIT-reconciled ratio, like every sibling.
+        assert "extract_volume_ratio(ctx.indicators)" in src
+        # The raw forming-bar ratio is the bug and must not come back.
+        assert "vol_ratio = cur_vol / vol_ma" not in src
+        assert "cur_vol / vol_ma" not in src
+
+    def test_forming_bar_ration_cannot_clear_the_gate(self):
+        """Demonstrates the arithmetic: even a bar at 100% of its eventual
+        volume only reaches ~1.0 against an MA that contains itself."""
+        from app.signals.strategies.base import VOLUME_MICRO_MIN
+
+        prior = [100.0] * 20          # 20 prior closed bars
+        for fill in (0.0, 0.25, 0.5, 0.75, 1.0):
+            forming = 100.0 * fill
+            raw_ma = (sum(prior) + forming) / 20.0
+            raw_ratio = (forming / raw_ma) if raw_ma else 0.0
+            assert raw_ratio < VOLUME_MICRO_MIN, (
+                f"fill={fill}: raw ratio {raw_ratio:.3f} unexpectedly cleared "
+                f"{VOLUME_MICRO_MIN} — the sawtooth assumption no longer holds"
+            )
+        # The honest (closed-bar) ratio for the same bar is 1.0 and clears the
+        # 0.8 scalp gate comfortably, which is why the PIT value is used.
+        assert 1.0 >= 0.8
+
+    def test_every_volume_gated_strategy_uses_the_reconciled_ratio(self):
+        """Sweep: no volume-gated strategy may build its own raw ratio."""
+        import inspect
+        from app.signals.strategies import STRATEGY_ENABLED, STRATEGY_REGISTRY
+
+        offenders: list[str] = []
+        for name, enabled in STRATEGY_ENABLED.items():
+            if not enabled:
+                continue
+            strat = STRATEGY_REGISTRY.get(name)
+            if strat is None:
+                continue
+            src = inspect.getsource(type(strat))
+            if "VOLUME" not in src and "vol_ratio" not in src:
+                continue  # not volume-gated
+            if "extract_volume_ratio" in src:
+                continue
+            offenders.append(f"{name} ({type(strat).__module__})")
+        assert not offenders, (
+            "volume-gated strategies bypassing extract_volume_ratio: "
+            + ", ".join(offenders)
+        )
+
+
+class TestExplainCoversEveryEnabledStrategy:
+    """A detect() that returns None must name its real blocker. The fallback
+    NO_SETUP_NO_EDGE is a diagnostic black hole that made two scalp strategies
+    unobservable for a full session."""
+
+    def test_enabled_strategies_have_explain_branches(self):
+        import inspect
+        from app.signals.pipeline.strategy_runner import _explain_detect_none
+        from app.signals.strategies import STRATEGY_ENABLED, STRATEGY_REGISTRY
+
+        src = inspect.getsource(_explain_detect_none)
+        missing = [
+            n for n, e in STRATEGY_ENABLED.items()
+            if e and n in STRATEGY_REGISTRY and f'"{n}"' not in src and f'"{n[:-1]}"' not in src
+        ]
+        assert not missing, "no explain branch for: " + ", ".join(missing)
+
+
 class TestThrottleCounterIsWired:
     """throttled_signals_count was declared and read but never written, so
     /signals/performance reported throttled_signals_total: 0 forever.

@@ -43,13 +43,20 @@ def _explain_detect_none(ctx: StrategyContext, strat_name: str) -> str:
         from app.signals.strategies.base import (
             extract_volume_ratio,
             extract_breakout_pressure,
+            extract_adx,
             has_closed_1m_candle,
             VOLUME_BREAKOUT_MIN,
+            VOLUME_MICRO_MIN,
             VOLUME_ORB_MIN,
             VOLUME_SCALP_MIN,
+            ADX_TREND_CUTOFF,
         )
     except Exception:
         return f"{strat_name}:NO_SETUP_NO_EDGE"
+    try:
+        from decimal import Decimal
+    except Exception:
+        Decimal = None  # type: ignore[assignment]
     try:
         upper = str(strat_name or "").upper()
         # BREAKOUT is an alias for the same VOLATILITY_BREAKOUT logic.
@@ -139,6 +146,55 @@ def _explain_detect_none(ctx: StrategyContext, strat_name: str) -> str:
                 except Exception:
                     pass
             return f"{strat_name}:NO_SETUP_NO_REJECTION_WICK"
+        if upper in ("MICRO_MOMENTUM", "MOMENTUM_REACCELERATION"):
+            # Both suppress on RANGE/LOW_VOL before any structure is read, and
+            # both are volume-gated on the PIT-reconciled rvol. Reporting the
+            # real blocker matters: a blanket NO_SETUP_NO_EDGE here previously
+            # hid a structurally impossible volume gate behind 288 identical
+            # "no edge" lines.
+            if ctx.timeframe != "1M":
+                return f"{strat_name}:NO_SETUP_WRONG_TIMEFRAME_{ctx.timeframe}"
+            if not has_closed_1m_candle(ctx):
+                return f"{strat_name}:NO_SETUP_FORMING_CANDLE"
+            if ctx.regime in ("RANGE", "LOW_VOL"):
+                return f"{strat_name}:NO_SETUP_REGIME_RANGE_{ctx.regime}"
+            vol = extract_volume_ratio(ctx.indicators)
+            if vol is None:
+                return f"{strat_name}:NO_SETUP_NO_VOLUME_MEASURED"
+            need = VOLUME_MICRO_MIN if upper == "MICRO_MOMENTUM" else VOLUME_SCALP_MIN
+            if vol < need:
+                return f"{strat_name}:NO_SETUP_LOW_VOLUME_{vol:.2f}_LT_{need}"
+            return f"{strat_name}:NO_SETUP_NO_STRUCTURE"
+        if upper == "TREND_PULLBACK":
+            try:
+                adx = extract_adx(ctx.indicators)
+                if adx is not None and adx < ADX_TREND_CUTOFF:
+                    return f"{strat_name}:NO_SETUP_LOW_ADX_{adx:.1f}_LT_{ADX_TREND_CUTOFF}"
+            except Exception:
+                pass
+            try:
+                trend_data = ctx.indicators.get("trend", {}) or {}
+                ema20, ema50 = trend_data.get("ema20"), trend_data.get("ema50")
+                if ema20 is not None and ema50 is not None:
+                    if Decimal(str(ema20)) <= Decimal(str(ema50)):
+                        return f"{strat_name}:NO_SETUP_NO_RIBBON_EMA20<=EMA50"
+                    dist = abs(ctx.spot_price - Decimal(str(ema20))) / ctx.spot_price * Decimal("100")
+                    if dist > Decimal("0.6"):
+                        return f"{strat_name}:NO_SETUP_FAR_FROM_EMA20_{float(dist):.2f}PCT_GT_0.6"
+            except Exception:
+                pass
+            return f"{strat_name}:NO_SETUP_NO_EDGE"
+        if upper == "MEAN_REVERSION":
+            try:
+                rsi = float((ctx.indicators.get("momentum", {}) or {}).get("rsi") or ctx.indicators.get("rsi") or 50.0)
+                bb_l = (ctx.indicators.get("volatility", {}) or {}).get("bollinger_lower")
+                if bb_l is not None and float(ctx.spot_price) < float(bb_l) and rsi > 35.0:
+                    return f"{strat_name}:NO_SETUP_RSI_NOT_EXTREME_{rsi:.0f}"
+                if bb_l is not None and float(ctx.spot_price) >= float(bb_l):
+                    return f"{strat_name}:NO_SETUP_NOT_AT_BAND"
+            except Exception:
+                pass
+            return f"{strat_name}:NO_SETUP_NO_EDGE"
     except Exception:
         pass
     return f"{strat_name}:NO_SETUP_NO_EDGE"
