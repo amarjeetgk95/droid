@@ -11,6 +11,7 @@ a successful exchange, held in memory). Frontend never sends secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import structlog
@@ -98,6 +99,118 @@ class BrokerConfig:
 _active: Optional[BrokerConfig] = None
 
 
+def _jwt_exp_epoch(token: object) -> float | None:
+    """Return the JWT ``exp`` claim as epoch seconds, or None when absent."""
+    try:
+        if not isinstance(token, str):
+            return None
+        raw = token.strip().strip("\"'")
+        if not raw or "." not in raw:
+            return None
+        import base64 as _b64
+        import json as _json
+
+        payload_b64 = raw.split(":")[-1].strip().split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = _json.loads(_b64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp")
+        return float(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+def _pick_fresher_token(env_token: str, file_token: str) -> str:
+    """Prefer the token with the later JWT expiry (daily 06:00 IST rotation).
+
+    FYERS access tokens expire every morning. backend/.fyers_token is written
+    by the OAuth callback each login while backend/.env keeps yesterday's
+    value. After 06:00 a restart must not resurrect the dead .env token when
+    the file holds this morning's valid one.
+    """
+    env_token = (env_token or "").strip().strip("\"'")
+    file_token = (file_token or "").strip().strip("\"'")
+    if env_token and not file_token:
+        return env_token
+    if file_token and not env_token:
+        return file_token
+    if not env_token and not file_token:
+        return ""
+    env_exp = _jwt_exp_epoch(env_token)
+    file_exp = _jwt_exp_epoch(file_token)
+    if env_exp is not None and file_exp is not None and file_exp != env_exp:
+        chosen = file_token if file_exp > env_exp else env_token
+        try:
+            logger.info(
+                "fyers_token_selected_by_expiry",
+                chosen="file" if chosen == file_token else "env",
+                env_exp=env_exp,
+                file_exp=file_exp,
+            )
+        except Exception:
+            pass
+        return chosen
+    # No comparable expiries — prefer the file token (written by the latest
+    # successful OAuth login) over the possibly-stale .env value.
+    if file_token:
+        return file_token
+    return env_token
+
+
+def _read_token_file() -> str:
+    """Longest token found in backend/.fyers_token (cwd or package-relative)."""
+    file_token = ""
+    try:
+        # OAuth callback writes backend/.fyers_token (process cwd is backend/),
+        # but guard both locations since tooling sometimes runs from repo root.
+        for _candidate in (Path(".fyers_token"), Path(__file__).resolve().parents[2] / ".fyers_token"):
+            if _candidate.exists():
+                try:
+                    _read = _candidate.read_text(encoding="utf-8").strip()
+                except Exception:
+                    continue
+                if _read and (not file_token or len(_read) > len(file_token)):
+                    file_token = _read
+                if _candidate.name == ".fyers_token" and str(_candidate.parent).endswith("backend"):
+                    break
+    except Exception:
+        return file_token
+    return file_token
+
+
+def current_access_token() -> str:
+    """Freshest usable FYERS access token across runtime state, .env and token file.
+
+    FYERS access tokens expire every morning (~06:00 IST). Long-lived objects
+    that capture ``settings.fyers_access_token`` at construction silently pin
+    yesterday's token and every downstream call 401s (seen as "no data returned"
+    in historical ingestion). Callers needing credentials per-request — such as
+    the historical provider — should resolve through here instead.
+
+    Returns "" when no usable credential exists.
+    """
+    from app.core.config import settings as cfg
+
+    candidates = [
+        ((_active.credentials.get("access_token") if _active else "") or ""),
+        cfg.fyers_access_token or "",
+        _read_token_file(),
+    ]
+    jwt_best, jwt_exp, opaque = "", float("-inf"), ""
+    for raw in candidates:
+        tok = (raw or "").strip().strip("\"'")
+        if not tok or not is_usable_access_token(tok):
+            continue
+        exp = _jwt_exp_epoch(tok)
+        if exp is None:
+            # Opaque (non-JWT) token carries no exp claim: usable fallback only
+            # when no JWT candidate exists, never a rival to one.
+            opaque = opaque or tok
+            continue
+        if exp > jwt_exp:
+            jwt_best, jwt_exp = tok, exp
+    return jwt_best or opaque
+
+
 def _env_config() -> BrokerConfig:
     """Build a config from static env-driven settings (fallback / startup)."""
     from app.core.config import settings as cfg
@@ -110,16 +223,14 @@ def _env_config() -> BrokerConfig:
         creds["app_id"] = cfg.fyers_app_id.strip().strip("\"'")
     if cfg.fyers_secret_key:
         creds["secret_key"] = cfg.fyers_secret_key.strip().strip("\"'")
-    token = (cfg.fyers_access_token or "").strip().strip("\"'")
-    if not token:
-        from pathlib import Path
-        token_file = Path(".fyers_token")
-        if token_file.exists():
-            try:
-                token = token_file.read_text(encoding="utf-8").strip()
-            except Exception:
-                token = ""
-
+    env_token = (cfg.fyers_access_token or "").strip().strip("\"'")
+    file_token = _read_token_file()
+    # FYERS tokens die every morning (~06:00 IST). The .env value goes stale
+    # while backend/.fyers_token holds this morning's OAuth token. Prefer the
+    # token with the later JWT expiry instead of blindly trusting .env, else a
+    # restart after 06:00 loads the dead .env token and parks on AUTH_EXPIRED
+    # while a valid token sits on disk.
+    token = _pick_fresher_token(env_token, file_token)
     if token:
         if is_usable_access_token(token):
             creds["access_token"] = token

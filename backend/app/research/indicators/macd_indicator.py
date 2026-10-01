@@ -1,8 +1,8 @@
-"""MACD Standard Indicator implementation for the Research Laboratory (§46)."""
+﻿"""MACD Standard Indicator implementation for the Research Laboratory (Â§46)."""
 
 from typing import Any
 
-from app.quant.indicators import calculate_ema
+from app.market_core.indicators import calculate_ema
 from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,

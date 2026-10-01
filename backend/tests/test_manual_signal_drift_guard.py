@@ -13,6 +13,7 @@ def _gen(client, **over):
         "timeframe": "5M",
         "notify_telegram": False,
         "allow_closed_market": True,
+        "confirm": True,  # closed-market gate: operator confirm required
     }
     base.update(over)
     return client.post("/api/v1/signals/generate", json=base)

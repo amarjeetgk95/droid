@@ -1,4 +1,4 @@
-"""Shared scaffolding for the built-in research indicators (§46).
+﻿"""Shared scaffolding for the built-in research indicators (Â§46).
 
 The concrete indicators in this package repeat the same skeleton: parameter
 coercion, OHLC extraction with None/length guards, ATR fallback, threshold to
@@ -7,13 +7,13 @@ IndicatorOutput assembly. :class:`BuiltinIndicator` owns that skeleton so each
 indicator module only implements its own math.
 
 Semantics are intentionally preserved exactly as written in the individual
-indicators (same guards, same rounding, same NaN propagation) — this module
+indicators (same guards, same rounding, same NaN propagation) â€” this module
 deduplicates the shape, it does not "fix" any behavior.
 """
 
 from typing import Any
 
-from app.quant.indicators import calculate_atr
+from app.market_core.indicators import calculate_atr
 from app.research.enums import DataQualityStatus, Direction, ForecastHorizon
 from app.research.indicator_base import IndicatorBase, IndicatorMetadata
 from app.research.models import IndicatorContext, IndicatorOutput
@@ -25,15 +25,15 @@ class BuiltinIndicator(IndicatorBase):
     """Base class owning the shared built-in indicator skeleton.
 
     Subclasses keep their own metadata and math. Provided helpers:
-      * ``_int_param`` / ``_float_param`` — parameter coercion guards
-      * ``_extract_series`` — closes/highs/lows + last-close/current_price guard
-      * ``_extract_opens`` / ``_extract_volumes`` — OHLCV guards
-      * ``_guarded_atr`` — ATR with the short-series fallback
-      * ``_last`` / ``_rate_of_change`` — rolling-window primitives
-      * ``_resolve_direction`` — threshold classification
-      * ``_resolve_confidence`` — confidence scaling
-      * ``_bracket_prices`` / ``_trend_prices`` — target/invalidation brackets
-      * ``_build_output`` — common IndicatorOutput field assembly
+      * ``_int_param`` / ``_float_param`` â€” parameter coercion guards
+      * ``_extract_series`` â€” closes/highs/lows + last-close/current_price guard
+      * ``_extract_opens`` / ``_extract_volumes`` â€” OHLCV guards
+      * ``_guarded_atr`` â€” ATR with the short-series fallback
+      * ``_last`` / ``_rate_of_change`` â€” rolling-window primitives
+      * ``_resolve_direction`` â€” threshold classification
+      * ``_resolve_confidence`` â€” confidence scaling
+      * ``_bracket_prices`` / ``_trend_prices`` â€” target/invalidation brackets
+      * ``_build_output`` â€” common IndicatorOutput field assembly
     """
 
     @staticmethod

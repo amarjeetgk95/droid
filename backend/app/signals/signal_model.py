@@ -1,4 +1,4 @@
-﻿"""
+"""
 Domain Models for Signal Module Decomposition (Phase 2)
 Provides structured, typed domain models representing distinct concerns:
   - SignalDefinition (immutable strategy decision)
@@ -17,9 +17,12 @@ from decimal import Decimal
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.signals.types import ExecutionStatus
+
 
 SignalFSMState = Literal[
     "DETECTED",
+    "PRE_ARMED",
     "VALIDATED",
     "ARMED",
     "TRIGGERED",
@@ -84,6 +87,7 @@ class SignalDefinition(BaseModel):
     risk_reward_t1: float
     risk_reward_t2: float
     confidence: float
+    opportunity_score: float | None = None
     signal_type: str = "INTRADAY"
     is_scalp: bool = False
     ttl_seconds: int = 300
@@ -189,6 +193,14 @@ class RiskSizing(BaseModel):
     quantity: int | None = None
     max_rupee_loss: float | None = None
     risk_r: Decimal | None = None
+    live_lots: int = 0
+    hypothetical_paper_lots: int = 0
+    live_executable: bool = False
+    paper_eligible: bool = False
+    observation_eligible: bool = False
+    execution_status: ExecutionStatus = "SAFETY_BLOCKED"
+    execution_blocked_reason: str | None = None
+    execution_score: float | None = None
 
 
 class ExecutionState(BaseModel):

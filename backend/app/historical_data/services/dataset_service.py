@@ -43,17 +43,29 @@ class HistoricalDatasetService:
             "latest_quality_report": quality_report.model_dump() if quality_report else None,
         }
 
-    def get_candle_page(
+    async def _resolve_current_version(self, symbol: str, timeframe: str) -> str:
+        """Current version tag for a symbol/timeframe (falls back to v1)."""
+        try:
+            dataset = await db_repo.get_dataset(f"{symbol.upper()}_{timeframe.upper()}")
+            if dataset and dataset.current_version_id:
+                return dataset.current_version_id.rsplit("_", 1)[-1]
+        except Exception:
+            pass
+        return "v1"
+
+    async def get_candle_page(
         self,
         symbol: str,
         timeframe: str,
-        version_tag: str = "v1",
+        version_tag: Optional[str] = None,
         page: int = 1,
         page_size: int = 100,
         sort_desc: bool = True,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
     ) -> Dict[str, Any]:
+        if version_tag is None:
+            version_tag = await self._resolve_current_version(symbol, timeframe)
         rows, total = parquet_repo.get_paginated_candles(
             symbol=symbol,
             timeframe=timeframe,
@@ -76,14 +88,16 @@ class HistoricalDatasetService:
             "candles": rows,
         }
 
-    def export_candles(
+    async def export_candles(
         self,
         symbol: str,
         timeframe: str,
-        version_tag: str = "v1",
+        version_tag: Optional[str] = None,
         export_format: str = "csv",
     ) -> Tuple[bytes, str, str]:
         """Export full dataset as bytes. Returns (bytes, media_type, filename)."""
+        if version_tag is None:
+            version_tag = await self._resolve_current_version(symbol, timeframe)
         df = parquet_repo.load_candles(symbol, timeframe, version_tag=version_tag)
         clean_sym = symbol.replace(":", "_").replace("-", "_")
 

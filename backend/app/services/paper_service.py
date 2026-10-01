@@ -1,4 +1,4 @@
-"""Industrial-grade virtual order matching + portfolio engine.
+﻿"""Industrial-grade virtual order matching + portfolio engine.
 
 Design notes (what changed vs the demo engine and why)
 ------------------------------------------------------
@@ -13,21 +13,21 @@ Design notes (what changed vs the demo engine and why)
    lock but perform live-quote IO outside it.
 3. Honest fills: MARKET orders prefer the live quote (with spread+slippage
    friction). The caller-supplied ``price`` is only a fallback when live is
-   unavailable (flagged as CLIENT_FALLBACK) — never silently trusted.
+   unavailable (flagged as CLIENT_FALLBACK) â€” never silently trusted.
    LIMIT / SL orders rest as PENDING when the market hasn't touched them.
 4. Costs: every fill records an ``estimated_costs`` figure via
-   ``app.quant.costs.calculate_option_costs`` (brokerage + STT + exchange +
+   ``app.market_core.costs.calculate_option_costs`` (brokerage + STT + exchange +
    GST + slippage). Gross fill stays in ``fill_price`` for backward compat.
 5. Risk gate: max single-order qty, max open positions, per-symbol exposure,
    fat-finger band (LIMIT only, when live is known), daily-loss brake.
-6. Idempotency: optional ``client_order_id`` — resubmission returns the
+6. Idempotency: optional ``client_order_id`` â€” resubmission returns the
    original order instead of double-filling (signal engine passes
    ``sig-{signal_id}``).
 7. Position flip: an opposite-side order larger than the held qty now closes
    the old position AND opens the residual (old code silently dropped it).
    Partial-close margin relief is pro-rata, not the new order's margin.
 8. Persistence: rejected orders are now always persisted (old code only
-   persisted some paths). DB failures never fail the in-memory fill — they
+   persisted some paths). DB failures never fail the in-memory fill â€” they
    are logged as degraded. MTM writes are throttled (only on real change).
 """
 
@@ -46,7 +46,7 @@ from app.models.paper import (
     VirtualPosition, PortfolioSummary
 )
 from app.models.database import PaperOrderDB, PaperPositionDB
-from app.quant.margin import calculate_required_margin
+from app.market_core.margin import calculate_required_margin
 from app.repositories.paper_repository import PaperTradingRepository
 from app.services.market_service import MarketService
 import structlog
@@ -58,7 +58,7 @@ ANON_KEY = "__anon__"
 #: Remediation text attached to persistence warnings for the signal book.
 SIGNAL_BOOK_PERSIST_HINT = (
     f"signal paper rows persist under reserved system user {SIGNAL_BOOK_USER_ID} "
-    f"({SIGNAL_BOOK_LABEL}); no reserved-identity migration is shipped — if that "
+    f"({SIGNAL_BOOK_LABEL}); no reserved-identity migration is shipped â€” if that "
     "auth.users/profiles row does not exist, provision it (Supabase auth admin) "
     "or this write stays memory-only"
 )
@@ -66,7 +66,7 @@ SIGNAL_BOOK_PERSIST_HINT = (
 # Execution friction (bps). 5 bps spread ~= the old 0.05% hardcoded spread.
 SPREAD_BPS = 5.0
 SLIPPAGE_BPS = 10.0
-# Risk-gate defaults — set wide so existing flows/tests never trip them;
+# Risk-gate defaults â€” set wide so existing flows/tests never trip them;
 # tighten via constructor for production.
 MAX_SINGLE_ORDER_QTY = 100_000
 MAX_OPEN_POSITIONS = 100
@@ -125,12 +125,12 @@ class PaperTradingService:
         self.max_single_order_qty = max_single_order_qty
         self.max_open_positions = max_open_positions
 
-    # ── sharding helpers ──────────────────────────────────────────
+    # â”€â”€ sharding helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     @staticmethod
     def _user_key(user_id: Optional[UUID]) -> str:
         return str(user_id) if user_id is not None else ANON_KEY
 
-    # ── persistence boundary ──────────────────────────────────────
+    # â”€â”€ persistence boundary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     @staticmethod
     def _persist_owner(user_id: Optional[UUID]) -> UUID:
         """DB owner of a shard: the real user, or the reserved signal-book user.
@@ -153,7 +153,7 @@ class PaperTradingService:
         Uses the caller's session when given (HTTP request scope); otherwise
         opens a short-lived one. The factory is resolved at call time so a
         test/runtime patch of ``app.core.database`` takes effect. Yields
-        ``None`` when the DB is unconfigured or the session cannot be opened —
+        ``None`` when the DB is unconfigured or the session cannot be opened â€”
         callers degrade to memory-only rather than failing the fill.
         """
         if session is not None:
@@ -195,7 +195,7 @@ class PaperTradingService:
             lock = self._locks.get(key)
             bound = self._lock_loops.get(key)
             # Replace the lock only when its loop is provably dead (test/worker
-            # teardown) — nobody can still hold it, so mutual exclusion is
+            # teardown) â€” nobody can still hold it, so mutual exclusion is
             # preserved. A live-but-different loop keeps the existing lock,
             # matching the pre-rebind behaviour; see core/service_lifecycle.py
             # for the same guard pattern.
@@ -282,7 +282,7 @@ class PaperTradingService:
     @staticmethod
     def _estimate_costs(symbol: str, side: str, fill: float, qty: int) -> float:
         try:
-            from app.quant.costs import calculate_option_costs
+            from app.market_core.costs import calculate_option_costs
             turnover = round(fill * qty, 2)
             buy_t = turnover if side == "BUY" else 0.0
             sell_t = turnover if side == "SELL" else 0.0
@@ -402,7 +402,7 @@ class PaperTradingService:
             is_open=db_pos.is_open,
         )
 
-    # ── internal: rejected-order builder (always persisted when possible) ──
+    # â”€â”€ internal: rejected-order builder (always persisted when possible) â”€â”€
     async def _reject(
         self,
         payload: OrderPayload,
@@ -506,7 +506,7 @@ class PaperTradingService:
             open_positions_count=len(open_positions),
         )
 
-    # ── fill resolution ─────────────────────────────────────────
+    # â”€â”€ fill resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async def _resolve_fill(
         self,
         payload: OrderPayload,
@@ -514,7 +514,7 @@ class PaperTradingService:
     ) -> tuple[float | None, str | None, bool]:
         """Return (fill_price, fill_source, is_pending).
 
-        PENDING is used for LIMIT/SL orders the market hasn't touched yet —
+        PENDING is used for LIMIT/SL orders the market hasn't touched yet â€”
         the caller must rest the order instead of filling it.
         """
         if forced_fill is not None:
@@ -533,7 +533,7 @@ class PaperTradingService:
             if live is not None:
                 return self._apply_friction(live, payload.side), "LIVE", False
             # Fail-closed: no live quote = no fill. Never fill a MARKET order
-            # at the client-supplied estimate — that fabricates economics.
+            # at the client-supplied estimate â€” that fabricates economics.
             logger.warning(
                 "paper_fill_rejected_no_live",
                 symbol=payload.symbol, reason="live_unavailable_market",
@@ -544,7 +544,7 @@ class PaperTradingService:
             if not payload.price or payload.price <= 0:
                 return None, None, False
             if live is None:
-                # Cannot verify limit touch without live — rest the order.
+                # Cannot verify limit touch without live â€” rest the order.
                 logger.warning("paper_fill_pending_no_live", symbol=payload.symbol, reason="live_unavailable_limit")
                 return None, None, True
             adj = self._apply_friction(live, payload.side)
@@ -562,7 +562,7 @@ class PaperTradingService:
             return None, None, False
         trig = float(payload.trigger_price)
         if live is None:
-            # Cannot evaluate the trigger without live — rest the order.
+            # Cannot evaluate the trigger without live â€” rest the order.
             return None, None, True
         triggered = (live >= trig) if payload.side == "BUY" else (live <= trig)
         if not triggered:
@@ -582,7 +582,7 @@ class PaperTradingService:
                 return max(adj, float(payload.price)), "LIMIT", False
             return None, None, True
 
-    # ── core order path ─────────────────────────────────────────
+    # â”€â”€ core order path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async def place_order(
         self,
         payload: OrderPayload,
@@ -608,14 +608,14 @@ class PaperTradingService:
         orders = self._ord_store(user_id)
         positions = self._pos_store(user_id)
 
-        # ── Idempotency: same (user, client_order_id) returns the original ──
+        # â”€â”€ Idempotency: same (user, client_order_id) returns the original â”€â”€
         if payload.client_order_id:
             seen = self._idempotency.setdefault(self._user_key(user_id), {})
             if payload.client_order_id in seen:
                 logger.info("paper_order_idempotent_replay", client_order_id=payload.client_order_id)
                 return seen[payload.client_order_id]
 
-        # ── Final Safety Invariant: Check Market Session for Indian Instruments ──
+        # â”€â”€ Final Safety Invariant: Check Market Session for Indian Instruments â”€â”€
         is_indian = payload.underlying in ("NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY") or any(
             x in payload.symbol for x in ("CE", "PE", "FUT", "NIFTY", "BANKNIFTY", "SENSEX")
         )
@@ -637,7 +637,7 @@ class PaperTradingService:
                 order_id, now_str, session, user_id, orders,
             )
 
-        # ── Risk gate ──
+        # â”€â”€ Risk gate â”€â”€
         if payload.quantity > self.max_single_order_qty:
             return await self._reject(
                 payload,
@@ -764,7 +764,7 @@ class PaperTradingService:
         if needs_margin and req_margin > snapshot.available_margin:
             return await self._reject(
                 payload,
-                f"Insufficient Margin. Required: ₹{req_margin:,.2f}, Available: ₹{snapshot.available_margin:,.2f}",
+                f"Insufficient Margin. Required: â‚¹{req_margin:,.2f}, Available: â‚¹{snapshot.available_margin:,.2f}",
                 order_id, now_str, session, user_id, orders,
             )
 
@@ -915,7 +915,7 @@ class PaperTradingService:
         for ord_payload in payload.orders:
             res = await self.place_order(ord_payload, session, user_id, allow_closed_market=allow_closed_market)
             results.append(res)
-            # Fail-closed on first rejection for SL legs? No — legacy behavior
+            # Fail-closed on first rejection for SL legs? No â€” legacy behavior
             # executes every leg independently; keep it, report per-leg status.
         return results
 
@@ -990,7 +990,7 @@ class PaperTradingService:
                 from app.services.calendar_service import calendar_service
                 perm = calendar_service.can_trade_now()
                 if not perm.allowed:
-                    raise ValueError(f"MARKET_CLOSED: {perm.reason} — pass allow_closed_market=True for cleanup exits")
+                    raise ValueError(f"MARKET_CLOSED: {perm.reason} â€” pass allow_closed_market=True for cleanup exits")
 
             exit_order = OrderPayload(
                 symbol=pos.symbol,
@@ -1141,7 +1141,7 @@ class PaperTradingService:
 
         ``user_id`` is the *memory* scope. Rows are read for its persist owner
         (the reserved system user for the anon signal book) but stored under
-        ``user_id`` — so signal trades hydrate ``_positions``/``_orders`` while
+        ``user_id`` â€” so signal trades hydrate ``_positions``/``_orders`` while
         ``_set_realized``/``_set_capital`` keep targeting the same memory shard.
         Returns the number of positions loaded.
         """
@@ -1227,7 +1227,7 @@ class PaperTradingService:
 
         open_positions = [p for p in snapshot if p.is_open]
 
-        # Concurrent live MTM refresh — one slow symbol must not stall the rest.
+        # Concurrent live MTM refresh â€” one slow symbol must not stall the rest.
         # Network IO happens OUTSIDE the lock.
         if open_positions:
             async def _fetch(pos: VirtualPosition) -> tuple[str, float | None]:

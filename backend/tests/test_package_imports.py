@@ -2,9 +2,9 @@
 
 An undeclared dependency used to surface as an ImportError buried in one test
 module — or not at all, when that module failed to collect quietly. The whole
-``app.quant`` package imports ``polars``, which was missing from
-``pyproject.toml`` and therefore only worked on a machine where someone had
-installed it by hand; a fresh clone could not import it at all.
+``app.market_core`` and ``app.copilot.analogue`` import ``polars``, which was
+missing from ``pyproject.toml`` and therefore only worked on a machine where
+someone had installed it by hand; a fresh clone could not import them at all.
 
 This walks ``app/`` and imports each top-level package, so a missing dependency
 fails loudly and by name instead of silently shrinking the suite.

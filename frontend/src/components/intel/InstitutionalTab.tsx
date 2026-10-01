@@ -223,186 +223,197 @@ export function InstitutionalTab({
   }, [miFullView]);
 
   return (
-    <div className="flex flex-col gap-2">
-      {/* Market intelligence dashboard */}
-      <section className="card" aria-label="Market intelligence">
-        <div className="card-hd">
-          <h2 className="card-title">Market Intelligence</h2>
-          {desk.mi ? (
-            <span className={`badge ${badgeClass(healthTone(desk.mi.regime))}`}>
-              {desk.mi.regime ?? '—'}
-            </span>
-          ) : null}
-          <span className="card-meta num">
-            {desk.mi?.spot !== null && desk.mi?.spot !== undefined ? desk.mi.spot : '—'}
-          </span>
-        </div>
-        <div className="card-bd flex flex-col gap-2">
-          {!desk.mi && !desk.loading ? (
-            <p className="sg-empty">Market intelligence unavailable for {instrument}.</p>
-          ) : desk.mi ? (
-            <>
-              <div className="sg-kvlist">
-                <ScoreKv label="bullish score" value={desk.mi.bullish} />
-                <ScoreKv label="bearish score" value={desk.mi.bearish} />
-                <ScoreKv label="breakout pressure" value={desk.mi.breakoutPressure} />
-                <ScoreKv label="breakdown pressure" value={desk.mi.breakdownPressure} />
-                <ScoreKv label="false breakout risk" value={desk.mi.falseBreakoutRisk} />
-                <div className="sg-kv">
-                  <span className="l">trend</span>
-                  <span className="v">{desk.mi.trend ?? '—'}</span>
-                </div>
-              </div>
-              <div className="pnl-strip">
-                <span className="ps">
-                  <span className="ps-l">short</span>
-                  <span className={`sg-tag ${signalTone(desk.mi.shortStatus ?? 'WATCH')}`}>
-                    {desk.mi.shortStatus ?? '—'}
-                  </span>
-                </span>
-                <span className="ps">
-                  <span className="ps-l">continuation</span>
-                  <span className={`sg-tag ${signalTone(desk.mi.contStatus ?? 'WATCH')}`}>
-                    {desk.mi.contStatus ?? '—'}
-                  </span>
-                </span>
-                <span className="ps">
-                  <span className="ps-l">breakout</span>
-                  <span className={`sg-tag ${signalTone(desk.mi.breakoutStatus ?? 'WATCH')}`}>
-                    {[desk.mi.breakoutStatus, desk.mi.breakoutDirection].filter(Boolean).join(' · ') || '—'}
-                  </span>
-                </span>
-                <span className="ps">
-                  <span className="ps-l">data</span>
-                  <span className={`sg-tag ${healthTone(desk.mi.dataHealth)}`}>
-                    {desk.mi.dataHealth ?? '—'}
-                  </span>
-                </span>
-              </div>
-              {miEvidence.supporting.length > 0 || miEvidence.conflicting.length > 0 ? (
-                <div className="tbl-scroll">
-                  <table className="sg-table">
-                    <tbody>
-                      {miEvidence.supporting.map((line, i) => (
-                        <tr key={`s-${i}`}><td><span className="sg-tag bull">supporting</span></td><td className="sg-rownote">{line}</td></tr>
-                      ))}
-                      {miEvidence.conflicting.map((line, i) => (
-                        <tr key={`c-${i}`}><td><span className="sg-tag bear">conflicting</span></td><td className="sg-rownote">{line}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="sg-note">No supporting/conflicting evidence in this poll.</p>
-              )}
-            </>
-          ) : (
-            <p className="sg-note">Loading market intelligence…</p>
-          )}
-        </div>
-      </section>
-
-      {/* Data health */}
-      <section className="card" aria-label="Data health">
-        <div className="card-hd">
-          <h2 className="card-title">Data Health</h2>
-          <span className="card-meta">{desk.healthRows.length} instrument(s)</span>
-        </div>
-        <div className="card-bd">
-          {desk.healthRows.length === 0 ? (
-            <p className="sg-empty">{desk.loading ? 'Loading data health…' : 'No data-health rows reported.'}</p>
-          ) : (
-            <div className="tbl-scroll">
-              <table className="sg-table">
-                <thead><tr><th>Instrument</th><th>Status</th><th>Feed</th></tr></thead>
-                <tbody>
-                  {desk.healthRows.map((row) => (
-                    <tr key={row.instrument}>
-                      <td className="sg-sym">{row.instrument}</td>
-                      <td><span className={`sg-tag ${healthTone(row.status)}`}>{row.status}</span></td>
-                      <td className="sg-rownote">{row.feed}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {Object.keys(desk.healthOverall).length > 0 ? (
-            <p className="sg-note">
-              {Object.entries(desk.healthOverall).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')}
-            </p>
-          ) : null}
-        </div>
-      </section>
-
-      {/* Calls & puts */}
-      <section className="card" aria-label="Calls and puts">
-        <div className="card-hd">
-          <h2 className="card-title">Calls / Puts</h2>
-          <span className="card-meta">{deepPickStr(cpRaw, 'underlying', 'instrument') ?? instrument}</span>
-        </div>
-        <div className="card-bd">
-          {!cpRaw && !desk.loading ? (
-            <p className="sg-empty">Calls/puts chain unavailable for {instrument}.</p>
-          ) : !cpRaw ? (
-            <p className="sg-note">Loading option chain…</p>
-          ) : (
-            <div className="sg-kvlist">
-              <ScoreKv label="pcr" value={deepPickNum(cpRaw, 'pcr')} />
-              <ScoreKv label="pcr volume" value={deepPickNum(cpRaw, 'pcr_volume')} />
-              <div className="sg-kv"><span className="l">call OI</span><span className="v num">{deepPickNum(cpRaw, 'total_call_oi')?.toLocaleString() ?? '—'}</span></div>
-              <div className="sg-kv"><span className="l">put OI</span><span className="v num">{deepPickNum(cpRaw, 'total_put_oi')?.toLocaleString() ?? '—'}</span></div>
-              <ScoreKv label="atm strike" value={deepPickNum(cpRaw, 'atm_strike')} />
-              <ScoreKv label="max pain" value={deepPickNum(cpRaw, 'max_pain', 'max_pain_strike')} />
-              <div className="sg-kv"><span className="l">expiry</span><span className="v">{deepPickStr(cpRaw, 'expiry') ?? '—'}</span></div>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Full MI */}
-      {miFullView ? (
-        <section className="card" aria-label="Full market intelligence">
+    <div className="flex flex-col gap-3">
+      {/* Row 1: Market Intelligence + Data Health */}
+      <div className="ds-grid-dashboard">
+        {/* Market intelligence dashboard */}
+        <section className="card" aria-label="Market intelligence">
           <div className="card-hd">
-            <h2 className="card-title">Full MI — {instrument}</h2>
-            <span className="card-meta">{pickStr(getObj(miFullView.raw.header) ?? {}, 'data_quality') ?? '—'}</span>
+            <h2 className="card-title">Market Intelligence</h2>
+            {desk.mi ? (
+              <span className={`badge ${badgeClass(healthTone(desk.mi.regime))}`}>
+                {desk.mi.regime ?? '—'}
+              </span>
+            ) : null}
+            <span className="card-meta num">
+              {desk.mi?.spot !== null && desk.mi?.spot !== undefined ? desk.mi.spot : '—'}
+            </span>
           </div>
           <div className="card-bd flex flex-col gap-2">
-            <div className="sg-kvlist">
-              <div className="sg-kv"><span className="l">regime</span><span className="v">{pickStr(getObj(miFullView.raw.market_state) ?? {}, 'regime') ?? '—'}</span></div>
-              <div className="sg-kv"><span className="l">momentum</span><span className="v">{pickStr(getObj(miFullView.raw.market_state) ?? {}, 'momentum') ?? '—'}</span></div>
-              <div className="sg-kv"><span className="l">breakout trigger</span><span className="v num">{fullLevels.trigger ?? '—'}</span></div>
-              <div className="sg-kv"><span className="l">support</span><span className="v">{fullLevels.support.join(', ') || '—'}</span></div>
-              <div className="sg-kv"><span className="l">resistance</span><span className="v">{fullLevels.resistance.join(', ') || '—'}</span></div>
-            </div>
-            {fullEvidence.supporting.length + fullEvidence.conflicting.length > 0 ? (
+            {!desk.mi && !desk.loading ? (
+              <p className="sg-empty">Market intelligence unavailable for {instrument}.</p>
+            ) : desk.mi ? (
+              <>
+                <p className="sg-note">Scores below reflect AI confidence in directional bias. Higher = stronger signal.</p>
+                <div className="sg-kvlist">
+                  <ScoreKv label="bullish score" value={desk.mi.bullish} />
+                  <ScoreKv label="bearish score" value={desk.mi.bearish} />
+                  <ScoreKv label="breakout pressure" value={desk.mi.breakoutPressure} />
+                  <ScoreKv label="breakdown pressure" value={desk.mi.breakdownPressure} />
+                  <ScoreKv label="false breakout risk" value={desk.mi.falseBreakoutRisk} />
+                  <div className="sg-kv">
+                    <span className="l">trend</span>
+                    <span className="v">{desk.mi.trend ?? '—'}</span>
+                  </div>
+                </div>
+                <div className="pnl-strip">
+                  <span className="ps">
+                    <span className="ps-l">short</span>
+                    <span className={`sg-tag ${signalTone(desk.mi.shortStatus ?? 'WATCH')}`}>
+                      {desk.mi.shortStatus ?? '—'}
+                    </span>
+                  </span>
+                  <span className="ps">
+                    <span className="ps-l">continuation</span>
+                    <span className={`sg-tag ${signalTone(desk.mi.contStatus ?? 'WATCH')}`}>
+                      {desk.mi.contStatus ?? '—'}
+                    </span>
+                  </span>
+                  <span className="ps">
+                    <span className="ps-l">breakout</span>
+                    <span className={`sg-tag ${signalTone(desk.mi.breakoutStatus ?? 'WATCH')}`}>
+                      {[desk.mi.breakoutStatus, desk.mi.breakoutDirection].filter(Boolean).join(' · ') || '—'}
+                    </span>
+                  </span>
+                  <span className="ps">
+                    <span className="ps-l">data</span>
+                    <span className={`sg-tag ${healthTone(desk.mi.dataHealth)}`}>
+                      {desk.mi.dataHealth ?? '—'}
+                    </span>
+                  </span>
+                </div>
+                {miEvidence.supporting.length > 0 || miEvidence.conflicting.length > 0 ? (
+                  <div className="tbl-scroll">
+                    <table className="sg-table">
+                      <tbody>
+                        {miEvidence.supporting.map((line, i) => (
+                          <tr key={`s-${i}`}><td><span className="sg-tag bull">supporting</span></td><td className="sg-rownote">{line}</td></tr>
+                        ))}
+                        {miEvidence.conflicting.map((line, i) => (
+                          <tr key={`c-${i}`}><td><span className="sg-tag bear">conflicting</span></td><td className="sg-rownote">{line}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="sg-note">No supporting/conflicting evidence in this poll.</p>
+                )}
+              </>
+            ) : (
+              <p className="sg-note">Loading market intelligence…</p>
+            )}
+          </div>
+        </section>
+
+        {/* Data health */}
+        <section className="card" aria-label="Data health">
+          <div className="card-hd">
+            <h2 className="card-title">Data Health</h2>
+            <span className="card-meta">{desk.healthRows.length} instrument(s)</span>
+          </div>
+          <div className="card-bd">
+            <p className="sg-note">Status of live feeds and data quality for tracked instruments. HEALTHY = good to trade from.</p>
+            {desk.healthRows.length === 0 ? (
+              <p className="sg-empty">{desk.loading ? 'Loading data health…' : 'No data-health rows reported.'}</p>
+            ) : (
               <div className="tbl-scroll">
                 <table className="sg-table">
+                  <thead><tr><th>Instrument</th><th>Status</th><th>Feed</th></tr></thead>
                   <tbody>
-                    {fullEvidence.supporting.map((line, i) => (
-                      <tr key={`fs-${i}`}><td><span className="sg-tag bull">supporting</span></td><td className="sg-rownote">{line}</td></tr>
-                    ))}
-                    {fullEvidence.conflicting.map((line, i) => (
-                      <tr key={`fc-${i}`}><td><span className="sg-tag bear">conflicting</span></td><td className="sg-rownote">{line}</td></tr>
+                    {desk.healthRows.map((row) => (
+                      <tr key={row.instrument}>
+                        <td className="sg-sym">{row.instrument}</td>
+                        <td><span className={`sg-tag ${healthTone(row.status)}`}>{row.status}</span></td>
+                        <td className="sg-rownote">{row.feed}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : null}
-            {fullEvidence.missing.length > 0 ? (
-              <p className="sg-note">Missing evidence: {fullEvidence.missing.join(', ')}</p>
+            )}
+            {Object.keys(desk.healthOverall).length > 0 ? (
+              <p className="sg-note">
+                {Object.entries(desk.healthOverall).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')}
+              </p>
             ) : null}
           </div>
         </section>
-      ) : null}
+      </div>
 
-      {/* Institutional signals */}
+      {/* Row 2: Calls/Puts + Full MI */}
+      <div className="ds-grid-dashboard">
+        {/* Calls & puts */}
+        <section className="card" aria-label="Calls and puts">
+          <div className="card-hd">
+            <h2 className="card-title">Calls / Puts</h2>
+            <span className="card-meta">{deepPickStr(cpRaw, 'underlying', 'instrument') ?? instrument}</span>
+          </div>
+          <div className="card-bd">
+            <p className="sg-note">PCR &gt; 1.0 = more call buying (bullish). PCR &lt; 1.0 = more put buying (bearish).</p>
+            {!cpRaw && !desk.loading ? (
+              <p className="sg-empty">Calls/puts chain unavailable for {instrument}.</p>
+            ) : !cpRaw ? (
+              <p className="sg-note">Loading option chain…</p>
+            ) : (
+              <div className="sg-kvlist">
+                <ScoreKv label="pcr" value={deepPickNum(cpRaw, 'pcr')} />
+                <ScoreKv label="pcr volume" value={deepPickNum(cpRaw, 'pcr_volume')} />
+                <div className="sg-kv"><span className="l">call OI</span><span className="v num">{deepPickNum(cpRaw, 'total_call_oi')?.toLocaleString() ?? '—'}</span></div>
+                <div className="sg-kv"><span className="l">put OI</span><span className="v num">{deepPickNum(cpRaw, 'total_put_oi')?.toLocaleString() ?? '—'}</span></div>
+                <ScoreKv label="atm strike" value={deepPickNum(cpRaw, 'atm_strike')} />
+                <ScoreKv label="max pain" value={deepPickNum(cpRaw, 'max_pain', 'max_pain_strike')} />
+                <div className="sg-kv"><span className="l">expiry</span><span className="v">{deepPickStr(cpRaw, 'expiry') ?? '—'}</span></div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Full MI */}
+        {miFullView ? (
+          <section className="card" aria-label="Full market intelligence">
+            <div className="card-hd">
+              <h2 className="card-title">Full MI — {instrument}</h2>
+              <span className="card-meta">{pickStr(getObj(miFullView.raw.header) ?? {}, 'data_quality') ?? '—'}</span>
+            </div>
+            <div className="card-bd flex flex-col gap-2">
+              <p className="sg-note">Deep breakdown of market regime, momentum, and key levels. Use this to understand the “why” behind the regime badge.</p>
+              <div className="sg-kvlist">
+                <div className="sg-kv"><span className="l">regime</span><span className="v">{pickStr(getObj(miFullView.raw.market_state) ?? {}, 'regime') ?? '—'}</span></div>
+                <div className="sg-kv"><span className="l">momentum</span><span className="v">{pickStr(getObj(miFullView.raw.market_state) ?? {}, 'momentum') ?? '—'}</span></div>
+                <div className="sg-kv"><span className="l">breakout trigger</span><span className="v num">{fullLevels.trigger ?? '—'}</span></div>
+                <div className="sg-kv"><span className="l">support</span><span className="v">{fullLevels.support.join(', ') || '—'}</span></div>
+                <div className="sg-kv"><span className="l">resistance</span><span className="v">{fullLevels.resistance.join(', ') || '—'}</span></div>
+              </div>
+              {fullEvidence.supporting.length + fullEvidence.conflicting.length > 0 ? (
+                <div className="tbl-scroll">
+                  <table className="sg-table">
+                    <tbody>
+                      {fullEvidence.supporting.map((line, i) => (
+                        <tr key={`fs-${i}`}><td><span className="sg-tag bull">supporting</span></td><td className="sg-rownote">{line}</td></tr>
+                      ))}
+                      {fullEvidence.conflicting.map((line, i) => (
+                        <tr key={`fc-${i}`}><td><span className="sg-tag bear">conflicting</span></td><td className="sg-rownote">{line}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              {fullEvidence.missing.length > 0 ? (
+                <p className="sg-note">Missing evidence: {fullEvidence.missing.join(', ')}</p>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+      </div>
+
+      {/* Row 3: Institutional Signals (full width) */}
       <section className="card" aria-label="Institutional signals">
         <div className="card-hd">
           <h2 className="card-title">Institutional Signals</h2>
           <span className="card-meta">{desk.signals.length} active</span>
         </div>
         <div className="card-bd flex flex-col gap-2">
+          <p className="sg-note">AI-generated trade signals. State shows where each signal is in its lifecycle. Inspect to see details or move it forward.</p>
           {ttlNote ? <p className="sg-note">{ttlNote}</p> : null}
           {desk.signals.length === 0 ? (
             <p className="sg-empty">{desk.loading ? 'Loading signals…' : `No active institutional signals for ${instrument}.`}</p>
@@ -446,6 +457,7 @@ export function InstitutionalTab({
                 <p className="sg-note">Loading signal detail…</p>
               ) : inspectDetail ? (
                 <div className="flex flex-col gap-2">
+                  <p className="sg-note">Detailed view of this signal. FSM state shows where it is in its lifecycle. Actions below move it forward.</p>
                   <div className="sg-kvlist">
                     <div className="sg-kv"><span className="l">fsm state</span><span className="v">{inspectDetail.fsmState ?? '—'}</span></div>
                     <div className="sg-kv"><span className="l">ttl remaining</span><span className="v num">{fmtDur(inspectDetail.ttlRemainingMs)}</span></div>
@@ -494,99 +506,109 @@ export function InstitutionalTab({
                 </tbody>
               </table>
             </div>
-          ) : null}
+          ) : (
+            <p className="sg-note">No history yet. History records state transitions and lifecycle events.</p>
+          )}
         </div>
       </section>
 
-      {/* Feed health */}
-      <section className="card" aria-label="Feed health">
-        <div className="card-hd">
-          <h2 className="card-title">Feed Circuits</h2>
-          <span className="card-meta">{desk.feeds.length} feed(s)</span>
-        </div>
-        <div className="card-bd flex flex-col gap-2">
-          <div className="ds-filters" style={{ marginLeft: 0 }}>
-            <label className="flex flex-col gap-1">
-              <span className="card-meta">anomaly</span>
-              <input className="input" value={tripAnomaly} onChange={(e) => setTripAnomaly(e.target.value)} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="card-meta">reason</span>
-              <input className="input" value={tripReason} onChange={(e) => setTripReason(e.target.value)} />
-            </label>
+      {/* Row 4: Feed Circuits + Audit Trail */}
+      <div className="ds-grid-dashboard">
+        {/* Feed health */}
+        <section className="card" aria-label="Feed health">
+          <div className="card-hd">
+            <h2 className="card-title">Feed Circuits</h2>
+            <span className="card-meta">{desk.feeds.length} feed(s)</span>
           </div>
-          {desk.feeds.length === 0 ? (
-            <p className="sg-empty">{desk.loading ? 'Loading feed health…' : 'No feed states reported.'}</p>
-          ) : (
-            <div className="tbl-scroll">
-              <table className="sg-table">
-                <thead><tr><th>Feed</th><th>Health</th><th>Detail</th><th>Actions</th></tr></thead>
-                <tbody>
-                  {desk.feeds.map((feed) => (
-                    <tr key={feed.instrument} data-active={feedDetailId === feed.instrument}>
-                      <td className="sg-sym">{feed.instrument}</td>
-                      <td><span className={`sg-tag ${healthTone(feed.health)}`}>{feed.health}</span></td>
-                      <td className="sg-rownote">{feed.detail ?? '—'}</td>
-                      <td>
-                        <span className="sg-actions">
-                          <button type="button" className="sg-ibtn" onClick={() => void handleFeedDetail(feed.instrument)}>
-                            {feedDetailId === feed.instrument ? 'Hide' : 'Detail'}
-                          </button>
-                          <button type="button" className="sg-ibtn danger" onClick={() => setPendingTrip({ id: feed.instrument, anomaly: tripAnomaly.trim() || 'MISSING', reason: tripReason.trim() || 'manual trip' })}>
-                            Trip
-                          </button>
-                          <button type="button" className="sg-ibtn" onClick={() => setPendingResync(feed.instrument)}>
-                            Resync
-                          </button>
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="card-bd flex flex-col gap-2">
+            <p className="sg-note">Feed health = is the data pipeline delivering live data? Trip = cut the feed. Resync = reconnect it.</p>
+            <div className="ds-filters" style={{ marginLeft: 0 }}>
+              <label className="flex flex-col gap-1">
+                <span className="card-meta">anomaly</span>
+                <input className="input" value={tripAnomaly} onChange={(e) => setTripAnomaly(e.target.value)} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="card-meta">reason</span>
+                <input className="input" value={tripReason} onChange={(e) => setTripReason(e.target.value)} />
+              </label>
             </div>
-          )}
-          {feedDetailId && feedDetail ? (
-            <div className="sg-kvlist">
-              {Object.entries(feedDetail).slice(0, 12).map(([k, v]) => (
-                <div className="sg-kv" key={k}>
-                  <span className="l">{k.replace(/_/g, ' ')}</span>
-                  <span className="v">{typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? String(v) : '—'}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </section>
+            {desk.feeds.length === 0 ? (
+              <p className="sg-empty">{desk.loading ? 'Loading feed health…' : 'No feed states reported.'}</p>
+            ) : (
+              <div className="tbl-scroll">
+                <table className="sg-table">
+                  <thead><tr><th>Feed</th><th>Health</th><th>Detail</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {desk.feeds.map((feed) => (
+                      <tr key={feed.instrument} data-active={feedDetailId === feed.instrument}>
+                        <td className="sg-sym">{feed.instrument}</td>
+                        <td><span className={`sg-tag ${healthTone(feed.health)}`}>{feed.health}</span></td>
+                        <td className="sg-rownote">{feed.detail ?? '—'}</td>
+                        <td>
+                          <span className="sg-actions">
+                            <button type="button" className="sg-ibtn" onClick={() => void handleFeedDetail(feed.instrument)}>
+                              {feedDetailId === feed.instrument ? 'Hide' : 'Detail'}
+                            </button>
+                            <button type="button" className="sg-ibtn danger" onClick={() => setPendingTrip({ id: feed.instrument, anomaly: tripAnomaly.trim() || 'MISSING', reason: tripReason.trim() || 'manual trip' })}>
+                              Trip
+                            </button>
+                            <button type="button" className="sg-ibtn" onClick={() => setPendingResync(feed.instrument)}>
+                              Resync
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {feedDetailId && feedDetail ? (
+              <div className="sg-kvlist">
+                {Object.entries(feedDetail).slice(0, 12).map(([k, v]) => (
+                  <div className="sg-kv" key={k}>
+                    <span className="l">{k.replace(/_/g, ' ')}</span>
+                    <span className="v">{typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? String(v) : '—'}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="sg-note">Click Detail on any feed row to see its raw configuration and state.</p>
+            )}
+          </div>
+        </section>
 
-      {/* Audit */}
-      <section className="card" aria-label="Audit trail">
-        <div className="card-hd">
-          <h2 className="card-title">Audit Trail</h2>
-          <span className="card-meta">{desk.audit.length} record(s)</span>
-        </div>
-        <div className="card-bd">
-          {desk.audit.length === 0 ? (
-            <p className="sg-empty">{desk.loading ? 'Loading audit…' : 'No audit records.'}</p>
-          ) : (
-            <div className="tbl-scroll">
-              <table className="sg-table">
-                <thead><tr><th>Ref</th><th>Event</th><th>Summary</th></tr></thead>
-                <tbody>
-                  {desk.audit.slice(0, 10).map((row, i) => (
-                    <tr key={`${row.id}-${i}`}>
-                      <td className="sg-rownote">{row.id.slice(0, 8)}</td>
-                      <td><span className="sg-tag neut">{row.kind}</span></td>
-                      <td className="sg-rownote">{row.summary}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
+        {/* Audit */}
+        <section className="card" aria-label="Audit trail">
+          <div className="card-hd">
+            <h2 className="card-title">Audit Trail</h2>
+            <span className="card-meta">{desk.audit.length} record(s)</span>
+          </div>
+          <div className="card-bd">
+            <p className="sg-note">Chronological log of system actions. Useful for tracing what happened to a signal.</p>
+            {desk.audit.length === 0 ? (
+              <p className="sg-empty">{desk.loading ? 'Loading audit…' : 'No audit records.'}</p>
+            ) : (
+              <div className="tbl-scroll">
+                <table className="sg-table">
+                  <thead><tr><th>Ref</th><th>Event</th><th>Summary</th></tr></thead>
+                  <tbody>
+                    {desk.audit.slice(0, 10).map((row, i) => (
+                      <tr key={`${row.id}-${i}`}>
+                        <td className="sg-rownote">{row.id.slice(0, 8)}</td>
+                        <td><span className="sg-tag neut">{row.kind}</span></td>
+                        <td className="sg-rownote">{row.summary}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
 
+      {/* Row 5: Evaluate Forms (full width) */}
       <EvaluateForms desk={desk} instrument={instrument} />
 
       <ConfirmDialog

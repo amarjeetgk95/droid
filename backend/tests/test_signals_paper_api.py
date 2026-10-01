@@ -91,6 +91,7 @@ class TestSignalsPaperIntegration:
             "execute_paper": True,
             "notify_telegram": False,
             "allow_closed_market": True,
+            "confirm": True,  # closed-market gate: operator confirm required
         }
         res = client.post("/api/v1/signals/generate", json=payload)
         assert res.status_code == 200
@@ -123,6 +124,7 @@ class TestSignalsPaperIntegration:
             "execute_paper": False,
             "notify_telegram": False,
             "allow_closed_market": True,
+            "confirm": True,  # closed-market gate: operator confirm required
         })
         assert gen_res.status_code == 200
         gen_signal = gen_res.json()["signal"]

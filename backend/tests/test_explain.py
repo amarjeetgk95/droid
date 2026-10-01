@@ -89,7 +89,7 @@ def test_signal_explain_handles_missing_ai_ml():
     cand = _candidate()
     ex = build_signal_explain(cand, 60.0, None, None, None, None, None, None, None, None)
     assert ex["verdict"]["confidence"] == 60.0
-    assert ex["verdict"]["state"] == "VALIDATED"  # below default 70 threshold
+    assert ex["verdict"]["state"] == "ARMED"  # RISK-ON: armed bar is 60.0
     assert ex["why_layman"]  # never empty
     assert ex["weights_version"] == 2
     # ai/ml domains present but unscored

@@ -15,8 +15,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
-# §5 Forecast Validator — removed with forecast module
-# from app.quant.forecast_validator import validate_tsfm_forecast, ForecastInvalidReason
+# §5 Forecast Validator — removed with the forecast/quant modules
 
 # §23 Staleness Guard
 from app.services.staleness_guard import check_staleness

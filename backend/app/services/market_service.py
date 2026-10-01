@@ -10,9 +10,44 @@ from app.core.cache import cache_service
 from app.core.config import settings
 from app.services.market_data_coordinator import market_data_coordinator
 from datetime import datetime, timezone
+import asyncio
+import time
 import structlog
 
 logger = structlog.get_logger()
+
+
+# ── Shared candle cache (module-level so every MarketService instance sees it) ──
+#
+# Why this exists: the signal scanner fans out 3 underlyings x 4 timeframes
+# every 10s, and the intraday desk re-requests the same bars 30s later. That
+# is ~216 FYERS calls/min from scanning alone, which overruns the provider
+# rate budget and provokes HTTP 429. The 15m/1h bars are identical across
+# those calls, so coalescing them removes most of the load rather than
+# merely absorbing it.
+#
+# Invariants:
+#   * ONLY non-empty results are cached. Caching a failed fetch would turn a
+#     transient provider error into a TTL-long phantom "market closed".
+#   * Explicit start/end range queries bypass the cache entirely — those are
+#     historical/replay reads, not the live path this cache exists to protect.
+_CANDLE_TTL_SECONDS: dict[str, float] = {
+    "1m": 5.0, "3m": 5.0,
+    "5m": 15.0, "15m": 15.0, "30m": 15.0,
+    "1h": 30.0, "4h": 30.0,
+    "1D": 300.0, "1W": 300.0,
+}
+_candle_cache: dict[tuple[str, str], tuple[float, list]] = {}
+_candle_inflight: dict[tuple[str, str], "asyncio.Future[list]"] = {}
+_CANDLE_CACHE_MAX_ENTRIES = 256
+
+
+def _candle_cache_store(key: tuple[str, str], value: list) -> None:
+    """Insert into the shared candle cache, evicting the oldest entry if full."""
+    if len(_candle_cache) >= _CANDLE_CACHE_MAX_ENTRIES and key not in _candle_cache:
+        oldest = min(_candle_cache.items(), key=lambda kv: kv[1][0])[0]
+        _candle_cache.pop(oldest, None)
+    _candle_cache[key] = (time.monotonic(), list(value))
 
 
 class MarketService:
@@ -128,6 +163,60 @@ class MarketService:
             "INDIAVIX": "INDIA VIX",
         }
         resolved = symbol_map.get(symbol_upper, symbol)
+
+        ttl = _CANDLE_TTL_SECONDS.get(timeframe, 15.0)
+        # Historical/replay reads must never observe a live-cache entry.
+        if start is not None or end is not None:
+            return await self._fetch_candles_uncached(resolved, timeframe, start, end)
+
+        key = (resolved, timeframe)
+        cached = _candle_cache.get(key)
+        if cached is not None:
+            ts, value = cached
+            if (time.monotonic() - ts) <= ttl:
+                return list(value)
+            _candle_cache.pop(key, None)
+
+        # Single-flight: concurrent callers for the same bars share one HTTP
+        # call. The scanner gathers underlyings in parallel and the dashboard
+        # polls on its own timer, so without this the same 1m NIFTY series is
+        # requested several times inside one bar.
+        inflight = _candle_inflight.get(key)
+        if inflight is not None:
+            try:
+                return list(await asyncio.shield(inflight))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass  # fall through and fetch independently
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[list] = loop.create_future()
+        _candle_inflight[key] = future
+        try:
+            value = await self._fetch_candles_uncached(resolved, timeframe, start, end)
+        except BaseException as exc:
+            if not future.done():
+                future.set_exception(exc)
+            raise
+        else:
+            # Never cache a failure — an empty list means "provider said
+            # nothing", not "there is genuinely no data".
+            if value:
+                _candle_cache_store(key, value)
+            if not future.done():
+                future.set_result(list(value))
+            return list(value)
+        finally:
+            _candle_inflight.pop(key, None)
+
+    async def _fetch_candles_uncached(
+        self,
+        resolved: str,
+        timeframe: str,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> list[NormalizedCandle]:
         return await self._circuit_breaker.call(
             lambda: self._provider.get_candles(resolved, timeframe, start, end),
             fallback=lambda: [],

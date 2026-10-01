@@ -5,7 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { useCommandSection } from '@/context/AppStreamContext';
 import { useInstrument } from '@/context/InstrumentContext';
 import { useMarketSession } from '@/context/MarketSessionContext';
-import { useForecastBoard } from '@/hooks/useForecastBoard';
+import { useDirectionalBoard } from '@/hooks/useDirectionalBoard';
 import {
   FORECAST_HORIZONS,
   consensusOf,
@@ -13,6 +13,8 @@ import {
 } from '@/lib/forecastBoard';
 import { isStaleForecast } from '@/lib/forecastStatus';
 import { ForecastHorizonCard } from './ForecastHorizonCard';
+import { DirectionalConsensusBoard } from './DirectionalConsensusBoard';
+import { PapPulsePanel, SignalsPulsePanel } from './DirectionalPulsePanels';
 import {
   FlowRiskPanel,
   MarketPulsePanel,
@@ -36,7 +38,8 @@ export function DashboardModule() {
   const { isOpen } = useMarketSession();
   const apiInstrument = forecastInstrument(instrument);
 
-  const board = useForecastBoard(apiInstrument, { autoRefreshMs: isOpen ? 60_000 : null });
+  const { forecast: board, pap, signals, consensus: directional, refreshing, refresh } =
+    useDirectionalBoard(apiInstrument, instrument, { isOpen });
 
   const marketSection = useCommandSection('market');
   const regimeSection = useCommandSection('regime');
@@ -76,6 +79,14 @@ export function DashboardModule() {
 
   return (
     <div className="flex flex-col gap-3">
+      <DirectionalConsensusBoard
+        consensus={directional}
+        instrument={instrument}
+        asOfLabel={board.updatedAt ? updatedLabel : undefined}
+        refreshing={refreshing}
+        onRefresh={() => void refresh()}
+      />
+
       <section className="ds-commandbar" aria-label="Market forecast controls" aria-busy={board.refreshing}>
         <div className="ds-title">
           <span className="cmd-hd">
@@ -142,6 +153,8 @@ export function DashboardModule() {
         <MlBiasPanel value={ml} instrument={instrument} />
         <OptionsPanel value={regime} />
         <FlowRiskPanel value={risk} />
+        <SignalsPulsePanel signals={signals} instrument={instrument} />
+        <PapPulsePanel pap={pap} instrument={instrument} />
         <HealthPanel feed={feed} />
         <PredictionTrackPanel value={forecast} instrument={apiInstrument} />
       </div>

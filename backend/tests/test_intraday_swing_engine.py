@@ -120,7 +120,12 @@ class TestIntradaySwingOptionBuyingMVP:
         cand_above = strat.detect(ctx_above_vwap)
         assert cand_above is not None
         assert cand_above.direction == "LONG_CALL"
-        assert cand_above.time_stop_seconds == 180 * 60
+        # Active holding clock is 15 min, not the old 180 min. This is a 5M
+        # intraday pullback armed for 600s; friction_gate prices theta over
+        # time_stop_seconds, and at 10800s the ATM-leg theta drag alone
+        # exceeded the whole 1.5R option target, so every candidate was
+        # rejected at the friction gate regardless of market conditions.
+        assert cand_above.time_stop_seconds == 900
 
     def test_theta_drag_guard_rejection(self):
         """Verify that excessive theta drag (> 20%) fails closed (§12 + P1).

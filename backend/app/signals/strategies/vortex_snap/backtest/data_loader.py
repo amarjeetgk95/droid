@@ -1,5 +1,5 @@
-"""
-Historical Data Loader & Point-In-Time Pipeline (§34).
+﻿"""
+Historical Data Loader & Point-In-Time Pipeline (Â§34).
 
 Provides:
 - Parquet historical candle loading (SENSEX, NIFTY, BANKNIFTY)
@@ -10,7 +10,7 @@ Provides:
 DATA-SOURCE CONTRACT (strict real-data default):
 - Live HUD paths MUST call load_candles_with_source(..., require_real_data=True).
   When no 1m parquet exists this raises FileNotFoundError (mapped to HTTP 503 by
-  the API layer) — it must NEVER silently fall back to the seed-42 generator.
+  the API layer) â€” it must NEVER silently fall back to the seed-42 generator.
 - generate_synthetic_session() is TEST / BACKTEST-ONLY. It is kept solely so the
   deterministic seed-42 session remains available to unit tests, ablation studies,
   and backtests that pass an explicit synthetic flag (allow_synthetic=True /
@@ -26,7 +26,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import polars as pl
 import structlog
 
-from app.quant.data.provenance import assert_real_dataset, check_provenance
+from app.market_core.data.provenance import assert_real_dataset, check_provenance
 from app.signals.strategies.vortex_snap.types import Candle
 from app.signals.strategies.vortex_snap.session import MarketSessionModel
 
@@ -42,7 +42,7 @@ _SYNTHETIC_NOTE = (
 
 @dataclass
 class CandleSource:
-    type: str                       # "parquet" | "synthetic" — storage form
+    type: str                       # "parquet" | "synthetic" â€” storage form
     instrument: str
     path: Optional[str] = None
     #: True when the candles are not verifiable market data. Previously defined
@@ -163,7 +163,7 @@ class HistoricalDataLoader:
                     timeframe=timeframe,
                     path=str(parquet_path),
                     reasons=list(report.reasons),
-                    note="Backtest/test path — results describe this file, not the market.",
+                    note="Backtest/test path â€” results describe this file, not the market.",
                 )
 
         df = pl.read_parquet(parquet_path)
@@ -202,7 +202,7 @@ class HistoricalDataLoader:
         """Load candles for an instrument, explicitly reporting the data source.
 
         Uses the real parquet dataset when available. If absent, either raises
-        FileNotFoundError (require_real_data=True — the live-HUD default) or
+        FileNotFoundError (require_real_data=True â€” the live-HUD default) or
         generates the deterministic seed-42 synthetic session and marks it as
         simulated (TEST/BACKTEST-ONLY via an explicit synthetic flag).
 
@@ -276,7 +276,7 @@ class HistoricalDataLoader:
 
         TEST / BACKTEST-ONLY helper (kept for deterministic unit tests, ablation,
         and backtests with an explicit synthetic flag). NEVER use on the live HUD
-        path — missing real data there must raise, not synthesize.
+        path â€” missing real data there must raise, not synthesize.
 
         Args:
             date_obj: The calendar date for the session.

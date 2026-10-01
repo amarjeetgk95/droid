@@ -19,12 +19,13 @@ from app.api import telegram as telegram_api
 from app.api import events as events_api
 from app.api import options_intelligence as options_intelligence_api
 from app.api import research as research_api
-from app.api import swing as swing_api
 from app.api import monitoring as monitoring_api
 from app.api import view as view_api
 from app.api import stream as stream_api
-from app.api import quant as quant_api
 from app.api import vortex as vortex_api
+from app.api import copilot as copilot_api
+from app.api import fisher_macd as fisher_macd_api
+from app.indicator_research.api import router as indicator_research_api
 from app.api.signals import router as signals_api
 from app.historical_data.api.routes import router as historical_data_api
 from app.services.central_feed import central_feed
@@ -35,6 +36,11 @@ from app.core.service_lifecycle import (
     stop_provider_stream,
     start_telegram_stack,
     stop_telegram_stack,
+)
+from app.core.startup_safety import (
+    assert_safe_bind_posture,
+    assert_single_instance,
+    log_trading_safety_posture,
 )
 import structlog
 
@@ -47,6 +53,19 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger = structlog.get_logger()
     
+    # ── STARTUP SAFETY CHECKS (fail-loud, before any engine starts) ─────
+    # 1) Single-instance guard: refuse a second backend on the same address.
+    #    Uvicorn binds with SO_REUSEADDR (double-bind SUCCEEDS on Windows),
+    #    so this pre-bind probe is the only thing preventing two silent
+    #    backends from splitting the tick feed. Runs lifespan-first —
+    #    uvicorn has not bound the port yet, so a conflict here exits the
+    #    process cleanly (STARTUP_FAILURE) with no half-bound listener.
+    assert_single_instance()
+    # 2) Bind/auth posture: never serve the dev-admin on a non-loopback bind.
+    assert_safe_bind_posture()
+    # 3) Explicit trading-posture record: restarts always land paper-first.
+    log_trading_safety_posture()
+
     # Startup
     logger.info(
         "app_startup",
@@ -99,11 +118,20 @@ async def lifespan(app: FastAPI):
         logger.info("warm_start_restored", snapshot_time=snapshot.timestamp.isoformat())
 
     # Cold-Start Historical Data Sync & Orphan Job Reconciliation
+    # Bounded so a stalled DB connection can delay readiness — the engine runs
+    # degraded (disk-only state) rather than never coming up.
     try:
         from app.historical_data.storage.db_repository import db_repo
-        await db_repo.sync_from_disk()
-        await db_repo.reconcile_orphaned_jobs()
-        logger.info("historical_data_synced_on_startup", count=len(db_repo._mem_datasets))
+
+        async def _init_historical_data() -> None:
+            await db_repo.sync_from_disk()
+            await db_repo.reconcile_orphaned_jobs()
+
+        try:
+            await asyncio.wait_for(_init_historical_data(), timeout=30.0)
+            logger.info("historical_data_synced_on_startup", count=len(db_repo._mem_datasets))
+        except asyncio.TimeoutError:
+            logger.warning("historical_data_startup_sync_timeout", hint="DB slow — continuing with disk-only state")
     except Exception as e:
         logger.warning("historical_data_startup_sync_failed", error=str(e))
 
@@ -227,14 +255,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("automated_signal_worker_start_failed", error=str(e))
 
-    # Start Swing Trading Worker (v5.0 EOD scan & intraday monitor)
-    try:
-        from app.swing.worker import swing_worker
-        swing_worker.start()
-        logger.info("swing_worker_started")
-    except Exception as e:
-        logger.warning("swing_worker_start_failed", error=str(e))
-
     # Hourly 1H-forecast evidence collection (shadow + settlement). Disabled by
     # default (FORECAST_SCHEDULER_ENABLED=on to enable); market-closed ticks
     # are no-ops. Never breaks startup.
@@ -284,11 +304,6 @@ async def lifespan(app: FastAPI):
         try:
             from app.services.morning_briefing_service import morning_briefing_service
             await morning_briefing_service.stop()
-        except Exception:
-            pass
-        try:
-            from app.swing.worker import swing_worker
-            swing_worker.stop()
         except Exception:
             pass
         try:
@@ -434,12 +449,13 @@ def create_app() -> FastAPI:
     app.include_router(events_api.router)
     app.include_router(options_intelligence_api.router)
     app.include_router(research_api.router)
-    app.include_router(swing_api.router)
     app.include_router(monitoring_api.router)
     app.include_router(view_api.router)
     app.include_router(stream_api.router)
-    app.include_router(quant_api.router)
     app.include_router(vortex_api.router)
+    app.include_router(copilot_api.router)
+    app.include_router(fisher_macd_api.router)
+    app.include_router(indicator_research_api)
     app.include_router(historical_data_api)
     
     return app

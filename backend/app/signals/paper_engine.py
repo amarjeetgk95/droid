@@ -1,4 +1,4 @@
-"""
+﻿"""
 Lot-Aware Realistic Paper Execution Adapter for Signal Centre
 Models:
   - Dynamic lot sizing from InstrumentMaster
@@ -62,8 +62,8 @@ class SignalPaperEngine:
         side = "BUY"
         direction_label = "CE" if "CALL" in sig.direction else "PE"
 
-        # ── Centralized Market Session Check ──
-        # P1 SAFETY: never bypass session on execute — only close_signal_position
+        # â”€â”€ Centralized Market Session Check â”€â”€
+        # P1 SAFETY: never bypass session on execute â€” only close_signal_position
         # may allow closed-market square-offs. allow_closed_market is ignored here.
         from app.services.calendar_service import calendar_service
         perm = calendar_service.can_trade_now()
@@ -88,7 +88,7 @@ class SignalPaperEngine:
                 chain_mark_at_fill=None,
             )
 
-        # Position Sizing — wallet-bound: size off live available margin, not initial capital.
+        # Position Sizing â€” wallet-bound: size off live available margin, not initial capital.
         # This keeps risk-based sizing confined to what the wallet can actually deploy now
         # (initial_capital + realized + unrealized - used_margin).
         try:
@@ -122,7 +122,7 @@ class SignalPaperEngine:
                 message="INVALID_PRICE: Spot price is non-positive",
             )
 
-        # ─ Reference mark for the option premium ──
+        # â”€ Reference mark for the option premium â”€â”€
         # A REAL chain mark is the broker's truth; a Black-76 estimate is only
         # a labeled fallback. Either way the reference must sit on the same
         # tick grid as the fill, because the execution guard measures slippage
@@ -145,7 +145,7 @@ class SignalPaperEngine:
             # Preference order is deliberate: the mark registry first (the exact
             # object the ledger later marks the position against, so entry and
             # valuation cannot drift), then the cached chain mid on the contract.
-            # There is NO Black-76 substitute — a model price is not a fill.
+            # There is NO Black-76 substitute â€” a model price is not a fill.
             from app.signals.option_marks import option_mark_registry, option_mark_service
 
             mark = option_mark_registry.get_usable(broker_sym, allow_model=False)
@@ -246,7 +246,7 @@ class SignalPaperEngine:
                 final_lots = max(1, sizing["lots"])
                 final_qty = final_lots * lot_size
 
-        # ── FAIL CLOSED: a fill requires a real broker price ──
+        # â”€â”€ FAIL CLOSED: a fill requires a real broker price â”€â”€
         if sig.option_contract and not premium_mark_available:
             logger.warning(
                 "paper_execution_blocked_no_chain_mark",
@@ -269,7 +269,7 @@ class SignalPaperEngine:
                 status="REJECTED",
                 message=(
                     f"CHAIN_MARK_UNAVAILABLE: no live FYERS quote for {broker_sym}. "
-                    "Trade skipped — no model price is used to fill."
+                    "Trade skipped â€” no model price is used to fill."
                 ),
             )
 
@@ -297,7 +297,7 @@ class SignalPaperEngine:
                 message="INVALID_PRICE: Fill price is non-positive",
             )
 
-        # ── PRE-fill domain guard: never let the service book the wrong instrument ──
+        # â”€â”€ PRE-fill domain guard: never let the service book the wrong instrument â”€â”€
         # Same fail-closed check the post-fill sanity gate applies, but run on
         # the engine's own (chain mark, estimate) pair BEFORE dispatch. An
         # option premium that is index-scale (e.g. an underlying spot leaked
@@ -332,18 +332,18 @@ class SignalPaperEngine:
                     order_id="",
                     status="REJECTED",
                     message=(
-                        f"OFF_DOMAIN_FILL: chain mark ₹{base_price:,.2f} for {broker_sym} is not "
-                        f"premium-domain (estimate ₹{fill_price:,.2f}) — trade skipped before order dispatch."
+                        f"OFF_DOMAIN_FILL: chain mark â‚¹{base_price:,.2f} for {broker_sym} is not "
+                        f"premium-domain (estimate â‚¹{fill_price:,.2f}) â€” trade skipped before order dispatch."
                     ),
                     fill_source="CHAIN",
                     chain_mark_at_fill=float(base_price),
                 )
 
-        # ── Wallet limit: confine trade to available balance, auto-downsize to 1 lot ──
+        # â”€â”€ Wallet limit: confine trade to available balance, auto-downsize to 1 lot â”€â”€
         # No per-trade % cap (full wallet usable), but required margin must fit live
         # available_margin. If requested lots don't fit, step down to the largest
         # affordable lots. If even 1 lot doesn't fit, reject with INSUFFICIENT_FUNDS.
-        from app.quant.margin import calculate_required_margin as _calc_margin
+        from app.market_core.margin import calculate_required_margin as _calc_margin
 
         requested_lots = final_lots
         try:
@@ -391,8 +391,8 @@ class SignalPaperEngine:
                 order_id="",
                 status="REJECTED",
                 message=(
-                    f"INSUFFICIENT_FUNDS: Required ₹{req_margin:,.2f} for {final_lots} lot(s), "
-                    f"Available ₹{live_available_margin:,.2f}. Trade skipped — confined to wallet balance."
+                    f"INSUFFICIENT_FUNDS: Required â‚¹{req_margin:,.2f} for {final_lots} lot(s), "
+                    f"Available â‚¹{live_available_margin:,.2f}. Trade skipped â€” confined to wallet balance."
                 ),
             )
         downsized = final_lots < requested_lots
@@ -406,7 +406,7 @@ class SignalPaperEngine:
                 available=live_available_margin,
             )
 
-        # ── v3.0 Execution Guard & Deterministic Intent ──
+        # â”€â”€ v3.0 Execution Guard & Deterministic Intent â”€â”€
         from app.signals.execution_intent import (
             make_execution_intent_id,
             make_fyers_order_tag,
@@ -418,7 +418,7 @@ class SignalPaperEngine:
         from app.signals.position import Position, position_registry
 
         # The id is a function of (signal_id, version, action, quantity, side,
-        # symbol) ONLY — the live quote is deliberately excluded, so a retry
+        # symbol) ONLY â€” the live quote is deliberately excluded, so a retry
         # after the mark moves maps to the same intent (and the same
         # client_order_id) instead of minting a fresh one and double-filling.
         intent_id = make_execution_intent_id(
@@ -558,7 +558,7 @@ class SignalPaperEngine:
             # A resting signal order is a ghost: the engine reports failure
             # below, so nothing would ever manage this order (no stop, no
             # ratchet, no exit) and it could fill later behind the signal's
-            # back. Cancel it — a signal order fills now or not at all.
+            # back. Cancel it â€” a signal order fills now or not at all.
             try:
                 await paper_service.cancel_order(paper_order.order_id)
                 logger.info(
@@ -605,7 +605,7 @@ class SignalPaperEngine:
                 target_2=float(sig.target_2),
                 order_id=paper_order.order_id,
                 status="PENDING",
-                message="Order is resting (PENDING) — market has not touched it yet",
+                message="Order is resting (PENDING) â€” market has not touched it yet",
                 fill_source="CHAIN",
                 chain_mark_at_fill=float(base_price) if 'base_price' in locals() else None,
             )
@@ -629,7 +629,7 @@ class SignalPaperEngine:
                 message=paper_order.rejection_reason or "Order rejected by paper service",
             )
 
-        # ── Fill sanity: the service must have priced the same instrument ──
+        # â”€â”€ Fill sanity: the service must have priced the same instrument â”€â”€
         # The paper service re-prices MARKET orders from its own live quote, and
         # its option path is supposed to consult the option chain (never the
         # underlying spot). If that ever regresses, or a caller hands it a symbol
@@ -684,15 +684,15 @@ class SignalPaperEngine:
                     order_id=paper_order.order_id,
                     status="REJECTED",
                     message=(
-                        f"OFF_DOMAIN_FILL: service filled {broker_sym} at ₹{service_fill:,.2f} "
-                        f"against chain mark ₹{base_price:,.2f} ({_dev * 100.0:.1f}% off). "
-                        "Not the same instrument — trade skipped."
+                        f"OFF_DOMAIN_FILL: service filled {broker_sym} at â‚¹{service_fill:,.2f} "
+                        f"against chain mark â‚¹{base_price:,.2f} ({_dev * 100.0:.1f}% off). "
+                        "Not the same instrument â€” trade skipped."
                     ),
                     fill_source="CHAIN",
                     chain_mark_at_fill=float(base_price),
                 )
 
-        # Update FSM with order details — trust the service's actual fill
+        # Update FSM with order details â€” trust the service's actual fill
         # (live quote + friction) over this engine's pre-trade estimate, now
         # that it is confirmed to be the same instrument as the chain mark.
         actual_fill = float(paper_order.fill_price or fill_price)
@@ -804,8 +804,8 @@ class SignalPaperEngine:
             order_id=paper_order.order_id,
             status=paper_order.status,
             message=(
-                f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ ₹{actual_fill:,.2f}"
-                + (f" (downsized from {requested_lots} lot(s) to fit wallet ₹{live_available_margin:,.2f})" if downsized else "")
+                f"Filled {final_lots} Lots ({final_qty} Qty) {broker_sym} @ â‚¹{actual_fill:,.2f}"
+                + (f" (downsized from {requested_lots} lot(s) to fit wallet â‚¹{live_available_margin:,.2f})" if downsized else "")
             ),
             fill_source="CHAIN",
             chain_mark_at_fill=float(base_price),
@@ -844,7 +844,7 @@ class SignalPaperEngine:
         if not broker_sym or not qty:
             return None
 
-        # ── Close-once: a settled audit row is terminal. No exit order, no
+        # â”€â”€ Close-once: a settled audit row is terminal. No exit order, no
         # audit rewrite, no registry mutation. (record_square_off is guarded
         # too, but this avoids even dispatching an exit for a settled signal.)
         _audit_rec = signal_audit_ledger.get(signal_id)
@@ -857,7 +857,7 @@ class SignalPaperEngine:
         # during settlement). Replaces direct `paper_service._positions` access.
         pos = await paper_service.get_position_snapshot(pos_id)
 
-        # Resolve exit price if missing — prefer the live position LTP
+        # Resolve exit price if missing â€” prefer the live position LTP
         # (VirtualPosition.ltp; there is no `current_price` field).
         # FAIL CLOSED: when neither the position LTP nor a fresh broker mark
         # exists the audit-only path settles flat (entry fill) with
@@ -915,7 +915,7 @@ class SignalPaperEngine:
             )
             exit_order = await paper_service.place_order(exit_payload, allow_closed_market=permit_closed)
 
-            # ── Settlement gate: only a confirmed fill books a close. ──
+            # â”€â”€ Settlement gate: only a confirmed fill books a close. â”€â”€
             # A rejected/unfilled exit must not settle the audit row or close
             # the registry position while the virtual position remains open.
             if exit_order.status != "FILLED":
@@ -959,7 +959,7 @@ class SignalPaperEngine:
             except Exception:
                 pass
 
-        # ── Signal-domain Position lifecycle ──
+        # â”€â”€ Signal-domain Position lifecycle â”€â”€
         # Mirror a successful full close into the position registry so the
         # registered Position and the portfolio Greeks ledger stop carrying
         # exposure for a settled trade. close_position() is idempotent; T1

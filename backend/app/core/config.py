@@ -55,9 +55,14 @@ class Settings(BaseSettings):
     ws_heartbeat_interval_seconds: float = 10.0
 
     # Rate Limiting Settings (Phase 2)
+    # The signal scanner alone generates ~216 provider calls/min (3 underlyings
+    # x [quote + 1m/5m/15m/1h candles + F&O + 1D] on a 10s scalp cadence plus a
+    # 30s intraday cadence). A 200/min ceiling was below the load this app
+    # generates by design, so FYERS answered with HTTP 429 and the scanner
+    # fail-closed to OFFLINE. Headroom over the self-generated load.
     rate_limit_requests_per_second: float = 10.0
-    rate_limit_requests_per_minute: float = 200.0
-    rate_limit_burst_limit: int = 20
+    rate_limit_requests_per_minute: float = 400.0
+    rate_limit_burst_limit: int = 40
 
     # High-Frequency Buffer Settings (Phase 2)
     event_buffer_max_size: int = 10000

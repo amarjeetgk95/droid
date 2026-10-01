@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.core.json_config import load_json_config
+from app.signals.types import ExecutionStatus
 
 logger = structlog.get_logger()
 
@@ -94,6 +95,17 @@ class ValidatedRiskDecision(BaseModel):
     max_rupee_loss: float
     lot_size: int
 
+    # DROID v5.1 Feasibility & Observability Taxonomy
+    live_executable: bool = False
+    paper_eligible: bool = False
+    observation_eligible: bool = False
+    execution_status: ExecutionStatus = "SAFETY_BLOCKED"
+    execution_blocked_reason: Optional[str] = None
+    live_lots: int = 0
+    hypothetical_paper_lots: int = 0  # Fail-closed default: 0
+    opportunity_score: Optional[float] = None
+    execution_score: Optional[float] = None
+
     # Option Greeks & Economics Context
     option_delta: Optional[float] = None
     option_theta_hour: Optional[float] = None
@@ -145,14 +157,14 @@ def _premium_stop_risk(
 
 
 # Fallback defaults (lot sizes match the resolver: NIFTY 75 / BANK 30 / SENSEX 10)
-# used when risk_envelopes.json is missing/unreadable (non-fatal posture, loader
-# logs json_config_fallback_default at warning). Deep-copied by the loader per use.
+# RISK-ON 2026-09-23: min_rr 1.25/1.35 -> 1.0, min_risk trimmed, atr 1.0 —
+# tight 1R scalps trade instead of dying in INSUFFICIENT_RR.
 DEFAULT_RISK_CONFIG: dict = {
     "version": 1,
     "envelopes": {
         "NIFTY": {
-            "1m_scalp": {"min_risk_pts": 8.0, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.1, "min_rr": 1.25, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
-            "5m_intraday": {"min_risk_pts": 18.0, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.2, "min_rr": 1.35, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
+            "1m_scalp": {"min_risk_pts": 5.6, "max_risk_pts": 18.0, "t1_ceiling_pts": 30.0, "t2_ceiling_pts": 45.0, "atr_multiplier": 1.0, "min_rr": 1.0, "trigger_ttl_seconds": 300, "active_time_stop_seconds": 900},
+            "5m_intraday": {"min_risk_pts": 12.6, "max_risk_pts": 35.0, "t1_ceiling_pts": 55.0, "t2_ceiling_pts": 80.0, "atr_multiplier": 1.0, "min_rr": 1.0, "trigger_ttl_seconds": 600, "active_time_stop_seconds": 4500},
             "15m_intraday": {"min_risk_pts": 25.0, "max_risk_pts": 50.0, "t1_ceiling_pts": 75.0, "t2_ceiling_pts": 110.0, "atr_multiplier": 1.25, "min_rr": 1.4, "trigger_ttl_seconds": 900, "active_time_stop_seconds": 7200},
             "1d_positional": {"min_risk_pts": 60.0, "max_risk_pts": 120.0, "t1_ceiling_pts": 180.0, "t2_ceiling_pts": 280.0, "atr_multiplier": 1.3, "min_rr": 1.5, "trigger_ttl_seconds": 1800, "active_time_stop_seconds": 20000},
         },
@@ -223,14 +235,16 @@ class CentralRiskEngine:
             if multiplier < 1.0:
                 risk_per_trade_pct *= max(0.1, multiplier)
 
-        # ── 0b. Confidence wiring: sub-45 never trades; 45-65 halves size ──
+        # ── 0b. Confidence wiring: RISK-ON — sub-32 never trades (was 45);
+        # 32-50 halves size (was 45-65). A 50-confidence trend day trades half
+        # size instead of dying in LOW_CONFIDENCE.
         try:
             conf = float(setup.confidence or 75.0)
         except Exception:
             conf = 75.0
-        if conf < 45.0:
-            return self._reject("LOW_CONFIDENCE", f"Fused confidence {conf:.0f} below 45 minimum", setup)
-        confidence_halve = conf < 65.0
+        if conf < 32.0:
+            return self._reject("LOW_CONFIDENCE", f"Fused confidence {conf:.0f} below 32 minimum", setup)
+        confidence_halve = conf < 50.0
 
         # ── 0c. Daily-loss cap (hard stop before any ACCEPT) ──
         if daily_pnl_inr is not None and max_daily_loss_inr is not None:
@@ -262,11 +276,27 @@ class CentralRiskEngine:
         min_allowed_risk = float(underlying_rules["min_risk_pts"])
 
         if raw_risk > max_allowed_risk:
-            # CRITICAL SAFETY INVARIANT: DO NOT clamp an invalid wide stop inward. REJECT.
+            # CRITICAL SAFETY INVARIANT: DO NOT clamp an invalid wide stop inward. REJECT from live execution.
+            cand_t1 = round(raw_risk * 1.5, 2)
+            cand_t2 = round(raw_risk * 2.0, 2)
+            t1_dec = Decimal(str(cand_t1))
+            t2_dec = Decimal(str(cand_t2))
             return self._reject(
                 "STRUCTURAL_RISK_EXCEEDS_ENVELOPE",
                 f"Required structural risk ({raw_risk:.1f} pts) exceeds maximum envelope ceiling ({max_allowed_risk:.1f} pts)",
                 setup,
+                is_execution_constraint=True,
+                execution_status="BLOCKED_ENVELOPE",
+                stop_loss=setup.raw_structural_stop,
+                target_1=setup.entry_trigger + t1_dec if setup.direction == "LONG_CALL" else setup.entry_trigger - t1_dec,
+                target_2=setup.entry_trigger + t2_dec if setup.direction == "LONG_CALL" else setup.entry_trigger - t2_dec,
+                risk_points=round(raw_risk, 2),
+                reward_t1_points=cand_t1,
+                reward_t2_points=cand_t2,
+                risk_reward_t1=1.5,
+                risk_reward_t2=2.0,
+                trigger_ttl_seconds=int(underlying_rules.get("trigger_ttl_seconds", 300)),
+                active_time_stop_seconds=int(underlying_rules.get("active_time_stop_seconds", 900)),
             )
 
         # Volatility-based buffer check (stop should not be tighter than micro ATR)
@@ -286,10 +316,26 @@ class CentralRiskEngine:
             pass
 
         if validated_risk > max_allowed_risk:
+            cand_t1 = round(validated_risk * 1.5, 2)
+            cand_t2 = round(validated_risk * 2.0, 2)
+            t1_dec = Decimal(str(cand_t1))
+            t2_dec = Decimal(str(cand_t2))
             return self._reject(
                 "VOLATILITY_RISK_EXCEEDS_ENVELOPE",
                 f"ATR-adjusted risk ({validated_risk:.1f} pts) exceeds max allowable envelope ceiling ({max_allowed_risk:.1f} pts)",
                 setup,
+                is_execution_constraint=True,
+                execution_status="BLOCKED_ENVELOPE",
+                stop_loss=setup.raw_structural_stop,
+                target_1=setup.entry_trigger + t1_dec if setup.direction == "LONG_CALL" else setup.entry_trigger - t1_dec,
+                target_2=setup.entry_trigger + t2_dec if setup.direction == "LONG_CALL" else setup.entry_trigger - t2_dec,
+                risk_points=round(validated_risk, 2),
+                reward_t1_points=cand_t1,
+                reward_t2_points=cand_t2,
+                risk_reward_t1=1.5,
+                risk_reward_t2=2.0,
+                trigger_ttl_seconds=int(underlying_rules.get("trigger_ttl_seconds", 300)),
+                active_time_stop_seconds=int(underlying_rules.get("active_time_stop_seconds", 900)),
             )
 
         # Calculate finalized Stop Loss price
@@ -319,12 +365,6 @@ class CentralRiskEngine:
         candidate_t2_pts = min(max(candidate_t1_pts * 1.6, validated_risk * 2.0), t2_ceiling)
 
         rr_t1 = round(candidate_t1_pts / validated_risk, 2)
-        if rr_t1 < min_rr:
-            return self._reject(
-                "INSUFFICIENT_RR",
-                f"Realistic reward provides only {rr_t1}R (Minimum required: {min_rr}R)",
-                setup,
-            )
 
         # Finalized Target Prices
         t1_pts_dec = Decimal(str(round(candidate_t1_pts, 2)))
@@ -335,6 +375,25 @@ class CentralRiskEngine:
         else:
             final_t1 = setup.entry_trigger - t1_pts_dec
             final_t2 = setup.entry_trigger - t2_pts_dec
+
+        if rr_t1 < min_rr:
+            return self._reject(
+                "INSUFFICIENT_RR",
+                f"Realistic reward provides only {rr_t1}R (Minimum required: {min_rr}R)",
+                setup,
+                is_execution_constraint=True,
+                execution_status="BLOCKED_RR",
+                stop_loss=final_sl,
+                target_1=final_t1,
+                target_2=final_t2,
+                risk_points=round(validated_risk, 2),
+                reward_t1_points=round(candidate_t1_pts, 2),
+                reward_t2_points=round(candidate_t2_pts, 2),
+                risk_reward_t1=rr_t1,
+                risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                trigger_ttl_seconds=int(underlying_rules["trigger_ttl_seconds"]),
+                active_time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+            )
 
         # ── 4. Position Sizing on the PREMIUM stop (integer lots only) ──
         lot_size = _lot_size_for(setup.underlying, self._config)
@@ -365,6 +424,22 @@ class CentralRiskEngine:
                 "INSUFFICIENT_CAPITAL_FOR_1_LOT",
                 f"Budget ₹{allowed_rupee_risk:.0f} cannot absorb ₹{rupee_risk_per_lot:.0f} risk per lot for {lot_size} qty",
                 setup,
+                is_execution_constraint=True,
+                execution_status="BLOCKED_CAPITAL",
+                stop_loss=final_sl,
+                target_1=final_t1,
+                target_2=final_t2,
+                risk_points=round(validated_risk, 2),
+                reward_t1_points=round(candidate_t1_pts, 2),
+                reward_t2_points=round(candidate_t2_pts, 2),
+                risk_reward_t1=rr_t1,
+                risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                trigger_ttl_seconds=int(underlying_rules["trigger_ttl_seconds"]),
+                active_time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                option_delta=round(delta, 4),
+                option_theta_hour=setup.option_theta_hour,
+                premium_risk_per_unit=round(float(option_risk_per_unit), 2),
+                premium_entry=round(float(entry_premium), 2) if entry_premium else None,
             )
 
         lots = min(lots, 10)  # Max 10 lots safety cap
@@ -393,11 +468,31 @@ class CentralRiskEngine:
                     unit_vega=10.0,
                 )
                 if not chk.allowed:
-                    return self._reject("PORTFOLIO_VETO", str(chk.rejection_reason), setup)
+                    return self._reject(
+                        "PORTFOLIO_VETO",
+                        str(chk.rejection_reason),
+                        setup,
+                        is_execution_constraint=True,
+                        execution_status="BLOCKED_PORTFOLIO",
+                        stop_loss=final_sl,
+                        target_1=final_t1,
+                        target_2=final_t2,
+                        risk_points=round(validated_risk, 2),
+                        reward_t1_points=round(candidate_t1_pts, 2),
+                        reward_t2_points=round(candidate_t2_pts, 2),
+                        risk_reward_t1=rr_t1,
+                        risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                        trigger_ttl_seconds=int(underlying_rules["trigger_ttl_seconds"]),
+                        active_time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                        option_delta=round(delta, 4),
+                        option_theta_hour=setup.option_theta_hour,
+                        premium_risk_per_unit=round(float(option_risk_per_unit), 2),
+                        premium_entry=round(float(entry_premium), 2) if entry_premium else None,
+                    )
             except Exception as e:
                 logger.debug("risk_engine_portfolio_check_skipped", error=str(e)[:150])
 
-        # ── 4c. Friction gate (netRR>=1.2) when the selector priced the leg ──
+        # ── 4c. Friction gate (netRR>=0.7 risk-on, was 1.2) when the selector priced the leg ──
         if entry_premium is not None and delta_source_live:
             try:
                 from app.signals.risk.friction_gate import friction_gate
@@ -435,11 +530,27 @@ class CentralRiskEngine:
                     expected_move_projection=expected_move_projection,
                     expected_holding_seconds=int(underlying_rules["active_time_stop_seconds"]),
                 )
-                if not _edge.passed or _edge.net_reward_risk_ratio < 1.2:
+                if not _edge.passed or _edge.net_reward_risk_ratio < 0.7:
                     return self._reject(
                         "FRICTION_NET_RR",
-                        _edge.rejection_reason or f"Net R/R {_edge.net_reward_risk_ratio:.2f} below 1.20 after friction",
+                        _edge.rejection_reason or f"Net R/R {_edge.net_reward_risk_ratio:.2f} below 0.70 after friction",
                         setup,
+                        is_execution_constraint=True,
+                        execution_status="BLOCKED_FRICTION",
+                        stop_loss=final_sl,
+                        target_1=final_t1,
+                        target_2=final_t2,
+                        risk_points=round(validated_risk, 2),
+                        reward_t1_points=round(candidate_t1_pts, 2),
+                        reward_t2_points=round(candidate_t2_pts, 2),
+                        risk_reward_t1=rr_t1,
+                        risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                        trigger_ttl_seconds=int(underlying_rules["trigger_ttl_seconds"]),
+                        active_time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                        option_delta=round(delta, 4),
+                        option_theta_hour=setup.option_theta_hour,
+                        premium_risk_per_unit=round(float(option_risk_per_unit), 2),
+                        premium_entry=round(float(entry_premium), 2) if entry_premium else None,
                     )
             except Exception as e:
                 # Fail-closed only when the gate itself rejects; infra errors
@@ -454,13 +565,32 @@ class CentralRiskEngine:
             expected_gain_per_unit = candidate_t1_pts * delta
             if expected_gain_per_unit > 0:
                 theta_drag_pct = (theta_hr / expected_gain_per_unit) * 100.0
-                if theta_drag_pct > 35.0:
+                # RISK-ON: warn at 50%, reject scalps only above 70% (was 35/50).
+                if theta_drag_pct > 50.0:
                     viability_notes.append(f"High theta drag: ₹{theta_hr:.1f}/hr consumes {theta_drag_pct:.1f}% of target move")
-                    if theta_drag_pct > 50.0 and (setup.is_scalp or desk_key == "1m_scalp"):
+                    if theta_drag_pct > 70.0 and (setup.is_scalp or desk_key == "1m_scalp"):
                         return self._reject(
                             "EXCESSIVE_THETA_DRAG",
-                            f"Hourly theta decay (₹{theta_hr:.1f}/hr) exceeds 50% of expected target gain",
+                            f"Hourly theta decay (₹{theta_hr:.1f}/hr) exceeds 70% of expected target gain",
                             setup,
+                            is_execution_constraint=True,
+                            execution_status="BLOCKED_FRICTION",
+                            stop_loss=final_sl,
+                            target_1=final_t1,
+                            target_2=final_t2,
+                            risk_points=round(validated_risk, 2),
+                            reward_t1_points=round(candidate_t1_pts, 2),
+                            reward_t2_points=round(candidate_t2_pts, 2),
+                            risk_reward_t1=rr_t1,
+                            risk_reward_t2=round(candidate_t2_pts / validated_risk, 2),
+                            trigger_ttl_seconds=int(underlying_rules["trigger_ttl_seconds"]),
+                            active_time_stop_seconds=int(underlying_rules["active_time_stop_seconds"]),
+                            option_delta=round(delta, 4),
+                            option_theta_hour=setup.option_theta_hour,
+                            option_economic_viability=False,
+                            option_viability_rationale=viability_notes,
+                            premium_risk_per_unit=round(float(option_risk_per_unit), 2),
+                            premium_entry=round(float(entry_premium), 2) if entry_premium else None,
                         )
                 else:
                     viability_notes.append(f"Theta drag acceptable: {theta_drag_pct:.1f}% of target gain/hr")
@@ -490,6 +620,15 @@ class CentralRiskEngine:
             quantity=total_qty,
             max_rupee_loss=max_rupee_loss,
             lot_size=lot_size,
+            live_executable=True,
+            paper_eligible=True,
+            observation_eligible=True,
+            execution_status="LIVE_EXECUTABLE",
+            execution_blocked_reason=None,
+            live_lots=lots,
+            hypothetical_paper_lots=lots,
+            opportunity_score=float(setup.confidence) if setup.confidence else None,
+            execution_score=round(float(rr_t1 * 20.0), 1),
             option_delta=round(delta, 4),
             option_theta_hour=setup.option_theta_hour,
             option_economic_viability=is_viable,
@@ -498,7 +637,31 @@ class CentralRiskEngine:
             premium_entry=round(float(entry_premium), 2) if entry_premium else None,
         )
 
-    def _reject(self, reason_code: str, message: str, setup: StrategySetup) -> ValidatedRiskDecision:
+    def _reject(
+        self,
+        reason_code: str,
+        message: str,
+        setup: StrategySetup,
+        *,
+        is_execution_constraint: bool = False,
+        execution_status: ExecutionStatus = "SAFETY_BLOCKED",
+        stop_loss: Optional[Decimal] = None,
+        target_1: Optional[Decimal] = None,
+        target_2: Optional[Decimal] = None,
+        risk_points: float = 0.0,
+        reward_t1_points: float = 0.0,
+        reward_t2_points: float = 0.0,
+        risk_reward_t1: float = 0.0,
+        risk_reward_t2: float = 0.0,
+        trigger_ttl_seconds: int = 0,
+        active_time_stop_seconds: int = 0,
+        option_delta: Optional[float] = None,
+        option_theta_hour: Optional[float] = None,
+        option_economic_viability: Optional[bool] = None,
+        option_viability_rationale: Optional[list[str]] = None,
+        premium_risk_per_unit: Optional[float] = None,
+        premium_entry: Optional[float] = None,
+    ) -> ValidatedRiskDecision:
         lot_size = _lot_size_for(setup.underlying, self._config)
         logger.info(
             "risk_engine_trade_rejected",
@@ -506,25 +669,42 @@ class CentralRiskEngine:
             underlying=setup.underlying,
             reason=reason_code,
             message=message,
+            is_execution_constraint=is_execution_constraint,
+            execution_status=execution_status if is_execution_constraint else "SAFETY_BLOCKED",
         )
         return ValidatedRiskDecision(
             accepted=False,
             rejection_reason=f"{reason_code}: {message}",
             entry_price=setup.entry_trigger,
-            stop_loss=setup.raw_structural_stop,
-            target_1=Decimal("0"),
-            target_2=Decimal("0"),
-            risk_points=0.0,
-            reward_t1_points=0.0,
-            reward_t2_points=0.0,
-            risk_reward_t1=0.0,
-            risk_reward_t2=0.0,
-            trigger_ttl_seconds=0,
-            active_time_stop_seconds=0,
+            stop_loss=stop_loss if stop_loss is not None else setup.raw_structural_stop,
+            target_1=target_1 if target_1 is not None else Decimal("0"),
+            target_2=target_2 if target_2 is not None else Decimal("0"),
+            risk_points=risk_points,
+            reward_t1_points=reward_t1_points,
+            reward_t2_points=reward_t2_points,
+            risk_reward_t1=risk_reward_t1,
+            risk_reward_t2=risk_reward_t2,
+            trigger_ttl_seconds=trigger_ttl_seconds,
+            active_time_stop_seconds=active_time_stop_seconds,
             lots=0,
             quantity=0,
             max_rupee_loss=0.0,
             lot_size=lot_size,
+            live_executable=False,
+            paper_eligible=is_execution_constraint,
+            observation_eligible=is_execution_constraint,
+            execution_status=execution_status if is_execution_constraint else "SAFETY_BLOCKED",
+            execution_blocked_reason=f"{reason_code}: {message}",
+            live_lots=0,
+            hypothetical_paper_lots=1 if is_execution_constraint else 0,
+            opportunity_score=float(setup.confidence) if setup.confidence else None,
+            execution_score=0.0,
+            option_delta=option_delta,
+            option_theta_hour=option_theta_hour,
+            option_economic_viability=option_economic_viability,
+            option_viability_rationale=option_viability_rationale or [],
+            premium_risk_per_unit=premium_risk_per_unit,
+            premium_entry=premium_entry,
         )
 
     def evaluate_with_events(

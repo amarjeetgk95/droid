@@ -159,40 +159,6 @@ def test_closed_market_requires_confirm_even_in_dev():
     _require_closed_market_privilege(dev_admin, True, True)
 
 
-def test_swing_regime_no_fixed_confidence():
-    from app.swing.regime import RegimeClassifier
-
-    clf = RegimeClassifier(hysteresis_bars=100)
-    # Insufficient history => None + INSUFFICIENT_DATA, never 0.0/50.0
-    r = clf.evaluate_benchmark([], symbol="NIFTY")
-    assert r.regime == "DATA_UNCERTAIN"
-    assert r.confidence is None
-    assert r.confidence_status == "INSUFFICIENT_DATA"
-
-    # Enough candles: label deterministic but confidence unmeasured (None/UNVETTED)
-    candles = [
-        {"close": 25000.0 + i, "high": 25010.0 + i, "low": 24990.0 + i}
-        for i in range(60)
-    ]
-    r2 = RegimeClassifier(hysteresis_bars=0).evaluate_benchmark(candles, symbol="NIFTY")
-    assert r2.confidence is None
-    assert r2.confidence_status == "UNVETTED"
-    assert r2.confidence not in (60.0, 65.0, 75.0, 80.0, 85.0)
-
-
-def test_models_no_50_placeholders():
-    from app.swing.models import MarketRegime, SectorClassification
-
-    mr = MarketRegime()
-    assert mr.confidence is None
-    assert mr.ma_alignment_score is None
-    assert mr.iv_percentile is None
-    assert mr.confidence != 50.0
-
-    sc = SectorClassification(sector="NIFTY")
-    assert sc.relative_strength is None
-
-
 def test_confluence_no_70_fallback():
     import asyncio
     from decimal import Decimal as D

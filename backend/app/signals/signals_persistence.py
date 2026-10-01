@@ -1,10 +1,8 @@
 """
-Supabase / PostgreSQL & Local Cache Persistence Layer for Executed Signals & Audit Ledger
-Persists trade lifecycle, execution receipts, and audited P&L across deployments, restarts, and redeployments.
-
-Strategy:
-  1. Primary: Supabase / PostgreSQL (executed_signals table)
-  2. Fallback / Local Fast Cache: signals_state.json (guarantees signals never reset to zero on redeploy)
+Supabase/PostgreSQL & local-cache persistence for executed signals and the audit
+ledger (trade lifecycle, receipts, audited P&L). Primary store: executed_signals
+table; fallback fast cache: signals_state.json so signals never reset to zero on
+redeploy.
 """
 from __future__ import annotations
 
@@ -27,7 +25,7 @@ logger = structlog.get_logger()
 SCHEMA_VERSION = 2
 
 def _resolve_state_file() -> Path:
-    # Absolute state-file path: env override → repo root → backend dir.
+    # Absolute path: env override → repo root (parents[3]) → backend dir.
     env = os.environ.get("SIGNALS_STATE_PATH")
     if env:
         return Path(env).resolve()
@@ -164,10 +162,8 @@ def save_signals_state_local(
 def restore_signals_state_local() -> int:
     """Restore signals from local cache file if PostgreSQL is unavailable or empty.
 
-    Newest-wins: when a signal already exists in memory, the row with the
-    greater updated_at/last_updated_utc wins (not first-wins). Restored
-    receipts are marked source=RESTORED and require chain-mark re-validation
-    before economics are trusted.
+    Newest-wins on updated_at/last_updated_utc (not first-wins); restored
+    receipts are source=RESTORED and require chain-mark re-validation.
     """
     target_file = SIGNALS_STATE_FILE
     if not target_file.exists():
@@ -216,9 +212,7 @@ def restore_signals_state_local() -> int:
                 sdata.pop("row_hash", None)
                 sdata.pop("updated_at", None)
                 sdata.pop("updated_at_utc", None) if "last_updated_utc" in sdata else None
-                # Compat: NULL confidence restores as None + UNVETTED (never 80.0).
-                # SignalInstance requires float at validation, so validate with a
-                # compat placeholder then surface None post-construction.
+                # Compat: NULL confidence restores as None + UNVETTED (float placeholder, then post-fix).
                 _conf_was_null = sdata.get("confidence") is None
                 if _conf_was_null:
                     sdata["confidence"] = 80.0
@@ -319,12 +313,10 @@ def restore_signals_state_local() -> int:
 
 def sanitize_persisted_signals() -> int:
     """
-    Sanitizes FSM signals and audit records in memory:
-    1. Sweeps pre-trigger/untriggered signals when market is closed or across sessions.
-    2. Correctly populates outcome_status, terminal_outcome, and realized_rr when
-       force-transitioning signals so win-rate and P&L metrics are never poisoned.
-    3. Repairs corrupted or incomplete legacy persisted records.
-    4. Purges synthetic/demo seeded trades and test signals.
+    Sanitizes FSM signals and audit records in memory: sweeps stale/untriggered
+    signals across sessions, populates outcome fields so win-rate and P&L are
+    never poisoned, repairs corrupted legacy records, VOID-quarantines demo/test
+    trades.
     """
     sanitized_count = 0
     try:
@@ -339,8 +331,7 @@ def sanitize_persisted_signals() -> int:
         ist_tz = ZoneInfo("Asia/Kolkata")
         today_ist = datetime.now(ist_tz).date()
 
-        # 1. Sweep unexecuted signals and prior-day signals via FSM transitions
-        # (no direct mutation — transitions populate outcomes + audit).
+        # 1. Sweep unexecuted + prior-day signals via FSM transitions (outcomes + audit; no direct mutation).
         for sid, inst in list(signal_fsm._signals.items()):
             try:
                 sig_dt = datetime.fromtimestamp(inst.created_at_utc / 1000.0, tz=ist_tz)
@@ -372,11 +363,8 @@ def sanitize_persisted_signals() -> int:
 
         # 2. Terminal FSM rows with missing outcome fields are REPAIRED from the
         #    established factual mapping (never voided, never invented): the
-        #    realised R is the state's own structural payoff. A terminal row is
-        #    already in its final state, so signal_fsm.transition() cannot be
-        #    used; fields are set with an FSMTransitionAudit note recording
-        #    exactly which fields were repaired and by which rule. Other legacy
-        #    PnL repairs live in the migration script (database/migrations/).
+        #    realised R is the state's own structural payoff. signal_fsm.transition()
+        #    cannot be used on a terminal row; repairs are audit-logged per field.
         terminal_outcome_facts: dict[str, tuple[str, str, Any]] = {
             "RUNNER_TIME_STOP_HIT": ("RUNNER_TIME_STOP", "PARTIAL_WIN", lambda s: float(s.risk_reward_t1 or 1.5)),
             "TARGET_2_HIT": ("WIN_T2", "FULL_WIN", lambda s: float(s.risk_reward_t2 or 3.0)),
@@ -405,9 +393,8 @@ def sanitize_persisted_signals() -> int:
                     inst.realized_rr_gross = rr_val
                     repair["realized_rr_gross"] = rr_val
                 if getattr(inst, "realized_rr_net", None) is None:
-                    # No surviving exit-leg evidence: the structural state
-                    # payoff is recorded and flagged as friction-free in the
-                    # audit note (gateway rule TERMINAL_OUTCOME_FACT_MAP).
+                    # No surviving exit-leg evidence: structural payoff, friction-free
+                    # (gateway rule TERMINAL_OUTCOME_FACT_MAP).
                     inst.realized_rr_net = rr_val
                     repair["realized_rr_net"] = rr_val
             except Exception as re:
@@ -447,10 +434,9 @@ def sanitize_persisted_signals() -> int:
                     rec.status = "RUNNER_TIME_STOP_HIT"
                     rec.is_winner = True
 
-        # 3. Domain corruption → VOID quarantine (never delete, never re-price).
-        #    The record is KEPT as evidence; corrupt economics (spot-scale fill,
-        #    catastrophic P&L, non-positive exit) are withdrawn so they can never
-        #    be re-aggregated. Hardcoded PnL repairs DELETED — see migration script.
+        # 3. Domain corruption → VOID quarantine (never delete, never re-price):
+        #    corrupt economics (spot-scale fill, catastrophic P&L, non-positive
+        #    exit) are withdrawn so they can never be re-aggregated.
         for aid, rec in list(signal_audit_ledger._trades.items()):
             corrupted = False
             if rec.exit_price is not None and rec.exit_price <= 0.0:
@@ -485,8 +471,8 @@ def sanitize_persisted_signals() -> int:
                 sanitized_count += 1
                 logger.warning("sanitized_corrupt_audit_trade", audit_id=aid)
 
-        # 4. Demo/test/ghost quarantine via VOID: ledger rows are KEPT as
-        #    evidence and excluded from every aggregate — never hard-deleted.
+        # 4. Demo/test/ghost quarantine via VOID: rows kept as evidence, excluded
+        #    from aggregates — never hard-deleted.
         demo_ids = {"SIG-NIFTY-BKO-01", "SIG-BNF-TRP-02", "SIG-SNX-MRV-03", "SIG-NIFTY-ORB-04"}
 
         def _is_test_or_ghost_id(target_id: Any) -> bool:
@@ -583,51 +569,34 @@ async def ensure_signals_tables() -> bool:
                     updated_at_utc BIGINT NOT NULL
                 )
             """))
-            # Schema migrations for v6.0 dual-cadence scalping engine — batched into single query
-            # confidence is NULLABLE with no fake 80.0 default; new rows store NULL
-            # when unmeasured (UNVETTED). Compat reads preserve legacy 80.0 values.
+            # v6.0 dual-cadence schema migrations. confidence is NULLABLE
+            # (no fake 80.0 default); unmeasured rows store NULL.
             cols_to_add = [
-                ("confidence", "DOUBLE PRECISION DEFAULT NULL"),
-                ("risk_points", "DOUBLE PRECISION"),
-                ("risk_reward_t1", "DOUBLE PRECISION DEFAULT 1.5"),
-                ("risk_reward_t2", "DOUBLE PRECISION DEFAULT 3.0"),
-                ("is_scalp", "BOOLEAN DEFAULT FALSE"),
-                ("signal_type", "TEXT DEFAULT 'INTRADAY'"),
-                ("time_stop_seconds", "INT"),
-                ("runner_ttl_seconds", "INT"),
-                ("time_stop_at_utc", "BIGINT"),
-                ("runner_time_stop_at_utc", "BIGINT"),
-                ("breakeven_activated", "BOOLEAN DEFAULT FALSE"),
-                ("current_stop_loss", "DOUBLE PRECISION"),
-                ("t1_hit", "BOOLEAN DEFAULT FALSE"),
-                ("remaining_qty", "INT"),
-                ("intended_qty", "INT"),
-                ("net_realized_pnl_inr", "DOUBLE PRECISION"),
+                ("confidence", "DOUBLE PRECISION DEFAULT NULL"), ("risk_points", "DOUBLE PRECISION"),
+                ("risk_reward_t1", "DOUBLE PRECISION DEFAULT 1.5"), ("risk_reward_t2", "DOUBLE PRECISION DEFAULT 3.0"),
+                ("is_scalp", "BOOLEAN DEFAULT FALSE"), ("signal_type", "TEXT DEFAULT 'INTRADAY'"),
+                ("time_stop_seconds", "INT"), ("runner_ttl_seconds", "INT"),
+                ("time_stop_at_utc", "BIGINT"), ("runner_time_stop_at_utc", "BIGINT"),
+                ("breakeven_activated", "BOOLEAN DEFAULT FALSE"), ("current_stop_loss", "DOUBLE PRECISION"),
+                ("t1_hit", "BOOLEAN DEFAULT FALSE"), ("remaining_qty", "INT"),
+                ("intended_qty", "INT"), ("net_realized_pnl_inr", "DOUBLE PRECISION"),
                 ("recon_json", "JSONB DEFAULT '{}'::jsonb"),
             ]
-            try:
-                alter_clauses = [f"ADD COLUMN IF NOT EXISTS {col} {col_type}" for col, col_type in cols_to_add]
-                await session.execute(text(f"ALTER TABLE executed_signals {', '.join(alter_clauses)}"))
-            except Exception as ce:
-                logger.debug("executed_signals_batch_alter_failed", error=str(ce)[:150])
-                # Fallback to individual column adds if batch fails
-                for col, col_type in cols_to_add:
-                    try:
-                        await session.execute(text(f"ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS {col} {col_type}"))
-                    except Exception:
-                        pass
+            for col, col_type in cols_to_add:
+                try:
+                    await session.execute(text(f"ALTER TABLE executed_signals ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                except Exception as ce:
+                    logger.debug("executed_signals_add_column_skipped", column=col, error=str(ce)[:150])
 
             try:
-                await session.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_executed_signals_underlying ON executed_signals (underlying);
-                    CREATE INDEX IF NOT EXISTS idx_executed_signals_status ON executed_signals (status);
-                    CREATE INDEX IF NOT EXISTS idx_executed_signals_created ON executed_signals (created_at_utc DESC);
-                """))
+                await session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_executed_signals_underlying ON executed_signals (underlying);"
+                    " CREATE INDEX IF NOT EXISTS idx_executed_signals_status ON executed_signals (status);"
+                    " CREATE INDEX IF NOT EXISTS idx_executed_signals_created ON executed_signals (created_at_utc DESC);"))
             except Exception as ie:
                 logger.debug("executed_signals_indices_create_failed", error=str(ie)[:150])
 
-            # Migrate legacy fake default away: new rows must store NULL when
-            # unmeasured, never an implicit 80.0. Keeps compat reads of old rows.
+            # Legacy rows must not keep an implicit 80.0 default for new inserts.
             try:
                 await session.execute(text("ALTER TABLE executed_signals ALTER COLUMN confidence DROP DEFAULT"))
             except Exception as me:
@@ -662,7 +631,7 @@ async def persist_executed_signal(record: Any) -> bool:
         hist_json = json.dumps([h.model_dump() if hasattr(h, "model_dump") else h for h in getattr(record, "state_history", [])], default=str)
 
         # Reconciler stage fills ride along so mid-flight economics survive
-        # restarts/redeploys (ephemeral disk loses signals_state.json).
+        # restarts (ephemeral disk loses signals_state.json).
         recon_json = "{}"
         try:
             from app.signals.fill_reconciler import option_fill_reconciler
@@ -855,10 +824,8 @@ async def restore_signals_from_db() -> int:
             from app.signals.fsm import signal_fsm, SignalInstance
 
             async with factory() as session:
-                # Hardcoded PnL repairs DELETED — moved to migration script
-                # (database/migrations/*_pnl_repair.py). Restore path never
-                # invents economics; corrupted rows are quarantined via VOID
-                # after load, not repaired inline.
+                # Hardcoded PnL repairs DELETED — see database/migrations/*_pnl_repair.py.
+                # Restore never invents economics; corrupt rows are VOID-quarantined.
 
                 res = await session.execute(text("""
                     SELECT * FROM executed_signals
@@ -917,9 +884,8 @@ async def restore_signals_from_db() -> int:
                         row_pnl_pts = row.get("actual_pnl_points")
                         row_exit = row.get("exit_price")
                         row_qty = int(row.get("quantity") or 75)
-                        # Fail-closed domain guard (no hardcoded PnL invention):
-                        # off-domain premiums are nulled and flagged for VOID
-                        # quarantine downstream; chain-mark re-validation required.
+                        # Fail-closed domain guard: off-domain premiums are nulled
+                        # and flagged for VOID quarantine (chain-mark re-check).
                         if is_opt_row:
                             if row_fill is not None and float(row_fill) > 5000.0:
                                 row_fill = None
@@ -1112,8 +1078,8 @@ async def restore_signals_from_db() -> int:
                                 risk_points=Decimal(str(row.get("risk_points") or abs((row.get("trigger_price") or 0) - (row.get("stop_loss") or 0)))),
                                 risk_reward_t1=float(row.get("risk_reward_t1") or 1.5),
                                 risk_reward_t2=float(row.get("risk_reward_t2") or 3.0),
-                                # Compat reads: legacy 80.0 rows keep 80.0; new NULL rows
-                                # restore as None + UNVETTED (never a silent 80.0).
+                                # Compat: legacy 80.0 rows keep 80.0; NULL rows restore
+                                # as None + UNVETTED below (never a silent 80.0).
                                 confidence=float(row.get("confidence")) if row.get("confidence") is not None else 80.0,
                                 option_contract=opt_dict,
                                 signal_type=str(row.get("signal_type") or "INTRADAY"),
@@ -1133,17 +1099,14 @@ async def restore_signals_from_db() -> int:
                                 lots=row.get("lots"),
                                 quantity=trade_qty,
                             )
-                            # NULL confidence (new rows) surfaces as None + UNVETTED,
-                            # never a silent 80.0. Compat: legacy 80.0 rows keep 80.0.
+                            # NULL confidence (new rows) restores as None + UNVETTED,
+                            # never a silent 80.0; legacy 80.0 rows keep 80.0.
                             try:
                                 if row.get("confidence") is None:
                                     fsm_inst.confidence = None  # type: ignore[assignment]
-                                    try:
-                                        _cb = dict(getattr(fsm_inst, "confluence_breakdown", {}) or {})
-                                        _cb["confidence_status"] = "UNVETTED"
-                                        fsm_inst.confluence_breakdown = _cb
-                                    except Exception:
-                                        pass
+                                    _cb = dict(getattr(fsm_inst, "confluence_breakdown", {}) or {})
+                                    _cb["confidence_status"] = "UNVETTED"
+                                    fsm_inst.confluence_breakdown = _cb
                             except Exception:
                                 pass
                             signal_fsm._signals[sid] = fsm_inst

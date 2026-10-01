@@ -1,4 +1,4 @@
-"""CLI tool to fetch and persist historical 1-minute market data via FYERS API v3 (Tier 0).
+﻿"""CLI tool to fetch and persist historical 1-minute market data via FYERS API v3 (Tier 0).
 
 Supports:
 - Chunked downloading (60-day slices) to respect broker limits
@@ -27,9 +27,9 @@ import structlog
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import settings
-from app.quant.data.data_firewall import DataQualityFirewall
-from app.quant.data.dataset_manager import DatasetManager
-from app.quant.data.provenance import assert_real_dataset
+from app.market_core.data.data_firewall import DataQualityFirewall
+from app.market_core.data.dataset_manager import DatasetManager
+from app.market_core.data.provenance import assert_real_dataset
 
 logger = structlog.get_logger("fetch_fyers_history")
 
@@ -147,7 +147,7 @@ def instrument_slug(symbol: str) -> str:
     """Canonical instrument directory name for a FYERS symbol.
 
     The previous mapping was ``"sensex" if "SENSEX" in symbol else "nifty"``,
-    which filed BANKNIFTY — and every other instrument — under ``nifty``.
+    which filed BANKNIFTY â€” and every other instrument â€” under ``nifty``.
     """
     upper = symbol.upper()
     for name in ("BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "NIFTY"):
@@ -206,7 +206,7 @@ async def download_history(
         if use_fixture_on_fail:
             return _persist_fixture(symbol, days=min(days, 180), reason="credentials_missing")
         raise ValueError(
-            "FYERS credentials missing. FYERS access tokens expire daily — set "
+            "FYERS credentials missing. FYERS access tokens expire daily â€” set "
             "FYERS_ACCESS_TOKEN to a fresh token, or pass --fixture-fallback to write "
             "a synthetic fixture to data/fixtures (which no loader treats as market data)."
         )
@@ -242,7 +242,7 @@ async def download_history(
         if use_fixture_on_fail:
             return _persist_fixture(symbol, days=min(days, 60), reason="no_candles_returned")
         raise ValueError(
-            "No historical candles retrieved from FYERS API. Nothing was written — "
+            "No historical candles retrieved from FYERS API. Nothing was written â€” "
             "refusing to substitute synthetic data for real history."
         )
 

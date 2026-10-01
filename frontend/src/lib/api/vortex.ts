@@ -1,5 +1,4 @@
 import type { ApiCore } from './client';
-import { DEFAULT_STALE_AFTER_MS } from '@/lib/feedState';
 
 export interface VortexSessionInfo {
   phase: string;
@@ -40,6 +39,8 @@ export interface CompressionState {
 
 export interface DirectionalPressureState {
   score: number;
+  /** Discrete direction (-1 bearish / 0 neutral / +1 bullish, ±0.20 thresholds). */
+  direction?: number | null;
   persistence: number;
   persistence_abs?: number;
   acceleration: number;
@@ -105,12 +106,28 @@ export interface FSMStateData {
   }>;
 }
 
+/** Staleness window for 1m closed candles: a fresh feed's last *closed* bar is
+ * 60-120s old by construction (sawtooth between minute closes), so the generic
+ * 30s REST threshold would flap LIVE/STALE forever. 150s covers one full bar
+ * plus poll jitter; anything older is genuinely lagging. */
+export const VORTEX_STALE_AFTER_MS = 150_000;
+
+export interface VortexLiveStatus {
+  status: string;
+  age_s?: number | null;
+  bars?: number | null;
+}
+
 export interface VortexDataSource {
-  type: 'parquet' | 'synthetic';
+  type: 'parquet' | 'synthetic' | 'fyers_ws_live';
   instrument: string;
   path: string | null;
   is_simulated: boolean;
   note: string;
+  /** Tick-level liveness from the WS aggregator (tick age, not candle age). */
+  live?: VortexLiveStatus | null;
+  history_bars?: number | null;
+  live_bars?: number | null;
 }
 
 export interface ActiveCandidateSignal {
@@ -190,12 +207,24 @@ export function vortexDataAgeMs(
   return Math.max(0, reference - last);
 }
 
+/** Backend tick-level liveness: WS ticks seconds old even as the last *closed*
+ * 1m bar ages 60-120s. Trust it when present — it is the aggregator's own
+ * freshness verdict, not a client inference. */
+export function vortexBackendLive(
+  hud: VortexMicrostructureHUD | null | undefined,
+): boolean {
+  const status = hud?.data_source?.live?.status;
+  return status === 'LIVE';
+}
+
 /** Missing candle time is stale — unknown freshness is never "live". */
 export function isVortexStale(
   hud: VortexMicrostructureHUD | null | undefined,
   clientNowMs: number = Date.now(),
-  staleAfterMs: number = DEFAULT_STALE_AFTER_MS,
+  staleAfterMs: number = VORTEX_STALE_AFTER_MS,
 ): boolean {
+  // Tick-live feeds are live even mid-bar (closed candle legitimately 60-120s old).
+  if (vortexBackendLive(hud)) return false;
   const ageMs = vortexDataAgeMs(hud, clientNowMs);
   return ageMs === null || ageMs > staleAfterMs;
 }

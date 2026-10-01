@@ -72,12 +72,15 @@ class LiquidityVacuumDetector:
             abs(current_candle.low - candles[-2].close),
         )
         med_tr = float(np.median(trs)) if trs else 1e-9
-        range_expansion = curr_tr / max(med_tr, 1e-9)
+        # Clamp: a flat window pins med_tr at the 1e-9 floor and one normal
+        # bar explodes the quotient to 1e10x on the HUD. Sub-scores already
+        # saturate at 1.0, so capping display-grade values loses nothing.
+        range_expansion = min(curr_tr / max(med_tr, 1e-9), 99.99)
 
         # 2. Volume Shock
         recent_vols = [c.volume for c in candles[-min(20, n) : -1]]
         med_vol = float(np.median(recent_vols)) if recent_vols else 1.0
-        volume_shock = current_candle.volume / max(med_vol, 1e-9)
+        volume_shock = min(current_candle.volume / max(med_vol, 1e-9), 99.99)
 
         # 3. Close Location Factor (direction-agnostic displacement conviction)
         # Position of close inside bar: 0.0 at low, 1.0 at high

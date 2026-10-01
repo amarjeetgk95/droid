@@ -30,6 +30,120 @@ logger = structlog.get_logger()
 GAP_EXEMPT_STRATEGIES = {"GAMMA_SPIKE", "GAMMA_SQUEEZE", "ORB"}
 
 
+def _explain_detect_none(ctx: StrategyContext, strat_name: str) -> str:
+    """Read-only why-not diagnostic for a detect() that returned None.
+
+    Mirrors the fail-closed entry filters of the 4 auto-scan strategies so the
+    funnel can show the TRUE blocker (low volume, price near VWAP, ORB window
+    closed, no squeeze/expansion, no close-beyond cross) instead of leaving
+    400+ silent evaluations that make Feed Health look like 100% of the story.
+    Never has side effects; never fabricates a candidate.
+    """
+    try:
+        from app.signals.strategies.base import (
+            extract_volume_ratio,
+            extract_breakout_pressure,
+            has_closed_1m_candle,
+            VOLUME_BREAKOUT_MIN,
+            VOLUME_ORB_MIN,
+            VOLUME_SCALP_MIN,
+        )
+    except Exception:
+        return f"{strat_name}:NO_SETUP_NO_EDGE"
+    try:
+        upper = str(strat_name or "").upper()
+        # BREAKOUT is an alias for the same VOLATILITY_BREAKOUT logic.
+        if upper in ("VOLATILITY_BREAKOUT", "BREAKOUT"):
+            if ctx.timeframe not in ("5M", "15M", "1H"):
+                return f"{strat_name}:NO_SETUP_WRONG_TIMEFRAME_{ctx.timeframe}"
+            vol = extract_volume_ratio(ctx.indicators)
+            if vol is None:
+                return f"{strat_name}:NO_SETUP_NO_VOLUME_MEASURED"
+            if vol < VOLUME_BREAKOUT_MIN:
+                return f"{strat_name}:NO_SETUP_LOW_VOLUME_{vol:.2f}_LT_{VOLUME_BREAKOUT_MIN}"
+            bp = extract_breakout_pressure(ctx.indicators)
+            if bp is None:
+                return f"{strat_name}:NO_SETUP_NO_PRESSURE"
+            # Squeeze gate (mirror volatility_breakout._has_squeeze inputs).
+            try:
+                from app.signals.strategies.volatility_breakout import _has_squeeze as _vb_squeeze
+                from app.signals.risk_engine import resolve_realistic_atr
+                atr = resolve_realistic_atr(ctx.underlying, ctx.spot_price, ctx.indicators)
+                if not _vb_squeeze(ctx, ctx.indicators, ctx.candles, atr):
+                    return f"{strat_name}:NO_SETUP_NO_SQUEEZE"
+            except Exception:
+                pass
+            # Expansion gate.
+            try:
+                candles = ctx.candles or []
+                if len(candles) >= 4:
+                    recent = [float(c.get("high", 0)) - float(c.get("low", 0)) for c in candles[-4:-1]]
+                    avg_r = sum(recent) / max(1, len(recent))
+                    last = candles[-1]
+                    curr_r = float(last.get("high", 0)) - float(last.get("low", 0))
+                    if not (curr_r >= avg_r * 1.10) and bp < 68:
+                        return f"{strat_name}:NO_SETUP_NO_EXPANSION_R_{curr_r:.1f}_AVG_{avg_r:.1f}_P_{bp:.0f}"
+            except Exception:
+                pass
+            return f"{strat_name}:NO_SETUP_NO_CLOSE_CROSS"
+        if upper == "ORB":
+            try:
+                if ctx.timestamp_ms and ctx.timestamp_ms > 0:
+                    utc_min = (int(ctx.timestamp_ms) // 60000) % 1440
+                    ist_min = (utc_min + 330) % 1440
+                    if ist_min < 570 or ist_min > 690:
+                        return f"{strat_name}:NO_SETUP_ORB_WINDOW_CLOSED_IST_{ist_min}"
+            except Exception:
+                pass
+            vol = extract_volume_ratio(ctx.indicators)
+            if vol is None:
+                return f"{strat_name}:NO_SETUP_NO_VOLUME_MEASURED"
+            if vol < VOLUME_ORB_MIN:
+                return f"{strat_name}:NO_SETUP_LOW_VOLUME_{vol:.2f}_LT_{VOLUME_ORB_MIN}"
+            return f"{strat_name}:NO_SETUP_NO_OR_BREAK"
+        if upper == "VWAP_SCALP":
+            if ctx.timeframe not in ("1M", "3M"):
+                return f"{strat_name}:NO_SETUP_WRONG_TIMEFRAME_{ctx.timeframe}"
+            if not has_closed_1m_candle(ctx):
+                return f"{strat_name}:NO_SETUP_FORMING_CANDLE"
+            if ctx.regime in ("TREND_UP", "TREND_DOWN"):
+                return f"{strat_name}:NO_SETUP_REGIME_TREND_{ctx.regime}"
+            vol = extract_volume_ratio(ctx.indicators)
+            if vol is None:
+                # Mirror detect() candle fallback before declaring missing.
+                try:
+                    cur_v = float(ctx.candles[-1].get("volume", 0)) if ctx.candles else None
+                    ma_v = ctx.volume_ma_20
+                    if cur_v and ma_v and ma_v > 0:
+                        vol = cur_v / ma_v
+                except Exception:
+                    vol = None
+                if vol is None:
+                    return f"{strat_name}:NO_SETUP_NO_VOLUME_MEASURED"
+            if vol < VOLUME_SCALP_MIN:
+                return f"{strat_name}:NO_SETUP_LOW_VOLUME_{vol:.2f}_LT_{VOLUME_SCALP_MIN}"
+            vwap_val = ctx.vwap
+            if vwap_val is None:
+                try:
+                    raw = ctx.indicators.get("vwap") or ctx.indicators.get("trend", {}).get("vwap")
+                    if raw is None:
+                        return f"{strat_name}:NO_SETUP_NO_VWAP"
+                except Exception:
+                    return f"{strat_name}:NO_SETUP_NO_VWAP"
+            else:
+                try:
+                    from decimal import Decimal
+                    dev = abs(ctx.spot_price - vwap_val) / abs(vwap_val) * Decimal("100")
+                    if dev < Decimal("0.3"):
+                        return f"{strat_name}:NO_SETUP_VWAP_NOT_STRETCHED_{float(dev):.2f}PCT"
+                except Exception:
+                    pass
+            return f"{strat_name}:NO_SETUP_NO_REJECTION_WICK"
+    except Exception:
+        pass
+    return f"{strat_name}:NO_SETUP_NO_EDGE"
+
+
 def run_strategies(
     ctx: StrategyContext,
     strategies_to_run: dict[str, Strategy],
@@ -37,6 +151,10 @@ def run_strategies(
     """
     Executes detector on each strategy and applies immediate pre-qualification gates.
     Returns (candidates, rejected_gates).
+
+    rejected_gates includes NO_SETUP_* codes for detect()->None so the funnel
+    shows true entry-filter blockers. Callers must NOT count NO_SETUP_* as
+    detected candidates (see scanner.py) — no candidate ever existed.
     """
     candidates: list[SignalCandidate] = []
     rejected_gates: list[str] = []
@@ -45,6 +163,7 @@ def run_strategies(
         try:
             candidate = strat.detect(ctx)
             if not candidate:
+                rejected_gates.append(_explain_detect_none(ctx, strat_name))
                 continue
 
             # Propagate context flags to candidate
@@ -86,7 +205,7 @@ def run_strategies(
                         is_opening_window = 0 <= elapsed_s <= 15 * 60
                 except Exception:
                     is_opening_window = False
-            if gap_pct_val > 0.5 and is_opening_window and strat_name not in GAP_EXEMPT_STRATEGIES:
+            if gap_pct_val > 1.5 and is_opening_window and strat_name not in GAP_EXEMPT_STRATEGIES:
                 rejected_gates.append(f"{strat_name}:GAP_TOO_LARGE_{gap_pct_val:.2f}pct")
                 logger.info("candidate_rejected_gap", strategy=strat_name, underlying=getattr(ctx, "underlying", "UNKNOWN"), gap_pct=gap_pct_val)
                 continue
@@ -144,6 +263,17 @@ def run_strategies(
                 rejected_gates.append(f"{strat_name}:{edge_res.rejection_reason or 'REJECT_FRICTION'}")
                 logger.info("candidate_rejected_friction", strategy=strat_name, underlying=ctx.underlying, reason=edge_res.rejection_reason)
                 continue
+
+            if candidate.path_simulation is None:
+                candidate.path_simulation = {
+                    "is_economically_viable": edge_res.passed,
+                    "net_reward_risk_ratio": edge_res.net_reward_risk_ratio,
+                    "total_friction_pts": edge_res.total_friction_pts,
+                    "expected_net_edge_pts": edge_res.expected_net_edge_pts,
+                    "cost_to_target_ratio_pct": edge_res.cost_to_target_ratio_pct,
+                    "viability_rationale": [edge_res.rejection_reason] if edge_res.rejection_reason else [],
+                    "breakdown": edge_res.breakdown,
+                }
 
             candidate.vwap_coverage_pct = ctx.vwap_coverage_pct
             # Full PIT context snapshot: downstream enrichment/validation must see the

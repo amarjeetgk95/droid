@@ -135,21 +135,31 @@ class TestTrendPullbackGeometry:
 class TestBreakoutGeometry:
     @staticmethod
     def _bullish_squeeze_candles():
-        """Compressed 3-bar base + expansion candle closing beyond 25010."""
+        """Compressed 3-bar base + expansion candle closing beyond 25010.
+
+        Candle 3 dips back below the 25000 broken level so the decision candle
+        makes a FRESH cross (prev close <= level) as the close-beyond gate
+        requires; the continuation scenario is the chase entry after that cross.
+        """
         return [
             {"open": 24996.0, "high": 25006.0, "low": 24994.0, "close": 25002.0, "volume": 1000},
             {"open": 25002.0, "high": 25008.0, "low": 24996.0, "close": 25005.0, "volume": 1000},
-            {"open": 25005.0, "high": 25009.0, "low": 24998.0, "close": 25004.0, "volume": 1000},
+            {"open": 25005.0, "high": 25009.0, "low": 24998.0, "close": 24999.0, "volume": 1000},
             {"open": 25004.0, "high": 25016.0, "low": 25000.0, "close": 25012.0, "volume": 5000},
         ]
 
     @staticmethod
     def _bearish_squeeze_candles():
-        """Compressed 3-bar base + expansion candle closing below 25000."""
+        """Compressed 3-bar base + expansion candle closing below 25000.
+
+        Candle 3 recovers back above the 25000 broken support so the decision
+        candle makes a FRESH cross (prev close >= level) per the close-beyond
+        gate; the breakdown continuation is the chase entry after that cross.
+        """
         return [
             {"open": 25004.0, "high": 25010.0, "low": 24994.0, "close": 24998.0, "volume": 1000},
             {"open": 24998.0, "high": 25004.0, "low": 24990.0, "close": 24995.0, "volume": 1000},
-            {"open": 24995.0, "high": 25001.0, "low": 24988.0, "close": 24993.0, "volume": 1000},
+            {"open": 24995.0, "high": 25001.0, "low": 24988.0, "close": 25001.0, "volume": 1000},
             {"open": 24988.0, "high": 24992.0, "low": 24976.0, "close": 24980.0, "volume": 5000},
         ]
 
@@ -395,12 +405,13 @@ class TestSensex1mScalpEnvelope:
     def test_sensex_1m_scalp_envelope_present(self):
         rules = central_risk_engine._config.get("envelopes", {}).get("SENSEX", {}).get("1m_scalp")
         assert rules is not None
-        assert rules["min_risk_pts"] == 35.0
+        # RISK-ON 2026-09-23: min_risk 35->24.5, atr 1.1->1.0, min_rr 1.25->1.0.
+        assert rules["min_risk_pts"] == 24.5
         assert rules["max_risk_pts"] == 70.0
         assert rules["t1_ceiling_pts"] == 100.0
         assert rules["t2_ceiling_pts"] == 160.0
-        assert rules["atr_multiplier"] == 1.1
-        assert rules["min_rr"] == 1.25
+        assert rules["atr_multiplier"] == 1.0
+        assert rules["min_rr"] == 1.0
         assert rules["trigger_ttl_seconds"] == 180
         assert rules["active_time_stop_seconds"] == 900
 

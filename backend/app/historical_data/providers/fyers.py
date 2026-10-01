@@ -16,12 +16,16 @@ import structlog
 from app.historical_data.providers.base import HistoricalDataProvider
 from app.historical_data.models.candle import CANDLE_POLARS_SCHEMA
 from app.core.config import settings
-from app.core.broker_runtime import is_usable_access_token
+from app.core.broker_runtime import current_access_token, is_usable_access_token
 
 logger = structlog.get_logger(__name__)
 
 FYERS_HISTORY_URL = "https://api-t1.fyers.in/data/history"
 MAX_CHUNK_DAYS_1M = 95  # Safe boundary below FYERS 100-day limit
+
+
+class FYERSAuthError(RuntimeError):
+    """Missing/expired FYERS credentials — never masquerade as an empty dataset."""
 
 
 def split_date_range(start_date: date, end_date: date, max_days: int = MAX_CHUNK_DAYS_1M) -> List[Tuple[date, date]]:
@@ -88,8 +92,13 @@ class FYERSHistoricalProvider(HistoricalDataProvider):
         max_retries: int = 3,
         request_timeout: float = 15.0,
     ):
-        self._app_id = (app_id or settings.fyers_app_id or "").strip()
-        self._access_token = (access_token or settings.fyers_access_token or "").strip()
+        # Ctor args are explicit overrides only. Credential *defaults* are
+        # resolved per-request in _get_auth_header: FYERS tokens expire every
+        # morning, and pinning settings.fyers_access_token here (as this did)
+        # 401'd every job after the first daily expiry while the OAuth token
+        # file held a live one.
+        self._explicit_app_id = (app_id or "").strip()
+        self._explicit_access_token = (access_token or "").strip()
         self.max_retries = max_retries
         self.request_timeout = request_timeout
         self._client: Optional[httpx.AsyncClient] = None
@@ -98,21 +107,35 @@ class FYERSHistoricalProvider(HistoricalDataProvider):
     def provider_id(self) -> str:
         return "fyers"
 
-    def _get_auth_header(self) -> str:
-        """Construct the FYERS v3 Authorization header."""
-        app_id = self._app_id
-        token = self._access_token
-        if not token:
-            # Check broker_runtime dynamically
+    def _get_app_id(self) -> str:
+        if self._explicit_app_id:
+            return self._explicit_app_id
+        app_id = (settings.fyers_app_id or "").strip()
+        if not app_id:
             try:
                 from app.core.broker_runtime import get_config
                 cfg = get_config()
                 if cfg.provider == "fyers":
-                    token = cfg.credentials.get("access_token") or ""
-                    app_id = app_id or cfg.credentials.get("app_id") or ""
+                    app_id = (cfg.credentials.get("app_id") or "").strip()
             except Exception:
                 pass
+        return app_id
 
+    def _get_access_token(self) -> str:
+        """Freshest usable token — resolved at call time, never cached."""
+        if self._explicit_access_token:
+            return self._explicit_access_token
+        token = current_access_token()
+        if token:
+            return token
+        # current_access_token() already consults settings; this stays as a
+        # defensive last resort for exotic configurations.
+        return (settings.fyers_access_token or "").strip().strip("\"'")
+
+    def _get_auth_header(self) -> str:
+        """Construct the FYERS v3 Authorization header."""
+        app_id = self._get_app_id()
+        token = self._get_access_token()
         if not token:
             return ""
         if app_id and ":" not in token:
@@ -149,8 +172,11 @@ class FYERSHistoricalProvider(HistoricalDataProvider):
     ) -> List[List[Any]]:
         """Fetch a single API chunk with exponential backoff."""
         auth_header = self._get_auth_header()
-        if not auth_header or not is_usable_access_token(self._access_token or auth_header):
+        if not auth_header or not is_usable_access_token(self._get_access_token()):
             logger.warning("fyers_missing_auth", hint="Valid FYERS credentials required for live historical API")
+            raise FYERSAuthError(
+                "No usable FYERS access token — re-authenticate via /api/v1/tokens/fyers/auth-url"
+            )
 
         fyers_symbol = self.resolve_provider_symbol(symbol)
         fyers_resolution = self.resolve_timeframe(timeframe)
@@ -182,12 +208,24 @@ class FYERSHistoricalProvider(HistoricalDataProvider):
                         if "limit" in msg.lower() or response.status_code == 429:
                             await asyncio.sleep(1.5 * attempt)
                             continue
+                        if any(k in msg.lower() for k in ("auth", "token", "expired", "unauthoriz")):
+                            raise FYERSAuthError(
+                                f"FYERS auth error: {msg} — re-authenticate via /api/v1/tokens/fyers/auth-url"
+                            )
                         return []
 
                 elif response.status_code in (429, 500, 502, 503, 504):
                     backoff = (2 ** attempt) + random.uniform(0.1, 0.5)
                     logger.warning("fyers_retryable_status", code=response.status_code, backoff=backoff, attempt=attempt)
                     await asyncio.sleep(backoff)
+                elif response.status_code in (401, 403):
+                    # Auth failures must surface as failures — returning []
+                    # here made every expired-token job look like "no data".
+                    logger.error("fyers_auth_rejected", code=response.status_code, body=response.text[:200])
+                    raise FYERSAuthError(
+                        f"FYERS rejected credentials (HTTP {response.status_code}) — "
+                        "re-authenticate via /api/v1/tokens/fyers/auth-url"
+                    )
                 else:
                     logger.error("fyers_non_retryable_error", code=response.status_code, body=response.text[:200])
                     break

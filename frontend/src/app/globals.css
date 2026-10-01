@@ -10,7 +10,7 @@
 /* Droid — modern SaaS light theme.
    White layers floating on a cool canvas, soft neutral shadows, slate ink,
    tabular financial typography, 4–12px radius, full-round status pills.
-   Colour carries meaning only: indigo #4f46e5 (brand/focus), emerald
+   Colour carries meaning only: violet #7c3aed (brand/focus), emerald
    #16a34a (up), red #dc2626 (down/loss), orange #f97316 (sell actions),
    amber #f59e0b (warn).
    All values are `--ds-*` tokens; components must not hardcode colour. */
@@ -199,7 +199,7 @@
   --ds-inset: #f1f5f9;
   --ds-inset-2: #e2e8f0;
   --ds-hover: #f1f5f9;
-  --ds-selected: rgba(79, 70, 229, 0.08);
+  --ds-selected: rgba(124, 58, 237, 0.08);
   /* Aliases referenced by feature components (prefer these over editing them). */
   --ds-card: var(--ds-surface);
   --ds-surface-elevated: var(--ds-surface);
@@ -211,13 +211,28 @@
   --ds-border: #e2e8f0;
   --ds-border-strong: #cbd5e1;
   --ds-rule-accent: 3px;
+  /* Control boundaries are held to WCAG 1.4.11 (3:1 against adjacent colour);
+     decorative hairlines are not. Two tokens so a table rule never thickens
+     into a button outline. */
+  --ds-border-control: #8492a6;
+  --ds-control-h: 30px;
+  --ds-hit-min: 28px;
+  --ds-focus-ink: var(--ds-accent);
+  --ds-focus-w: 2px;
+  /* Numeric feature set — tabular figures, lining, slashed zero. */
+  --ds-num: tabular-nums lining-nums slashed-zero;
+  /* Streaming-value flash decay. */
+  --ds-flash-dur: 900ms;
 
   /* ── Ink ramp (slate: #1e293b body, #64748b secondary, #94a3b8 muted) ─ */
   --ds-ink: #1e293b;
   --ds-text-primary: var(--ds-ink);
-  --ds-ink-2: #64748b;
+  /* Slate ramp tuned for AA. Ratios on --ds-surface (#fff):
+     ink 13.6:1 · ink-2 7.5:1 · ink-3 4.76:1. ink-4 is structural only
+     (rules, ornament dots) and must never carry text. */
+  --ds-ink-2: #475569;
   --ds-text-secondary: var(--ds-ink-2);
-  --ds-ink-3: #94a3b8;
+  --ds-ink-3: #64748b;
   --ds-text-muted: var(--ds-ink-3);
   --ds-ink-4: #cbd5e1;
   --ds-disabled: #cbd5e1;
@@ -230,19 +245,22 @@
   /* Chrome — deep slate for headers/nav/primary chrome, never for data text */
   --ds-chrome: #0f172a;
 
-  /* ── Interactive chrome — indigo accent, the single brand colour ──── */
-  --ds-accent: #4f46e5;
-  --ds-accent-hover: #4338ca;
-  --ds-accent-active: #3730a3;
-  --ds-accent-ink: #4f46e5;
-  --ds-accent-wash: rgba(79, 70, 229, 0.08);
-  --ds-accent-line: rgba(79, 70, 229, 0.24);
+  /* ── Interactive chrome — violet accent, the single brand colour ──── */
+  --ds-accent: #7c3aed;
+  --ds-accent-hover: #6d28d9;
+  --ds-accent-active: #5b21b6;
+  --ds-accent-ink: #7c3aed;
+  --ds-accent-wash: rgba(124, 58, 237, 0.08);
+  --ds-accent-line: rgba(124, 58, 237, 0.24);
+  --ds-accent-glow: rgba(124, 58, 237, 0.24);
+  --ds-selection: rgba(124, 58, 237, 0.18);
 
   /* ── Up / long — emerald ──────────────────────────────────────────── */
   --ds-bull: #16a34a;
   --ds-bull-strong: #15803d;
   --ds-bull-wash: rgba(22, 163, 74, 0.1);
   --ds-bull-line: rgba(22, 163, 74, 0.28);
+  --ds-bull-transparent: rgba(22, 163, 74, 0);
 
   /* ── Down / short — red ───────────────────────────────────────────── */
   --ds-bear: #dc2626;
@@ -252,6 +270,7 @@
   --ds-bear-strong: #b91c1c;
   --ds-bear-wash: rgba(220, 38, 38, 0.08);
   --ds-bear-line: rgba(220, 38, 38, 0.28);
+  --ds-bear-glow: rgba(220, 38, 38, 0.22);
 
   /* ── Neutral (slate) ──────────────────────────────────────────────── */
   --ds-neut: #94a3b8;
@@ -298,8 +317,11 @@
   --ds-gap-page: 12px;
 
   /* Elevation — soft, layered, neutral. */
-  --ds-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
-  --ds-shadow-card-hover: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.05);
+  /* Hairlines carry structure. Elevation is reserved for things that float
+     above the desk (popover, drawer, modal, toast) — never for tiles. */
+  --ds-shadow-card: 0 1px 1px rgba(15, 23, 42, 0.03);
+  --ds-shadow-card-hover: var(--ds-shadow-card);
+  --ds-shadow-overlay: 0 16px 40px -16px rgba(15, 23, 42, 0.28), 0 4px 12px -4px rgba(15, 23, 42, 0.12);
   --ds-shadow-lg: 0 16px 40px -16px rgba(15, 23, 42, 0.24), 0 4px 12px -4px rgba(15, 23, 42, 0.1);
   --ds-page-w: 1440px;
 
@@ -309,6 +331,220 @@
   /* Terminal shell — fixed height of the sticky top rail. */
   --rail-h: 48px;
   --rail-sub-h: 36px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   APPEARANCE AXES — three orthogonal switches on <html>:
+
+     data-theme    light (default) | dark
+     data-density  comfortable (default) | compact | dense
+     data-contrast high
+
+   They are separate on purpose. A user may want the dark terminal at
+   comfortable density on a laptop, or the light desk at dense density on a
+   27" panel. `prefers-contrast` and `forced-colors` are honoured without any
+   switch at all, because those users have already stated the preference to
+   the OS.
+
+   `dark:` utilities stay inert (see the @custom-variant at the top): every
+   colour on the desk comes from a token, so themes swap here and nowhere else.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dark terminal ────────────────────────────────────────────────────────
+   A true trading-floor theme, not an inverted one. Rules:
+     · surfaces stay near-black but never pure black (>#0a0e14) so haloed
+       text does not smear on OLED;
+     · direction colour brightens (graphics on dark need more luminance for
+       the same perceived intensity) while "-strong" stays the TEXT variant,
+       i.e. lighter than the fill — inverted from light mode on purpose;
+     · washes/lines gain alpha so a 10% wash is still visible on #121826. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ds-page: #0b0f17;
+  --ds-surface: #121826;
+  --ds-panel-card: #121826;
+  --ds-surface-subtle: #161d2c;
+  --ds-inset: #1b2333;
+  --ds-inset-2: #232d40;
+  --ds-hover: #1b2333;
+  --ds-selected: rgba(167, 139, 250, 0.14);
+  --ds-scrim: rgba(2, 6, 23, 0.66);
+
+  --ds-border-subtle: #1b2333;
+  --ds-border: #263149;
+  --ds-border-strong: #3b4a68;
+  --ds-border-control: #6b7b99;
+
+  --ds-ink: #e6ebf3;
+  --ds-ink-2: #a7b3c6;
+  --ds-ink-3: #8391a8;
+  --ds-ink-4: #4a5670;
+  --ds-disabled: #3b4a68;
+  --ds-ink-inverse: #0b0f17;
+  --ds-chrome: #060a12;
+
+  --ds-accent: #a78bfa;
+  --ds-accent-hover: #c4b5fd;
+  --ds-accent-active: #ddd6fe;
+  --ds-accent-ink: #a78bfa;
+  --ds-accent-wash: rgba(167, 139, 250, 0.16);
+  --ds-accent-line: rgba(167, 139, 250, 0.42);
+  --ds-accent-glow: rgba(167, 139, 250, 0.3);
+  --ds-selection: rgba(167, 139, 250, 0.3);
+
+  --ds-bull: #22c55e;
+  --ds-bull-strong: #4ade80;
+  --ds-bull-wash: rgba(34, 197, 94, 0.16);
+  --ds-bull-line: rgba(34, 197, 94, 0.42);
+  --ds-bull-transparent: rgba(34, 197, 94, 0);
+
+  --ds-bear: #ef4444;
+  --ds-bear-strong: #f87171;
+  --ds-bear-action: #fb923c;
+  --ds-bear-action-hover: #fdba74;
+  --ds-bear-wash: rgba(239, 68, 68, 0.16);
+  --ds-bear-line: rgba(239, 68, 68, 0.42);
+  --ds-bear-glow: rgba(239, 68, 68, 0.3);
+
+  --ds-neut: #64748b;
+  --ds-neut-wash: rgba(148, 163, 184, 0.14);
+
+  --ds-warn: #fbbf24;
+  --ds-warn-strong: #fcd34d;
+  --ds-warn-wash: rgba(251, 191, 36, 0.16);
+  --ds-warn-line: rgba(251, 191, 36, 0.42);
+  --ds-warn-ink: #fde68a;
+
+  --ds-chart-grid: rgba(255, 255, 255, 0.06);
+  --ds-chart-crosshair: rgba(255, 255, 255, 0.4);
+  --ds-chart-axis: rgba(255, 255, 255, 0.12);
+
+  --ds-shadow-card: 0 1px 1px rgba(0, 0, 0, 0.4);
+  --ds-shadow-overlay: 0 16px 40px -16px rgba(0, 0, 0, 0.72), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Density ──────────────────────────────────────────────────────────────
+   Density is a *type-scale* switch, not a scale transform: shrinking a
+   comfortable layout with `zoom` resamples text and destroys the subpixel
+   alignment that makes tabular columns line up. Every step below is a
+   deliberate rung on the same ramp. Nothing ever renders below 10px. */
+html[data-density="compact"] {
+  --ds-row-h: 26px;
+  --ds-pad-cell-y: 4px;
+  --ds-pad-cell-x: 10px;
+  --ds-pad-panel: 10px 12px;
+  --ds-gap-page: 10px;
+  --ds-control-h: 26px;
+  --ds-hit-min: 26px;
+  --ds-rule-accent: 3px;
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --ds-fs-micro: 10px;
+  --ds-fs-label: 10.5px;
+  --ds-fs-xs: 11px;
+  --ds-fs-sm: 11.5px;
+  --ds-fs-base: 12.5px;
+  --ds-fs-md: 13px;
+  --ds-fs-lg: 15px;
+  --ds-fs-xl: 17px;
+}
+html[data-density="dense"] {
+  --ds-row-h: 22px;
+  --ds-pad-cell-y: 2px;
+  --ds-pad-cell-x: 8px;
+  --ds-pad-panel: 8px 10px;
+  --ds-gap-page: 8px;
+  --ds-control-h: 22px;
+  --ds-hit-min: 24px;
+  --ds-rule-accent: 2px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --ds-fs-micro: 10px;
+  --ds-fs-label: 10px;
+  --ds-fs-xs: 10.5px;
+  --ds-fs-sm: 11px;
+  --ds-fs-base: 12px;
+  --ds-fs-md: 12.5px;
+  --ds-fs-lg: 14px;
+  --ds-fs-xl: 16px;
+}
+
+/* ── High contrast ────────────────────────────────────────────────────────
+   Promotes the muted ramp to body ink and the hairlines to visible rules.
+   Applies when the OS asks (prefers-contrast) or when the operator opts in. */
+@media (prefers-contrast: more) {
+  :root {
+    --ds-ink-2: #1e293b;
+    --ds-ink-3: #334155;
+    --ds-border-subtle: #cbd5e1;
+    --ds-border: #94a3b8;
+    --ds-border-strong: #64748b;
+    --ds-border-control: #334155;
+    --ds-focus-w: 3px;
+  }
+  html[data-theme="dark"] {
+    --ds-ink-2: #e6ebf3;
+    --ds-ink-3: #c3ccda;
+    --ds-border-subtle: #3b4a68;
+    --ds-border: #6b7b99;
+    --ds-border-strong: #94a3b8;
+    --ds-border-control: #c3ccda;
+  }
+}
+html[data-contrast="high"] {
+  --ds-ink-2: #1e293b;
+  --ds-ink-3: #334155;
+  --ds-border-subtle: #cbd5e1;
+  --ds-border: #94a3b8;
+  --ds-border-strong: #64748b;
+  --ds-border-control: #334155;
+  --ds-focus-w: 3px;
+}
+html[data-contrast="high"][data-theme="dark"] {
+  --ds-ink-2: #e6ebf3;
+  --ds-ink-3: #c3ccda;
+  --ds-border-subtle: #3b4a68;
+  --ds-border: #6b7b99;
+  --ds-border-strong: #94a3b8;
+  --ds-border-control: #c3ccda;
+}
+
+/* ── Forced colours (Windows High Contrast) ───────────────────────────────
+   Washes are removed by the UA, which erases every tone cue we rely on. The
+   tone containers are re-drawn with a system-coloured outline plus a glyph
+   slot, so bull/bear/warn stay distinguishable without colour. */
+@media (forced-colors: active) {
+  .chip, .badge, .ttl-pill, .feed-pill, .rail-chip, .stat-chip, .sg-tag, .sg-dir {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
+  [data-tone="bull"], [data-tone="up"], [data-tone="long"],
+  .b-bull, .sg-tag.bull, .sg-dir.long, .feed-pill--on, .rail-chip--on {
+    border-style: double;
+  }
+  [data-tone="bear"], [data-tone="down"], [data-tone="short"],
+  .b-bear, .sg-tag.bear, .sg-dir.short, .feed-pill--down, .rail-chip--down {
+    border-style: dashed;
+  }
+  [data-tone="warn"], .b-warn, .sg-tag.warn, .feed-pill--warn, .rail-chip--warn {
+    border-style: dotted;
+  }
+  .meter, .dbar, .mini-meter-track, .prob-bar-stacked {
+    border: 1px solid CanvasText;
+  }
+  .seg-btn[data-active="true"], .tab.is-active, .instrument-tab[aria-selected="true"] {
+    outline: 1px solid Highlight;
+  }
+  :focus-visible { outline: 2px solid Highlight; }
 }
 
 /* The palette bridge that once remapped Tailwind's emerald/rose/amber/blue/sky/
@@ -321,7 +557,10 @@
 
 html {
   scrollbar-gutter: stable;
-  font-variant-numeric: tabular-nums;
+  /* Desk-wide numeral contract: every figure aligns on the decimal, every
+     zero is slashed so 0/O is unambiguous in symbols and quantities. */
+  font-variant-numeric: tabular-nums lining-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "lnum" 1, "zero" 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -423,16 +662,18 @@ body {
 }
 
 /* Stat/KPI tiles lift on hover — the only affordance in a dense grid. */
+/* Tiles acknowledge the pointer with a hairline, never with movement. A grid
+   that lifts under the cursor turns 40 tiles into a lava lamp, and moves the
+   very numbers the operator is tracking. */
 .stat,
 .kpi,
 .sg-stat {
-  transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease;
+  transition: border-color 150ms ease, background-color 150ms ease;
 }
 .stat:hover,
 .kpi:hover {
-  transform: translateY(-1px);
   border-color: var(--ds-border-strong);
-  box-shadow: var(--ds-shadow-card-hover);
+  background: var(--ds-surface-subtle);
 }
 
 /* ---------- type helpers ---------- */
@@ -447,9 +688,10 @@ body {
   font-size: var(--ds-fs-base);
   font-weight: 600;
   background: var(--ds-surface);
-  border: 1px solid var(--ds-border-strong);
+  border: 1px solid var(--ds-border-control);
   border-radius: var(--radius-md);
   padding: 6px 14px;
+  min-height: var(--ds-control-h);
   cursor: pointer;
   color: var(--ds-ink);
   transition: background 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
@@ -466,13 +708,13 @@ body {
   background: var(--ds-accent);
   border-color: var(--ds-accent);
   color: var(--ds-ink-inverse);
-  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.24);
+  box-shadow: 0 1px 2px var(--ds-accent-glow);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--ds-accent-hover);
   border-color: var(--ds-accent-hover);
   color: var(--ds-ink-inverse);
-  box-shadow: 0 4px 10px -2px rgba(79, 70, 229, 0.35);
+  box-shadow: 0 4px 10px -2px var(--ds-accent-glow);
 }
 .btn-buy {
   background: var(--ds-bull);
@@ -533,8 +775,8 @@ body {
   animation: seg-danger-pulse 1s ease-in-out infinite;
 }
 @keyframes seg-danger-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(223, 81, 72, 0.25); }
-  50% { box-shadow: 0 0 0 3px rgba(223, 81, 72, 0.12); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--ds-bear-glow); }
+  50% { box-shadow: 0 0 0 3px var(--ds-bear-wash); }
 }
 
 /* ---------- tables ---------- */
@@ -577,7 +819,8 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   letter-spacing: 0.01em;
   border-radius: 999px;
   padding: 2px 9px;
-  border: 1px solid transparent;
+  border-width: 1px;
+  border-style: solid;
   white-space: nowrap;
 }
 .badge::before {
@@ -587,10 +830,12 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   border-radius: 50%;
   background: currentColor;
 }
-.b-bull { color: var(--ds-bull-strong); background: var(--ds-bull-wash); border-color: var(--ds-bull-line); }
-.b-bear { color: var(--ds-bear-strong); background: var(--ds-bear-wash); border-color: var(--ds-bear-line); }
-.b-neut { color: var(--ds-ink-2); background: var(--ds-neut-wash); border-color: var(--ds-border); }
-.b-info { color: var(--ds-accent); background: var(--ds-accent-wash); border-color: var(--ds-accent-line); }
+/* Tone modifiers carry no colour of their own — they select a slot map
+   declared once, at the top of the TONE block. */
+.b-bull { --tone-ink: var(--ds-bull-strong); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.b-bear { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
+.b-neut { --tone-ink: var(--ds-ink-2); --tone-wash: var(--ds-neut-wash); --tone-line: var(--ds-border); }
+.b-info { --tone-ink: var(--ds-accent); --tone-wash: var(--ds-accent-wash); --tone-line: var(--ds-accent-line); }
 
 /* ---------- meters & bars ---------- */
 .meter { height: 6px; background: var(--ds-inset-2); border: 0; border-radius: 999px; overflow: hidden; }
@@ -772,6 +1017,62 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .forecast-hero[data-tone="bear"] { border-left-color: var(--ds-bear); }
 .forecast-hero[data-tone="neut"] { border-left-color: var(--ds-accent); }
 
+/* ---------- numerics, tick flash, table density ---------- */
+
+/* Numeral contract. `tabular-nums lining-nums slashed-zero` on every figure —
+   columns align on the decimal and 0 never reads as O in a symbol or a qty.
+   `.col-num` owns a whole column: right-aligned, tabular, never wrapped. */
+.num, .mono, .tbl .r, .sg-table .r, .sg-mini th.r, .sg-mini td.r,
+.sg-num, .stat-v, .kpi-v, .sg-cell .v, .sg-kv .v, .telemetry-item .t-val,
+.verdict-stat-v, .instrument-tab__quote, .rail-meta__clock {
+  font-variant-numeric: var(--ds-num);
+}
+.col-num { text-align: right; font-variant-numeric: var(--ds-num); white-space: nowrap; }
+.unit { color: var(--ds-ink-3); font-weight: 500; margin-left: 2px; }
+
+/* Signed-value convention: direction is carried by the ink, and the sign is
+   already in the figure. No arrow glyphs, no ▲/▼ noise. */
+.v-pos { color: var(--ds-bull-strong); }
+.v-neg { color: var(--ds-bear-strong); }
+.v-flat { color: var(--ds-ink-2); }
+
+/* Tick flash for streaming values. Set data-dir="up|down" on the value node
+   when the number changes; the wash decays on its own and the attribute is
+   re-set on the next move. Motion is decorative, so reduced-motion drops it. */
+.tick { border-radius: var(--radius-xs); transition: background-color 220ms ease; }
+.tick[data-dir="up"] { animation: ds-tick-up var(--ds-flash-dur) ease-out 1; }
+.tick[data-dir="down"] { animation: ds-tick-down var(--ds-flash-dur) ease-out 1; }
+@keyframes ds-tick-up {
+  0% { background-color: var(--ds-bull-wash); }
+  100% { background-color: transparent; }
+}
+@keyframes ds-tick-down {
+  0% { background-color: var(--ds-bear-wash); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tick[data-dir] { animation: none; }
+}
+
+/* Row rhythm is a token, not a side effect of whatever sits in the cell. */
+.tbl td, .sg-table tbody td { height: var(--ds-row-h); }
+
+/* Dense-table options — opt-in, because each is wrong in the wrong table:
+   zebra fights the active-row highlight, and a sticky lead column hides data
+   on any table that already fits. */
+.tbl--zebra tbody tr:nth-child(even) td { background: var(--ds-surface-subtle); }
+.tbl--zebra tbody tr:hover td { background: var(--ds-hover); }
+.tbl--sticky tbody td:first-child,
+.tbl--sticky thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--ds-surface);
+  box-shadow: inset -1px 0 0 var(--ds-border);
+}
+.tbl--sticky thead th:first-child { z-index: 3; background: var(--ds-surface-subtle); }
+.tbl--sticky tbody tr:hover td:first-child { background: var(--ds-hover); }
+
 /* ---------- misc ---------- */
 .divider { border: 0; border-top: 1px solid var(--ds-border); margin: 12px 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -869,11 +1170,10 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   font-weight: 600;
   letter-spacing: 0.04em;
   white-space: nowrap;
-  border: 1px solid var(--ds-border);
+  border-width: 1px;
+  border-style: solid;
   border-radius: 999px;
   padding: 2px 9px;
-  background: var(--ds-surface-subtle);
-  color: var(--ds-ink-2);
 }
 .feed-pill > i {
   width: 5px;
@@ -883,27 +1183,12 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   display: block;
   flex: 0 0 auto;
 }
-.feed-pill--on {
-  color: var(--ds-bull-strong);
-  border-color: var(--ds-bull-line);
-  background: var(--ds-bull-wash);
-}
-.feed-pill--warn {
-  color: var(--ds-warn-strong);
-  border-color: var(--ds-warn-line);
-  background: var(--ds-warn-wash);
-}
-.feed-pill--down {
-  color: var(--ds-bear-strong);
-  border-color: var(--ds-bear-line);
-  background: var(--ds-bear-wash);
-}
-.feed-pill--degraded {
-  color: var(--ds-warn-ink);
-  border-color: var(--ds-warn-line);
-  background: var(--ds-warn-wash);
-}
-.feed-pill--idle { color: var(--ds-ink-2); }
+/* Variants select a tone slot map; the base rule above does the painting. */
+.feed-pill--on { --tone-ink: var(--ds-bull-strong); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.feed-pill--warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.feed-pill--down { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
+.feed-pill--degraded { --tone-ink: var(--ds-warn-ink); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.feed-pill--idle { --tone-ink: var(--ds-ink-2); --tone-wash: var(--ds-neut-wash); --tone-line: var(--ds-border); }
 .feed-pill__meta {
   font-weight: 500;
   color: inherit;
@@ -919,7 +1204,8 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   background-size: 400% 100%;
   animation: ds-shimmer 1.4s ease infinite;
   border-radius: var(--radius-sm);
-  color: transparent !important;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
   user-select: none;
 }
 @keyframes ds-shimmer {
@@ -934,9 +1220,12 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 ::-webkit-scrollbar-thumb:hover { background: var(--ds-border-strong); }
 * { scrollbar-width: thin; scrollbar-color: var(--ds-inset-2) transparent; }
 
-:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 2px; }
+:focus-visible { outline: var(--ds-focus-w) solid var(--ds-focus-ink); outline-offset: 2px; }
+@media (forced-colors: active) {
+  :focus-visible { outline: 2px solid Highlight; }
+}
 
-::selection { background: rgba(79, 70, 229, 0.18); }
+::selection { background: var(--ds-selection); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -998,9 +1287,8 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   gap: 5px;
   font-size: var(--ds-fs-xs);
   font-weight: 600;
-  color: var(--ds-ink-2);
-  background: var(--ds-surface-subtle);
-  border: 1px solid var(--ds-border);
+  border-width: 1px;
+  border-style: solid;
   border-radius: 999px;
   padding: 2px 9px;
   white-space: nowrap;
@@ -1099,30 +1387,29 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 
 .badge-sm { font-size: var(--ds-fs-label); padding: 2px 8px; gap: 4px; border-radius: 999px; }
 .badge-sm::before { width: 4px; height: 4px; border-radius: 50%; }
-.b-warn { color: var(--ds-warn-strong); background: var(--ds-warn-wash); border-color: var(--ds-warn-line); }
+.b-warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
 
 .ttl-pill {
   display: inline-flex;
   align-items: center;
   font-size: var(--ds-fs-xs);
   font-weight: 600;
-  font-variant-numeric: tabular-nums lining-nums;
+  font-variant-numeric: var(--ds-num);
   border-radius: 999px;
   padding: 2px 9px;
-  background: var(--ds-surface-subtle);
-  color: var(--ds-ink-2);
-  border: 1px solid var(--ds-border);
+  border-width: 1px;
+  border-style: solid;
   white-space: nowrap;
 }
-.ttl-pill.warn { background: var(--ds-warn-wash); color: var(--ds-warn-strong); border-color: var(--ds-warn-line); }
-.ttl-pill.expired { background: var(--ds-bear-wash); color: var(--ds-bear-strong); border-color: var(--ds-bear-line); }
+.ttl-pill.warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.ttl-pill.expired { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
 
 .mini-meter { display: inline-flex; align-items: center; gap: 6px; }
 .mini-meter-track { width: 48px; height: 5px; border-radius: 999px; background: var(--ds-inset-2); overflow: hidden; display: block; }
 .mini-meter-track > i { display: block; height: 100%; background: var(--ds-accent); border-radius: 999px; }
 
 .btn-ic { display: inline-flex; align-items: center; gap: 6px; }
-.icon-btn { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); }
+.icon-btn { width: var(--ds-hit-min); height: var(--ds-hit-min); min-height: var(--ds-hit-min); padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); }
 .icon-btn.icon-danger:hover:not(:disabled) { border-color: var(--ds-bear); color: var(--ds-bear-strong); }
 .btn.is-bull {
   background: var(--ds-bull);
@@ -1140,9 +1427,10 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   font-weight: 500;
   color: var(--ds-ink);
   background: var(--ds-surface);
-  border: 1px solid var(--ds-border-strong);
+  border: 1px solid var(--ds-border-control);
   border-radius: var(--radius-md);
   padding: 5px 9px;
+  min-height: var(--ds-control-h);
   width: 100%;
   min-width: 0;
   transition: border-color 120ms ease;
@@ -1211,13 +1499,13 @@ select.input { cursor: pointer; }
 .sg-ctl {
   font-family: var(--ds-mono); font-size: var(--ds-fs-xs); font-weight: 600; color: var(--ds-ink);
   background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--radius-sm);
-  padding: 3px 7px; cursor: pointer; max-width: 132px;
+  padding: 3px 7px; cursor: pointer; max-width: 132px; min-height: var(--ds-control-h);
 }
 .sg-ctl:hover { border-color: var(--ds-accent); }
 .sg-ctl option { color: var(--ds-ink); }
 .sg-ibtn {
-  width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
-  background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--radius-sm); color: var(--ds-ink-2); cursor: pointer;
+  width: var(--ds-hit-min); height: var(--ds-hit-min); padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ds-surface); border: 1px solid var(--ds-border-control); border-radius: var(--radius-sm); color: var(--ds-ink-2); cursor: pointer;
 }
 .sg-ibtn:hover:not(:disabled) { border-color: var(--ds-accent); color: var(--ds-accent); }
 .sg-ibtn:disabled { opacity: 0.4; cursor: default; }
@@ -1228,7 +1516,7 @@ select.input { cursor: pointer; }
   font: inherit; font-size: var(--ds-fs-base); font-weight: 600; letter-spacing: 0.01em;
   background: var(--ds-accent); color: var(--ds-ink-inverse); border: 1px solid var(--ds-accent); border-radius: var(--radius-md);
   padding: 6px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.24);
+  box-shadow: 0 1px 2px var(--ds-accent-glow);
 }
 .sg-primary:hover:not(:disabled) { background: var(--ds-accent-hover); border-color: var(--ds-accent-hover); }
 .sg-err { margin: 0; font-size: var(--ds-fs-xs); color: var(--ds-bear-strong); font-family: var(--ds-mono); flex-basis: 100%; }
@@ -1253,19 +1541,21 @@ select.input { cursor: pointer; }
 .sg-strat { font-size: var(--ds-fs-xs); color: var(--ds-ink-2); text-transform: capitalize; }
 .sg-dir {
   display: inline-block; font-size: var(--ds-fs-label); font-weight: 700; letter-spacing: 0.02em;
-  padding: 1px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap;
+  padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  border-width: 1px; border-style: solid;
 }
-.sg-dir.long { color: var(--ds-bull-strong); background: var(--ds-bull-wash); border-color: var(--ds-bull-line); }
-.sg-dir.short { color: var(--ds-bear-strong); background: var(--ds-bear-wash); border-color: var(--ds-bear-line); }
+.sg-dir.long { --tone-ink: var(--ds-bull-strong); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.sg-dir.short { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
 .sg-tag {
   display: inline-block; font-size: var(--ds-fs-label); font-weight: 600; letter-spacing: 0.01em;
-  padding: 1px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap;
+  padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  border-width: 1px; border-style: solid;
 }
-.sg-tag.bull { color: var(--ds-bull-strong); background: var(--ds-bull-wash); border-color: var(--ds-bull-line); }
-.sg-tag.bear { color: var(--ds-bear-strong); background: var(--ds-bear-wash); border-color: var(--ds-bear-line); }
-.sg-tag.info { color: var(--ds-accent); background: var(--ds-accent-wash); border-color: var(--ds-accent-line); }
-.sg-tag.warn { color: var(--ds-warn-strong); background: var(--ds-warn-wash); border-color: var(--ds-warn-line); }
-.sg-tag.neut { color: var(--ds-ink-2); background: var(--ds-neut-wash); border-color: var(--ds-border); }
+.sg-tag.bull { --tone-ink: var(--ds-bull-strong); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.sg-tag.bear { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
+.sg-tag.info { --tone-ink: var(--ds-accent); --tone-wash: var(--ds-accent-wash); --tone-line: var(--ds-accent-line); }
+.sg-tag.warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.sg-tag.neut { --tone-ink: var(--ds-ink-2); --tone-wash: var(--ds-neut-wash); --tone-line: var(--ds-border); }
 .sg-conf { display: inline-flex; align-items: center; gap: 6px; }
 .sg-conf .bar { width: 40px; height: 4px; background: var(--ds-inset-2); border-radius: 999px; overflow: hidden; display: block; }
 .sg-conf .bar > i { display: block; height: 100%; background: var(--ds-accent); }
@@ -1346,8 +1636,12 @@ select.input { cursor: pointer; }
 .sg-mini th.r, .sg-mini td.r { text-align: right; }
 .sg-mini td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--ds-border-subtle); }
 .sg-flags { display: grid; gap: 5px; margin-top: 6px; }
-.sg-flag { margin: 0; font-size: var(--ds-fs-xs); font-weight: 500; padding: 5px 10px; border-radius: var(--radius-sm); border: 1px solid; }
-.sg-flag.warn { color: var(--ds-warn-strong); background: var(--ds-warn-wash); border-color: var(--ds-warn-line); }
+.sg-flag {
+  margin: 0; font-size: var(--ds-fs-xs); font-weight: 500; padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border-width: 1px; border-style: solid;
+}
+.sg-flag.warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
 .sg-list { margin: 6px 0 0; padding-left: 14px; display: grid; gap: 3px; font-size: var(--ds-fs-sm); color: var(--ds-ink-2); }
 .sg-tl { margin: 0; padding: 0; list-style: none; display: grid; }
 .sg-tl li {
@@ -1367,6 +1661,81 @@ select.input { cursor: pointer; }
   .kpi { padding: 5px 8px; }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   TONE — the single colour-authority on the desk.
+
+   Six families of pill (chip, badge, sg-tag, sg-dir, ttl-pill, feed-pill,
+   rail-chip, stat-chip, sg-flag) each used to spell out their own bull/bear/
+   warn/info hex set, so a re-tune meant six edits and drift was inevitable.
+   Now every one of them declares intent once — by class modifier or by
+   `data-tone` — and consumes three slots:
+
+     --tone-ink    text/icon colour   (the "-strong" rung)
+     --tone-wash   flat background
+     --tone-line   hairline border
+
+   Adding a tone is a one-line change here. Adding a container is a
+   three-slot consumption. `data-tone` lets markup opt in without a class:
+   <span className="chip" data-tone="bull">
+   ══════════════════════════════════════════════════════════════════════════ */
+/* Declared in `@layer components` on purpose. Tailwind v4 orders
+   theme → base → components → utilities, so a utility (`bg-up-wash`,
+   `text-ink-3`, `border-down-line`) still overrides the tone slot — which is
+   how the existing markup uses it — while the tone wins over nothing else and
+   never needs !important. Geometry (padding/radius/type) stays unlayered with
+   each container. */
+@layer components {
+  [data-tone],
+  .chip, .badge, .sg-tag, .sg-dir, .ttl-pill, .feed-pill, .rail-chip, .stat-chip, .sg-flag {
+    --tone-ink: var(--ds-ink-2);
+    --tone-wash: var(--ds-neut-wash);
+    --tone-line: var(--ds-border);
+  }
+
+  /* bull / up / long */
+  [data-tone="bull"], [data-tone="up"], [data-tone="long"],
+  .chip--up, .b-bull, .sg-tag.bull, .sg-dir.long, .feed-pill--on, .rail-chip--on, .sg-flag.up {
+    --tone-ink: var(--ds-bull-strong);
+    --tone-wash: var(--ds-bull-wash);
+    --tone-line: var(--ds-bull-line);
+  }
+  /* bear / down / short  (expired-level red reuses the bear slot) */
+  [data-tone="bear"], [data-tone="down"], [data-tone="short"],
+  .chip--down, .b-bear, .sg-tag.bear, .sg-dir.short, .feed-pill--down, .rail-chip--down, .ttl-pill.expired, .sg-flag.down {
+    --tone-ink: var(--ds-bear-strong);
+    --tone-wash: var(--ds-bear-wash);
+    --tone-line: var(--ds-bear-line);
+  }
+  /* warn — amber, incl. degraded feeds */
+  [data-tone="warn"],
+  .chip--warn, .b-warn, .sg-tag.warn, .feed-pill--warn, .feed-pill--degraded, .rail-chip--warn, .rail-chip--degraded, .ttl-pill.warn, .sg-flag.warn {
+    --tone-ink: var(--ds-warn-strong);
+    --tone-wash: var(--ds-warn-wash);
+    --tone-line: var(--ds-warn-line);
+  }
+  /* info — brand accent, for neutral-but-notable state */
+  [data-tone="info"],
+  .chip--info, .b-info, .sg-tag.info {
+    --tone-ink: var(--ds-accent);
+    --tone-wash: var(--ds-accent-wash);
+    --tone-line: var(--ds-accent-line);
+  }
+  /* neut — explicit, so "no signal" is a choice and not a fallback */
+  [data-tone="neut"], [data-tone="neutral"],
+  .chip--neut, .b-neut, .sg-tag.neut, .feed-pill--idle, .rail-chip--idle {
+    --tone-ink: var(--ds-ink-2);
+    --tone-wash: var(--ds-neut-wash);
+    --tone-line: var(--ds-border);
+  }
+
+  /* The one place the slots are painted. */
+  .chip, .badge, .sg-tag, .sg-dir, .ttl-pill, .feed-pill, .rail-chip, .stat-chip, .sg-flag {
+    color: var(--tone-ink);
+    background: var(--tone-wash);
+    border-color: var(--tone-line);
+  }
+}
+
 /* ---------- institutional chip: one tone chip for regime/direction/state ---------- */
 .chip {
   display: inline-flex;
@@ -1377,16 +1746,10 @@ select.input { cursor: pointer; }
   letter-spacing: 0.01em;
   border-radius: 999px;
   padding: 2px 9px;
-  border: 1px solid var(--ds-border);
-  background: var(--ds-neut-wash);
-  color: var(--ds-ink-2);
+  border-width: 1px;
+  border-style: solid;
   white-space: nowrap;
 }
-.chip--up { color: var(--ds-bull-strong); background: var(--ds-bull-wash); border-color: var(--ds-bull-line); }
-.chip--down { color: var(--ds-bear-strong); background: var(--ds-bear-wash); border-color: var(--ds-bear-line); }
-.chip--warn { color: var(--ds-warn-strong); background: var(--ds-warn-wash); border-color: var(--ds-warn-line); }
-.chip--info { color: var(--ds-accent); background: var(--ds-accent-wash); border-color: var(--ds-accent-line); }
-.chip--neut { color: var(--ds-ink-2); background: var(--ds-neut-wash); border-color: var(--ds-border); }
 
 /* ---------- institutional notice: flat wash + tone left rule, never emoji ---------- */
 .notice {
@@ -1395,16 +1758,17 @@ select.input { cursor: pointer; }
   gap: 10px;
   padding: 8px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--ds-border);
-  background: var(--ds-surface);
+  border: 1px solid var(--tone-line, var(--ds-border));
+  background: var(--tone-wash, var(--ds-surface));
   border-left-width: var(--ds-rule-accent);
+  border-left-color: var(--tone-ink, var(--ds-accent));
   font-size: var(--ds-fs-base);
   color: var(--ds-ink-2);
 }
-.notice--warn { border-left-color: var(--ds-warn); background: var(--ds-warn-wash); }
-.notice--down { border-left-color: var(--ds-bear); background: var(--ds-bear-wash); }
-.notice--up { border-left-color: var(--ds-bull); background: var(--ds-bull-wash); }
-.notice--info { border-left-color: var(--ds-accent); background: var(--ds-accent-wash); }
+.notice--warn { --tone-ink: var(--ds-warn); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.notice--down { --tone-ink: var(--ds-bear); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
+.notice--up { --tone-ink: var(--ds-bull); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.notice--info { --tone-ink: var(--ds-accent); --tone-wash: var(--ds-accent-wash); --tone-line: var(--ds-accent-line); }
 
 /* ---------- micro label: 11px uppercase, the only sanctioned all-caps ---------- */
 .micro-label {
@@ -1746,11 +2110,10 @@ select.input { cursor: pointer; }
   font-weight: 700;
   letter-spacing: 0.04em;
   white-space: nowrap;
-  border: 1px solid var(--ds-border);
+  border-width: 1px;
+  border-style: solid;
   border-radius: 999px;
   padding: 2px 9px;
-  background: var(--ds-surface-subtle);
-  color: var(--ds-ink-2);
 }
 .rail-chip > i {
   width: 5px;
@@ -1760,27 +2123,11 @@ select.input { cursor: pointer; }
   display: block;
   flex: 0 0 auto;
 }
-.rail-chip--on {
-  color: var(--ds-bull-strong);
-  border-color: var(--ds-bull-line);
-  background: var(--ds-bull-wash);
-}
-.rail-chip--warn {
-  color: var(--ds-warn-strong);
-  border-color: var(--ds-warn-line);
-  background: var(--ds-warn-wash);
-}
-.rail-chip--down {
-  color: var(--ds-bear-strong);
-  border-color: var(--ds-bear-line);
-  background: var(--ds-bear-wash);
-}
-.rail-chip--degraded {
-  color: var(--ds-warn-ink);
-  border-color: var(--ds-warn-line);
-  background: var(--ds-warn-wash);
-}
-.rail-chip--idle { color: var(--ds-ink-2); }
+.rail-chip--on { --tone-ink: var(--ds-bull-strong); --tone-wash: var(--ds-bull-wash); --tone-line: var(--ds-bull-line); }
+.rail-chip--warn { --tone-ink: var(--ds-warn-strong); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.rail-chip--down { --tone-ink: var(--ds-bear-strong); --tone-wash: var(--ds-bear-wash); --tone-line: var(--ds-bear-line); }
+.rail-chip--degraded { --tone-ink: var(--ds-warn-ink); --tone-wash: var(--ds-warn-wash); --tone-line: var(--ds-warn-line); }
+.rail-chip--idle { --tone-ink: var(--ds-ink-2); --tone-wash: var(--ds-neut-wash); --tone-line: var(--ds-border); }
 .rail-chip--on > i { animation: rail-pulse 2.4s ease-out infinite; }
 
 /* Body frame — side rail + content. */
@@ -1862,9 +2209,8 @@ select.input { cursor: pointer; }
 /* Rail responsive — one cluster sheds labels as space tightens.
    Broker never hides; deck drops to a second row on mobile. */
 @keyframes rail-pulse {
-  0% { box-shadow: 0 0 0 0 var(--ds-bull-line); }
-  70% { box-shadow: 0 0 0 4px rgba(22, 163, 74, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+  0% { box-shadow: 0 0 0 0 var(--ds-bull-line); }    70% { box-shadow: 0 0 0 4px var(--ds-bull-transparent); }
+    100% { box-shadow: 0 0 0 0 var(--ds-bull-transparent); }
 }
 @media (max-width: 1279px) {
   .rail-meta__next { display: none; }

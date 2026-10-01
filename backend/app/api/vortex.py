@@ -1,7 +1,7 @@
-"""
+﻿"""
 VORTEX-SNAP API Router
 Endpoints for Microstructure Telemetry, Live State Machine HUD,
-Event-Driven Backtesting, Ablation Study, and Research Experiments (§43–§47).
+Event-Driven Backtesting, Ablation Study, and Research Experiments (Â§43â€“Â§47).
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.api.envelope import envelope
 from app.models.market import DataStatus
-from app.quant.data.provenance import ProvenanceError
+from app.market_core.data.provenance import ProvenanceError
 from app.signals.strategies.base import StrategyContext
 from app.signals.strategies.vortex_snap.config import VortexSnapConfig
 from app.signals.strategies.vortex_snap.session import MarketSessionModel
@@ -72,6 +72,48 @@ def get_vortex_strategy() -> VortexSnapStrategy:
     return _strategy_instance
 
 
+def _build_deterministic_hud_state(
+    candles_1m: List[Candle],
+    candles_5m: List[Candle],
+    symbol_clean: str,
+):
+    """Replay history on fresh engines so the HUD is point-in-time deterministic.
+
+    The singleton strategy accumulates ``_prior_*`` state (pressure
+    persistence, compression duration, translation delta) and FSM
+    ``state_enter_bar_count`` across HTTP requests. On a stale dataset
+    (e.g. yesterday's parquet served while the live feed is down) every poll
+    incremented persistence by 1-3 bars, so the HUD showed 23 bars instead of
+    the true streak. Replaying sequentially on fresh instances makes repeated
+    polls return identical values.
+    """
+    from app.signals.strategies.vortex_snap.feature_engine import VortexFeatureEngine
+    from app.signals.strategies.vortex_snap.signals.state_machine import VortexSnapFSM
+
+    fresh_engine = VortexFeatureEngine(_config)
+    fresh_fsm = VortexSnapFSM()
+    snapshot = None
+    # Sequential replay: each prefix rebuilds priors (persistence, duration)
+    # exactly as a live bar-by-bar feed would. Cost ~130ms for 120 bars.
+    for i in range(1, len(candles_1m) + 1):
+        sub_1m = candles_1m[:i]
+        # Resample progressively so regime/levels see the same 5m context as
+        # the live path would have at bar i.
+        sub_5m = HistoricalDataLoader.resample_5m(sub_1m)
+        snapshot = fresh_engine.compute_snapshot(
+            instrument=symbol_clean,
+            candles_1m=sub_1m,
+            timestamp_ms=sub_1m[-1].timestamp,
+            spot_price=sub_1m[-1].close,
+            candles_5m=sub_5m,
+        )
+        try:
+            fresh_fsm.step(snapshot, sub_1m)
+        except Exception:  # pragma: no cover - FSM must never break the HUD
+            logger.debug("vortex_hud_fsm_step_failed", bar=i)
+    return snapshot, fresh_fsm
+
+
 def _require_real_data() -> bool:
     env = os.environ.get(_config.data.strict_mode_env)
     if env is not None:
@@ -83,7 +125,7 @@ def _get_live_candles(symbol: str, count: int) -> Tuple[List[Candle], Dict[str, 
     """Read closed 1m candles aggregated from FYERS HSM websocket ticks.
 
     Source of truth for the live HUD. Returns ([], NO_DATA status) when the
-    feed has nothing — it never fabricates prices.
+    feed has nothing â€” it never fabricates prices.
     """
     try:
         from app.services.live_candles import live_candles
@@ -101,7 +143,7 @@ def _get_candles(
 
     Source priority (live path, prefer_live=True):
       1. Live 1m candles aggregated from FYERS HSM websocket ticks
-         (``app.services.live_candles``) — the source of truth.
+         (``app.services.live_candles``) â€” the source of truth.
       2. Verified real parquet (only when the live feed has insufficient bars).
       3. Explicit synthetic (backtest/ablation opt-in only).
 
@@ -135,6 +177,59 @@ def _get_candles(
                 "live": live_status,
             }
             return live, source
+        # Mid-session restart: WS buffer holds only a few closed bars (< min)
+        # while the market has been open for hours. Merging those fresh live
+        # bars onto parquet history gives a live-anchored series immediately
+        # instead of 30 min of STALE. Last candle stays live (age seconds).
+        if len(live) > 0 and _data_loader.locate_parquet(symbol_upper, "1m") is not None:
+            try:
+                hist, hist_src = _data_loader.load_candles_with_source(
+                    instrument=symbol_upper,
+                    timeframe="1m",
+                    count=count,
+                    require_real_data=require_real,
+                )
+                if getattr(hist_src, "type", "") != "synthetic":
+                    by_ts: Dict[int, Candle] = {}
+                    for c in hist:
+                        by_ts[int(c.timestamp)] = c
+                    for c in live:
+                        by_ts[int(c.timestamp)] = c  # live wins on overlap
+                    merged = [by_ts[k] for k in sorted(by_ts.keys())][-count:]
+                    if merged and int(merged[-1].timestamp) == int(live[-1].timestamp):
+                        gap_s = None
+                        try:
+                            if hist:
+                                gap_s = (int(live[0].timestamp) - int(hist[-1].timestamp)) / 1000.0
+                        except Exception:
+                            gap_s = None
+                        logger.info(
+                            "vortex_data_live_merged",
+                            instrument=symbol_upper,
+                            live_bars=len(live),
+                            history_bars=len(merged) - len(live),
+                            gap_s=round(gap_s, 1) if gap_s is not None else None,
+                        )
+                        source = {
+                            "type": "fyers_ws_live",
+                            "instrument": symbol_upper,
+                            "path": None,
+                            "is_simulated": False,
+                            "note": (
+                                f"Live-anchored merge: {len(live)} live 1m bar(s) from FYERS HSM "
+                                f"on {len(merged) - len(live)} parquet history bar(s)."
+                                + (f" Overnight/session gap {round(gap_s/3600,1)}h before live tail." if gap_s and gap_s > 3600 else "")
+                            ),
+                            "provenance_verified": True,
+                            "live": live_status,
+                            "history_bars": len(merged) - len(live),
+                            "live_bars": len(live),
+                        }
+                        return merged, source
+            except (FileNotFoundError, ProvenanceError) as exc:
+                logger.warning("vortex_live_merge_fallback_failed", instrument=symbol_upper, error=str(exc)[:200])
+            except Exception as exc:  # pragma: no cover - merge must never break HUD
+                logger.warning("vortex_live_merge_failed", instrument=symbol_upper, error=str(exc)[:200])
         if require_real and _data_loader.locate_parquet(symbol_upper, "1m") is None:
             # Contain the phrase "Real market data required" so callers/tests
             # get one consistent strict-mode message. When a dataset path does
@@ -224,7 +319,7 @@ def _serialize_level(level: Any) -> Dict[str, Any]:
 
 
 # -------------------------------------------------------------
-# 1. Engine Status & Telemetry (§43)
+# 1. Engine Status & Telemetry (Â§43)
 # -------------------------------------------------------------
 @router.get("/status")
 async def get_vortex_status():
@@ -263,7 +358,7 @@ async def get_vortex_status():
 
 
 # -------------------------------------------------------------
-# 2. Point-in-Time Microstructure State & HUD (§43)
+# 2. Point-in-Time Microstructure State & HUD (Â§43)
 # -------------------------------------------------------------
 @router.get("/microstructure/{symbol}")
 async def get_microstructure_state(
@@ -279,16 +374,11 @@ async def get_microstructure_state(
     candles_1m, source_dict = _get_candles(symbol_clean, count=bars)
     candles_5m = HistoricalDataLoader.resample_5m(candles_1m)
 
-    strat = get_vortex_strategy()
-    feature_engine = strat.feature_engine
-
     last_candle = candles_1m[-1]
-    snapshot = feature_engine.compute_snapshot(
-        instrument=symbol_clean,
-        candles_1m=candles_1m,
-        timestamp_ms=last_candle.timestamp,
-        spot_price=last_candle.close,
-        candles_5m=candles_5m,
+    # Deterministic replay on fresh engines: never mutate the process-wide
+    # singleton from a read-only HUD request (see _build_deterministic_hud_state).
+    snapshot, replayed_fsm = _build_deterministic_hud_state(
+        candles_1m, candles_5m, symbol_clean
     )
 
     # Convert candles to dict format expected by StrategyContext
@@ -304,7 +394,9 @@ async def get_microstructure_state(
         for c in candles_1m
     ]
 
-    # Evaluate candidate using strategy adapter
+    # Evaluate candidate on a fresh strategy instance (shares the loaded ML
+    # validator but owns fresh feature/FSM state). The singleton is never
+    # touched by this read-only path, so repeated polls stay identical.
     ctx = StrategyContext(
         underlying=symbol_clean,
         spot_price=Decimal(str(round(last_candle.close, 2))),
@@ -313,7 +405,12 @@ async def get_microstructure_state(
         daily_loss_limit_breached=False,
         portfolio_positions=[],
     )
-    candidate = strat.detect(ctx)
+    try:
+        fresh_strategy = VortexSnapStrategy(_config, ml_validator=_ml_validator)
+        candidate = fresh_strategy.detect(ctx)
+    except Exception:  # pragma: no cover - HUD must stay up when detection fails
+        logger.debug("vortex_hud_candidate_failed", instrument=symbol_clean)
+        candidate = None
 
     comp = snapshot.compression
     press = snapshot.pressure
@@ -329,7 +426,7 @@ async def get_microstructure_state(
         "data_source": source_dict,
         "timestamp": datetime.fromtimestamp(snapshot.timestamp_ms / 1000, tz=timezone.utc).isoformat(),
         # Last-candle freshness for the frontend (age/staleness handling lives
-        # in the UI — it diffs server_now_ms against last_candle_timestamp_ms).
+        # in the UI â€” it diffs server_now_ms against last_candle_timestamp_ms).
         "last_candle_timestamp_ms": last_candle.timestamp,
         "last_candle_timestamp": datetime.fromtimestamp(last_candle.timestamp / 1000, tz=timezone.utc).isoformat(),
         "server_now_ms": int(time.time() * 1000),
@@ -344,6 +441,9 @@ async def get_microstructure_state(
         },
         "directional_pressure": {
             "score": round(press.pressure_score, 4),
+            # Discrete direction (-1/0/+1, Â±0.20 thresholds): the HUD pill
+            # must render NEUTRAL at 0 instead of mislabeling it BEARISH.
+            "direction": int(press.pressure_direction),
             "persistence": press.pressure_persistence,
             "persistence_abs": abs(press.pressure_persistence),
             # Normalized acceleration is comparable to score units/bar.
@@ -385,7 +485,7 @@ async def get_microstructure_state(
             "regime": reg.regime.value,
             "confidence": round(reg.regime_confidence, 3),
             # Explicit fallback marker: UNKNOWN regime or low confidence (<=0.30)
-            # means "no measurement" — includes the ablation-disabled path
+            # means "no measurement" â€” includes the ablation-disabled path
             # (UNKNOWN) and the insufficient-history path. Never styled as a
             # measured call on the frontend when true.
             "is_fallback": bool(reg.regime.value == "UNKNOWN" or reg.regime_confidence <= 0.30),
@@ -405,7 +505,7 @@ async def get_microstructure_state(
             "nearest_resistance": levels.nearest_resistance.price if levels.nearest_resistance else None,
             # Explicit type labels: nearest support may be a broken HIGH-type
             # (e.g. SWING_HIGH_5M/SESSION_HIGH below price after a breakout) and
-            # nearest resistance may be a LOW-type — never infer side from type.
+            # nearest resistance may be a LOW-type â€” never infer side from type.
             "nearest_support_type": (
                 levels.nearest_support.level_type.value if levels.nearest_support else None
             ),
@@ -427,8 +527,8 @@ async def get_microstructure_state(
             ],
         },
         "fsm_state": {
-            "current_state": strat.fsm.state.value if hasattr(strat.fsm.state, "value") else str(strat.fsm.state),
-            "state_enter_bar_count": strat.fsm.state_enter_bar_count,
+            "current_state": replayed_fsm.state.value if hasattr(replayed_fsm.state, "value") else str(replayed_fsm.state),
+            "state_enter_bar_count": replayed_fsm.state_enter_bar_count,
             "transition_history": [
                 {
                     "from_state": t.from_state.value,
@@ -436,7 +536,7 @@ async def get_microstructure_state(
                     "timestamp_ms": t.timestamp_ms,
                     "reason": t.reason,
                 }
-                for t in strat.fsm.transition_history[-10:]
+                for t in replayed_fsm.transition_history[-10:]
             ],
         },
         "active_candidate": (
@@ -460,7 +560,7 @@ async def get_microstructure_state(
 
 
 # -------------------------------------------------------------
-# 3. Interactive Event-Driven Backtesting Engine (§30, §35)
+# 3. Interactive Event-Driven Backtesting Engine (Â§30, Â§35)
 # -------------------------------------------------------------
 @router.post("/backtest")
 async def run_vortex_backtest(request: VortexBacktestRequest):
@@ -540,7 +640,7 @@ async def run_vortex_backtest(request: VortexBacktestRequest):
 
 
 # -------------------------------------------------------------
-# 4. 9-Stage Component Ablation Runner (§32)
+# 4. 9-Stage Component Ablation Runner (Â§32)
 # -------------------------------------------------------------
 @router.get("/ablation")
 async def get_or_run_ablation(
@@ -574,7 +674,7 @@ async def get_or_run_ablation(
 
 
 # -------------------------------------------------------------
-# 5. Saved Research Experiment Reports (§50, §52)
+# 5. Saved Research Experiment Reports (Â§50, Â§52)
 # -------------------------------------------------------------
 @router.get("/experiments")
 async def list_experiment_reports():

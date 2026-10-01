@@ -1,0 +1,21 @@
+{
+  "symbol": "NIFTY",
+  "timeframe": "1h",
+  "version_tag": "v6",
+  "row_count": 1738,
+  "start_time": "2025-09-22T03:00:00+00:00",
+  "end_time": "2026-09-30T09:00:00+00:00",
+  "checksum_sha256": "cbeba309bc16a1d49dd3bcabb4398e2cd1e1797448d360bbfb49609be1e6fae0",
+  "quality_score": 97.45,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "derived_from_1m",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-30T11:02:27.604132Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-30T11:02:27.631370+00:00"
+}

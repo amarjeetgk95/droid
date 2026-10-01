@@ -91,15 +91,14 @@ export function ChatPanel({
                   m.content ? <p style={PRE_WRAP}>{m.content}</p> : null
                 ) : (
                   <>
-                    {m.reasoning || m.toolNotes.length > 0 ? (
+                    {m.toolNotes.length > 0 ? (
                       <details>
-                        <summary>Why + tools</summary>
-                        {m.reasoning ? <p className="sg-note">reasoning: {m.reasoning}</p> : null}
-                        {m.toolNotes.map((note, i) => (
-                          <p key={i} className="sg-note">
-                            {note}
-                          </p>
-                        ))}
+                        <summary>Gathering live market context…</summary>
+                        <ul>
+                          {m.toolNotes.map((note, i) => (
+                            <li key={i} className="sg-note">{note}</li>
+                          ))}
+                        </ul>
                       </details>
                     ) : null}
                     {m.content ? (
@@ -110,10 +109,10 @@ export function ChatPanel({
                     ) : null}
                   </>
                 )}
-                {!m.content && m.pending ? <p className="sg-note">thinking…</p> : null}
+                {!m.content && m.pending ? <p className="sg-note">Gathering live market context…</p> : null}
                 {m.role === 'assistant' && (m.provider || m.model) ? (
                   <p className="card-meta">
-                    {m.provider ?? '—'} · {m.model ?? '—'}
+                    AI explanation · {m.provider ?? '—'} / {m.model ?? 'auto'}
                   </p>
                 ) : null}
                 {m.error ? <p className="sg-err">{m.error}</p> : null}

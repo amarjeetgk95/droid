@@ -1,9 +1,9 @@
-from app.quant.margin import calculate_required_margin
+﻿from app.market_core.margin import calculate_required_margin
 
 
 class TestMarginCalculator:
     def test_option_buying_margin(self):
-        # Buying 2 lots of NIFTY CE at ₹150 (Quantity = 150)
+        # Buying 2 lots of NIFTY CE at â‚¹150 (Quantity = 150)
         margin = calculate_required_margin("OPTION_BUY", "NIFTY", price=150.0, quantity=150)
         assert margin == 150.0 * 150
 

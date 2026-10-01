@@ -37,17 +37,21 @@ StrategyName = Literal[
     "ABSORPTION_REVERSAL",
     "IV_REGIME",
     "VORTEX_SNAP",
+    "FISHER_MACD_CONFLUENCE",
 ]
 TradeDirection = Literal["LONG_CALL", "LONG_PUT"]
 Timeframe = Literal["1M", "3M", "5M", "15M", "1H", "1D"]
 SignalType = Literal["SCALP", "INTRADAY", "SWING"]
 
 # ── P1 shared thresholds (single source of truth) ──
-ADX_TREND_CUTOFF: float = 22.0
-VOLUME_MICRO_MIN: float = 1.5
-VOLUME_BREAKOUT_MIN: float = 1.5
-VOLUME_ORB_MIN: float = 1.3
-VOLUME_SCALP_MIN: float = 1.2
+# RISK-ON 2026-09-23: ADX 22->25 (more trend days still eligible for
+# pullback/breakout), volumes 1.5/1.5/1.3/1.2 -> 1.1/1.1/1.0/0.8.
+# Quiet-trend days print candidates instead of NO_SETUP_LOW_VOLUME.
+ADX_TREND_CUTOFF: float = 25.0
+VOLUME_MICRO_MIN: float = 1.1
+VOLUME_BREAKOUT_MIN: float = 1.1
+VOLUME_ORB_MIN: float = 1.0
+VOLUME_SCALP_MIN: float = 0.8
 PCR_BULL_MAX: float = 0.80
 PCR_BEAR_MIN: float = 1.20
 

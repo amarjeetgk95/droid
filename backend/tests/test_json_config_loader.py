@@ -17,8 +17,10 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import structlog
 from structlog.testing import capture_logs
 
+import app.core.json_config as json_config_module
 from app.core.json_config import (
     DEFAULT_SEARCH_DIRS,
     JSONConfigError,
@@ -26,12 +28,33 @@ from app.core.json_config import (
     load_json_config,
 )
 
+_CONFIGURED_KEYS = (
+    "processors",
+    "wrapper_class",
+    "context_class",
+    "logger_factory",
+    "cache_logger_on_first_use",
+)
+
 
 @pytest.fixture(autouse=True)
-def _clean_config_cache():
+def _clean_config_cache(monkeypatch):
+    """Isolate the config cache *and* the structlog state these tests assert on.
+
+    ``capture_logs()`` only sees events from loggers bound to the live structlog
+    configuration. Any earlier test that boots the app (``setup_logging()``)
+    replaces that configuration and enables ``cache_logger_on_first_use``, which
+    leaves the loader's module logger bound to a list the capture never mutates —
+    the log assertions then silently see zero events. Pin an uncached config and
+    rebind the module logger so capture is order-independent.
+    """
     clear_json_config_cache()
+    saved_config = {key: structlog.get_config()[key] for key in _CONFIGURED_KEYS}
+    structlog.configure(cache_logger_on_first_use=False)
+    monkeypatch.setattr(json_config_module, "logger", structlog.get_logger())
     yield
     clear_json_config_cache()
+    structlog.configure(**saved_config)
 
 
 # ── path search ──────────────────────────────────────────────────────
@@ -89,7 +112,7 @@ def test_default_search_loads_repo_config_with_logged_path():
     with capture_logs() as logs:
         data = load_json_config("scoring_weights.json")
 
-    assert data["thresholds"]["armed"] == 78.0
+    assert data["thresholds"]["armed"] == 60.0
     loaded = [e for e in logs if e["event"] == "json_config_loaded"]
     assert loaded and loaded[0]["path"].endswith("scoring_weights.json")
 
@@ -197,8 +220,8 @@ def test_confluence_fail_closed_without_thresholds():
         with pytest.raises(RuntimeError, match="fail-closed startup"):
             confluence._validate_confluence_config(bad)
 
-    validated = confluence._validate_confluence_config({"thresholds": {"armed": 78.0}})
-    assert validated["thresholds"]["armed"] == 78.0
+    validated = confluence._validate_confluence_config({"thresholds": {"armed": 60.0}})
+    assert validated["thresholds"]["armed"] == 60.0
 
 
 def test_confluence_loader_required_raises_when_file_missing(tmp_path, monkeypatch):
@@ -241,9 +264,9 @@ def test_signal_fusion_uses_file_weights_and_thresholds():
     fusion = importlib.import_module("app.algo.signal_fusion")
 
     assert fusion.WEIGHTS_VERSION == 2
-    assert fusion.ARMED_THRESHOLD == Decimal("78.0")
-    assert fusion.FUSION_LONG_THRESHOLD == Decimal("62")
-    assert fusion.FUSION_SHORT_THRESHOLD == Decimal("38")
+    assert fusion.ARMED_THRESHOLD == Decimal("60.0")
+    assert fusion.FUSION_LONG_THRESHOLD == Decimal("55")
+    assert fusion.FUSION_SHORT_THRESHOLD == Decimal("45")
     assert fusion._load_scoring_weights_percent({"weights_percent": {"technical": 12.5, "ml_max": 9.0}}) == {
         "technical": Decimal("12.5")
     }

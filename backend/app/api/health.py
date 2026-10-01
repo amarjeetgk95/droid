@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from app.services.market_service import MarketService
@@ -11,6 +13,37 @@ router = APIRouter(tags=["health"])
 async def health_live():
     """Liveness check — process is running."""
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/live", include_in_schema=False)
+async def live_alias():
+    """Top-level liveness alias (same contract as /health/live)."""
+    return await health_live()
+
+
+async def _probe_database(timeout: float = 3.0) -> str:
+    """Lightweight DB reachability probe: SELECT 1 within a short deadline.
+
+    A temporary Supabase outage must degrade the readiness REPORT, never the
+    process — failures are swallowed into the returned status string.
+    """
+    try:
+        from sqlalchemy import text
+
+        from app.core.database import get_async_session_factory
+
+        factory = get_async_session_factory()
+        if factory is None:
+            return "not_configured"
+
+        async def _ping() -> None:
+            async with factory() as session:
+                await session.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_ping(), timeout=timeout)
+        return "ok"
+    except Exception:
+        return "unavailable"
 
 
 @router.get("/health/ready")
@@ -48,6 +81,24 @@ async def health_ready():
         checks["broker_token"] = "present" if usable else ("placeholder" if raw_token else "missing")
     except Exception:
         checks["broker_token"] = "unknown"
+
+    # Database reachability — informational only (the central feed remains the
+    # hard gate). Lets the dashboard distinguish "process up but DB down".
+    checks["database"] = await _probe_database()
+
+    # Signal engine liveness — informational: "ready" without the worker means
+    # the API serves but no signals are being scanned.
+    try:
+        from app.signals.worker import automated_signal_worker
+        checks["signal_worker"] = (
+            "ok" if bool(getattr(automated_signal_worker, "_running", False)) else "down"
+        )
+    except Exception:
+        checks["signal_worker"] = "unknown"
+
+    # Explicit trading-posture marker so an admin can confirm at a glance that
+    # the process restarted into the safe (paper-first) configuration.
+    checks["trading_posture"] = "paper_first"
 
     timestamp = datetime.now(timezone.utc).isoformat()
     if checks["central_feed"] == "ok":
@@ -202,6 +253,16 @@ async def market_data_health():
             message=f"Health probe degraded: {str(e)[:150]}",
         )
         return fallback.model_dump()
+
+
+@router.get("/ready", include_in_schema=False)
+async def ready_alias():
+    """Top-level readiness alias (same contract as /health/ready).
+
+    Uptime monitors and the launcher's readiness wait poll this; the central-feed hard
+    gate (503 when the feed is down) applies identically.
+    """
+    return await health_ready()
 
 
 @router.get("/api/v1/health/database")

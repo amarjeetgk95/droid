@@ -65,6 +65,16 @@ class DirectionalPressureEngine:
 
         eps = self.config.epsilon
         raw_pressures = [compute_raw_pressure(c, eps) for c in candles]
+        # Index spot feeds (FYERS HSM) carry no volume: every bar is 0 and the
+        # volume-weighted score is identically 0 forever live, while parquet
+        # history (FYERS history API turnover) has volume. When no measurable
+        # volume-weighted activity exists over the window, fall back to
+        # equal-weight body efficiency so live pressure stays meaningful. Both
+        # paths are tanh-normalized, so scores remain comparable.
+        if sum(abs(p) for p in raw_pressures) <= eps:
+            raw_pressures = [
+                (c.close - c.open) / max(c.high - c.low, eps) for c in candles
+            ]
 
         # Rolling windows
         w_p = min(self.config.pressure_window, len(raw_pressures))

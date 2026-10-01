@@ -1,6 +1,6 @@
-from datetime import datetime, date, timezone
+﻿from datetime import datetime, date, timezone
 import zoneinfo
-from app.quant.expiry_math import calculate_time_to_expiry, get_risk_free_rate, MIN_TIME_TO_EXPIRY
+from app.market_core.expiry_math import calculate_time_to_expiry, get_risk_free_rate, MIN_TIME_TO_EXPIRY
 
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 

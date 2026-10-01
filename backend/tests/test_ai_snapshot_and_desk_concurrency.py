@@ -240,7 +240,7 @@ async def test_desk_concurrency_decoupled_scalp_and_intraday(monkeypatch):
 
 
 def test_candle_anchored_cooldown_scaling():
-    """Verify cooldown scales with candle timeframe: 1M=60s, 3M=180s, 5M=300s, 15M=900s."""
+    """RISK-ON: cooldown scales 1M=20s, 3M=60s, 5M=120s, 15M=300s (was 60/180/300/900)."""
     engine = ScalpConfirmationEngine()
     now_ms = 1_000_000_000
 
@@ -264,13 +264,13 @@ def test_candle_anchored_cooldown_scaling():
     # Record confirmed at now_ms
     engine.record_confirmed(cand_1m, candle_timestamp_ms=now_ms, now_ms=now_ms)
 
-    # 45s later (1M requires 60s) -> should be rejected for cooldown
-    res = engine.validate(cand_1m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 45_000, now_ms=now_ms + 45_000)
+    # 10s later (1M requires 20s) -> rejected for cooldown
+    res = engine.validate(cand_1m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 10_000, now_ms=now_ms + 10_000)
     assert res.passed is False
     assert res.reason_code == "REJECTED_COOLDOWN"
 
-    # 65s later (1M requires 60s) -> passes cooldown
-    res_pass = engine.validate(cand_1m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 65_000, now_ms=now_ms + 65_000)
+    # 25s later -> passes cooldown
+    res_pass = engine.validate(cand_1m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 25_000, now_ms=now_ms + 25_000)
     assert res_pass.passed is True
 
     # For 5M candidate (requires 300s)
@@ -292,13 +292,13 @@ def test_candle_anchored_cooldown_scaling():
     )
     engine.record_confirmed(cand_5m, candle_timestamp_ms=now_ms, now_ms=now_ms)
 
-    # 150s later -> 150 < 300 -> rejected for cooldown
-    res_5m = engine.validate(cand_5m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 150_000, now_ms=now_ms + 150_000)
+    # 60s later -> 60 < 120 -> rejected for cooldown
+    res_5m = engine.validate(cand_5m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 60_000, now_ms=now_ms + 60_000)
     assert res_5m.passed is False
     assert res_5m.reason_code == "REJECTED_COOLDOWN"
 
-    # 305s later -> passes
-    res_5m_pass = engine.validate(cand_5m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 305_000, now_ms=now_ms + 305_000)
+    # 130s later -> passes
+    res_5m_pass = engine.validate(cand_5m, current_spot=Decimal("24805"), regime="RANGE", candle_timestamp_ms=now_ms + 130_000, now_ms=now_ms + 130_000)
     assert res_5m_pass.passed is True
 
 
@@ -317,11 +317,8 @@ async def test_performance_metrics_and_diagnostics_throttled_total(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fno_degraded_state_aware_lifecycle(monkeypatch):
-    """Degraded F&O setups fail closed at admission: no VALIDATED/ARMED lifecycle.
-
-    P0-2 contract: the FNOIntegrityGate rejects the candidate outright
-    (ARMED_BLOCKED_FNO_DEGRADED), so it never enters the FSM and can never be
-    transitioned into an active state by a later operator action.
+    """RISK-ON: degraded F&O haircuts and forces VALIDATED — no hard veto.
+    FNOIntegrityGate passes; PIT-empty here still drops registration.
     """
     monkeypatch.setattr(calendar_service, "can_trade_now", _mock_open_permission)
 
@@ -348,7 +345,7 @@ async def test_fno_degraded_state_aware_lifecycle(monkeypatch):
 
     registered, rejected = await scanner._process_candidates([cand])
     assert registered == []
-    assert any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
+    assert not any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
 
     # No FSM instance exists to arm, trigger or confirm.
     assert not [s for s in signal_fsm.list_active() if s.underlying == "NIFTY"]

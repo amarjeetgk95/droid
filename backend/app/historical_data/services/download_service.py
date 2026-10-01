@@ -153,11 +153,26 @@ class HistoricalDownloadService:
                     await db_repo.save_job(job)
 
             # Combine downloaded chunks
+            failed_chunks = [c for c in job.chunks if c.status == "FAILED"]
             valid_dfs = [df for df in all_chunk_dfs if not df.is_empty()]
             if not valid_dfs:
-                job.status = "COMPLETED"
                 job.completed_at = datetime.now(timezone.utc)
-                job.error_message = "No data returned by provider for requested date range"
+                if failed_chunks:
+                    # Chunks errored (e.g. expired FYERS token) — this is a
+                    # FAILED job, not a silent "completed with no data".
+                    job.status = "FAILED"
+                    job.error_message = failed_chunks[0].error_message or (
+                        f"{len(failed_chunks)}/{job.total_chunks} chunk(s) failed"
+                    )
+                    logger.error(
+                        "historical_job_failed",
+                        job_id=job.job_id,
+                        failed_chunks=len(failed_chunks),
+                        error=job.error_message,
+                    )
+                else:
+                    job.status = "COMPLETED"
+                    job.error_message = "No data returned by provider for requested date range"
                 await db_repo.save_job(job)
                 return
 
@@ -249,7 +264,14 @@ class HistoricalDownloadService:
                     pass
                 await db_repo.upsert_dataset(dataset)
 
-            job.status = "COMPLETED"
+            if failed_chunks:
+                job.status = "PARTIAL"
+                job.error_message = (
+                    f"{len(failed_chunks)}/{job.total_chunks} chunk(s) failed: "
+                    f"{failed_chunks[0].error_message or 'unknown error'}"
+                )
+            else:
+                job.status = "COMPLETED"
             job.completed_at = datetime.now(timezone.utc)
             await db_repo.save_job(job)
             logger.info("historical_job_completed", job_id=job.job_id, rows=len(final_df), quality=report.quality_score)

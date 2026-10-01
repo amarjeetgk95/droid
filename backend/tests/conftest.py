@@ -240,19 +240,9 @@ def isolate_signals_state(tmp_path, monkeypatch):
     import importlib
     _sv_mod = importlib.import_module("app.signals.safety.sequence_validator")
     _fhm_mod = importlib.import_module("app.signals.safety.feed_health_monitor")
-    _sw_persist = importlib.import_module("app.swing.persistence")
     from app.signals.safety.feed_circuit import feed_circuit
 
     monkeypatch.setattr(_sv_mod, "_SEQ_STATE_FILE", tmp_path / "sequence_state.json")
-    # Swing state files are CWD-relative: isolate them to tmp so tests never
-    # overwrite the real swing_state.json, and reset the scanner's cached last
-    # scan (test_swing_api seeds the state file and reads the fallback path).
-    monkeypatch.setattr(_sw_persist, "SWING_STATE_FILE", tmp_path / "swing_state.json")
-    monkeypatch.setattr(_sw_persist, "SWING_CANDLES_CACHE_FILE", tmp_path / "swing_candles_cache.json")
-    from app.swing.scanner import swing_scanner
-    swing_scanner._last_scan_result = None
-    swing_scanner._candle_cache.clear()
-    swing_scanner._disk_cache.clear()
 
     feed_circuit._states.clear()
     monkeypatch.setattr(_fhm_mod, "_TELEMETRY_CACHE", {"ts_ns": 0, "payload": None})

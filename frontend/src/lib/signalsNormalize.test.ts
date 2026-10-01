@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildValidationGates,
   executionEligibility,
+  gateStatusForScore,
   isOpenLedgerStatus,
   isTerminalSignalState,
   matchesDeskFilter,
@@ -115,6 +117,57 @@ describe('filter predicates', () => {
     expect(matchesDeskFilter(null, false, 'INTRADAY')).toBe(true);
     expect(matchesDeskFilter('SCALP_DESK', null, 'SCALP')).toBe(true);
     expect(matchesDeskFilter('INTRADAY', null, 'SCALP')).toBe(false);
+  });
+});
+
+describe('buildValidationGates', () => {
+  const breakdown = {
+    technical: 72,
+    mtf: 58,
+    fno: 38,
+    regime: 66,
+    ai: 81,
+    ai_status: 'AVAILABLE',
+    ml_score: 64,
+    ml_status: 'AVAILABLE',
+  };
+
+  it('maps real confluence domains with bar-judged statuses', () => {
+    const gates = buildValidationGates({ confluence_breakdown: breakdown });
+    expect(gates.map((g) => [g.label, g.status])).toEqual([
+      ['TECH', 'PASS'],
+      ['MTF', 'WARN'],
+      ['F&O', 'FAIL'],
+      ['REGIME', 'PASS'],
+      ['AI', 'PASS'],
+      ['ML', 'PASS'],
+    ]);
+    expect(gates[0].score).toBe(72);
+  });
+
+  it('renders AI/ML as OFFLINE with no score instead of a fake number', () => {
+    const gates = buildValidationGates({
+      confluence_breakdown: { ...breakdown, ai_status: 'UNAVAILABLE', ai: null, ml_status: 'UNAVAILABLE', ml_score: null },
+    });
+    const ai = gates.find((g) => g.key === 'ai');
+    const ml = gates.find((g) => g.key === 'ml');
+    expect(ai).toEqual({ key: 'ai', label: 'AI', score: null, status: 'OFFLINE' });
+    expect(ml).toEqual({ key: 'ml', label: 'ML', score: null, status: 'OFFLINE' });
+    // Measured domains are unaffected by offline advisors.
+    expect(gates.find((g) => g.key === 'technical')?.status).toBe('PASS');
+  });
+
+  it('omits the section when the payload carries no breakdown', () => {
+    expect(buildValidationGates({})).toEqual([]);
+    expect(buildValidationGates({ confluence_breakdown: null })).toEqual([]);
+    expect(buildValidationGates({ confluence_breakdown: { ai_status: 'UNAVAILABLE' } })).toHaveLength(2);
+  });
+
+  it('judges scores against the 60 ARMED bar', () => {
+    expect(gateStatusForScore(60)).toBe('PASS');
+    expect(gateStatusForScore(59.9)).toBe('WARN');
+    expect(gateStatusForScore(45)).toBe('WARN');
+    expect(gateStatusForScore(44.9)).toBe('FAIL');
   });
 });
 

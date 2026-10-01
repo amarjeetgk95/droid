@@ -1,8 +1,8 @@
 'use client';
 
 /* On-demand institutional evaluators: MI, breakout, portfolio risk, contract
-   validation. POSTs compute readouts only — no backend state changes, so they
-   submit directly; results render as read-only sg-kv lists via useToast. */
+    validation. POSTs compute readouts only — no backend state changes, so they
+    submit directly; results render as read-only sg-kv lists via useToast. */
 
 import { useCallback, useState, type ReactNode } from 'react';
 import { useToast } from '@/components/ui/toast';
@@ -47,12 +47,14 @@ function EvalShell({
   state,
   onSubmit,
   children,
+  description,
 }: {
   title: string;
   meta?: string;
   state: EvalState;
   onSubmit: () => void;
   children: ReactNode;
+  description?: string;
 }) {
   return (
     <section className="card" aria-label={title}>
@@ -61,6 +63,7 @@ function EvalShell({
         {meta ? <span className="card-meta">{meta}</span> : null}
       </div>
       <div className="card-bd flex flex-col gap-2">
+        {description ? <p className="sg-note">{description}</p> : null}
         <div className="ds-filters" style={{ marginLeft: 0 }}>
           {children}
           <button type="button" className="btn btn-primary" disabled={state.busy} onClick={onSubmit}>
@@ -200,13 +203,13 @@ export function EvaluateForms({ desk, instrument }: { desk: InstitutionalDeskSta
   const contractValid = contract.data ? contract.data.valid === true : null;
 
   return (
-    <div className="flex flex-col gap-2">
-      <EvalShell title="Market intelligence — evaluate" meta={instrument} state={mi} onSubmit={() => void submitMI()}>
+    <div className="ds-grid-dashboard">
+      <EvalShell title="Market intelligence — evaluate" meta={instrument} state={mi} onSubmit={() => void submitMI()} description="Runs the MI engine with current or custom spot/VWAP to get a fresh readout.">
         <TextField label="spot price" value={miSpot} onChange={setMiSpot} placeholder="optional" inputMode="decimal" />
         <TextField label="vwap" value={miVwap} onChange={setMiVwap} placeholder="optional" inputMode="decimal" />
       </EvalShell>
 
-      <EvalShell title="Breakout — evaluate" meta={instrument} state={brk} onSubmit={() => void submitBreakout()}>
+      <EvalShell title="Breakout — evaluate" meta={instrument} state={brk} onSubmit={() => void submitBreakout()} description="Checks whether price is breaking a key level with confirmation, volume, and momentum.">
         <TextField label="breakout level *" value={brkLevel} onChange={setBrkLevel} placeholder="e.g. 25950.5" inputMode="decimal" />
         <TextField label="current price *" value={brkPrice} onChange={setBrkPrice} placeholder="e.g. 25910.2" inputMode="decimal" />
         <TextField label="atr" value={brkAtr} onChange={setBrkAtr} placeholder="optional" inputMode="decimal" />
@@ -224,7 +227,7 @@ export function EvaluateForms({ desk, instrument }: { desk: InstitutionalDeskSta
         </label>
       </EvalShell>
 
-      <EvalShell title="Portfolio risk — readout" meta={instrument} state={risk} onSubmit={() => void submitRisk()}>
+      <EvalShell title="Portfolio risk — readout" meta={instrument} state={risk} onSubmit={() => void submitRisk()} description="Shows how this order would affect overall portfolio risk given current margin.">
         <TextField label="notional *" value={riskNotional} onChange={setRiskNotional} placeholder="e.g. 1500000" inputMode="decimal" />
         <TextField label="margin *" value={riskMargin} onChange={setRiskMargin} placeholder="e.g. 180000" inputMode="decimal" />
         <span className="seg" title="Order side">
@@ -247,7 +250,7 @@ export function EvaluateForms({ desk, instrument }: { desk: InstitutionalDeskSta
         ) : null}
       </EvalShell>
 
-      <EvalShell title="Contract validation — readout" meta={instrument} state={contract} onSubmit={() => void submitContract()}>
+      <EvalShell title="Contract validation — readout" meta={instrument} state={contract} onSubmit={() => void submitContract()} description="Verifies the order size and price are valid for this instrument.">
         <TextField label="price *" value={ctPrice} onChange={setCtPrice} placeholder="e.g. 25950.5" inputMode="decimal" />
         <TextField label="quantity *" value={ctQty} onChange={setCtQty} placeholder="e.g. 50" inputMode="decimal" />
         {contractValid !== null ? (

@@ -739,7 +739,7 @@ async def get_market_briefing(
                 f"Look for mean-reversion exhaustion near R1 ₹{pivots.r1}",
                 f"Respect 14-period ATR volatility band of {regime.indicators.atr_14} points",
             ],
-            provider_used="droid_quant_engine",
+            provider_used="droid_engine",
         )
         return _ai_envelope(briefing)
     except Exception as e:

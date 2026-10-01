@@ -89,23 +89,16 @@ export function createPendingAssistant(): CopilotMessage {
   };
 }
 
-/** Human-readable one-liner for a `tool_call` chunk payload. Never throws. */
+/** Human-readable one-liner for a `tool_call` chunk payload.
+    NON-SENSITIVE: never exposes internal tool names, arguments or prompts. */
 export function summarizeToolCall(toolCall: unknown): string {
-  const o = getObj(toolCall);
-  if (!o) return 'assistant requested a tool';
-  const fn = getObj(o.function);
-  const name = pickStr(o, 'name') ?? pickStr(fn ?? {}, 'name') ?? 'unknown-tool';
-  return `calling ${name}`;
+  return 'Gathering live market context…';
 }
 
-/** Human-readable one-liner for a `tool_result` chunk payload. Never throws. */
+/** Human-readable one-liner for a `tool_result` chunk payload.
+    NON-SENSITIVE: never exposes internal tool names, arguments or payloads. */
 export function summarizeToolResult(toolResult: unknown): string {
-  const o = getObj(toolResult);
-  if (!o) return 'tool returned';
-  const name = pickStr(o, 'name') ?? 'tool';
-  const result = getObj(o.result);
-  const err = result ? asStr(result.error) : null;
-  return err ? `${name} failed: ${err.slice(0, 160)}` : `${name} returned market data`;
+  return '✓ Market data received';
 }
 
 /**
@@ -321,6 +314,24 @@ export function biasTone(v: unknown): 'bull' | 'bear' | 'neut' | 'warn' | 'info'
   if (/(WATCH|WAIT|UNCERTAIN|VOLATILE)/.test(s)) return 'warn';
   if (/(ARMED|READY|TRIGGERED|LIVE)/.test(s)) return 'info';
   return 'neut';
+}
+
+/** Canonical direction → tone mapping from the DROID backend enum.
+    This is the authoritative mapping — badge, title and scenario summary all
+    derive from it, never from free-form text. Fixes the BEARISH/NEUTRAL bug. */
+export function canonicalDirectionTone(
+  direction: string | null | undefined,
+): 'bull' | 'bear' | 'neut' | 'warn' | 'info' {
+  const canonical: Record<string, 'bull' | 'bear' | 'neut' | 'warn' | 'info'> = {
+    BULLISH: 'bull',
+    MILD_BULLISH: 'bull',
+    NEUTRAL: 'neut',
+    MILD_BEARISH: 'bear',
+    BEARISH: 'bear',
+    NO_SIGNAL: 'warn',
+  };
+  const key = String(direction ?? '').trim().toUpperCase();
+  return canonical[key] ?? 'warn';
 }
 
 /** Flatten an unknown deep-insight payload into capped label/value rows. Never throws. */

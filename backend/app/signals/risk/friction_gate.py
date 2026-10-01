@@ -187,8 +187,8 @@ class FrictionGate:
 
     def __init__(
         self,
-        min_net_reward_risk: float = 1.2,
-        max_cost_to_target_ratio: float = 0.30,  # Max 30% of gross target eaten by costs
+        min_net_reward_risk: float = 0.7,
+        max_cost_to_target_ratio: float = 0.45,  # RISK-ON: 45% (was 30%) — 1R+ edge after costs trades
         default_nifty_lot: int = 75,
         default_banknifty_lot: int = 30,
         default_sensex_lot: int = 10,

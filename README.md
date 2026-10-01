@@ -5,9 +5,9 @@ DROID is a personal trading-intelligence terminal for Indian index futures & opt
 ```
 ┌──────────────────────────────┐        ┌───────────────────────────────────────────────┐
 │  Frontend (Next.js static)   │        │  Backend (FastAPI, 127.0.0.1:8000)            │
-│  https://fo-droid.web.app    │◄──────►│  Central feed · Signal worker · Swing worker  │
-│  Firebase Hosting            │  HTTP  │  Telegram stack · Forecast/Flow schedulers    │
-└──────────────────────────────┘        │  Paper engine · AI copilot · ML research      │
+│  https://fo-droid.web.app    │◄──────►│  Central feed · Signal worker · Forecast schedulers│
+│  Firebase Hosting            │  HTTP  │  Telegram stack · Institutional flow schedulers     │
+└──────────────────────────────┘        │  Paper engine · AI copilot · ML research             │
                                         └───────────┬───────────────────────┬───────────┘
                                                     │                       │
                                           ┌─────────▼─────────┐   ┌─────────▼─────────┐
@@ -47,7 +47,6 @@ Droid/
 │   │   ├── research/         Forecast research: predictions, settlement, shadow, scheduler
 │   │   ├── services/         Central feed, write pipeline, snapshots, SLO, paper, OpenRouter catalog
 │   │   ├── signals/          Signal engine: scanner, FSM, risk, paper, outcomes, audit, SSE/Telegram
-│   │   ├── swing/            Swing trading EOD scan + intraday monitor
 │   │   └── technical_analysis/ Indicators and TA primitives
 │   ├── scripts/              Training, validation, backfill, promotion scripts
 │   ├── tests/                Pytest suite (including the no-fabrication gate)
@@ -55,9 +54,9 @@ Droid/
 │   ├── run_migrations.py     Applies database/migrations/*.sql to Supabase
 │   └── .env.example          Backend environment template
 ├── frontend/                 Next.js 16 static export (React 19, Tailwind 4, Radix UI)
-│   ├── src/app/              Routes: /, /signals, /swing, /options, /trade, /intel,
+│   ├── src/app/              Routes: /, /signals, /options, /trade, /intel,
 │   │                         /lab, /copilot, /ops, /settings, /login
-│   ├── src/components/       Module UI (dashboard, signals, swing, options, trade, intel,
+│   ├── src/components/       Module UI (dashboard, signals, options, trade, intel,
 │   │                         lab, copilot, ops, settings, shell, ui)
 │   ├── src/hooks/            Data hooks (market stream, desks, execution guard, …)
 │   ├── src/context/          App stream / instrument / market session contexts
@@ -78,7 +77,6 @@ Droid/
 |--------------|----------------------------|-------------------------------------------------------------------------|
 | `/`          | Dashboard / Command Centre| System health, feed circuits, regime, ML bias, forecast and signal ribbon |
 | `/signals`   | Signals & Ledger           | Scanner grid, signal lifecycle, execution ledger, outcomes             |
-| `/swing`     | Swing Desk                 | EOD swing scans and intraday swing positions                           |
 | `/options`   | Options & Strategy         | Option chain analytics, strategy builder, options intelligence          |
 | `/trade`     | Trade Ops                  | Paper/live trade operations, health panel, risk controls                |
 | `/intel`     | Intel                      | FII/DII flows, institutional overlays, event intelligence               |
@@ -150,14 +148,14 @@ Create `frontend/.env.local`:
 
 | Action | Command |
 |--------|---------|
-| Start everything (1-click) | Double-click `Start-Backend.cmd` — starts uvicorn, waits for `/health/subsystems`, then opens https://fo-droid.web.app |
-| Start backend manually | `backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload` (from `backend/`) |
+| Start everything (1-click, **default**) | Double-click `Start-Backend.cmd` — starts uvicorn, waits for `/health/subsystems`, then opens https://fo-droid.web.app |
+| Start backend in a console | From `backend/`: `.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000` — no `--reload` on Windows (the reloader deadlocks and keeps port 8000 held; relaunch after code changes instead) |
 | API docs | http://127.0.0.1:8000/docs |
 | Frontend local dev | `npm run dev` in `frontend/` (optional; production is the static Firebase site) |
 | Deploy frontend | Double-click `Deploy-Frontend.cmd` — builds static export with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` and runs `firebase deploy --only hosting --project fo-droid` |
 | Mobile access | Double-click `Start-Mobile-Tunnel.cmd` — exposes the backend via a Cloudflare quick tunnel, rebuilds the export with that URL, redeploys. Quick-tunnel URLs change on restart, so re-run after reboot. Broker OAuth still callbacks to `127.0.0.1`, so do FYERS login on the PC. |
 
-Backend startup brings up (once per process): central market feed, FYERS stream with retry, Telegram stack, morning briefing (08:50 IST), automated signal worker (3s risk / 10s scalp / 30s intraday), swing worker, forecast + institutional-flow schedulers, event engine, and signal/paper persistence hydration. Graceful shutdown runs on process teardown only.
+Backend startup brings up (once per process): central market feed, FYERS stream with retry, Telegram stack, morning briefing (08:50 IST), automated signal worker (3s risk / 10s scalp / 30s intraday), forecast + institutional-flow schedulers, event engine, and signal/paper persistence hydration. Graceful shutdown runs on process teardown only.
 
 ## Testing & CI
 

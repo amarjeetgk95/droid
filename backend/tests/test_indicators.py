@@ -1,5 +1,5 @@
-import math
-from app.quant.indicators import (
+﻿import math
+from app.market_core.indicators import (
     calculate_sma, calculate_ema, calculate_rsi, calculate_atr,
     calculate_adx, calculate_bollinger_bands, calculate_supertrend
 )

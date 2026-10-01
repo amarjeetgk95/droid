@@ -78,6 +78,7 @@ export function EventDetail({
         <span className="card-meta num">{eventIdOf(event).slice(0, 8)}</span>
       </div>
       <div className="card-bd flex flex-col gap-2">
+        <p className="sg-note">What this event is, when it happens, and why it matters to the market.</p>
         <div className="pnl-strip">
           <span className="ps">
             <span className="ps-l">verification</span>
@@ -115,16 +116,16 @@ export function EventDetail({
 
         {scores ? (
           <div className="sg-kvlist">
-            <Kv label="importance" value={fmtScore(scores.importance.final_score)} />
-            <Kv label="market impact" value={scores.market_impact.status === 'SCORED' ? fmtScore(scores.market_impact.final_score) : scores.market_impact.status} />
-            <Kv label="opportunity" value={scores.opportunity.status === 'SCORED' ? fmtScore(scores.opportunity.final_score) : scores.opportunity.status} />
+            <div className="sg-kv"><span className="l">importance</span><span className="v">{fmtScore(scores.importance.final_score)}</span></div>
+            <div className="sg-kv"><span className="l">market impact</span><span className="v">{scores.market_impact.status === 'SCORED' ? fmtScore(scores.market_impact.final_score) : scores.market_impact.status}</span></div>
+            <div className="sg-kv"><span className="l">opportunity</span><span className="v">{scores.opportunity.status === 'SCORED' ? fmtScore(scores.opportunity.final_score) : scores.opportunity.status}</span></div>
             {scores.opportunity.failed_gates.length > 0 ? (
-              <Kv label="failed gates" value={scores.opportunity.failed_gates.join(', ')} />
+              <div className="sg-kv"><span className="l">failed gates</span><span className="v">{scores.opportunity.failed_gates.join(', ')}</span></div>
             ) : null}
-            {scores.opportunity.reason ? <Kv label="gate reason" value={scores.opportunity.reason} /> : null}
+            {scores.opportunity.reason ? <div className="sg-kv"><span className="l">gate reason</span><span className="v">{scores.opportunity.reason}</span></div> : null}
           </div>
         ) : (
-          <p className="sg-note">No score snapshot for this event yet.</p>
+          <p className="sg-note">No score snapshot for this event yet. Scores are computed when the engine processes the event.</p>
         )}
 
         {comparables.length > 0 ? (
@@ -143,44 +144,44 @@ export function EventDetail({
             </table>
           </div>
         ) : (
-          <p className="sg-note">No historical comparables for this event.</p>
+          <p className="sg-note">No historical comparables for this event. The engine needs past events to find patterns.</p>
         )}
 
         {prediction ? (
           <div className="sg-kvlist">
-            <Kv label="predicted" value={`${prediction.predicted_direction} · conf ${prediction.confidence}`} />
-            <Kv label="decision" value={prediction.decision.replace(/_/g, ' ')} />
-            <Kv label="cutoff" value={fmtClockIST(prediction.data_cutoff_timestamp)} />
-            <Kv label="immutable" value={prediction.snapshot_immutable ? 'YES' : 'NO'} />
+            <div className="sg-kv"><span className="l">predicted</span><span className="v">{prediction.predicted_direction} · conf {prediction.confidence}</span></div>
+            <div className="sg-kv"><span className="l">decision</span><span className="v">{prediction.decision.replace(/_/g, ' ')}</span></div>
+            <div className="sg-kv"><span className="l">cutoff</span><span className="v">{fmtClockIST(prediction.data_cutoff_timestamp)}</span></div>
+            <div className="sg-kv"><span className="l">immutable</span><span className="v">{prediction.snapshot_immutable ? 'YES' : 'NO'}</span></div>
           </div>
         ) : (
-          <p className="sg-note">No immutable prediction snapshot for this event.</p>
+          <p className="sg-note">No immutable prediction snapshot for this event yet. Predictions are created once and never changed.</p>
         )}
 
         {live ? (
           <div className="sg-kvlist">
-            <Kv label="live underlying" value={live.underlying} />
-            <Kv label="opportunity" value={fmtScore(live.opportunity_score.final_score)} />
-            <Kv label="strategy" value={live.strategy_state} />
-            <Kv label="mode" value={live.execution_mode} />
-            <Kv label="spot" value={String(pickNum(getObj(live.live_options) ?? {}, 'spot_price') ?? '—')} />
-            <Kv label="pcr OI" value={String(pickStr(getObj(live.live_options) ?? {}, 'pcr_oi') ?? pickNum(getObj(live.live_options) ?? {}, 'pcr_oi') ?? '—')} />
+            <div className="sg-kv"><span className="l">live underlying</span><span className="v">{live.underlying}</span></div>
+            <div className="sg-kv"><span className="l">opportunity</span><span className="v">{fmtScore(live.opportunity_score.final_score)}</span></div>
+            <div className="sg-kv"><span className="l">strategy</span><span className="v">{live.strategy_state}</span></div>
+            <div className="sg-kv"><span className="l">mode</span><span className="v">{live.execution_mode}</span></div>
+            <div className="sg-kv"><span className="l">spot</span><span className="v">{String(pickNum(getObj(live.live_options) ?? {}, 'spot_price') ?? '—')}</span></div>
+            <div className="sg-kv"><span className="l">pcr OI</span><span className="v">{String(pickStr(getObj(live.live_options) ?? {}, 'pcr_oi') ?? pickNum(getObj(live.live_options) ?? {}, 'pcr_oi') ?? '—')}</span></div>
           </div>
         ) : (
-          <p className="sg-note">No live opportunity evaluation for this event right now.</p>
+          <p className="sg-note">No live opportunity evaluation for this event right now. This updates while the market is open.</p>
         )}
 
         {outcome ? (
           <div className="sg-kvlist">
-            <Kv label="predicted" value={outcome.predicted_direction} />
-            <Kv label="actual" value={outcome.actual_direction} />
-            <Kv label="correct" value={outcome.prediction_correct ? 'YES' : 'NO'} />
-            <Kv label="initial move" value={`${outcome.initial_move_pct}%`} />
-            <Kv label="max move" value={`${outcome.maximum_move_pct}%`} />
-            <Kv label="settled" value={outcome.is_settled ? 'YES' : 'NO'} />
+            <div className="sg-kv"><span className="l">predicted</span><span className="v">{outcome.predicted_direction}</span></div>
+            <div className="sg-kv"><span className="l">actual</span><span className="v">{outcome.actual_direction}</span></div>
+            <div className="sg-kv"><span className="l">correct</span><span className="v">{outcome.prediction_correct ? 'YES' : 'NO'}</span></div>
+            <div className="sg-kv"><span className="l">initial move</span><span className="v">{outcome.initial_move_pct}%</span></div>
+            <div className="sg-kv"><span className="l">max move</span><span className="v">{outcome.maximum_move_pct}%</span></div>
+            <div className="sg-kv"><span className="l">settled</span><span className="v">{outcome.is_settled ? 'YES' : 'NO'}</span></div>
           </div>
         ) : (
-          <p className="sg-note">Outcome not yet settled for this event.</p>
+          <p className="sg-note">Outcome not yet settled for this event. Settles after the event passes and market impact is measured.</p>
         )}
 
         {bundle.errors.length > 0 ? (

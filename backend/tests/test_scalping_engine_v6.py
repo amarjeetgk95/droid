@@ -131,10 +131,13 @@ class TestScalpingConfirmationEngine:
         assert res_dup.passed is False
         assert res_dup.reason_code == "REJECTED_DEDUPLICATION"
 
-        # Next candle 30 seconds later: rejected by cooldown (default 60s)
+        # Next candle 30 seconds later: RISK-ON 1M cooldown is 20s (was 60s),
+        # so 30s passes; 10s still cools down.
         res_cd = scalp_confirmation_engine.validate(cand, Decimal("24900.0"), "COMPRESSION_SQUEEZE", candle_timestamp_ms=c_ts + 30000, now_ms=c_ts + 31000)
-        assert res_cd.passed is False
-        assert res_cd.reason_code == "REJECTED_COOLDOWN"
+        assert res_cd.passed is True
+        res_cd10 = scalp_confirmation_engine.validate(cand, Decimal("24900.0"), "COMPRESSION_SQUEEZE", candle_timestamp_ms=c_ts + 10000, now_ms=c_ts + 11000)
+        assert res_cd10.passed is False
+        assert res_cd10.reason_code == "REJECTED_COOLDOWN"
 
 
 class TestTwoClockFSMAndLifecycle:

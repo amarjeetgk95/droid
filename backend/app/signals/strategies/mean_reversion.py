@@ -162,6 +162,13 @@ class MeanReversionStrategy(Strategy):
                         f"Target 1 at Mean / VWAP (₹{bb_middle:,.2f})",
                     ],
                     option_contract=contract,
+                    # Active holding clock. Without it this candidate is
+                    # UNTRADEABLE BY CONSTRUCTION: friction_gate falls back to
+                    # candidate.time_stop_seconds, gets None, and hard-rejects
+                    # with REJECT_NO_HOLDING_CLOCK on 100% of evaluations.
+                    # 15 min matches the mean/VWAP reversion horizon on a 5M bar.
+                    ttl_seconds=300,
+                    time_stop_seconds=900,
                 )
 
         # ── BEARISH OVERBOUGHT REVERSAL (LONG_PUT) ──
@@ -229,6 +236,10 @@ class MeanReversionStrategy(Strategy):
                         f"Target 1 at Mean / VWAP (₹{bb_middle:,.2f})",
                     ],
                     option_contract=contract,
+                    # See LONG_CALL branch: absent holding clock => deterministic
+                    # REJECT_NO_HOLDING_CLOCK at the friction gate.
+                    ttl_seconds=300,
+                    time_stop_seconds=900,
                 )
 
         return None

@@ -46,12 +46,12 @@ class ScalpConfirmationEngine:
     def __init__(
         self,
         skew_tolerance_ms: int = 250,
-        max_candle_age_ms: int = 45_000,
-        default_cooldown_seconds: int = 60,
-        max_spread_pts: Decimal = Decimal("2.00"),
-        max_spread_pct: Decimal = Decimal("0.020"),
-        min_option_volume: int = 1000,
-        min_option_oi: int = 5000,
+        max_candle_age_ms: int = 120_000,
+        default_cooldown_seconds: int = 20,
+        max_spread_pts: Decimal = Decimal("4.00"),
+        max_spread_pct: Decimal = Decimal("0.040"),
+        min_option_volume: int = 100,
+        min_option_oi: int = 500,
     ):
         self.skew_tolerance_ms = skew_tolerance_ms
         self.max_candle_age_ms = max_candle_age_ms
@@ -146,12 +146,12 @@ class ScalpConfirmationEngine:
         return True, None
 
     def _max_age_for_timeframe(self, timeframe: str) -> int:
-        # P0-2: scalp candles decay fast. 1M prints are only actionable for
-        # 45s; 3M+ for 90s. The old 120s blanket let dead prints arm.
+        # RISK-ON: 1M prints actionable 120s, 3M+ 180s (was 45s/90s — live
+        # polls with 60s cadence arrived already-stale and died here).
         tf = str(timeframe or "").upper()
         if tf == "1M":
-            return 45_000
-        return 90_000
+            return 120_000
+        return 180_000
 
     def validate(
         self,
@@ -208,11 +208,11 @@ class ScalpConfirmationEngine:
         last_ts = self._last_signal_time.get(cd_key, 0)
         elapsed_sec = (ts_now - last_ts) / 1000.0
         tf_cooldown_map = {
-            "1M": 60,
-            "3M": 180,
-            "5M": 300,
-            "15M": 900,
-            "1H": 3600,
+            "1M": 20,
+            "3M": 60,
+            "5M": 120,
+            "15M": 300,
+            "1H": 1200,
             "1D": 86400,
         }
         cooldown_sec = tf_cooldown_map.get(str(candidate.timeframe).upper(), self.default_cooldown_seconds)
@@ -232,16 +232,17 @@ class ScalpConfirmationEngine:
                 metrics={"elapsed_seconds": elapsed_sec, "cooldown_seconds": cooldown_sec, "timeframe": candidate.timeframe},
             )
 
-        # 4. Anti-Chase Ceiling (§16)
+        # 4. Anti-Chase Ceiling (§16) — RISK-ON: 0.50R normal / 0.60R volatile
+        # (was 0.35/0.30 — momentum entries chased 0.4R and died here).
         if candidate.direction == "LONG_CALL":
             chase_pts = max(Decimal("0"), current_spot - candidate.trigger)
         else:
             chase_pts = max(Decimal("0"), candidate.trigger - current_spot)
 
-        # Fraction allowed: 0.30 in volatile regimes, otherwise 0.35R (tightened for 80% quality)
+        # Fraction allowed: 0.60 in volatile regimes, otherwise 0.50R (risk-on)
         r_upper = regime.upper()
         is_high_vol = any(k in r_upper for k in ("HIGH_VOL", "VOLATILE", "EVENT"))
-        allowed_fraction = 0.30 if is_high_vol else 0.35
+        allowed_fraction = 0.60 if is_high_vol else 0.50
         max_allowed_chase_pts = candidate.risk_points * Decimal(str(allowed_fraction))
 
         if chase_pts > max_allowed_chase_pts:
@@ -273,11 +274,11 @@ class ScalpConfirmationEngine:
                 metrics={"regime": regime, "strategy": candidate.strategy},
             )
 
-        # 6. India VIX Percentile Filter — P0-2: NO GAMMA_SPIKE exemption.
-        # Extreme-VIX chop kills every scalp desk. The only override is proven
-        # executability: spread <= 1.0pt AND RVOL >= 1.5 on this print.
+        # 6. India VIX Percentile Filter — RISK-ON: suppress only >= 90th
+        # percentile (was 80 — most trend days sat at 80-85 and died here).
+        # Override stays: spread <= 1.0pt AND RVOL >= 1.5 proves executability.
         vix_pct = getattr(candidate, "vix_percentile", None)
-        if vix_pct is not None and vix_pct >= 80.0:
+        if vix_pct is not None and vix_pct >= 90.0:
             _rvol_now = float(rvol) if rvol is not None else None
             _spread_now: float | None = None
             try:
@@ -298,29 +299,14 @@ class ScalpConfirmationEngine:
                     metrics={"vix_percentile": vix_pct, "spread": _spread_now, "rvol": _rvol_now},
                 )
 
-        # 7. Lunch-Session Liquidity Vacuum Filter — P0-2: NO GAMMA_SPIKE
-        # exemption (same spread+RVOL override as VIX).
+        # 7. Lunch-Session Liquidity Vacuum Filter — RISK-ON: lunch prints pass
+        # with a rationale note (was hard veto — 12:00-13:30 went dark daily).
         lunch_session = getattr(candidate, "lunch_session", False)
         if lunch_session:
-            _rvol_now2 = float(rvol) if rvol is not None else None
-            _spread_now2: float | None = None
             try:
-                if option_bid is not None and option_ask is not None:
-                    _spread_now2 = float(option_ask - option_bid)
+                candidate.rationale.append("Lunch session print (12:00-13:30 IST) — thin liquidity, half size")
             except Exception:
-                _spread_now2 = None
-            _override2 = (
-                _spread_now2 is not None and _spread_now2 <= 1.0
-                and _rvol_now2 is not None and _rvol_now2 >= 1.5
-            )
-            if not _override2:
-                return ScalpConfirmationResult(
-                    passed=False,
-                    candidate=candidate,
-                    reason_code="REJECTED_LUNCH_SESSION",
-                    rejection_message="Lunch session (12:00-13:30 IST) — liquidity vacuum suppresses scalp entries (no exemption; override needs spread<=1.0+RVOL>=1.5)",
-                    metrics={"lunch_session": True, "spread": _spread_now2, "rvol": _rvol_now2},
-                )
+                pass
 
         # 8. Liquidity & Spread Validation (P0-2: 2.00pts / 2.0%, OR logic).
         # Old code required BOTH pts AND pct to breach (AND) — a 5pt spread

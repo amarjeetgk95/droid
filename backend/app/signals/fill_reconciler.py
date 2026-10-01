@@ -1,14 +1,14 @@
-"""
+﻿"""
 Fill Reconciler & Execution Domain Adapter (Version 6.0)
 
 Enforces:
-  1. Strict Domain Separation: Underlying Signal Domain vs Execution Domain (§24).
+  1. Strict Domain Separation: Underlying Signal Domain vs Execution Domain (Â§24).
   2. Option Realized P&L is calculated strictly from actual option fills:
      Net P&L = (Exit Premium - Entry Premium) * Qty - Statutory Costs.
-     DELTA IS STRICTLY FORBIDDEN FOR REALIZED P&L (§25).
+     DELTA IS STRICTLY FORBIDDEN FOR REALIZED P&L (Â§25).
   3. Staged Exits: T1 (50% staged exit) + Runner (50% runner exit at T2/SL/Time-Stop).
   4. Residual Quantity & Fill Tracking.
-  5. Indian Option Statutory Costs Deduction via app.quant.costs.
+  5. Indian Option Statutory Costs Deduction via app.market_core.costs.
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from typing import Optional
 from pydantic import BaseModel, Field
 import structlog
 
-from app.quant.costs import calculate_option_costs, CostBreakdown
-from app.quant.black76 import black76_price
+from app.market_core.costs import calculate_option_costs, CostBreakdown
+from app.market_core.black76 import black76_price
 from app.signals.fsm import SignalInstance
 
 logger = structlog.get_logger()
@@ -65,7 +65,7 @@ class FillReconciliationRecord(BaseModel):
     created_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
     updated_at_utc: int = Field(default_factory=lambda: int(time.time() * 1000))
     # True when rebuilt from ledger fills after the in-memory record was lost
-    # (e.g. restart). Economics before the rebuild are unknown — consumers
+    # (e.g. restart). Economics before the rebuild are unknown â€” consumers
     # must prefer the audit ledger's own P&L over this record's partial sums.
     synthetic: bool = False
 
@@ -81,7 +81,7 @@ def resolve_signal_lot_size_with_provenance(sig: SignalInstance) -> tuple[int, b
 
     Returns (lot_size, used_fallback). Contract lot is truth; 75/30/10 are
     last-resort only for rows predating contract metadata. Fallback usage is
-    never silent — callers must set synthetic=True + surfaced
+    never silent â€” callers must set synthetic=True + surfaced
     reconciliation_status.
     """
     contract = getattr(sig, "option_contract", None)
@@ -116,7 +116,7 @@ def resolve_signal_lot_size(sig: SignalInstance) -> int:
     """Authoritative lot size for a signal's option contract.
 
     Prefers the contract's own ``lot_size`` (chain/resolver truth). The legacy
-    underlying defaults (75/30/10) remain only as a last-resort fallback —
+    underlying defaults (75/30/10) remain only as a last-resort fallback â€”
     never silent (warning logged; callers must flag synthetic=true).
     """
     _lot, _fallback = resolve_signal_lot_size_with_provenance(sig)
@@ -144,7 +144,7 @@ class OptionFillReconciler:
     ) -> float:
         """
         Estimates theoretical option premium using Black-76 when market quotes are absent.
-        GATED behind allow_model=True — production fill paths must never call this
+        GATED behind allow_model=True â€” production fill paths must never call this
         without explicit opt-in (model prices are not fills).
         """
         if not allow_model:
@@ -173,7 +173,7 @@ class OptionFillReconciler:
         """
         Registers actual entry fill, sets initial position and pre-computes 50% staged exit qty.
         Corrupted entries (None/non-positive/off-domain) return None + quarantine
-        (RECONCILIATION_REQUIRED) — never fabricate a premium.
+        (RECONCILIATION_REQUIRED) â€” never fabricate a premium.
         Idempotent on (signal, stage=ENTRY, fill_ts bucket).
 
         ``lot_size`` defaults to the signal contract's own lot size (falling back
@@ -187,13 +187,13 @@ class OptionFillReconciler:
         else:
             lot_size, _lot_fallback = resolve_signal_lot_size_with_provenance(sig)
         # Guard: an option fill can NEVER be an index spot price (>5000 pts).
-        # FAIL CLOSED: do not repair it with a Black-76 estimate — that would
+        # FAIL CLOSED: do not repair it with a Black-76 estimate â€” that would
         # manufacture the very premium we are trying to verify. Record the raw
         # observation, flag the record, and let the audit ledger refuse to book
         # cross-domain P&L downstream.
         is_opt = bool(sig.option_contract or "CALL" in sig.direction or "PUT" in sig.direction)
         if fill_price is None or (isinstance(fill_price, (int, float)) and float(fill_price) <= 0):
-            logger.error("corrupted_option_fill_none", signal_id=sig.signal_id, note="None/non-positive fill → quarantine")
+            logger.error("corrupted_option_fill_none", signal_id=sig.signal_id, note="None/non-positive fill â†’ quarantine")
             rec_q = FillReconciliationRecord(
                 signal_id=sig.signal_id, underlying=sig.underlying, strategy=sig.strategy,
                 direction=sig.direction, lot_size=lot_size, intended_qty=int(quantity or 0),
@@ -294,7 +294,7 @@ class OptionFillReconciler:
         exit_time_ms: Optional[int] = None,
     ) -> FillReconciliationRecord:
         """
-        Executes T1 Staged Exit (§18, §25):
+        Executes T1 Staged Exit (Â§18, Â§25):
           - Closes t1_qty (50% staged exit).
           - Calculates net option P&L and statutory costs for closed portion.
           - Updates remaining_qty for the runner.
@@ -306,7 +306,7 @@ class OptionFillReconciler:
         _idem = self._t1_idem_key(sig.signal_id, float(exit_fill_price or 0), now_ms)
         existing = self._records.get(sig.signal_id)
         if existing is not None and existing.t1_fill_price == exit_fill_price:
-            # Same price already booked for T1 — check fill history for same bucket.
+            # Same price already booked for T1 â€” check fill history for same bucket.
             for f in existing.fills:
                 if f.stage == "TARGET_1" and abs(int(f.timestamp_utc // 1000) - int(now_ms // 1000)) < 2:
                     return existing
@@ -331,7 +331,7 @@ class OptionFillReconciler:
             qty = int(sig.intended_qty or (sig.paper_order or {}).get("quantity", lot_sz))
             rec = self.reconcile_entry(sig, float(sig.actual_fill_price or sig.trigger), qty, lot_sz)
             if rec is None:
-                # Corrupted entry → quarantine record already stored; return it.
+                # Corrupted entry â†’ quarantine record already stored; return it.
                 return self._records[sig.signal_id]
             if _lot_fb:
                 try:
@@ -424,7 +424,7 @@ class OptionFillReconciler:
                         )
                 except Exception:
                     pass
-        # Idempotency (signal, stage, fill_ts): same final already booked → noop.
+        # Idempotency (signal, stage, fill_ts): same final already booked â†’ noop.
         try:
             for f in rec.fills:
                 if f.stage == exit_reason and abs(int(f.timestamp_utc // 1000) - int(now_ms // 1000)) < 2 and f.price == exit_fill_price:
@@ -436,8 +436,8 @@ class OptionFillReconciler:
         if close_qty > 0:
             # Domain guard (fail closed, no repair): option premiums live below
             # ~5000, so a spot-scale entry (e.g. trigger 23807 stored as a fill)
-            # paired with a premium exit would fabricate a -₹17L P&L. Close the
-            # position but book nothing — a Black-76 "repair" here would only
+            # paired with a premium exit would fabricate a -â‚¹17L P&L. Close the
+            # position but book nothing â€” a Black-76 "repair" here would only
             # swap one invented number for another.
             _is_opt = bool(
                 (sig.option_contract or {})

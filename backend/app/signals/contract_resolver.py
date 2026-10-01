@@ -32,7 +32,7 @@ FYERS_WEEKLY_MONTH_CODE: dict[int, str] = {
 # SEBI Sep-2025 expiry harmonization (one weekly benchmark per exchange):
 #   NSE NIFTY  -> Tuesday weeklies (incl. month-end Tuesday monthlies)
 #   BSE SENSEX -> Thursday weeklies (incl. month-end Thursday monthlies)
-#   BANKNIFTY  -> NO weeklies since Nov 2024; monthlies expire last Thursday.
+#   BANKNIFTY  -> NO weeklies since Nov 2024; monthlies expire last Tuesday.
 # Python weekday(): Mon=0 ... Sun=6. Pre-2025 values (NIFTY Thu, SENSEX Fri)
 # mint non-existent contracts — never revert without an exchange circular.
 INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
@@ -60,8 +60,8 @@ INDEX_CONTRACT_CONFIGS: dict[str, dict] = {
         "lot_size": 30,
         "tick_size": Decimal("0.05"),
         "contract_multiplier": Decimal("1.0"),
-        "weekly_expiry_day": 3,  # Thursday (monthlies only — see has_weekly)
-        "monthly_expiry_day": 3,
+        "weekly_expiry_day": 1,  # Tuesday (monthlies only — see has_weekly)
+        "monthly_expiry_day": 1,
         "has_weekly": False,
     },
     "SENSEX": {

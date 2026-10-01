@@ -63,11 +63,10 @@ def _chain_ce():
 
 @pytest.mark.asyncio
 async def test_degraded_fno_blocks_candidate_arming(monkeypatch):
-    """Verify that candidates with fno_degraded=True fail closed at admission.
-
-    P0-2 contract: degraded F&O can never arm — the FNOIntegrityGate rejects
-    the candidate before any FSM registration, so no VALIDATED watch is created
-    that could later be transitioned by an operator.
+    """RISK-ON 2026-09-23: degraded F&O haircuts (-4) and forces VALIDATED, no
+    longer a hard ARMED_BLOCKED veto at admission. The candidate proceeds past
+    FNOIntegrityGate; PIT-empty here still drops it (no candles), so nothing
+    registers — but the veto code is gone by design.
     """
     monkeypatch.setattr(calendar_service, "can_trade_now", _mock_open_permission)
 
@@ -96,7 +95,8 @@ async def test_degraded_fno_blocks_candidate_arming(monkeypatch):
 
     registered, rejected = await scanner._process_candidates([cand])
     assert registered == []
-    assert any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
+    # RISK-ON: FNO gate passes; PIT-empty is the drop reason here.
+    assert not any("ARMED_BLOCKED_FNO_DEGRADED" in r for r in rejected)
 
     # No FSM instance may exist for the rejected candidate.
     assert not [s for s in signal_fsm.list_active() if s.underlying == "NIFTY"]
@@ -125,10 +125,12 @@ def test_dynamic_fno_scoring_in_breakout():
     strat = BreakoutStrategy()
 
     # Compressed base + expansion candle closing beyond resistance 24800.
+    # Candle 3 dips back below the broken level so the decision candle makes a
+    # FRESH cross (prev close <= level) per the close-beyond gate.
     candles = [
         {"open": 24796.0, "high": 24806.0, "low": 24794.0, "close": 24802.0, "volume": 1000},
         {"open": 24802.0, "high": 24808.0, "low": 24796.0, "close": 24805.0, "volume": 1000},
-        {"open": 24805.0, "high": 24809.0, "low": 24798.0, "close": 24804.0, "volume": 1000},
+        {"open": 24805.0, "high": 24809.0, "low": 24798.0, "close": 24799.0, "volume": 1000},
         {"open": 24804.0, "high": 24816.0, "low": 24800.0, "close": 24812.0, "volume": 5000},
     ]
 

@@ -62,14 +62,18 @@ def test_october_november_december_codes():
 
 
 def test_post_2025_expiry_weekdays():
-    # SEBI Sep-2025 map: NIFTY Tue, SENSEX Thu, BANKNIFTY monthly-only (last Thu).
+    # SEBI Sep-2025 map: NSE monthly/weekly expiries on Tuesday (last Tuesday of
+    # the month for monthlies), BSE SENSEX on Thursday. BANKNIFTY has had no
+    # weeklies since Nov 2024, so its only expiry is the month-end Tuesday.
     wed = date(2026, 9, 9)  # Wednesday
     s_exp, s_kind = resolve_nearest_expiry("SENSEX", wed)
     assert (s_exp, s_kind) == (date(2026, 9, 10), "WEEKLY"), (s_exp, s_kind)
     n_exp, n_kind = resolve_nearest_expiry("NIFTY", wed)
     assert (n_exp, n_kind) == (date(2026, 9, 15), "WEEKLY"), (n_exp, n_kind)
     b_exp, b_kind = resolve_nearest_expiry("BANKNIFTY", wed)
-    assert (b_exp, b_kind) == (date(2026, 9, 24), "MONTHLY"), (b_exp, b_kind)
+    assert (b_exp, b_kind) == (date(2026, 9, 29), "MONTHLY"), (b_exp, b_kind)
+    assert b_exp.weekday() == 1  # Tuesday — month-end NSE expiry
+    assert b_exp == date(2026, 9, 29)  # last Tuesday of Sep 2026
 
 
 def test_sensex_thursday_contract_symbol():

@@ -49,21 +49,22 @@ DEFAULT_WEIGHTS = _load_scoring_weights_percent()
 # every fused output so downstream (explain, audit, AI) can prove which bundle scored.
 WEIGHTS_VERSION: int | str = _SCORING_CONFIG.get("version", 2)
 
-# Unified thresholds (scoring_weights.json: fusion_long 62 / fusion_short 38 / armed 78).
-# Armed threshold lives ONLY in scoring_weights.json thresholds.armed (78.0).
+# Unified thresholds (scoring_weights.json: fusion_long 55 / fusion_short 45 / armed 60).
+# RISK-ON overhaul 2026-09-23: 62/38 strangled every range day into NO_TRADE.
+# Armed threshold lives ONLY in scoring_weights.json thresholds.armed (60.0).
 _TH = _SCORING_CONFIG.get("thresholds", {}) or {}
 try:
-    FUSION_LONG_THRESHOLD = Decimal(str(_TH.get("fusion_long", 62)))
+    FUSION_LONG_THRESHOLD = Decimal(str(_TH.get("fusion_long", 55)))
 except Exception:
-    FUSION_LONG_THRESHOLD = Decimal("62")
+    FUSION_LONG_THRESHOLD = Decimal("55")
 try:
-    FUSION_SHORT_THRESHOLD = Decimal(str(_TH.get("fusion_short", 38)))
+    FUSION_SHORT_THRESHOLD = Decimal(str(_TH.get("fusion_short", 45)))
 except Exception:
-    FUSION_SHORT_THRESHOLD = Decimal("38")
+    FUSION_SHORT_THRESHOLD = Decimal("45")
 try:
-    ARMED_THRESHOLD = Decimal(str(_TH.get("armed", 78.0)))
+    ARMED_THRESHOLD = Decimal(str(_TH.get("armed", 60.0)))
 except Exception:
-    ARMED_THRESHOLD = Decimal("78.0")
+    ARMED_THRESHOLD = Decimal("60.0")
 
 
 @dataclass
@@ -282,10 +283,11 @@ class SignalFusion:
 
         # Correlation penalty: when all three trend sleeves agree (all bull or all
         # bear) they are almost certainly the same impulse — haircut the fuse.
+        # RISK-ON: 2.0 (was 5.0 — punished exactly the strong trends we want).
         try:
             _all_bull = _t01 >= 0.75 and _m01 >= 0.75 and _r01 >= 0.75
             _all_bear = _t01 <= 0.25 and _m01 <= 0.25 and _r01 <= 0.25
-            correlation_penalty = D("5.0") if (_all_bull or _all_bear) else D("0")
+            correlation_penalty = D("2.0") if (_all_bull or _all_bear) else D("0")
         except Exception:
             correlation_penalty = D("0")
 
@@ -325,17 +327,19 @@ class SignalFusion:
         if ai_bias == direction: agreement += 1
         confidence: Decimal | None = D("0.5") + D(agreement) * D("0.07") + (abs(fused - D(50)) / D(200))
         # Haircut when AI unavailable (no AI key or NEUTRAL with low confidence)
+        # RISK-ON: 0.03 (was 0.08 — AI-offline days still deserve size).
         if not inputs.ai or inputs.ai.get("bias", "NEUTRAL") == "NEUTRAL":
-            confidence -= D("0.08")
+            confidence -= D("0.03")
         confidence = max(D("0.1"), min(D("0.90"), confidence))
         # Partial-missing fusion is explicitly fallback and non-actionable when
         # thin: never present a fallback 0.5-derived confidence as measured edge.
         # _measured holds the pre-substitution measured count (fail-closed).
+        # RISK-ON: 1 domain can trade (was 2 — single-strong-signal days went dark).
         try:
             _measured_ct = len(_measured)
         except Exception:
             _measured_ct = 0
-        if _fusion_status == "fallback" and _measured_ct < 2:
+        if _fusion_status == "fallback" and _measured_ct < 1:
             direction = "NO_TRADE"  # type: ignore[assignment]
             confidence = None
 
@@ -617,9 +621,9 @@ TriggerType = Literal["BREAKOUT","BREAKDOWN","VWAP_CROSS","EMA_CROSS","VOLUME_SP
 @dataclass
 class TriggerConfig:
     trigger_types: list[TriggerType] = field(default_factory=lambda: ["BREAKOUT"])
-    min_score: Decimal = D(60)
-    min_confidence: Decimal = D("0.6")
-    cooldown_seconds: int = 60
+    min_score: Decimal = D(50)
+    min_confidence: Decimal = D("0.40")
+    cooldown_seconds: int = 20
 
 
 class TriggerEngine:

@@ -109,8 +109,10 @@ export const PaperTradingSettingsSchema = z.object({
 
 // --- Preferences Settings ---
 export const PreferencesSettingsSchema = z.object({
-  // Accepted so old backups still import, but `migrateThemeToLight` coerces it back:
-  // globals.css has no dark token set, so 'dark' can never be honoured.
+  // Accepted so old backups still import, but `migrateThemeToLight` coerces it
+  // back to 'light'. The account-level field stays light-only on purpose: the
+  // live appearance axes (theme / density / contrast) are device preferences
+  // and live in lib/displayMode.ts, applied to <html> as data-* attributes.
   theme: z.enum(['light', 'dark']).default('light'),
   numberFormat: z.enum(['INDIAN', 'INTERNATIONAL']),
   defaultIndexSymbol: z.string().trim().min(1).max(50),

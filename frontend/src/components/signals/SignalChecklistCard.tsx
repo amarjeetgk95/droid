@@ -2,29 +2,27 @@
 
 import { Info, Play, Trash2 } from 'lucide-react';
 import {
-  confPct,
   executionEligibility,
   fmtDist,
   fmtTtl,
   isTerminalSignalState,
+  pickMs,
+  pickNum,
+  pickStr,
   shortId,
   signalAgeLabel,
-  stateTone,
 } from '@/lib/signalsNormalize';
 import type { ActiveRow } from '@/lib/signalsNormalize';
 import type { VirtualPosition } from '@/lib/types';
 import { fmtInr, pnlClass, positionUnrealized } from '@/lib/ledger';
 import { safeNum } from '@/lib/utils';
-import {
-  buildStageChecklist,
-  closedOutcome,
-  executionInfo,
-  stageOf,
-  type ChecklistStep,
-  type ChecklistStepStatus,
-} from '@/lib/signalStages';
+import { closedOutcome, executionInfo, stageOf, stateLabel } from '@/lib/signalStages';
 
-/* ── Helpers ───────────────────────────────────────────────── */
+import { SignalStageRail } from './parts/SignalStageRail';
+import { SignalGatesStrip } from './parts/SignalGatesStrip';
+import { SignalLevelGrid } from './parts/SignalLevelGrid';
+
+/* ── helpers ── */
 
 function directionText(direction: unknown): 'LONG' | 'SHORT' | string {
   const value = typeof direction === 'string' ? direction.toUpperCase() : '';
@@ -33,13 +31,21 @@ function directionText(direction: unknown): 'LONG' | 'SHORT' | string {
   return value || '—';
 }
 
-function formatStamp(ms: number | null): string | null {
-  if (ms === null) return null;
-  return new Date(ms).toLocaleTimeString('en-IN', {
+function fmtISTFull(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return '—';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('day')} ${get('month')} ${get('hour')}:${get('minute')}:${get('second')} IST`;
 }
 
 function optionContractLabel(raw: Record<string, unknown>): string | null {
@@ -50,65 +56,11 @@ function optionContractLabel(raw: Record<string, unknown>): string | null {
     (typeof c.display_symbol === 'string' && c.display_symbol) ||
     (typeof c.symbol === 'string' && c.symbol) ||
     (typeof c.broker_symbol === 'string' && c.broker_symbol);
-  if (sym) {
-    return sym.replace(/^(NSE|BSE):/i, '').replace(/-EQ$/i, '');
-  }
-  const underlying = c.underlying ?? raw.underlying ?? '';
-  const strike = c.strike ?? c.strike_price ?? '';
-  const optType = c.option_type ?? '';
-  const expiry = c.expiry_label ?? c.expiry_date ?? '';
-  if (underlying && strike) {
-    return `${underlying} ${expiry ? String(expiry).slice(0, 6) : ''} ${strike} ${optType}`.trim();
-  }
+  if (sym) return sym.replace(/^(NSE|BSE):/i, '').replace(/-EQ$/i, '');
   return null;
 }
 
-function liveStatusLabel(
-  stage: string,
-  state: string,
-  pnl: number | null,
-): { text: string; tone: 'live' | 'profit' | 'loss' | 'expired' | 'settled' } {
-  const terminal = isTerminalSignalState(state);
-  if (terminal) {
-    const outcome = closedOutcome(state);
-    if (outcome === 'WIN') return { text: 'CLOSED · WIN', tone: 'profit' };
-    if (outcome === 'LOSS') return { text: 'CLOSED · LOSS', tone: 'loss' };
-    if (state.toUpperCase().includes('EXPIRED')) return { text: 'EXPIRED', tone: 'expired' };
-    return { text: 'SETTLED', tone: 'settled' };
-  }
-  if (stage === 'EXECUTED' && pnl !== null) {
-    return pnl >= 0
-      ? { text: 'EXECUTED · IN PROFIT', tone: 'profit' }
-      : { text: 'EXECUTED · IN LOSS', tone: 'loss' };
-  }
-  if (stage === 'EXECUTED') return { text: 'EXECUTED', tone: 'live' };
-  return { text: 'LIVE', tone: 'live' };
-}
-
-const STATUS_TONE_CLASSES: Record<string, string> = {
-  live: 'text-accent border-accent-line bg-accent-wash',
-  profit: 'text-up-strong border-up-line bg-up-wash',
-  loss: 'text-down-strong border-down-line bg-down-wash',
-  expired: 'text-warn-strong border-warn-line bg-warn-wash',
-  settled: 'text-ink-2 border-border bg-surface-subtle',
-};
-
-/* ── Stepper step tone ──────────────────────────────────────── */
-
-function stepTone(step: ChecklistStep, outcome: 'WIN' | 'LOSS' | 'FLAT' | null): { box: string; glyph: string } {
-  const status: ChecklistStepStatus = step.status;
-  if (status === 'done') return { box: 'border-up-line bg-up-wash text-up-strong', glyph: '✓' };
-  if (status === 'current') return { box: 'border-accent-line bg-accent-wash text-accent', glyph: '●' };
-  if (status === 'skipped') return { box: 'border-border bg-surface-subtle text-ink-3', glyph: '–' };
-  if (status === 'terminal') {
-    if (outcome === 'WIN') return { box: 'border-up-line bg-up-wash text-up-strong', glyph: '✓' };
-    if (outcome === 'LOSS') return { box: 'border-down-line bg-down-wash text-down-strong', glyph: '✕' };
-    return { box: 'border-warn-line bg-warn-wash text-warn-strong', glyph: '■' };
-  }
-  return { box: 'border-border bg-surface-subtle text-ink-3', glyph: '○' };
-}
-
-/* ── Component ──────────────────────────────────────────────── */
+/* ── compact scanning tile — full dossier lives in SignalDetailDrawer ── */
 
 export function SignalChecklistCard({
   row,
@@ -132,31 +84,76 @@ export function SignalChecklistCard({
   const stage = stageOf(row.state);
   const terminal = stage === 'CLOSED';
   const outcome = terminal ? closedOutcome(row.state) : null;
-  const steps = buildStageChecklist(row);
   const eligibility = executionEligibility(row.state, marketClosed);
   const ttl = now > 0 ? fmtTtl(row.expiresMs, now) : ({ label: '—', tone: 'ok' } as const);
-  // Missing timestamps render "age unknown" — never a silent today/just-now.
   const age = signalAgeLabel(row.timeMs, now > 0 ? now : undefined);
   const dir = directionText(row.direction);
+  const isLong = dir === 'LONG';
+  const isShort = dir === 'SHORT';
   const fill = executionInfo(row);
   const pnl = position ? positionUnrealized(position) : null;
-  const showExecution = stage === 'EXECUTED' || fill.fillPrice !== null;
 
-  const contractLabel = optionContractLabel(row.raw);
-  const statusInfo = liveStatusLabel(stage, row.state, pnl);
-  const title = contractLabel ?? row.symbol;
+  const raw = (row.raw ?? {}) as Record<string, unknown>;
+  const contractLabel = optionContractLabel(raw);
+  const timeframe = pickStr(raw, 'timeframe') ?? null;
+  const deskLabel =
+    row.isScalp !== null ? (row.isScalp ? 'SCALP' : 'INTRADAY') : (row.desk ?? pickStr(raw, 'signal_type'));
+  const dataQuality = pickStr(raw, 'data_quality') ?? null;
+  const createdMs = pickMs(raw, 'created_at_utc', 'created_at_ms', 'created_at', 'created_at_iso') ?? row.timeMs;
+  const expiresMs = row.expiresMs ?? pickMs(raw, 'expires_at_utc', 'expiry_ms') ?? null;
+  const triggeredMs = pickMs(raw, 'triggered_at_utc', 'triggered_at') ?? null;
 
-  // Risk:Reward ratio from raw data
-  const riskPts = row.raw.risk_points ?? row.raw.risk_reward_t1;
-  const rr = typeof riskPts === 'number' && riskPts > 0
-    ? `1:${riskPts.toFixed(1)}`
-    : row.t1 && row.sl && row.triggerLevel
-      ? `1:${Math.abs(((row.t1 - row.triggerLevel) / (row.triggerLevel - row.sl))).toFixed(1)}`
+  const rrT1 = pickNum(raw, 'risk_reward_t1', 'risk_reward_1', 'rr_t1');
+  const rrT2 = pickNum(raw, 'risk_reward_t2', 'risk_reward_2', 'rr_t2');
+  const synthRr =
+    row.t1 !== null && row.sl !== null && row.triggerLevel !== null && row.triggerLevel !== row.sl
+      ? Math.abs((row.t1 - row.triggerLevel) / (row.triggerLevel - row.sl))
       : null;
+  const rrT1Final = rrT1 ?? synthRr;
+  const rrText =
+    rrT1Final !== null || rrT2 !== null
+      ? `1:${rrT1Final !== null ? rrT1Final.toFixed(2) : '—'}${rrT2 !== null ? ` / 1:${rrT2.toFixed(2)}` : ''}`
+      : null;
+
+  const spotAtDetect = row.spot ?? pickNum(raw, 'spot_price', 'spot_price_at_creation', 'current_price');
+  const distPts = pickNum(raw, 'distance_to_trigger_pts');
+  const distPct = pickNum(raw, 'distance_to_trigger_pct');
+  const distText =
+    distPts !== null || distPct !== null
+      ? `${distPts !== null ? `${distPts >= 0 ? '+' : ''}${distPts.toFixed(2)}` : '—'}${distPct !== null ? ` (${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%)` : ''}`
+      : fmtDist(row.triggerLevel, spotAtDetect);
+
+  const qty = fill.quantity ?? pickNum(raw, 'quantity', 'lots', 'intended_qty');
+  const exitPrice = pickNum(raw, 'exit_price');
+  const exitReason = pickStr(raw, 'exit_reason');
+
+  const steps = (() => {
+    // Reason line reads the latest transition reason off the checklist.
+    const historyEntries = Array.isArray(row.raw.state_history) ? row.raw.state_history : [];
+    const latest = historyEntries[historyEntries.length - 1];
+    if (latest && typeof latest === 'object') {
+      const reason = pickStr(latest as Record<string, unknown>, 'reason_code');
+      if (reason) return reason;
+    }
+    return null;
+  })();
+  const reasonLine =
+    `${dir} ${row.strategy}${timeframe ? ` ${timeframe}` : ''} — ${stateLabel(row.state)}` +
+    (steps ? ` (${steps})` : '');
+
+  const spine = terminal ? 'bg-ink-3' : isLong ? 'bg-up' : isShort ? 'bg-down' : 'bg-accent';
+  const statusPill = terminal
+    ? outcome === 'WIN'
+      ? 'border-up-line bg-up-wash text-up-strong'
+      : outcome === 'LOSS'
+        ? 'border-down-line bg-down-wash text-down-strong'
+        : 'border-warn-line bg-warn-wash text-warn-strong'
+    : 'border-accent-line bg-accent-wash text-accent';
+  const statusText = terminal ? (outcome ?? stateLabel(row.state)).toUpperCase() : stage.toUpperCase();
 
   return (
     <article
-      className="card cursor-pointer transition-colors hover:border-border-strong"
+      className="card group relative flex h-full w-full cursor-pointer flex-col gap-2 p-3 transition-all hover:-translate-y-[1px] hover:border-border-strong hover:shadow-lg"
       role="button"
       tabIndex={0}
       onClick={() => onOpen(row)}
@@ -166,191 +163,131 @@ export function SignalChecklistCard({
           onOpen(row);
         }
       }}
-      title="Open signal detail"
+      title={`Open signal dossier · ${row.id}`}
     >
-      {/* Header: single title row + single meta row */}
-      <div className="px-3 pb-2 pt-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate text-[13px] font-bold tracking-tight text-ink">
-              {title}
-            </span>
-            {contractLabel ? (
-              <span className="shrink-0 text-[11px] font-semibold text-ink-3">{row.symbol}</span>
-            ) : null}
-          </div>
+      <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${spine}`} aria-hidden="true" />
+
+      {/* header */}
+      <div className="flex items-center justify-between gap-2 pl-1">
+        <div className="flex min-w-0 items-center gap-1.5">
           <span
-            className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold tracking-wider ${STATUS_TONE_CLASSES[statusInfo.tone] ?? STATUS_TONE_CLASSES.settled}`}
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-extrabold tracking-wider text-white ${
+              isLong ? 'bg-up' : isShort ? 'bg-down' : 'bg-ink-2'
+            }`}
           >
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                statusInfo.tone === 'live' ? 'bg-accent animate-pulse' :
-                statusInfo.tone === 'profit' ? 'bg-up' :
-                statusInfo.tone === 'loss' ? 'bg-down' :
-                'bg-ink-3'
-              }`}
-            />
-            {statusInfo.text}
-          </span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px]">
-          <span className="sg-sym text-[12px]">{row.symbol}</span>
-          <span className={`sg-dir text-[10px] ${dir === 'LONG' ? 'long' : dir === 'SHORT' ? 'short' : 'neut'}`}>
             {dir}
           </span>
-          <span className={`sg-tag text-[10px] ${stateTone(row.state) === 'bull' ? 'bull' : stateTone(row.state) === 'bear' ? 'bear' : stateTone(row.state) === 'info' ? 'info' : stateTone(row.state) === 'warn' ? 'warn' : 'neut'}`}>
-            {row.state}
+          <h3 className="truncate text-[14px] font-extrabold tracking-tight text-ink" title={contractLabel ?? row.symbol}>
+            {row.symbol}
+          </h3>
+          <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-ink-2">
+            {row.strategy}
+            {timeframe ? ` · ${timeframe}` : ''}
           </span>
-          {row.isScalp !== null ? (
-            <span className={`sg-tag text-[10px] ${row.isScalp ? 'info' : 'neut'}`}>
-              {row.isScalp ? 'SCALP' : 'INTRADAY'}
-            </span>
-          ) : null}
-          {row.quarantined ? <span className="sg-tag warn text-[10px]">QUARANTINED</span> : null}
-          <span className="sg-rownote">
-            {row.strategy} · {shortId(row.id)}
-          </span>
-          <span className="sg-meta">
-            <i className={row.incomplete ? '' : 'on'} />
-            conf {confPct(row.confidence01)}% · {age}
-          </span>
-          <span className={`sg-ttl ${ttl.tone === 'expired' ? 'expired' : ttl.tone === 'warn' ? 'warn' : ''}`}>
-            {terminal ? 'settled' : ttl.label}
+        </div>
+        <span
+          className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-px text-[10px] font-extrabold tracking-wider ${statusPill}`}
+          title={`FSM ${row.state} · stage ${stage}`}
+        >
+          {!terminal ? <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> : null}
+          {statusText}
+        </span>
+      </div>
+
+      {/* contract + id */}
+      <div className="mono truncate pl-1 font-mono text-[10px] text-ink-2" title={contractLabel ?? row.id}>
+        {contractLabel ?? shortId(row.id)}
+        {deskLabel ? ` · ${deskLabel}` : ''}
+        {dataQuality && dataQuality !== 'LIVE' ? ` · ${dataQuality}` : ''}
+        {row.quarantined ? ' · QUARANTINED' : ''}
+      </div>
+
+      {/* levels */}
+      <div className="pl-1">
+        <SignalLevelGrid row={row} />
+      </div>
+
+      {/* spot / dist / rr */}
+      <div
+        className="mono truncate pl-1 font-mono text-[10px] tabular-nums text-ink-2"
+        title={`Spot @ detect ${spotAtDetect !== null ? safeNum(spotAtDetect) : '—'}${createdMs !== null ? ` · ${fmtISTFull(createdMs)}` : ''}`}
+      >
+        Spot {spotAtDetect !== null ? safeNum(spotAtDetect) : '—'} · {distText}
+        {rrText ? ` · R:R ${rrText}` : ''}
+        {position && pnl !== null ? (
+          <span className={`font-extrabold ${pnlClass(pnl)}`}> · {fmtInr(pnl, true)}</span>
+        ) : null}
+      </div>
+
+      {/* lifecycle rail */}
+      <div className="pl-1 pr-1">
+        <SignalStageRail row={row} />
+        <div className="mono mt-1 flex items-center justify-between font-mono text-[9.5px] text-ink-3">
+          <span title={createdMs !== null ? `Created ${fmtISTFull(createdMs)}` : undefined}>{age}</span>
+          <span title={expiresMs !== null ? `Expires ${fmtISTFull(expiresMs)}` : undefined}>
+            {terminal ? (exitReason ?? exitPrice !== null ? `Exit ${safeNum(exitPrice)}` : 'settled') : `⏳ ${ttl.label}`}
           </span>
         </div>
       </div>
 
-      {/* Lifecycle stepper */}
-      <div className="border-t border-border-subtle px-4 py-2.5">
-        <div className="flex items-start">
-          {steps.map((step, index) => {
-            const tone = stepTone(step, outcome);
-            const stamp = formatStamp(step.timestampMs);
-            const connector =
-              index === 0
-                ? 'bg-transparent'
-                : step.status === 'pending'
-                  ? 'bg-border'
-                  : step.status === 'current'
-                    ? 'bg-accent-line'
-                    : 'bg-up-line';
-            return (
-              <div key={step.stage} className="relative min-w-0 flex-1">
-                {index > 0 ? (
-                  <span className={`absolute left-[-50%] right-[50%] top-[10px] h-[2px] ${connector}`} aria-hidden="true" />
-                ) : null}
-                <div className="relative flex flex-col items-center gap-1 text-center">
-                  <span
-                    className={`z-10 flex h-[20px] w-[20px] items-center justify-center rounded-full border text-[11px] font-bold ${tone.box}`}
-                    title={step.reason ?? step.label}
-                  >
-                    {tone.glyph}
-                  </span>
-                  <span className="text-[11px] font-semibold text-ink-2">
-                    {step.label}
-                  </span>
-                  <span className="mono min-h-[14px] text-[10px] text-ink-3">{stamp ?? ''}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      {/* gates strip */}
+      <div className="pl-1">
+        <SignalGatesStrip row={row} />
       </div>
 
-      {/* Levels */}
-      <div className="border-t border-border-subtle px-3 py-2">
-        <div className={`grid gap-x-4 gap-y-1.5 ${showExecution ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-2 sm:grid-cols-5'}`}>
-          <div>
-            <span className="stat-l text-[10px]">Trigger</span>
-            <div className="mono text-[13px] font-semibold">{safeNum(row.triggerLevel)}</div>
-          </div>
-          <div>
-            <span className="stat-l text-[10px]">Stop</span>
-            <div className="mono text-[13px] font-semibold">{safeNum(row.sl)}</div>
-          </div>
-          <div>
-            <span className="stat-l text-[10px]">Target 1</span>
-            <div className="mono text-[13px] font-semibold">{safeNum(row.t1)}</div>
-          </div>
-          <div>
-            <span className="stat-l text-[10px]">Distance</span>
-            <div className="mono text-[13px] font-semibold">{fmtDist(row.triggerLevel, row.spot)}</div>
-          </div>
-          <div>
-            {position && pnl !== null ? (
-              <>
-                <span className="stat-l text-[10px]">Live P&amp;L</span>
-                <div className={`mono text-[13px] font-bold ${pnlClass(pnl)}`}>{fmtInr(pnl, true)}</div>
-              </>
-            ) : showExecution ? (
-              <>
-                <span className="stat-l text-[10px]">Fill{fill.quantity ? ` · ${fill.quantity}` : ''}</span>
-                <div className="mono text-[13px] font-semibold">{safeNum(fill.fillPrice)}</div>
-              </>
-            ) : rr ? (
-              <>
-                <span className="stat-l text-[10px]">R:R</span>
-                <div className="mono text-[13px] font-semibold">{rr}</div>
-              </>
-            ) : null}
-          </div>
-          {showExecution ? (
-            <div>
-              <span className="stat-l text-[10px]">Qty</span>
-              <div className="mono text-[13px] font-semibold">{fill.quantity ?? '—'}</div>
-            </div>
-          ) : null}
-        </div>
-      </div>
+      {/* reason + warnings */}
+      <p className="truncate pl-1 text-[11px] font-medium text-ink-2" title={reasonLine}>
+        {reasonLine}
+      </p>
+      {row.incomplete || row.quarantined ? (
+        <p className="truncate rounded-md border border-warn-line bg-warn-wash px-1.5 py-0.5 text-[10px] font-semibold text-warn-strong">
+          {row.incomplete ? `Missing ${row.missingLevels.join(', ')}. ` : ''}
+          {row.quarantined ? `Quarantined: ${row.quarantineReason ?? 'off-domain data'}.` : ''}
+        </p>
+      ) : null}
 
-      {/* Footer: outcome + actions */}
-      <div className="flex items-center gap-2 border-t border-border-subtle px-3 py-1.5">
-        {terminal ? (
-          <span
-            className={`sg-tag text-[10px] ${outcome === 'WIN' ? 'bull' : outcome === 'LOSS' ? 'bear' : 'neut'}`}
-          >
-            {outcome}
-          </span>
-        ) : (
-          <span className="sg-rownote">{eligibility.eligible ? 'Ready to execute' : (eligibility.reason ?? '')}</span>
-        )}
-        <div className="ml-auto flex items-center gap-1">
+      {/* actions */}
+      <div className="mt-auto flex items-center gap-1.5 pl-1 pt-1">
+        {!terminal ? (
           <button
             type="button"
-            className="sg-ibtn"
-            title="Signal detail and dossier"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpen(row);
-            }}
-          >
-            <Info size={13} />
-          </button>
-          <button
-            type="button"
-            className="sg-ibtn"
-            title={eligibility.eligible ? 'Execute as paper order' : eligibility.reason ?? 'Not executable'}
             disabled={!eligibility.eligible || busy}
+            title={eligibility.eligible ? `Execute · trigger ${safeNum(row.triggerLevel)} · SL ${safeNum(row.sl)}` : (eligibility.reason ?? 'Not executable')}
             onClick={(event) => {
               event.stopPropagation();
               onExecute(row);
             }}
+            className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg bg-up-strong px-2 py-1.5 text-[11px] font-bold text-white transition-all hover:opacity-90 disabled:opacity-40"
           >
-            <Play size={13} />
+            <Play size={12} />
+            <span className="truncate">{busy ? 'Working…' : `Execute${qty !== null ? ` · ${qty}` : ''}`}</span>
           </button>
-          <button
-            type="button"
-            className="sg-ibtn danger"
-            title={isTerminalSignalState(row.state) ? 'Delete signal record' : 'Close and square off'}
-            disabled={busy}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(row);
-            }}
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(row);
+          }}
+          className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold text-ink-2 transition-colors hover:border-accent hover:text-accent"
+          title={`Dossier · created ${fmtISTFull(createdMs)}${triggeredMs !== null ? ` · triggered ${fmtISTFull(triggeredMs)}` : ''}`}
+        >
+          <Info size={12} />
+          <span>Dossier</span>
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(row);
+          }}
+          className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold text-ink-2 transition-colors hover:border-down hover:text-down-strong disabled:opacity-40"
+          title={isTerminalSignalState(row.state) ? `Delete ${shortId(row.id)}` : 'Close and square off'}
+        >
+          <Trash2 size={12} />
+          <span>Delete</span>
+        </button>
       </div>
     </article>
   );

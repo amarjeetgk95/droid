@@ -1,4 +1,4 @@
-"""Option Market Pressure Index (OMPI) v0.1 (§15-§18).
+﻿"""Option Market Pressure Index (OMPI) v0.1 (Â§15-Â§18).
 
 Proprietary experimental indicator combining directional price structure,
 options market positioning, participation volume dynamics, volatility regime,
@@ -10,7 +10,7 @@ Every sub-component is fully transparent and exposed in the output.
 import math
 from typing import Any
 
-from app.quant.indicators import (
+from app.market_core.indicators import (
     calculate_bollinger_bands,
     calculate_ema,
     calculate_rsi,
@@ -25,7 +25,7 @@ from app.research.models import IndicatorContext, IndicatorOutput
 
 
 class OMPIIndicator(BuiltinIndicator):
-    """Option Market Pressure Index (OMPI) v0.1 (§15-§18).
+    """Option Market Pressure Index (OMPI) v0.1 (Â§15-Â§18).
     
     Synthesizes five structural market pressure vectors:
       1. Directional Price Pressure (P_dir)      [weight: 0.30]

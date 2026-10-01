@@ -16,11 +16,13 @@ import structlog
 from pydantic import BaseModel, Field, computed_field
 
 from app.signals.safety.clocks import ist_from_timestamp
+from app.signals.types import ExecutionStatus
 
 logger = structlog.get_logger()
 
 SignalFSMState = Literal[
     "DETECTED",
+    "PRE_ARMED",
     "VALIDATED",
     "ARMED",
     "TRIGGERED",
@@ -40,8 +42,9 @@ ALLOWED_TRANSITIONS: dict[SignalFSMState, set[SignalFSMState]] = {
     # DETECTED->CONFIRMED and VALIDATED->CONFIRMED are removed; ARMED->CONFIRMED
     # is also removed — the only legal entry to CONFIRMED is TRIGGERED->CONFIRMED
     # with a guard_snapshot carrying trigger evidence.
-    "DETECTED": {"VALIDATED", "ARMED", "INVALIDATED", "EXPIRED"},
-    "VALIDATED": {"ARMED", "TRIGGERED", "INVALIDATED", "EXPIRED"},
+    "DETECTED": {"PRE_ARMED", "VALIDATED", "ARMED", "INVALIDATED", "EXPIRED"},
+    "PRE_ARMED": {"ARMED", "TRIGGERED", "VALIDATED", "EXPIRED", "INVALIDATED", "CLOSED"},
+    "VALIDATED": {"PRE_ARMED", "ARMED", "TRIGGERED", "INVALIDATED", "EXPIRED"},
     "ARMED": {"TRIGGERED", "EXPIRED", "INVALIDATED"},
     "TRIGGERED": {"CONFIRMED", "INVALIDATED", "EXPIRED"},
     "CONFIRMED": {"TARGET_1_HIT", "TARGET_2_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT", "INVALIDATED", "EXPIRED", "CLOSED"},
@@ -63,6 +66,7 @@ TERMINAL_STATES: set[SignalFSMState] = {
 # FSM ↔ audit-ledger status mapping (unified enum; both stored + tested).
 FSM_TO_AUDIT_STATUS: dict[str, str] = {
     "DETECTED": "ARMED",
+    "PRE_ARMED": "ARMED",
     "VALIDATED": "ARMED",
     "ARMED": "ARMED",
     "TRIGGERED": "TRIGGERED",
@@ -206,6 +210,17 @@ class SignalInstance(BaseModel):
     lots: int | None = None
     quantity: int | None = None
     max_rupee_loss: float | None = None
+
+    # DROID v5.1 Opportunity Intelligence & Execution Feasibility Taxonomy
+    opportunity_score: float | None = None
+    execution_score: float | None = None
+    live_executable: bool = False
+    paper_eligible: bool = False
+    observation_eligible: bool = False
+    execution_status: ExecutionStatus = "SAFETY_BLOCKED"
+    execution_blocked_reason: str | None = None
+    live_lots: int = 0
+    hypothetical_paper_lots: int = 0  # Fail-closed default: 0
 
     # Options Intelligence & Multi-Horizon Economics (§40)
     greeks: dict | None = None

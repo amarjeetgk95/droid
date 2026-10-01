@@ -24,6 +24,37 @@ logger = structlog.get_logger()
 # Sentinel FSM state: PIT rejected the candidate — scanner must drop it, never register.
 REJECT_STATE = "REJECT"
 
+# Bar duration per scan timeframe, used to size the PIT staleness floor.
+_TIMEFRAME_BAR_MS: dict[str, int] = {
+    "1M": 60_000,
+    "3M": 180_000,
+    "5M": 300_000,
+    "15M": 900_000,
+    "1H": 3_600_000,
+    "1D": 86_400_000,
+}
+_PIT_DEFAULT_MAX_AGE_MS = 120_000
+
+
+def _pit_max_age_ms(cand: SignalCandidate) -> int:
+    """Timeframe-aware PIT staleness floor.
+
+    The validator measures the decision time against the newest candle's
+    timestamp, and providers stamp that at the bar's OPEN (fyers.py
+    ``datetime.fromtimestamp(c[0])``). While the current bar is still forming
+    its open is legitimately up to one bar-duration old, so a fixed 120s floor
+    hard-rejected the 5M intraday desk for the whole back half of every 5-minute
+    bar (~60% of wall-clock time) with a STALE_DATA violation — a bar that was
+    current, not stale.
+
+    Floor is now one bar + tolerance, never below the 120s default so 1M
+    behaviour is unchanged.
+    """
+    bar_ms = _TIMEFRAME_BAR_MS.get(str(getattr(cand, "timeframe", "") or "").upper())
+    if not bar_ms:
+        return _PIT_DEFAULT_MAX_AGE_MS
+    return max(_PIT_DEFAULT_MAX_AGE_MS, bar_ms + 30_000)
+
 
 async def enrich_candidate(
     cand: SignalCandidate,
@@ -100,6 +131,7 @@ async def enrich_candidate(
             candles=_pit_candles,
             fno_data=_pit_fno,
             quote_timestamp_ms=_quote_ts,
+            max_age_ms=_pit_max_age_ms(cand),
         )
         if not _pit.passed:
             rejected_gates.append(f"{cand.strategy}:PIT_LOOKAHEAD_{';'.join(_pit.violations)[:120]}")
@@ -446,18 +478,18 @@ async def enrich_candidate(
     except Exception as _ex:
         logger.debug("signal_explain_build_skipped", error=str(_ex))
 
-    # Determine initial FSM state — VALIDATED on any degraded/unverified input,
-    # ARMED only on full verification plus sufficient fused confidence.
+    # Determine initial FSM state — RISK-ON: only hard-unverified inputs force
+    # VALIDATED (stale PIT timeline, degraded F&O, strong flow divergence).
+    # AI-unavailable or VWAP-degraded alone no longer vetoes ARMED — the 3-4pt
+    # haircut already prices it, and a 60+ fused print arms and takes risk.
     _divergence_downgrade = bool(isinstance(inst_overlay, dict) and inst_overlay.get("downgrade_to_validated"))
     if _divergence_downgrade:
         try:
             cand.rationale.append(f"Divergence guard: {inst_overlay.get('reasons', ['flow-divergence'])[-1]} — forced VALIDATED")
         except Exception:
             pass
-    _ai_unavailable = not (ai_advice is not None and getattr(ai_advice, "status", None) == "AVAILABLE")
-    _vwap_degraded = bool(getattr(cand, "vwap_degraded", False))
     _pit_ok = bool(_pit is not None and _pit.passed)
-    if fno_is_degraded or _vwap_degraded or (not _pit_ok) or _ai_unavailable or _divergence_downgrade:
+    if fno_is_degraded or (not _pit_ok) or _divergence_downgrade:
         fsm_init_state = "VALIDATED"
     else:
         fsm_init_state = "ARMED" if fused_score >= ARMED_THRESHOLD else "VALIDATED"

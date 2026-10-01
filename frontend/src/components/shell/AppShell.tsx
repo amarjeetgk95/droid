@@ -15,7 +15,6 @@ import {
   Menu,
   Radio,
   Settings as SettingsIcon,
-  TrendingUp,
   Wrench,
   X,
   type LucideIcon,
@@ -35,13 +34,14 @@ import { MODULE_NAV, isActivePath } from './nav';
 import { InstrumentPicker } from './InstrumentPicker';
 import { BrokerAuthControl } from './BrokerAuthControl';
 import { AudioControl } from './AudioControl';
+import { DisplayModeControl } from './DisplayModeControl';
 import { scalpAudio } from '@/lib/scalpAudio';
 import { SESSION_PHASE_LABELS } from './status';
 
 const NAV_ICONS: Record<string, LucideIcon> = {
   '/': LayoutDashboard,
   '/signals': Radio,
-  '/swing': TrendingUp,
+  '/pap': Radio,
   '/options': ChartCandlestick,
   '/trade': ArrowLeftRight,
   '/intel': Landmark,
@@ -262,6 +262,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="rail-actions">
               <BrokerAuthControl />
               <AudioControl />
+              <DisplayModeControl />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button

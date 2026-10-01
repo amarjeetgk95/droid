@@ -1,0 +1,71 @@
+<!--
+  DROID Backend — Windows Service (WinSW v2) configuration.
+
+  Wraps the existing FastAPI/Uvicorn backend as a native Windows service.
+  The .exe next to this file MUST be named droid-backend.exe (WinSW derives
+  the service name and log file names from the executable's base name).
+
+  Install:  run service\install-service.bat  (from an elevated prompt)
+  Docs:     docs/LOCAL_BACKEND_SERVICE.md
+
+  NO SECRETS live in this file. Credentials are read by the app from
+  backend/.env (supabase/FYERS/Telegram/OpenRouter keys) exactly as in
+  development. Only non-secret runtime knobs are set below.
+
+  To change host/port: edit the two <argument> lines marked "BIND" and
+  run restart-service.bat. Keep the backend on 127.0.0.1 unless you
+  fully understand the exposure (see docs, section "Binding").
+-->
+<service>
+  <!-- ── Service identity ─────────────────────────────────────────────── -->
+  <id>DROIDBackend</id>
+  <name>DROID Backend (FastAPI)</name>
+  <description>DROID trading-intelligence backend: FastAPI + Uvicorn on 127.0.0.1:8000. Manages the central market-data feed, signal engine, Telegram stack and Supabase persistence. Source of truth: E:\Droid\backend.</description>
+
+  <!-- ── Executable ────────────────────────────────────────────────────── -->
+  <!-- %BASE% expands to the directory containing this file (backend\service);
+       WinSW sets it itself. PYTHONPATH is the backend/ folder so
+       `app.main:app` resolves. -->
+  <executable>%BASE%\..\.venv\Scripts\python.exe</executable>
+  <arguments>-m uvicorn app.main:app --host 127.0.0.1 --port 8000</arguments>
+  <workingdirectory>%BASE%\..</workingdirectory>
+
+  <!-- ── Runtime environment (non-secret only) ─────────────────────────── -->
+  <env name="PYTHONPATH" value="%BASE%\.."/>
+  <env name="PYTHONUNBUFFERED" value="1"/>
+  <env name="PYTHONIOENCODING" value="utf-8"/>
+  <!-- Schedulers the dev launcher enables; keep service behaviour identical. -->
+  <env name="FORECAST_SCHEDULER_ENABLED" value="on"/>
+  <env name="FLOW_SCHEDULER_ENABLED" value="on"/>
+  <!-- Host/port mirror of the BIND arguments above; the app reads
+       BACKEND_HOST/BACKEND_PORT from backend/.env if you override them there. -->
+
+  <!-- ── Process behaviour ─────────────────────────────────────────────── -->
+  <!-- Start on boot, but let the OS settle first (network up before FYERS). -->
+  <startmode>Automatic</startmode>
+  <delayedAutoStart/>
+  <!-- Restart on crash after a short cooldown. WinSW restarts the wrapper
+       for start failures too, so a transient boot-time failure self-heals. -->
+  <onfailure action="restart" delay="10 sec"/>
+  <!-- Stop: WinSW sends Ctrl+C/CTRL_BREAK to the console child. Uvicorn 0.53+
+       handles SIGBREAK -> full lifespan shutdown (workers/feeds/Telegram
+       stop cleanly), then exits. If the child ignores it and hangs, WinSW
+       TerminateProcess-es it after stoptimeout. Do NOT enable
+       stopparentprocessfirst: killing the wrapper first would orphan the
+       Python child. -->
+  <stoptimeout>25 sec</stoptimeout>
+  <stopparentprocessfirst>false</stopparentprocessfirst>
+
+  <!-- ── Logging: repo-root logs\, rotated ──────────────────────────────── -->
+  <!-- droid-backend.out.log / droid-backend.err.log (+ .1/.2/... rolls).
+       Rolling caps disk usage: 10 MB per file, 8 kept => bounded history. -->
+  <logpath>%BASE%\..\..\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+
+  <!-- If the service keeps running cleanly for 1 hour, reset the SCM failure
+       count so a single bad day cannot exhaust restart attempts forever. -->
+  <resetfailure>1 hour</resetfailure>
+</service>

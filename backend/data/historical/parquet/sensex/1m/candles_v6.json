@@ -1,0 +1,21 @@
+{
+  "symbol": "SENSEX",
+  "timeframe": "1m",
+  "version_tag": "v6",
+  "row_count": 93073,
+  "start_time": "2025-09-22T03:45:00+00:00",
+  "end_time": "2026-09-30T09:59:00+00:00",
+  "checksum_sha256": "1daa998acbe3851c2f4b7242de667fde883ab4f32c18f3fd77db8bbc163d5a82",
+  "quality_score": 100.0,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "fyers",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-30T11:02:23.419881Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-30T11:02:23.489410+00:00"
+}

@@ -286,12 +286,6 @@ export function confidence01ToPct(v: number | null): number {
   return confPct(v);
 }
 
-/** 0..100 score domain (score domain only, never confidence). */
-export function score0100ToPct(v: number | null): number {
-  if (v === null) return 0;
-  return Math.max(0, Math.min(100, v));
-}
-
 export function shortId(id: string): string {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
 }
@@ -672,6 +666,83 @@ export function toLedgerSummary(sum: Record<string, unknown> | null): LedgerSumm
 /* ---------------- semantic state tones ---------------- */
 
 export type Tone = 'bull' | 'bear' | 'info' | 'warn' | 'neut';
+
+/* ---------------- confluence validation gates ---------------- */
+
+/** ARMED bar from `backend/config/scoring_weights.json` thresholds.armed
+ *  (imported in `backend/app/signals/confluence.py` as ARMED_THRESHOLD). */
+export const CONFLUENCE_ARMED_BAR = 60;
+
+export type GateStatus = 'PASS' | 'WARN' | 'FAIL' | 'OFFLINE';
+
+export type ValidationGate = {
+  key: string;
+  label: string;
+  /** 0..100 domain score. Null when the domain was unavailable — never faked. */
+  score: number | null;
+  status: GateStatus;
+};
+
+/** Display status for a measured 0..100 domain score. Mirrors
+ *  `backend/app/signals/confluence.py`: domains earn above 55, are penalized
+ *  below 45, and the ARMED bar is 60. */
+export function gateStatusForScore(score: number): GateStatus {
+  if (score >= CONFLUENCE_ARMED_BAR) return 'PASS';
+  if (score >= 45) return 'WARN';
+  return 'FAIL';
+}
+
+function measuredGate(key: string, label: string, value: unknown): ValidationGate | null {
+  const n = asNum(value);
+  if (n === null) return null;
+  const clamped = Math.max(0, Math.min(100, n));
+  return { key, label, score: clamped, status: gateStatusForScore(clamped) };
+}
+
+/** Honest validation gates from a signal's `confluence_breakdown` dict
+ *  (`backend/app/signals/pipeline/signal_factory.py`). Domains absent from the
+ *  payload are omitted — except AI/ML advisors, which render OFFLINE so a
+ *  missing advisor is never mistaken for a passing one. Never invents scores:
+ *  no breakdown (or no measurable domain) yields an empty array and the card
+ *  omits the section. */
+export function buildValidationGates(raw: Record<string, unknown>): ValidationGate[] {
+  const cb = getObj(raw.confluence_breakdown);
+  if (!cb) return [];
+  const gates: ValidationGate[] = [];
+  for (const gate of [
+    measuredGate('technical', 'TECH', cb.technical),
+    measuredGate('mtf', 'MTF', cb.mtf),
+    measuredGate('fno', 'F&O', cb.fno),
+    measuredGate('regime', 'REGIME', cb.regime),
+  ]) {
+    if (gate) gates.push(gate);
+  }
+  const aiStatus = asStr(cb.ai_status)?.toUpperCase() ?? 'UNAVAILABLE';
+  const aiScore = asNum(cb.ai);
+  gates.push(
+    aiStatus === 'AVAILABLE' && aiScore !== null
+      ? {
+          key: 'ai',
+          label: 'AI',
+          score: Math.max(0, Math.min(100, aiScore)),
+          status: gateStatusForScore(aiScore),
+        }
+      : { key: 'ai', label: 'AI', score: null, status: 'OFFLINE' },
+  );
+  const mlStatus = asStr(cb.ml_status)?.toUpperCase() ?? 'UNAVAILABLE';
+  const mlScore = asNum(cb.ml_score);
+  gates.push(
+    mlStatus === 'AVAILABLE' && mlScore !== null
+      ? {
+          key: 'ml',
+          label: 'ML',
+          score: Math.max(0, Math.min(100, mlScore)),
+          status: gateStatusForScore(mlScore),
+        }
+      : { key: 'ml', label: 'ML', score: null, status: 'OFFLINE' },
+  );
+  return gates;
+}
 
 /** Map a signal/status state to a badge tone. */
 export function stateTone(state: string): Tone {

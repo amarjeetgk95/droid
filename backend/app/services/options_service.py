@@ -1,4 +1,4 @@
-import math
+﻿import math
 from datetime import datetime, date, timezone
 from app.models.options import (
     OptionGreeks, OptionSide, OptionChainStrikeRow,
@@ -8,9 +8,9 @@ from app.models.options import (
 from app.models.market import NormalizedOptionQuote
 from app.services.market_service import MarketService
 from app.services.contract_master import contract_master_service
-from app.quant.black76 import black76_greeks
-from app.quant.iv_solver import calculate_iv_black76
-from app.quant.expiry_math import calculate_time_to_expiry, get_risk_free_rate
+from app.market_core.black76 import black76_greeks
+from app.market_core.iv_solver import calculate_iv_black76
+from app.market_core.expiry_math import calculate_time_to_expiry, get_risk_free_rate
 import structlog
 
 logger = structlog.get_logger()
@@ -54,7 +54,7 @@ class OptionsService:
         t = calculate_time_to_expiry(now, target_expiry_date)
         r, r_source = get_risk_free_rate()
 
-        # Estimated cost-of-carry futures price — NOT a FYERS futures quote.
+        # Estimated cost-of-carry futures price â€” NOT a FYERS futures quote.
         # Truth-of-Wall: downstream must treat this as carry_estimate, never live basis.
         futures_price = round(spot_price * math.exp(r * t), 2) if spot_price > 0 else 0.0
 
@@ -78,7 +78,7 @@ class OptionsService:
                 raw_quotes = latest
 
         # Honest expiry: the ladder's date is whatever the broker actually
-        # priced (mode of quote expiries) — never the calendar bootstrap's
+        # priced (mode of quote expiries) â€” never the calendar bootstrap's
         # guess. This also covers the fallback above, where the broker
         # substitutes its nearest live expiry for a rejected date. Greeks
         # carry, sync and the response label all follow the resolved date.
@@ -101,7 +101,7 @@ class OptionsService:
             t = calculate_time_to_expiry(now, target_expiry_date)
             futures_price = round(spot_price * math.exp(r * t), 2) if spot_price > 0 else 0.0
 
-        # Group raw quotes by strike — FYERS truth only.
+        # Group raw quotes by strike â€” FYERS truth only.
         strikes_map: dict[float, dict[str, NormalizedOptionQuote]] = {}
         for q in raw_quotes:
             if q.strike not in strikes_map:
@@ -160,7 +160,7 @@ class OptionsService:
         # Find ATM strike
         atm_strike = min(all_strikes, key=lambda k: abs(k - spot_price))
 
-        # Pass 1: Solve for baseline ATM IV — FYERS LTPs only, never fabricated.
+        # Pass 1: Solve for baseline ATM IV â€” FYERS LTPs only, never fabricated.
         # Truth-of-Wall: if both legs fail to solve, base_atm_iv stays None and
         # per-strike Greeks stay None (no synthetic smile).
         atm_ce = strikes_map.get(atm_strike, {}).get("CE")
@@ -190,7 +190,7 @@ class OptionsService:
             ce_side: OptionSide | None = None
             pe_side: OptionSide | None = None
 
-            # Build Call side — Truth-of-Wall: solved IV only, else greeks=None.
+            # Build Call side â€” Truth-of-Wall: solved IV only, else greeks=None.
             if ce_raw:
                 total_ce_oi += ce_raw.oi
                 total_ce_vol += ce_raw.volume
@@ -231,7 +231,7 @@ class OptionsService:
                     greeks=ce_greeks,
                 )
 
-            # Build Put side — Truth-of-Wall: solved IV only, else greeks=None.
+            # Build Put side â€” Truth-of-Wall: solved IV only, else greeks=None.
             if pe_raw:
                 total_pe_oi += pe_raw.oi
                 total_pe_vol += pe_raw.volume

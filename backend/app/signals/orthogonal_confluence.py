@@ -37,11 +37,12 @@ class OrthogonalConfluenceResult(BaseModel):
     sizing_multiplier: float = 1.0
 
 
-# P0-2: only a strong, unanimous tape arms. A 72 bar let marginal
-# chop through as SUPPORTIVE; 78 matches the confluence ARMED bar.
-SUPPORTIVE_BAR = 78.0
-# Below 60 there is no edge to size — the setup is blocked, not halved.
-SIZING_BLOCK_LEVEL = 60.0
+# P0-2: only a strong, unanimous tape arms. RISK-ON 2026-09-23: 78->60 bar
+# so 2-vector agreement prints SUPPORTIVE; 60+ NEUTRAL sizes at 0.75x instead
+# of blocking. Below 42 there is no edge to size — the setup is blocked.
+SUPPORTIVE_BAR = 60.0
+# Below 42 there is no edge to size — the setup is blocked, not halved.
+SIZING_BLOCK_LEVEL = 42.0
 
 
 class OrthogonalConfluenceEngine:
@@ -203,23 +204,24 @@ class OrthogonalConfluenceEngine:
         elif overall <= 35.0 or len(reasons) >= 3:
             status = "CONTRADICTORY"
 
-        # Continuous Sizing Multiplier (Section 62) — P0-2 FAIL-CLOSE:
-        # sub-60 is BLOCKED (0.0x, passed=False), never a 0.5x consolation.
-        # NEUTRAL also blocks: only SUPPORTIVE may arm.
+        # Continuous Sizing Multiplier (Section 62) — RISK-ON:
+        # sub-42 is BLOCKED (0.0x, passed=False). 42-58 sizes 0.75x,
+        # 58-72 sizes 1.0x, 72+ sizes 1.25x. NEUTRAL with 58+ may arm —
+        # only CONTRADICTORY or sub-42 blocks.
         sizing = 1.0
-        if overall >= 80.0:
+        if overall >= 72.0:
             sizing = 1.25  # A+ setup
-        elif overall >= 68.0:
+        elif overall >= 58.0:
             sizing = 1.0   # Standard setup
         elif overall >= SIZING_BLOCK_LEVEL:
             sizing = 0.75  # Moderate setup
         else:
             sizing = 0.0   # BLOCKED — no edge to size
-            if "SIZING_BLOCK_BELOW_60" not in reasons:
-                reasons.append(f"SIZING_BLOCK_BELOW_60_{overall:.1f}")
+            if "SIZING_BLOCK_BELOW_42" not in reasons:
+                reasons.append(f"SIZING_BLOCK_BELOW_42_{overall:.1f}")
 
-        passed = (status == "SUPPORTIVE") and (overall >= SIZING_BLOCK_LEVEL)
-        if status == "NEUTRAL" and passed:
+        passed = (status in ("SUPPORTIVE", "NEUTRAL")) and (overall >= 58.0)
+        if status == "CONTRADICTORY":
             passed = False
         if overall < SIZING_BLOCK_LEVEL:
             passed = False

@@ -1,4 +1,4 @@
-"""Deep Insight aggregation service — combines regime, options, multi-TF, and AI signal per §14."""
+﻿"""Deep Insight aggregation service â€” combines regime, options, multi-TF, and AI signal per Â§14."""
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +33,7 @@ from app.ai.regime_detector import RegimeDetector
 from app.services.regime_service import RegimeService
 from app.services.market_service import MarketService
 from app.services.options_service import OptionsService
-from app.quant.indicators import calculate_rsi, calculate_adx, calculate_atr
+from app.market_core.indicators import calculate_rsi, calculate_adx, calculate_atr
 
 logger = structlog.get_logger()
 
@@ -152,14 +152,14 @@ class DeepInsightService:
                     call_resistance=0.0,
                     oi_trend="Stable",
                     iv="Unknown",
-                    interpretation="Options chain unavailable — bias unknown. Ignore pcr/iv on this card.",
+                    interpretation="Options chain unavailable â€” bias unknown. Ignore pcr/iv on this card.",
                 )
             pcr = analytics.pcr_oi if analytics else 1.0
             spot = analytics.spot_price if analytics else 0.0
 
             # A non-positive PCR means the chain snapshot has no usable OI
-            # (zero/missing), not extreme call dominance — calling it BULLISH
-            # prints "BULLISH · PCR 0" on bearish days. Treat as unknown.
+            # (zero/missing), not extreme call dominance â€” calling it BULLISH
+            # prints "BULLISH Â· PCR 0" on bearish days. Treat as unknown.
             try:
                 pcr_f = float(pcr)
             except (TypeError, ValueError):
@@ -172,17 +172,17 @@ class DeepInsightService:
                     call_resistance=0.0,
                     oi_trend="Stable",
                     iv="Unknown",
-                    interpretation="Options PCR unavailable — bias unknown. Ignore options bias on this card.",
+                    interpretation="Options PCR unavailable â€” bias unknown. Ignore options bias on this card.",
                 )
             pcr = pcr_f
 
             # Determine bias
             if pcr > 1.2:
                 bias = Direction.BEARISH
-                interp = "High PCR — put buying dominant, bearish undertone"
+                interp = "High PCR â€” put buying dominant, bearish undertone"
             elif pcr < 0.8:
                 bias = Direction.BULLISH
-                interp = "Low PCR — call buying dominant, bullish undertone"
+                interp = "Low PCR â€” call buying dominant, bullish undertone"
             else:
                 bias = Direction.NEUTRAL
                 interp = "Balanced options flow"
@@ -344,9 +344,9 @@ class DeepInsightService:
             if is_no_setup:
                 setup = DeepInsightSetup(
                     setup_type=SetupType.NO_SETUP,
-                    entry_zone="—",
+                    entry_zone="â€”",
                     stop_loss=0.0,
-                    target="—",
+                    target="â€”",
                     risk_reward=0.0,
                 )
                 # Never surface low-level validator text (e.g. "entry price
@@ -362,9 +362,9 @@ class DeepInsightService:
             else:
                 setup = DeepInsightSetup(
                     setup_type=signal.setup_type,
-                    entry_zone=f"{signal.entry:.0f}" if signal.entry > 0 else "—",
+                    entry_zone=f"{signal.entry:.0f}" if signal.entry > 0 else "â€”",
                     stop_loss=signal.stop_loss,
-                    target=f"{signal.target:.0f}" if signal.target > 0 else "—",
+                    target=f"{signal.target:.0f}" if signal.target > 0 else "â€”",
                     risk_reward=round((abs(signal.target - signal.entry) / max(abs(signal.entry - signal.stop_loss), 0.01)), 1) if signal.entry > 0 and signal.stop_loss > 0 else 0.0,
                 )
                 ai_summary = f"{signal.setup_type.value} setup on {signal.timeframe} timeframe."
@@ -384,7 +384,7 @@ class DeepInsightService:
                 "positive_factors": signal.reasons[:3],
                 "main_risks": signal.invalidation[:3],
             }
-            # A valid NO_TRADE (no setup) is not a validation failure — report
+            # A valid NO_TRADE (no setup) is not a validation failure â€” report
             # ACCEPT so the System tab shows a neutral/green state instead of
             # a red REJECT badge with a misleading price error.
             if is_no_setup and (

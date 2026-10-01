@@ -1,5 +1,5 @@
-"""
-Market Data Engine — §5 + Technical Analysis §11 + MTF §12 + F&O §13 + Options Selection §14-15
+﻿"""
+Market Data Engine â€” Â§5 + Technical Analysis Â§11 + MTF Â§12 + F&O Â§13 + Options Selection Â§14-15
 
 Normalized MarketData decoupled from provider structs.
 """
@@ -38,7 +38,7 @@ class MarketData:
 
     @classmethod
     def from_provider(cls, raw: dict, instrument_id: str, symbol: str) -> "MarketData":
-        """Normalize provider-specific response — strategy never touches raw."""
+        """Normalize provider-specific response â€” strategy never touches raw."""
         # Try common keys with fallbacks
         def dec(k, default=None):
             v = raw.get(k, raw.get(k.lower(), default))
@@ -84,7 +84,7 @@ class MarketData:
         )
 
     def spread_metrics(self) -> dict:
-        """§15 mid_price & spread_pct, with UNDEFINED guard."""
+        """Â§15 mid_price & spread_pct, with UNDEFINED guard."""
         if self.bid is None or self.ask is None:
             return {"spread": "UNDEFINED", "mid_price": None, "spread_pct": None}
         bid, ask = D(self.bid), D(self.ask)
@@ -95,7 +95,7 @@ class MarketData:
         return {"spread": "DEFINED", "mid_price": mid, "spread_pct": pct}
 
 
-# ── Technical Analysis Engine §11 ───────────────────────────────────────
+# â”€â”€ Technical Analysis Engine Â§11 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @dataclass
 class TechnicalState:
@@ -112,18 +112,18 @@ class TechnicalState:
 
 
 class TechnicalEngine:
-    """Wraps existing quant indicators — configurable set."""
+    """Wraps market_core indicators â€” configurable set."""
 
     def analyze(self, candles: list[dict] | None = None, price: Decimal | None = None, indicators: dict | None = None) -> TechnicalState:
         """
-        Produce structured state. In production delegates to app.quant.indicators.
+        Produce structured state. In production delegates to app.market_core.indicators.
         Fail-closed: missing rsi/adx/close yields score None + INSUFFICIENT_DATA,
         never a silent 50 neutral presented as measured.
         """
         if indicators is None:
             indicators = {}
 
-        # Explicit presence checks — no silent 50/15/0 defaults.
+        # Explicit presence checks â€” no silent 50/15/0 defaults.
         _has_rsi = indicators.get("rsi") is not None
         _has_adx = indicators.get("adx") is not None
         _has_close = (price is not None) or (indicators.get("close") is not None)
@@ -181,7 +181,7 @@ class TechnicalEngine:
         )
 
 
-# ── Multi-Timeframe Engine §12 ──────────────────────────────────────────
+# â”€â”€ Multi-Timeframe Engine Â§12 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @dataclass
 class MTFTimeframeState:
@@ -235,11 +235,11 @@ class MTFEngine:
         else:
             alignment, bias, conflict = "MIXED", "NEUTRAL", False
 
-        # Higher-timeframe respects strategy config — caller enforces
+        # Higher-timeframe respects strategy config â€” caller enforces
         return MTFBias(states=states, trend_alignment=alignment, overall_bias=bias, conflict=conflict)
 
 
-# ── Futures & Options Engine §13 ────────────────────────────────────────
+# â”€â”€ Futures & Options Engine Â§13 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @dataclass
 class FoState:
@@ -270,11 +270,11 @@ class FoEngine:
         spot = D(data["spot_price"]) if data.get("spot_price") else None
         fut = D(data["futures_price"]) if data.get("futures_price") else None
         basis = (fut - spot) if spot and fut else None
-        # Near expiry distinguish directional vs rollover §13
+        # Near expiry distinguish directional vs rollover Â§13
         days_to_expiry = data.get("days_to_expiry")
         expiry_effect = None
         if days_to_expiry is not None and days_to_expiry <= 2:
-            # If OI drop with volume spike → rollover, else directional
+            # If OI drop with volume spike â†’ rollover, else directional
             expiry_effect = "ROLLOVER" if data.get("oi_drop") else "DIRECTIONAL"
 
         put_oi = data.get("put_oi")
@@ -300,7 +300,7 @@ class FoEngine:
         )
 
 
-# ── Options Contract Selection §14-15 ───────────────────────────────────
+# â”€â”€ Options Contract Selection Â§14-15 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @dataclass
 class OptionCandidate:
@@ -331,9 +331,9 @@ class OptionCandidate:
 
 class OptionsSelector:
     """
-    §14 Selection pipeline:
-    Direction → Delta candidates → Liquidity → Spread → Volume/OI → Expiry → Margin → Trade Risk → Portfolio Risk → Final
-    Delta never overrides veto (§14 last line).
+    Â§14 Selection pipeline:
+    Direction â†’ Delta candidates â†’ Liquidity â†’ Spread â†’ Volume/OI â†’ Expiry â†’ Margin â†’ Trade Risk â†’ Portfolio Risk â†’ Final
+    Delta never overrides veto (Â§14 last line).
     """
 
     TARGET_DELTA: Decimal = D("0.60")
@@ -367,7 +367,7 @@ class OptionsSelector:
         delta_cands = []
         for c in filtered:
             if c.delta is None:
-                continue  # IV null → exclude from Greeks-based selection (§15) OR conservative fallback for existing — but for new entry, exclude
+                continue  # IV null â†’ exclude from Greeks-based selection (Â§15) OR conservative fallback for existing â€” but for new entry, exclude
             try:
                 d = abs(D(c.delta))
             except Exception:
@@ -385,7 +385,7 @@ class OptionsSelector:
         # Sort by delta closeness
         delta_cands.sort(key=lambda c: abs(abs(D(c.delta)) - target))
 
-        # Apply veto chain in order — any veto eliminates candidate
+        # Apply veto chain in order â€” any veto eliminates candidate
         for cand in delta_cands:
             # Liquidity veto
             if cand.oi is not None and cand.oi < int(min_oi):
@@ -413,7 +413,7 @@ class OptionsSelector:
                 ok, reason = trade_risk_fn(cand)
                 if not ok:
                     continue
-            # Portfolio risk veto — last
+            # Portfolio risk veto â€” last
             if portfolio_risk_fn:
                 ok, reason = portfolio_risk_fn(cand)
                 if not ok:
@@ -424,7 +424,7 @@ class OptionsSelector:
         return None, "ALL_CANDIDATES_VETOED_BY_LIQUIDITY_SPREAD_RISK_MARGIN"
 
     def validate_quote(self, cand: OptionCandidate) -> tuple[bool, str | None]:
-        """§15 invalid quote guard."""
+        """Â§15 invalid quote guard."""
         if cand.bid is None or cand.ask is None:
             return False, "INVALID_QUOTE_MISSING_BID_ASK"
         bid, ask = D(cand.bid), D(cand.ask)
@@ -447,7 +447,7 @@ class OptionsSelector:
         return True, None
 
 
-# ── Market Regime Engine §19 ────────────────────────────────────────────
+# â”€â”€ Market Regime Engine Â§19 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class RegimeEngine:
     REGIMES = ["STRONG_BULL","BULL","RANGE","BEAR","STRONG_BEAR","HIGH_VOLATILITY","EVENT_RISK"]
@@ -457,7 +457,7 @@ class RegimeEngine:
         inputs: trend, adx, atr, vix, breadth, price_structure etc.
         Fail-closed: missing inputs yield confidence None + INSUFFICIENT_DATA
         (never silent defaults); fixed confidences are removed in favour of
-        explicit UNVETTED status — regime label is deterministic, confidence is
+        explicit UNVETTED status â€” regime label is deterministic, confidence is
         unmeasured.
         """
         if not isinstance(inputs, dict) or not inputs:

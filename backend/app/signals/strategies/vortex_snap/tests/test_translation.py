@@ -57,3 +57,16 @@ class TestTranslationRatioEngine:
         # Price direction vs net pressure direction
         if press.pressure_score > 0.60 and trans.price_direction < 0:
             assert trans.translation_state == TranslationState.REJECTION_CONFLICT
+
+    def test_ratio_clamped_when_pressure_vanishes(self):
+        # Zero-volume flat-ish drift: quotient would explode via epsilon —
+        # the HUD must never show 1e9x.
+        candles = [
+            create_candle(1000 + i * 60000, 24000 + (i % 3), 24000 + (i % 3) + 4, 24000 + (i % 3) - 4, 24000 + (i % 3) + 1, volume=0.0)
+            for i in range(15)
+        ]
+        press = self.pressure_engine.compute(candles)
+        trans = self.translation_engine.compute(candles, press)
+
+        assert trans.translation_ratio <= 99.99
+        assert trans.translation_ratio >= 0.0

@@ -34,19 +34,20 @@ export type ChartTokens = {
 
 /**
  * Used during SSR and as a per-token fallback if a token is missing or empty.
- * Values mirror `:root` in globals.css — keep them in sync (design gate:
- * scripts/check-design-rules.mjs).
+ * Values mirror `:root` in globals.css **exactly** — `designTokens.test.ts`
+ * fails the build if they drift, because a stale chart palette is invisible
+ * until someone screenshots a chart next to a table.
  */
 const FALLBACK: ChartTokens = {
-  up: '#4caf50',       // --ds-bull
-  down: '#df5148',     // --ds-bear
-  accent: '#387ed1',   // --ds-accent
-  warn: '#ff9500',     // --ds-warn
-  grid: 'rgba(68, 68, 68, 0.06)',      // --ds-chart-grid
-  crosshair: 'rgba(68, 68, 68, 0.35)', // --ds-chart-crosshair
-  axis: 'rgba(68, 68, 68, 0.12)',      // --ds-chart-axis
-  text: '#9b9b9b',     // --ds-ink-3
-  surface: '#ffffff',  // --ds-surface
+  up: '#16a34a',                       // --ds-bull
+  down: '#dc2626',                     // --ds-bear
+  accent: '#7c3aed',                   // --ds-accent
+  warn: '#f59e0b',                     // --ds-warn
+  grid: 'rgba(15, 23, 42, 0.06)',      // --ds-chart-grid
+  crosshair: 'rgba(15, 23, 42, 0.4)',  // --ds-chart-crosshair
+  axis: 'rgba(15, 23, 42, 0.12)',      // --ds-chart-axis
+  text: '#64748b',                     // --ds-ink-3
+  surface: '#ffffff',                  // --ds-surface
 };
 
 const TOKEN_MAP: Record<keyof ChartTokens, string> = {
@@ -91,8 +92,9 @@ export function chartTokens(): ChartTokens {
 }
 
 /**
- * Escape hatch for tests and for re-reading after a runtime token change.
- * The theme is currently light-only and fixed, so nothing calls this in the app.
+ * Drop the cache so the next `chartTokens()` re-reads the live tokens.
+ * Called by `applyDisplayMode()` whenever the theme changes — the light and
+ * dark terminal palettes differ, and a chart must follow the desk.
  */
 export function resetChartTokens(): void {
   cached = null;

@@ -13,6 +13,21 @@ import { EventsTab } from './EventsTab';
 
 type TopTab = 'institutional' | 'events';
 
+function interpretPcr(value: number | null): string | null {
+  if (value === null) return null;
+  if (value > 1.2) return 'bullish';
+  if (value < 0.8) return 'bearish';
+  if (value >= 0.9 && value <= 1.1) return 'neutral';
+  return 'mixed';
+}
+
+function interpretSizing(multiplier: number | null | undefined): string | null {
+  if (multiplier === null || multiplier === undefined) return null;
+  if (multiplier >= 1.0) return 'full size';
+  if (multiplier >= 0.75) return 'reduced';
+  return 'minimal';
+}
+
 export function IntelModule() {
   const { instrument } = useInstrument();
   const { isOpen } = useMarketSession();
@@ -50,6 +65,13 @@ export function IntelModule() {
   const busy = tab === 'institutional' ? inst.refreshing : events.refreshing;
   const error = tab === 'institutional' ? inst.error : events.error;
 
+  const regime = inst.mi?.regime?.replace(/_/g, ' ');
+  const regimeLabel = regime && regime !== '—' ? regime.toLowerCase() : null;
+
+  const pcrRaw = pickNum(getObj(inst.callsPuts) ?? {}, 'pcr');
+  const pcrInterpretation = interpretPcr(pcrRaw);
+  const sizingInterpretation = interpretSizing(sizing);
+
   return (
     <div className="flex flex-col gap-3">
       <section className="ds-commandbar" aria-label="Intelligence hub controls" aria-busy={busy}>
@@ -58,6 +80,11 @@ export function IntelModule() {
           <span className={`badge ${isOpen ? 'b-bull' : 'b-neut'}`}>
             {isOpen ? 'MARKET OPEN' : 'MARKET CLOSED'}
           </span>
+          {regimeLabel ? (
+            <span className={`badge ${badgeClass(healthTone(inst.mi?.regime))}`} title="Current market regime">
+              {regimeLabel}
+            </span>
+          ) : null}
           {proximity ? (
             <span className={`badge ${badgeClass(proximityTone)}`} title="Event proximity (stream + overlay)">
               {proximity.replace(/_/g, ' ')}
@@ -66,29 +93,33 @@ export function IntelModule() {
           <span className="card-meta">{instrument}</span>
         </div>
         <div className="stat-chips">
-          <span className="stat-chip">
-            inst signals <b>{inst.signals.length}</b>
-          </span>
-          <span className="stat-chip">
-            events today <b>{events.today.length}</b>
-          </span>
-          {activeEventCount > 0 ? (
-            <span className="stat-chip">
-              live now <b>{activeEventCount}</b>
+          {regime ? (
+            <span className="stat-chip" title="Current market regime">
+              regime <b>{regime}</b>
             </span>
           ) : null}
-          <span className="stat-chip" title="FII/DII institutional sentiment (stream)">
-            flow <b>{fiiSentiment ? fiiSentiment.replace(/_/g, ' ') : '—'}</b>
-          </span>
-          <span className="stat-chip" title="Event-aware entry gate">
+          <span className="stat-chip" title="Can new trades enter right now?">
             entry <b>{canEnter === null ? '—' : canEnter ? 'OPEN' : 'BLOCKED'}</b>
           </span>
           {sizing !== null && sizing !== undefined ? (
-            <span className="stat-chip">
-              sizing <b>{Math.round(Number(sizing) * 100)}%</b>
+            <span className="stat-chip" title={`Size multiplier: ${Math.round(Number(sizing) * 100)}%`}>
+              size <b>{Math.round(Number(sizing) * 100)}%</b>
+              {sizingInterpretation ? <span className={`sg-tag ${sizingInterpretation === 'full size' ? 'bull' : sizingInterpretation === 'reduced' ? 'warn' : 'neut'}`} style={{ marginLeft: 4 }}>{sizingInterpretation}</span> : null}
             </span>
           ) : null}
-          <span className="stat-chip">
+          <span className="stat-chip" title="Currently active events">
+            live <b>{activeEventCount}</b>
+          </span>
+          <span className="stat-chip" title="FII/DII institutional money flow">
+            flow <b>{fiiSentiment ? fiiSentiment.replace(/_/g, ' ') : '—'}</b>
+          </span>
+          {pcrRaw !== null ? (
+            <span className="stat-chip" title={`Put/Call ratio = ${pcrRaw.toFixed(2)}`}>
+              pcr <b>{pcrRaw.toFixed(2)}</b>
+              {pcrInterpretation ? <span className={`sg-tag ${pcrInterpretation === 'bullish' ? 'bull' : pcrInterpretation === 'bearish' ? 'bear' : 'neut'}`} style={{ marginLeft: 4 }}>{pcrInterpretation}</span> : null}
+            </span>
+          ) : null}
+          <span className="stat-chip" title="Time of last data refresh">
             as of <b>{updatedLabel}</b>
           </span>
         </div>

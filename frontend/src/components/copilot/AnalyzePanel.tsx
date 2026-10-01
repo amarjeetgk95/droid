@@ -1,39 +1,44 @@
 'use client';
 
-/* Analyze tab: symbol + optional model override -> POST /analyze (or
-   /analyze/{symbol}/with-model), report sections + GET /history/{symbol} list. */
+/* Analyze tab: structured DROID Market Intelligence Copilot.
+   Uses POST /api/copilot/analyze which returns a canonical structured response.
+   The UI never derives the directional badge from free-form text — it reads
+   the canonical `summary.direction` enum from the structured response.
+*/
 
 import { useState } from 'react';
 import { useInstrument } from '@/context/InstrumentContext';
-import { useCopilotAnalyze } from '@/hooks/useCopilot';
-import { biasTone, copilotErrorHint } from '@/lib/copilot';
+import { useStructuredCopilotAnalyze } from '@/hooks/useCopilot';
+import { copilotErrorHint } from '@/lib/copilot';
 import { useToast } from '@/components/ui/toast';
-import { CopilotAnswer } from './CopilotAnswer';
+import { CopilotStructuredAnswer } from './CopilotStructuredAnswer';
+
+const HORIZONS = [
+  { value: 'NEXT_15_MIN', label: 'Next 15 min' },
+  { value: 'NEXT_60_MIN', label: 'Next 60 min' },
+  { value: 'TODAY', label: 'Today' },
+  { value: 'NEXT_SESSION', label: 'Next session' },
+  { value: 'SWING_3_5_DAYS', label: 'Swing 3–5 days' },
+] as const;
+
+type Horizon = typeof HORIZONS[number]['value'];
 
 export function AnalyzePanel() {
   const { instrument } = useInstrument();
   const [symbol, setSymbol] = useState<string>(instrument);
-  const [modelOverride, setModelOverride] = useState('');
-  const desk = useCopilotAnalyze();
+  const [query, setQuery] = useState('what\'s next day market prediction');
+  const [horizon, setHorizon] = useState<Horizon>('NEXT_SESSION');
+  const desk = useStructuredCopilotAnalyze();
   const { push } = useToast();
 
   const handleAnalyze = async () => {
-    const ok = await desk.analyze(symbol, modelOverride);
+    const ok = await desk.analyze(symbol, query, horizon);
     if (ok) {
       push('success', 'Analysis complete.');
-      void desk.loadHistory(symbol);
     } else if (desk.error) {
-      const hint = copilotErrorHint(desk.error);
-      push('error', desk.error, hint.kind === 'generic' ? undefined : hint.hint);
+      push('error', desk.error);
     }
   };
-
-  const handleHistory = async () => {
-    await desk.loadHistory(symbol);
-    if (desk.historyError) push('error', desk.historyError);
-  };
-
-  const tone = desk.report ? biasTone(desk.report.bias) : 'neut';
 
   return (
     <div className="flex flex-col gap-3">
@@ -49,23 +54,37 @@ export function AnalyzePanel() {
             }}
           />
         </label>
-        <label className="field" title="Blank uses POST /api/v1/ai/analyze with the Settings model; set an ID to use POST /analyze/{symbol}/with-model">
-          <span className="field-l">Model override (optional)</span>
+        <label className="field">
+          <span className="field-l">Query</span>
           <input
-            className="input mono"
-            value={modelOverride}
-            placeholder="auto — or a model ID"
-            onChange={(e) => setModelOverride(e.target.value)}
+            className="input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void handleAnalyze();
             }}
+            placeholder="e.g. what's next day market prediction"
           />
         </label>
-        <button type="button" className="btn btn-primary" disabled={desk.analyzing} onClick={() => void handleAnalyze()}>
-          {desk.analyzing ? 'Analyzing… (up to 180s)' : 'Analyze'}
-        </button>
-        <button type="button" className="btn" disabled={desk.historyLoading} onClick={() => void handleHistory()}>
-          {desk.historyLoading ? 'Loading…' : 'History'}
+        <label className="field">
+          <span className="field-l">Horizon</span>
+          <select
+            className="input"
+            value={horizon}
+            onChange={(e) => setHorizon(e.target.value as Horizon)}
+          >
+            {HORIZONS.map((h) => (
+              <option key={h.value} value={h.value}>{h.label}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={desk.analyzing}
+          onClick={() => void handleAnalyze()}
+        >
+          {desk.analyzing ? 'Analyzing…' : 'Analyze'}
         </button>
       </div>
 
@@ -76,76 +95,13 @@ export function AnalyzePanel() {
         </div>
       ) : null}
 
-      {desk.report ? (
-        <>
-          <section className="card" aria-label="Analysis summary">
-            <div className="card-hd">
-              <h2 className="card-title">Report</h2>
-              <span className={`badge b-${tone}`}>{desk.report.bias}</span>
-              <span className="card-meta num">
-                {desk.report.symbol}
-                {desk.report.confidence !== null ? ` · ${desk.report.confidence.toFixed(1)}%` : ''}
-                {desk.modelUsed ? ` · ${desk.modelUsed}` : ''}
-              </span>
-            </div>
-            <div className="card-bd">
-              <CopilotAnswer raw={desk.report.summary} confidence={desk.report.confidence} providerLabel={`${desk.report.timestamp} · ${desk.report.provider}${desk.modelUsed ? ` · ${desk.modelUsed}` : ''}`} />
-            </div>
-          </section>
-          {desk.report.sections.map((s, i) => (
-            <details key={s.label} className="card" aria-label={s.label} open={i === 0 ? true : undefined}>
-              <summary>{s.label}</summary>
-              <CopilotAnswer raw={s.text} />
-            </details>
-          ))}
-        </>
+      {desk.response ? (
+        <CopilotStructuredAnswer data={desk.response} />
       ) : (
-        !desk.analyzing && <p className="sg-note">Run an analysis to render the structured report sections here.</p>
+        !desk.analyzing && (
+          <p className="sg-note">Run an analysis to render the structured intelligence report.</p>
+        )
       )}
-
-      <section className="card" aria-label="Analysis history">
-        <div className="card-hd">
-          <h2 className="card-title">History</h2>
-          <span className="card-meta num">{desk.history.length}</span>
-        </div>
-        <div className="card-bd">
-          {desk.historyError ? <p className="sg-err">{desk.historyError}</p> : null}
-          {desk.history.length === 0 ? (
-            <p className="sg-empty">No past reports loaded for this symbol yet.</p>
-          ) : (
-            <div className="tbl-scroll">
-              <table className="sg-table">
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Symbol</th>
-                    <th>Bias</th>
-                    <th>Conf</th>
-                    <th>Summary</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {desk.history.map((row) => (
-                    <tr key={row.id}>
-                      <td className="num">{row.timestamp}</td>
-                      <td>
-                        <span className="sg-sym">{row.symbol}</span>
-                      </td>
-                      <td>
-                        <span className={`sg-tag ${biasTone(row.bias)}`}>{row.bias}</span>
-                      </td>
-                      <td className="num">{row.confidence !== null ? row.confidence.toFixed(1) : '—'}</td>
-                      <td>
-                        <span className="sg-rownote">{row.summary}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

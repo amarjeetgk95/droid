@@ -1,14 +1,14 @@
-from app.models.regime import (
+﻿from app.models.regime import (
     MarketRegimeOverview, TechnicalIndicators, KeyLevelsModel,
     PivotSetModel, VixRegimeInfo, MarketRegimeState, VixRegimeCategory
 )
 from app.services.market_service import MarketService
-from app.quant.indicators import (
+from app.market_core.indicators import (
     calculate_rsi, calculate_adx, calculate_atr,
     calculate_bollinger_bands, calculate_supertrend,
     calculate_ema, calculate_sma
 )
-from app.quant.pivots import (
+from app.market_core.pivots import (
     calculate_classic_pivots, calculate_fibonacci_pivots,
     calculate_camarilla_pivots, calculate_value_area
 )
@@ -162,22 +162,22 @@ class RegimeService:
             pct = 50.0
         elif vix_val < 13.0:
             category: VixRegimeCategory = "LOW_VOLATILITY"
-            interp = "Compressed volatility environment — option premiums are low. Favorable for defined credit spreads / iron condors."
+            interp = "Compressed volatility environment â€” option premiums are low. Favorable for defined credit spreads / iron condors."
             strategy = "Iron Condors, Short Strangles with wide wings, Calendar Spreads"
             pct = 18.0
         elif vix_val < 18.0:
             category = "NORMAL_VOLATILITY"
-            interp = "Standard volatility environment — balanced risk/reward between direction and theta decay."
+            interp = "Standard volatility environment â€” balanced risk/reward between direction and theta decay."
             strategy = "Bull Put / Bear Call Spreads, Ratio Spreads, Long Diagonals"
             pct = 46.0
         elif vix_val < 24.0:
             category = "ELEVATED_VOLATILITY"
-            interp = "Elevated event pricing — high intraday point swings. Option buying / long gamma favored on intraday breakouts."
+            interp = "Elevated event pricing â€” high intraday point swings. Option buying / long gamma favored on intraday breakouts."
             strategy = "Long Straddles, Debit Spreads, Volatility Breakout Straddles"
             pct = 82.0
         else:
             category = "EXTREME_VOLATILITY"
-            interp = "Crisis / extreme panic volatility — severe dislocation. Delta-neutral hedging and strict risk-off mandatory."
+            interp = "Crisis / extreme panic volatility â€” severe dislocation. Delta-neutral hedging and strict risk-off mandatory."
             strategy = "Deep OTM Protective Puts, Cash Preservation, Long VIX Futures"
             pct = 96.0
 
@@ -234,32 +234,32 @@ class RegimeService:
         if is_squeeze:
             regime_state: MarketRegimeState = "COMPRESSION_SQUEEZE"
             confidence = 88.0
-            headline = "Volatility Squeeze — Imminent Breakout Implied"
+            headline = "Volatility Squeeze â€” Imminent Breakout Implied"
             rationale = "Bollinger Bands are severely contracted with low ADX. Compression usually precedes explosive directional expansions."
         elif is_expansion:
             regime_state = "VOLATILE_EXPANSION"
             confidence = 82.0
-            headline = "Volatile Expansion — Wide Intraday Ranges"
+            headline = "Volatile Expansion â€” Wide Intraday Ranges"
             rationale = "Bollinger Bandwidth and ATR are expanding with elevated India VIX. Momentum trades with trailing stops are favored."
         elif is_bullish_trend:
             regime_state = "TRENDING_BULLISH"
             confidence = 90.0
-            headline = "Trending Bullish — Strong Institutional Buying"
+            headline = "Trending Bullish â€” Strong Institutional Buying"
             rationale = "Price is commanding above key EMAs with ADX > 22 and Supertrend bullish. Buy-on-dips strategy aligns with structure."
         elif is_bearish_trend:
             regime_state = "TRENDING_BEARISH"
             confidence = 90.0
-            headline = "Trending Bearish — Institutional Supply Dominant"
+            headline = "Trending Bearish â€” Institutional Supply Dominant"
             rationale = "Price is rejecting from resistance with ADX confirming downward momentum and RSI < 48. Sell-on-rallies strategy favored."
         elif vix_info.vix_value < 14.5:
             regime_state = "RANGEBOUND_LOW_VOL"
             confidence = 80.0
-            headline = "Rangebound Low Volatility — Premium Decay Market"
+            headline = "Rangebound Low Volatility â€” Premium Decay Market"
             rationale = "ADX is subdued under 20 and India VIX is low. Price is oscillating tightly within Value Area POC/VAH/VAL."
         else:
             regime_state = "RANGEBOUND_HIGH_VOL"
             confidence = 78.0
-            headline = "Rangebound High Volatility — Choppy Mean-Reversion"
+            headline = "Rangebound High Volatility â€” Choppy Mean-Reversion"
             rationale = "Price lacks clean trend continuation but oscillates across wide swings. Strict target booking at Support/Resistance."
 
         return MarketRegimeOverview(

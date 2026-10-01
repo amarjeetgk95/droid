@@ -1,0 +1,21 @@
+{
+  "symbol": "BANKNIFTY",
+  "timeframe": "1D",
+  "version_tag": "v6",
+  "row_count": 249,
+  "start_time": "2025-09-22T00:00:00+00:00",
+  "end_time": "2026-09-29T00:00:00+00:00",
+  "checksum_sha256": "6331d7a8b4a84c8bf51757536dc743d3892e0a0f3e83d6c539f1136ad01f6d5d",
+  "quality_score": 97.7,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "derived_from_1m",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-29T12:11:06.889149Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-29T12:11:06.949899+00:00"
+}

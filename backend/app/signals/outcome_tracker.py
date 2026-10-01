@@ -331,15 +331,16 @@ class SignalOutcomeTracker(OutcomeMetricsMixin):
 
                     # Attempt paper execution
                     paper_res = None
-                    lots_to_trade = (sig.option_contract or {}).get("lots") or getattr(sig, "lots", None) or 1
-                    try:
-                        paper_res = await signal_paper_engine.execute_signal(
-                            sig.signal_id,
-                            lots_override=lots_to_trade,
-                            allow_closed_market=allow_closed_market,
-                        )
-                    except Exception as pe:
-                        logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
+                    if getattr(sig, "paper_eligible", True):
+                        lots_to_trade = getattr(sig, "hypothetical_paper_lots", 0) or (sig.option_contract or {}).get("lots") or getattr(sig, "lots", None) or 1
+                        try:
+                            paper_res = await signal_paper_engine.execute_signal(
+                                sig.signal_id,
+                                lots_override=lots_to_trade,
+                                allow_closed_market=allow_closed_market,
+                            )
+                        except Exception as pe:
+                            logger.warning("auto_paper_execution_failed", signal_id=sig.signal_id, error=str(pe))
 
                     # Single atomic TRIGGERED+CONFIRMED with paper receipt:
                     # CONFIRMED only on successful, non-rejected paper execution,

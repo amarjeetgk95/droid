@@ -14,20 +14,22 @@ from typing import Any, Optional
 
 
 TICK = Decimal("0.05")
-# P0-2 FAIL-CLOSE: minimum trigger distance — the larger of 0.05% of spot or
-# 0.15R. A trigger buried inside this band is born-triggered noise.
-MIN_GAP_PCT = Decimal("0.0005")
-MIN_GAP_RISK_FRACTION = Decimal("0.15")
-# ATR-normalized gap: the trigger must also clear 0.25*ATR of microstructure
-# noise, plus the expected spread+slippage cost of the round trip.
-ATR_GAP_FRACTION = Decimal("0.25")
-# Minimum risk size: 0.03% of spot (filters dust stops that make R:R meaningless).
-MIN_RISK_PCT = Decimal("0.0003")
-# Minimum reward bar — 1.5R intraday, 1.3R scalp (tighter costs, faster exit).
-MIN_RR_T2 = 1.5
-MIN_RR_T2_SCALP = 1.3
-# Entry zone wider than 1R means the "setup" is just chop.
-MAX_ENTRY_WIDTH_R = Decimal("1.0")
+# RISK-ON 2026-09-23: minimum trigger distance — the larger of 0.02% of spot or
+# 0.08R (was 0.05% / 0.15R). A trigger buried inside this band is still
+# born-triggered noise, but normal 5-15pt NIFTY gaps now pass instead of dying.
+MIN_GAP_PCT = Decimal("0.0002")
+MIN_GAP_RISK_FRACTION = Decimal("0.08")
+# ATR-normalized gap: the trigger must also clear 0.12*ATR of microstructure
+# noise (was 0.25), plus the expected spread+slippage cost of the round trip.
+ATR_GAP_FRACTION = Decimal("0.12")
+# Minimum risk size: 0.015% of spot (was 0.03% — dust-stop filter halved).
+MIN_RISK_PCT = Decimal("0.00015")
+# Minimum reward bar — 1.0R intraday and scalp (was 1.5/1.3). Sub-1.0R is cost,
+# but 1.0-1.5R with momentum is now tradable risk, not auto-reject.
+MIN_RR_T2 = 1.0
+MIN_RR_T2_SCALP = 1.0
+# Entry zone wider than 1.5R means the "setup" is just chop (was 1.0R).
+MAX_ENTRY_WIDTH_R = Decimal("1.5")
 
 
 @dataclass
@@ -163,8 +165,8 @@ def check_trigger_integrity(
              "gap_pct": float(gap / abs(spot) * 100), "risk_pts": float(risk)},
         )
 
-    # 3. Dust-stop filter.
-    min_risk_floor = (abs(spot) * Decimal("0.00008")) if is_scalp_effective else (abs(spot) * MIN_RISK_PCT)
+    # 3. Dust-stop filter (RISK-ON: scalp floor 0.004% / intraday 0.015%).
+    min_risk_floor = (abs(spot) * Decimal("0.00004")) if is_scalp_effective else (abs(spot) * MIN_RISK_PCT)
     if risk < min_risk_floor:
         return TriggerCheckResult(
             False, "RISK_TOO_SMALL",

@@ -231,10 +231,21 @@ export class ApiCore {
         const error: unknown = await response.json().catch(() => ({ detail: response?.statusText }));
         const record = (error && typeof error === 'object' ? error : {}) as Record<string, unknown>;
         const rawDetail = record.detail ?? record.error ?? record.message;
+        // FastAPI validation errors (422) arrive as a list of
+        // {loc, msg, type} objects — stringifying that as "[object Object]"
+        // or falling back to the statusText hides the actual field error.
         const detail =
           typeof rawDetail === 'string' && rawDetail
             ? rawDetail
-            : `API Error ${response.status}: ${response.statusText}`;
+            : Array.isArray(rawDetail) && rawDetail.length > 0
+              ? (rawDetail as Array<Record<string, unknown>>)
+                  .map((item) => {
+                    if (!item || typeof item !== 'object') return String(item);
+                    const loc = Array.isArray(item.loc) ? (item.loc as unknown[]).filter((p) => p !== 'body').join('.') : '';
+                    return `${loc ? `${loc}: ` : ''}${typeof item.msg === 'string' ? item.msg : JSON.stringify(item)}`;
+                  })
+                  .join('; ')
+              : `API Error ${response.status}: ${response.statusText}`;
         const hint = typeof record.hint === 'string' ? ` Hint: ${record.hint}` : '';
         const extra =
           detail.toLowerCase().includes('paid models are disabled')

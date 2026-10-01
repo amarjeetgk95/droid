@@ -26,8 +26,8 @@ CACHE_FILE = Path("live_contracts_cache.json")
 REFRESH_INTERVAL_MS = 60_000
 
 
-#: A chain row older than this is not a live mark (one refresh cycle + slack).
-CHAIN_ROW_MAX_AGE_MS = 90_000
+#: A chain row older than this is not a live mark (5 min window during market session).
+CHAIN_ROW_MAX_AGE_MS = 300_000
 
 
 class LiveStrikeInfo(BaseModel):
@@ -130,6 +130,9 @@ class LiveContractCache:
                     count += 1
                 except Exception:
                     continue
+            up_ms = int(payload.get("updated_at_ms") or 0)
+            if up_ms > 0:
+                self._last_refresh_ms = up_ms
             return count
         except Exception:
             return 0
@@ -399,11 +402,10 @@ class LiveContractCache:
 
     async def _guarded_refresh(self, market_svc: Any = None) -> None:
         try:
-            # Release the reservation so a real refresh runs now.
-            with self._lock:
-                self._last_refresh_ms = 0
             await self.refresh(market_svc)
         except Exception as e:
+            with self._lock:
+                self._last_refresh_ms = int(time.time() * 1000)
             logger.debug("live_contracts_refresh_err", error=str(e)[:150])
 
 

@@ -67,18 +67,69 @@ class SignalScanner:
       - Intraday Desk (5M / 15M): Breakout, Mean Reversion, Trend Pullback, Gamma Squeeze, ORB
     """
 
-    def __init__(self, scan_cache_ttl_s: float = 10.0):
+    def __init__(self, scan_cache_ttl_s: float = 3.0):
+        # NOTE: the cache TTL must stay STRICTLY BELOW the worker's scan
+        # intervals (10s scalp / 30s intraday). At TTL == interval the entry
+        # written by tick N is still fresh when tick N+1 comes due, so
+        # _cache_get returned early and the scan was skipped entirely — the
+        # scalp desk really ran every ~20s and every skipped tick was silent
+        # (no log, no counter). 3s keeps manual /scanner calls coalesced while
+        # guaranteeing each due worker tick performs a real scan.
         self._last_diagnostics: dict[str, ScanDiagnostics] = {}
         self._scan_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._scan_cache_ttl_s = scan_cache_ttl_s
         self._market_svc: Any = None
         self._daily_funnel_date: str = ""
         self._daily_funnel: dict[str, Any] = {}
+        # Per-scan suppression counters, keyed "<UNDERLYING>:<TIMEFRAME>".
+        # Previously throttled_signals_count was declared and read but never
+        # written anywhere, so /signals/performance reported
+        # throttled_signals_total: 0 forever while dedup/cooldown/stacking
+        # drops were happening. These are populated by _note_throttle().
+        self._throttle_counts: dict[str, int] = {}
         self._init_daily_funnel()
+
+    @staticmethod
+    def _is_throttle_code(code: str) -> bool:
+        """True when a rejection means 'suppressed', not 'no setup / bad economics'.
+
+        These are the codes that used to vanish from every metric while still
+        dropping real, fully-qualified candidates.
+        """
+        up = (code or "").upper()
+        return any(
+            marker in up
+            for marker in (
+                "REJECTED_DEDUPLICATION",
+                "REJECTED_COOLDOWN",
+                "REJECTED_STALE_DATA",
+                "REJECTED_CHASE",
+                "REJECTED_REGIME",
+                "REJECTED_VIX_EXTREME",
+                "REJECTED_SPREAD",
+                "REJECTED_LIQUIDITY",
+                "REJECTED_OI_TOO_LOW",
+                "GAP_TOO_LARGE",
+                "DROPPED_CORRELATED",
+                "CONFLICT_TIE_REJECT_BOTH",
+                "STACKING_BLOCKED",
+                "UNDERLYING_HAS_ACTIVE_TRADE",
+                "PORTFOLIO_CONCURRENCY_LIMIT_REACHED",
+                "REJECT_CROSS_DESK_CONFLICT",
+                "REJECT_PORTFOLIO_VETO",
+            )
+        )
+
+    def _note_throttle(self, key: str, codes: list[str]) -> int:
+        n = sum(1 for c in codes if self._is_throttle_code(c))
+        if n:
+            self._throttle_counts[key] = self._throttle_counts.get(key, 0) + n
+        return n
 
     def _init_daily_funnel(self) -> None:
         today_str = datetime.now(UTC).strftime("%Y-%m-%d")
         self._daily_funnel_date = today_str
+        self._throttle_counts = {}
         self._daily_funnel = {
             "date": today_str,
             "data_since": datetime.now(UTC).isoformat(),
@@ -123,6 +174,8 @@ class SignalScanner:
         upper = code.upper()
         if "MARKET_CLOSED" in upper or "CALENDAR" in upper:
             return "Market Closed", "Session is closed or outside authorized trading window"
+        if "NO_SETUP" in upper or "NO_VOLUME" in upper or "NO_SQUEEZE" in upper or "NO_EXPANSION" in upper or "NO_CLOSE_CROSS" in upper or "NO_OR_BREAK" in upper or "ORB_WINDOW_CLOSED" in upper or "VWAP_NOT_STRETCHED" in upper or "NO_REJECTION_WICK" in upper or "REGIME_TREND" in upper or "FORMING_CANDLE" in upper or "LOW_VOLUME" in upper or "NO_PRESSURE" in upper or "NO_VWAP" in upper or "WRONG_TIMEFRAME" in upper:
+            return "No Setup (Entry Filters)", "Price, volume, or structure did not meet entry filters — market balanced, no tradable edge"
         if "MARKET_DATA_OFFLINE" in upper or "FEED" in upper or "CIRCUIT" in upper or "STALE" in upper:
             return "Feed Health / Circuit", "Market feed stale, offline, or circuit health check degraded"
         if "GAP" in upper:
@@ -248,7 +301,12 @@ class SignalScanner:
         return self._market_svc
 
     def get_last_diagnostics(self) -> dict[str, Any]:
-        return {k: v.model_dump() for k, v in self._last_diagnostics.items()}
+        out: dict[str, Any] = {}
+        for k, v in self._last_diagnostics.items():
+            d = v.model_dump()
+            d["throttled_signals_count"] = int(self._throttle_counts.get(k, 0))
+            out[k] = d
+        return out
 
     @staticmethod
     def _is_fallback_quote(quote: Any) -> bool:
@@ -262,6 +320,12 @@ class SignalScanner:
         desk: str | None = None,
     ) -> list[SignalCandidate]:
         self._check_rollover()
+        try:
+            from app.signals.live_contract_cache import live_contract_cache
+            if live_contract_cache.refresh_due() or live_contract_cache.stats().get("strikes", 0) == 0:
+                live_contract_cache.schedule_refresh(self._get_market_svc())
+        except Exception:
+            pass
         u = validate_underlying(underlying)
         ctx, diag = await acquire_market_context(u, timeframe, self._get_market_svc())
         self._last_diagnostics[f"{u}:{timeframe}"] = diag
@@ -296,6 +360,10 @@ class SignalScanner:
         candidates, rejected = run_strategies(ctx, strategies_to_run)
         diag.candidates_found = len(candidates)
         diag.reasons.extend(rejected)
+        # Scalp-confirmation dedup / cooldown / chase rejections and the opening
+        # gap filter fire inside run_strategies and were previously invisible to
+        # every metric. Record them so throttled_signals_count is real.
+        diag.throttled_signals_count = self._note_throttle(f"{u}:{timeframe}", rejected)
 
         for cand in candidates:
             self._daily_funnel["candidates_found"] += 1
@@ -307,6 +375,12 @@ class SignalScanner:
 
         for rej in rejected:
             self._record_rejection(rej)
+            # NO_SETUP_* means detect() returned None — no candidate ever
+            # existed. Record the blocker for funnel honesty but do NOT
+            # inflate detected-candidate counts (that hid the true story and
+            # made Feed Health look like 100% of evaluations).
+            if "NO_SETUP" in rej.upper():
+                continue
             strat = rej.split(":", 1)[0] if ":" in rej else None
             if strat:
                 self._daily_funnel["candidates_found"] += 1
@@ -343,6 +417,9 @@ class SignalScanner:
             rejected_gates.extend(dropped_conflicts)
             for d in dropped_conflicts:
                 self._record_rejection(f"CONFLICT:{d}")
+            # Correlated/duplicate drops are suppressions, not economics.
+            for c in candidates:
+                self._note_throttle(f"{c.underlying}:{c.timeframe}", dropped_conflicts)
 
         pre_risk_chain = GateChain([
             FeedCircuitGate(),
@@ -364,13 +441,17 @@ class SignalScanner:
             # 1. Evaluate Pre-Risk Gates
             passed_pre, results_pre = pre_risk_chain.evaluate(cand, registered_in_flight=registered_signals)
             fno_is_degraded = getattr(cand, "fno_degraded", False)
+            _pre_codes: list[str] = []
             for r in results_pre:
                 if not r.passed and r.reason_code:
                     rejected_gates.append(f"{cand.strategy}:{r.reason_code}")
                     self._record_rejection(f"{cand.strategy}:{r.reason_code}")
+                    _pre_codes.append(r.reason_code)
                 elif r.reason_code == "ARMED_BLOCKED_FNO_DEGRADED":
                     rejected_gates.append(f"{cand.strategy}:{r.reason_code}")
                     self._record_rejection(f"{cand.strategy}:{r.reason_code}")
+            # Desk/portfolio/cross-desk stacking limits suppress real candidates.
+            self._note_throttle(f"{cand.underlying}:{cand.timeframe}", _pre_codes)
             if not passed_pre:
                 continue
             self._daily_funnel["stages"]["pre_risk_passed"] += 1
@@ -414,10 +495,14 @@ class SignalScanner:
                     underlying=cand.underlying,
                     reason=risk_decision.rejection_reason,
                     event_state=getattr(overlay, "proximity_state", "UNKNOWN") if overlay else "NONE",
+                    observation_eligible=risk_decision.observation_eligible,
+                    execution_status=risk_decision.execution_status,
                 )
-                continue
-            self._daily_funnel["stages"]["risk_passed"] += 1
-            self._daily_funnel["strategy_stats"][cand.strategy]["risk_passed"] += 1
+                if not risk_decision.observation_eligible:
+                    continue
+            else:
+                self._daily_funnel["stages"]["risk_passed"] += 1
+                self._daily_funnel["strategy_stats"][cand.strategy]["risk_passed"] += 1
 
             # Update candidate parameters from risk decision
             cand.stop_loss = risk_decision.stop_loss

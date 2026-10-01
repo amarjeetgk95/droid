@@ -45,8 +45,10 @@ def test_chain_mark_gate_refuses_formula_contract():
     cand = _cand(option_contract=c)
     r = ChainMarkGate().evaluate(cand)
     if c.contract_source != "fyers_chain":
-        assert r.passed is False
-        assert r.reason_code == "CHAIN_MARK_UNAVAILABLE"
+        # RISK-ON: formula fallback passes as VALIDATED-grade paper (1-lot cap),
+        # stamped CHAIN_FORMULA_FALLBACK — offline mornings print WATCH.
+        assert r.passed is True
+        assert r.reason_code == "CHAIN_FORMULA_FALLBACK"
     bad = _cand(path_simulation={"is_economically_viable": False,
                                  "viability_rationale": ["no edge"]})
     r2 = OptionViabilityGate().evaluate(bad)

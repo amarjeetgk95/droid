@@ -184,9 +184,9 @@ def test_confluence_dynamic_weight_renormalization():
     )
     
     # 1. Base without AI or ML: unified weights tech 40 / mtf 20 / fno 15 / regime 10
-    # (sum 0.85, renormalized) minus AI-unavailable haircut 8.0 (scoring_weights v2).
+    # (sum 0.85, renormalized) minus AI-unavailable haircut 3.0 (RISK-ON v2).
     score_base = confluence_engine.fuse(cand, ai_result=None, ml_prediction=None)
-    expected_base = (80.0 * 0.40/0.85) + (75.0 * 0.20/0.85) + (70.0 * 0.15/0.85) + (85.0 * 0.10/0.85) - 8.0
+    expected_base = (80.0 * 0.40/0.85) + (75.0 * 0.20/0.85) + (70.0 * 0.15/0.85) + (85.0 * 0.10/0.85) - 3.0
     assert abs(score_base - expected_base) < 0.2
     
     # 2. With AI Available (no haircut; weights sum 0.95)

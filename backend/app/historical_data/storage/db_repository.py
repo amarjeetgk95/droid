@@ -87,28 +87,38 @@ class HistoricalDBRepository:
             logger.warning("failed_to_load_historical_manifest", error=str(e))
 
     def _save_manifest(self) -> None:
-        try:
-            self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "datasets": {k: v.model_dump(mode="json") for k, v in self._mem_datasets.items()},
-                "versions": {k: [ver.model_dump(mode="json") for ver in v_list] for k, v_list in self._mem_versions.items()},
-                "jobs": {k: j.model_dump(mode="json") for k, j in self._mem_jobs.items()},
-                "gaps": {k: [g.model_dump(mode="json") for g in g_list] for k, g_list in self._mem_gaps.items()},
-            }
-            tmp = self.manifest_path.with_suffix(f".tmp.{os.getpid()}")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+        for attempt in range(3):
             try:
-                tmp.replace(self.manifest_path)
-            except Exception:
-                import shutil
-                shutil.copyfile(tmp, self.manifest_path)
+                self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                data = {
+                    "datasets": {k: v.model_dump(mode="json") for k, v in self._mem_datasets.items()},
+                    "versions": {k: [ver.model_dump(mode="json") for ver in v_list] for k, v_list in self._mem_versions.items()},
+                    "jobs": {k: j.model_dump(mode="json") for k, j in self._mem_jobs.items()},
+                    "gaps": {k: [g.model_dump(mode="json") for g in g_list] for k, g_list in self._mem_gaps.items()},
+                }
+                tmp = self.manifest_path.with_suffix(f".tmp.{os.getpid()}")
                 try:
                     tmp.unlink(missing_ok=True)
                 except Exception:
                     pass
-        except Exception as e:
-            logger.warning("failed_to_save_historical_manifest", error=str(e))
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, default=str)
+                try:
+                    os.replace(tmp, self.manifest_path)
+                except Exception:
+                    import shutil
+                    shutil.copyfile(tmp, self.manifest_path)
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                return
+            except Exception as e:
+                if attempt >= 2:
+                    logger.warning("failed_to_save_historical_manifest", error=str(e))
+                else:
+                    import time
+                    time.sleep(0.2 * (attempt + 1))
 
     # ── DISK DISCOVERY & COLD-START HYDRATION ─────────────────────────────
 

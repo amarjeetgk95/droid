@@ -121,26 +121,27 @@ class BreakoutStrategyEngine:
         if ctx.synchronization_status == "CROSS_MARKET_DATA_NOT_SYNCHRONIZED" and not cross_market_valid:
             conflicts.append("CROSS_MARKET_DATA_NOT_SYNCHRONIZED")
 
-        # Core logic — multi-factor
+        # Core logic — multi-factor (RISK-ON 2026-09-23: lower bars so range
+        # days still print POSSIBLE/WATCH instead of perpetual REJECTED).
         # BULLISH BREAKOUT conditions
         is_bullish_setup = (
-            bullish > 65
-            and breakout_pressure > 70
+            bullish > 55
+            and breakout_pressure > 55
             and ctx.price_action.get("trend") in ("BULLISH", "RANGING")
             and ctx.technical.get("vwap") in ("ABOVE", "AT")
-            and volume_expansion
-            and (close_confirmed or breakout_pressure > 80)
-            and false_risk < 60
+            and (volume_expansion or breakout_pressure > 62)
+            and (close_confirmed or breakout_pressure > 60)
+            and false_risk < 75
             and current_price is not None and breakout_level is not None and current_price > breakout_level
         )
         is_bearish_setup = (
-            bearish > 65
-            and breakdown_pressure > 70
+            bearish > 55
+            and breakdown_pressure > 55
             and ctx.price_action.get("trend") in ("BEARISH", "RANGING")
             and ctx.technical.get("vwap") in ("BELOW", "AT")
-            and volume_expansion
-            and (close_confirmed or breakdown_pressure > 80)
-            and false_risk < 60
+            and (volume_expansion or breakdown_pressure > 62)
+            and (close_confirmed or breakdown_pressure > 60)
+            and false_risk < 75
             and current_price is not None and breakout_level is not None and current_price < breakout_level
         )
 
@@ -158,8 +159,8 @@ class BreakoutStrategyEngine:
             return BreakoutSignal(instrument_id=ctx.instrument, direction="BEARISH", status=status, confidence=max(0, conf), breakout_level=breakout_level, false_breakout_risk=false_risk, supporting=supporting, conflicts=conflicts)
 
         # No breakout
-        # Determine if WATCH (nearby)
-        if bullish > 58 or bearish > 58:
+        # Determine if WATCH (nearby) — RISK-ON: 50 bar so lean days still watch.
+        if bullish > 50 or bearish > 50:
             # Possible but not confirmed — WATCH
             dir_guess: Direction = "BULLISH" if bullish >= bearish else "BEARISH"
             return BreakoutSignal(instrument_id=ctx.instrument, direction=dir_guess, status="WATCH", confidence=int(max(bullish, bearish)*0.6), breakout_level=breakout_level, false_breakout_risk=false_risk, supporting=supporting, conflicts=conflicts, reason="watch — conditions partially met")
@@ -196,9 +197,9 @@ class ShortHorizonBreakoutStrategy:
     ) -> ShortHorizonOutput:
         # Use breakout engine first
         sig = self._engine.evaluate(ctx, breakout_level=breakout_level, current_price=current_price, close_confirmed=close_confirmed, volume_expansion=volume_expansion, momentum_accelerating=momentum_accel)
-        # Short-horizon additional filters
+        # Short-horizon additional filters (RISK-ON: 0.4 ATR wall, 85 risk cap)
         # Nearby opposing level too close → downgrade
-        if nearest_opposing_level_distance_atr is not None and nearest_opposing_level_distance_atr < 0.8:
+        if nearest_opposing_level_distance_atr is not None and nearest_opposing_level_distance_atr < 0.4:
             # resistance 10 points away for NIFTY with ATR ~ 80 is ~0.125 ATR → too close
             if sig.status in ("POSSIBLE", "CONFIRMED"):
                 sig.status = "WATCH"
@@ -206,12 +207,13 @@ class ShortHorizonBreakoutStrategy:
                 sig.false_breakout_risk = min(100, sig.false_breakout_risk + 15)
         if not liquidity_ok:
             return ShortHorizonOutput(instrument=ctx.instrument, direction=sig.direction, status="REJECTED", confidence=0, false_breakout_risk=90, reason="illiquid")
-        # Momentum acceleration required for short horizon quality
-        if sig.status != "REJECTED" and not momentum_accel and sig.confidence < 75:
+        # Momentum acceleration required for short horizon quality (RISK-ON: only
+        # downgrade soft setups below 60 confidence — let 60+ run without accel).
+        if sig.status != "REJECTED" and not momentum_accel and sig.confidence < 60:
             sig.status = "WATCH"
 
-        # False-breakout probability high → REJECT
-        if sig.false_breakout_risk > 70:
+        # False-breakout probability high → REJECT (RISK-ON: 85 cap)
+        if sig.false_breakout_risk > 85:
             return ShortHorizonOutput(instrument=ctx.instrument, direction=sig.direction, status="REJECTED", confidence=0, false_breakout_risk=sig.false_breakout_risk, reason=f"false breakout risk {sig.false_breakout_risk}")
 
         # Map breakout status -> horizon status
@@ -292,7 +294,8 @@ class IntradayContinuationStrategy:
             sig.status = "WATCH"
             sig.conflicts.append("cross-market not confirmed")
 
-        if sig.false_breakout_risk > 65:
+        # RISK-ON: 85 risk cap for continuation (was 65 — killed every trend day).
+        if sig.false_breakout_risk > 85:
             return ContinuationOutput(instrument=ctx.instrument, direction=sig.direction, status="REJECTED", confidence=0, reason="continuation false-breakout risk high", max_holding_minutes=self.max_holding_minutes)
 
         # Map

@@ -9,7 +9,7 @@ def test_generate_without_chain_is_formula(client, mock_market_feed, mock_market
     res = client.post("/api/v1/signals/generate", json={
         "underlying": "NIFTY", "strategy": "BREAKOUT", "direction": "LONG_CALL",
         "timeframe": "5M", "current_price": ltp,
-        "notify_telegram": False, "allow_closed_market": True,
+        "notify_telegram": False, "allow_closed_market": True, "confirm": True,
     })
     assert res.status_code == 200, res.text
     opt = res.json()["signal"]["option_contract"]
@@ -26,7 +26,7 @@ def test_execute_without_mark_rejected(client, mock_market_feed, mock_market_ope
     gen = client.post("/api/v1/signals/generate", json={
         "underlying": "NIFTY", "strategy": "BREAKOUT", "direction": "LONG_CALL",
         "timeframe": "5M", "current_price": ltp,
-        "notify_telegram": False, "allow_closed_market": True,
+        "notify_telegram": False, "allow_closed_market": True, "confirm": True,
     })
     assert gen.status_code == 200, gen.text
     sid = gen.json()["signal"]["signal_id"]

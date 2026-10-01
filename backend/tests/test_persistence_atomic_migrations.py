@@ -1,13 +1,11 @@
 """Regression tests for the phase-1 atomic_json leftovers.
 
-Covers the three JSON writers migrated onto ``app.core.atomic_json``:
+Covers the two JSON writers migrated onto ``app.core.atomic_json``:
   * ``event_engine.signal_bridge`` shadow-record persistence,
-  * ``institutional.drift`` degradation flag,
-  * ``swing.persistence`` legacy v1 backup + reset.
+  * ``institutional.drift`` degradation flag.
 
-Pins payload shape, indentation, target paths and the legacy error-swallowing
-semantics (failures never raise; backup failure does not block the reset;
-reset failure still returns the legacy-safe fallback dict).
+Pins payload shape, indentation, target paths and the error-swallowing
+semantics (failures never raise).
 """
 
 from __future__ import annotations
@@ -98,84 +96,3 @@ def test_drift_flag_write_failure_is_swallowed(tmp_path, monkeypatch):
     monkeypatch.setattr(drift, "FLAG", blocker / "institutional_degraded.flag")
 
     drift._write({"degraded": True, "reason": "x", "at": "y"})  # must not raise
-
-
-# ── swing.persistence legacy v1 migration ──────────────────────────────────
-
-
-def test_legacy_swing_state_migration_writes_backup_and_reset(tmp_path, monkeypatch):
-    from app.swing import persistence
-
-    monkeypatch.chdir(tmp_path)
-    state_file = tmp_path / "swing_state.json"
-    legacy = {"schema_version": 1, "positions": [{"symbol": "NIFTY", "qty": 75}]}
-    state_file.write_text(json.dumps(legacy), encoding="utf-8")
-    monkeypatch.setattr(persistence, "SWING_STATE_FILE", state_file)
-
-    state = persistence.load_swing_state()
-
-    assert state["schema_version"] == persistence.SWING_STATE_SCHEMA_VERSION
-    assert state["setups"] == []
-    assert state["open_positions"] == []
-    assert state["closed_positions"] == []
-    assert state["regime"] is None
-    assert isinstance(state["updated_at_utc"], int)
-
-    on_disk = json.loads(state_file.read_text(encoding="utf-8"))
-    assert on_disk["schema_version"] == 2
-    assert on_disk["setups"] == []
-
-    backups = sorted(tmp_path.glob("swing_state_legacy_backup_*.json"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == json.dumps(legacy, indent=2)
-
-
-def test_legacy_backup_failure_still_resets_state(tmp_path, monkeypatch):
-    from app.swing import persistence
-
-    monkeypatch.chdir(tmp_path)
-    state_file = tmp_path / "swing_state.json"
-    state_file.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
-    monkeypatch.setattr(persistence, "SWING_STATE_FILE", state_file)
-
-    real = persistence.atomic_write_json
-    calls = {"n": 0}
-
-    def _fail_backup_only(path, payload, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return False
-        return real(path, payload, **kwargs)
-
-    monkeypatch.setattr(persistence, "atomic_write_json", _fail_backup_only)
-
-    state = persistence.load_swing_state()
-
-    assert state["schema_version"] == 2
-    assert isinstance(state["updated_at_utc"], int)
-    assert json.loads(state_file.read_text(encoding="utf-8"))["schema_version"] == 2
-    assert calls["n"] == 2  # backup attempted, reset still executed
-    assert not list(tmp_path.glob("swing_state_legacy_backup_*.json"))
-
-
-def test_legacy_reset_failure_returns_original_fallback(tmp_path, monkeypatch):
-    from app.swing import persistence
-
-    monkeypatch.chdir(tmp_path)
-    state_file = tmp_path / "swing_state.json"
-    state_file.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
-    monkeypatch.setattr(persistence, "SWING_STATE_FILE", state_file)
-    monkeypatch.setattr(persistence, "atomic_write_json", lambda *a, **k: False)
-
-    state = persistence.load_swing_state()
-
-    # Pre-migration path: the reset write raised, the outer handler logged
-    # load_swing_state_failed and returned the fallback (no updated_at_utc).
-    assert state == {
-        "schema_version": persistence.SWING_STATE_SCHEMA_VERSION,
-        "setups": [],
-        "open_positions": [],
-        "closed_positions": [],
-        "regime": None,
-    }
-    assert json.loads(state_file.read_text(encoding="utf-8")) == {"schema_version": 1}

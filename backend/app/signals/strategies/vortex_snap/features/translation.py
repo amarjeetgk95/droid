@@ -97,7 +97,10 @@ class TranslationRatioEngine:
 
         # 4. Translation Ratio (§8 formula)
         # translation_ratio = normalized_price_displacement / (normalized_pressure + epsilon)
+        # Clamp: when pressure is ~0 the quotient explodes (1e9x on the HUD)
+        # while carrying zero information — the state is NEUTRAL regardless.
         trans_ratio = norm_displacement / max(norm_pressure, eps)
+        trans_ratio = max(0.0, min(trans_ratio, 99.99))
 
         # 5. Normalized Translation Score in [0, 1] using sigmoid mapping
         # A ratio of 1.0 maps to ~0.50, > 2.0 maps towards 1.0, < 0.5 maps towards 0.0

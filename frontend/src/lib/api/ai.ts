@@ -457,6 +457,17 @@ export function createAiApi(core: ApiCore) {
         },
       );
     },
+
+    async copilotAnalyze(payload: import('../types').CopilotAnalyzeRequest) {
+      const headers: Record<string, string> = {};
+      if (payload.openrouter_api_key) headers['X-OpenRouter-Key'] = payload.openrouter_api_key;
+      if (payload.gemini_api_key) headers['X-Gemini-Key'] = payload.gemini_api_key;
+      if (payload.openai_api_key) headers['X-OpenAI-Key'] = payload.openai_api_key;
+      return core.request<{ data: import('../types').CopilotAnalysisResponse; error: string | null; meta: import('../types').ApiMeta }>(
+        '/api/copilot/analyze',
+        { method: 'POST', headers, body: JSON.stringify(payload) },
+      );
+    },
   };
 }
 

@@ -41,6 +41,8 @@ import type {
   AIChatRequest,
   AIOptionsStrategyRequest,
   AITradeValidationRequest,
+  CopilotAnalyzeRequest,
+  CopilotAnalysisResponse,
   OpenRouterModel,
 } from '@/lib/types';
 
@@ -350,7 +352,65 @@ export function useCopilotModels(): CopilotModelsState {
 }
 
 // ---------------------------------------------------------------------------
-// Briefing (GET /briefing/{symbol} + GET /deep-insight/{symbol})
+// Structured Copilot Intelligence (POST /api/copilot/analyze)
+// ---------------------------------------------------------------------------
+
+export type StructuredCopilotAnalyzeState = {
+  response: CopilotAnalysisResponse | null;
+  analyzing: boolean;
+  error: string | null;
+  analyze: (symbol: string, query: string, horizon?: string) => Promise<boolean>;
+};
+
+export function useStructuredCopilotAnalyze(): StructuredCopilotAnalyzeState {
+  const settings = useAISettings();
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  const [response, setResponse] = useState<CopilotAnalysisResponse | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const analyze = useCallback(async (symbol: string, query: string, horizon?: string): Promise<boolean> => {
+    const clean = toBackendSymbol(symbol);
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const resolved = resolveAISettings(settingsRef.current);
+      const payload: CopilotAnalyzeRequest = {
+        symbol: clean,
+        query: query.trim(),
+        horizon: (horizon as any) || undefined,
+        depth: 'STANDARD',
+        provider: resolved.provider,
+        model: resolved.model || undefined,
+        allow_paid: resolved.allow_paid ?? undefined,
+        explain: true,
+        openrouter_api_key: resolved.openRouterApiKey || undefined,
+        gemini_api_key: resolved.geminiApiKey || undefined,
+      };
+      const result = await api.copilotAnalyze(payload);
+      const data = (result as { data?: unknown }).data;
+      if (!data || typeof data !== 'object') {
+        throw new Error('Structured analysis payload was empty or unparseable.');
+      }
+      setResponse(data as CopilotAnalysisResponse);
+      return true;
+    } catch (err) {
+      setError(errorMessage(err, 'Structured analysis failed'));
+      return false;
+    } finally {
+      setAnalyzing(false);
+    }
+  }, []);
+
+  return { response, analyzing, error, analyze };
+}
+
+// ---------------------------------------------------------------------------
+// Briefing
 // ---------------------------------------------------------------------------
 
 export type CopilotBriefingState = {

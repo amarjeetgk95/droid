@@ -213,9 +213,10 @@ class SignalCenterService:
         # If short or continuation confirmed, ensure CONFIRMED
         if short_out.status == "CONFIRMED" or cont_out.status == "CONFIRMED":
             status = "CONFIRMED"
-        # Triggered = breakout possible but close not confirmed
+        # Triggered = breakout possible but close not confirmed (RISK-ON: 55 bar,
+        # was 70 — range-day POSSIBLE prints now surface as TRIGGERED WATCH).
         if status == "POSSIBLE_BREAKOUT" and short_out.status in ("POSSIBLE","WATCH"):
-            status = "TRIGGERED" if ctx.scores.get("breakout_pressure",0) > 70 else status
+            status = "TRIGGERED" if ctx.scores.get("breakout_pressure",0) > 55 else status
 
         # Build signal for BREAKOUT SETUPS tab
         direction = sig.direction if sig.direction != "NEUTRAL" else ("BULLISH" if ctx.scores.get("bullish_score",50) >= 50 else "BEARISH")
@@ -235,8 +236,8 @@ class SignalCenterService:
         except Exception:
             pass
         # Create authoritative Signal — persistent per (instrument, direction, level bucket),
-        # 60s TTL with update-in-place (no UUID churn per poll).
-        ttl_ms = 60000
+        # 180s TTL with update-in-place (was 60s — polls expired prints before UI saw them).
+        ttl_ms = 180000
         level_bucket = str(int(float(breakout_level))) if breakout_level is not None else "na"
         try:
             day_bucket = time.strftime("%Y%m%d", time.gmtime((last_update_ms or now_ms) / 1000.0))
@@ -304,7 +305,11 @@ class SignalCenterService:
                     invalidation_conditions={},
                 )
                 _trig_type = "BREAKOUT" if direction == "BULLISH" else "BREAKDOWN"
-                _trigger_ok, _trigger_reason = _fusion_trigger_engine.should_trigger(_probe, _trig_type)  # type: ignore
+                # RISK-ON: probe at 50/0.40 with 20s cooldown (was 60/0.60/60s —
+                # every 50-60 pressure print died as COOLDOWN/SCORE_BELOW).
+                from app.algo.signal_fusion import TriggerConfig as _TrigCfg
+                _risk_cfg = _TrigCfg(min_score=_D("50"), min_confidence=_D("0.40"), cooldown_seconds=20)
+                _trigger_ok, _trigger_reason = _fusion_trigger_engine.should_trigger(_probe, _trig_type, _risk_cfg)  # type: ignore
             except Exception as _te:
                 # Fail-open for the probe itself would mint duplicates; fail-closed
                 # for the gate but never crash generation — log and continue.
@@ -317,9 +322,18 @@ class SignalCenterService:
                     reason=_trigger_reason,
                     persistent_id=persistent_id,
                 )
-                # Cooldown/duplicate/market-closed: do not register a new FSM entry.
-                # Return None so active_setups renders an honest NO_SETUP card.
-                return None
+                # RISK-ON: faint prints (SCORE/CONFIDENCE below bar) still
+                # register as WATCH-grade VALIDATED risk instead of vanishing
+                # into NO_SETUP. Only hard vetoes (MARKET_CLOSED / DUPLICATE)
+                # return None — cooldowns downgrade, never disappear.
+                if _trigger_reason in ("MARKET_CLOSED", "DUPLICATE_SIGNAL_ID"):
+                    return None
+                # Fall through: register below as WATCH with the deny reason
+                # stamped, so the BREAKOUT SETUPS tab shows risk instead of blank.
+                try:
+                    signal.ai = {"status": "WATCH", "reason": f"risk-on WATCH ({_trigger_reason}) — deterministic, 1-lot cap"}
+                except Exception:
+                    pass
             # Store and register (gate passed)
             try:
                 _fusion_trigger_engine.mark_triggered(_probe)  # type: ignore

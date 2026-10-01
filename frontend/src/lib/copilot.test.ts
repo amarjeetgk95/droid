@@ -62,7 +62,7 @@ describe('applyChatChunk reducer', () => {
     expect(msg.pending).toBe(false);
   });
 
-  it('records tool calls/results as notes and surfaces chunk errors', () => {
+  it('records tool calls/results as non-sensitive status notes', () => {
     let msg = pendingAssistant();
     msg = applyChatChunk(
       msg,
@@ -73,7 +73,8 @@ describe('applyChatChunk reducer', () => {
       { type: 'tool_result', delta: '', reasoning_delta: '', tool_result: { name: 'get_market_quote', result: { ltp: 1 } } } as never,
     );
     expect(msg.toolNotes).toHaveLength(2);
-    expect(msg.toolNotes[0]).toContain('get_market_quote');
+    expect(msg.toolNotes[0]).toBe('Gathering live market context…');
+    expect(msg.toolNotes[1]).toBe('✓ Market data received');
     msg = applyChatChunk(msg, { type: 'error', delta: 'boom', reasoning_delta: '' } as never);
     expect(msg.pending).toBe(false);
     expect(msg.error).toBe('boom');
@@ -112,11 +113,11 @@ describe('buildChatMessages', () => {
 });
 
 describe('summarizeToolCall / summarizeToolResult', () => {
-  it('never throws on malformed payloads', () => {
-    expect(summarizeToolCall(null)).toBeTruthy();
-    expect(summarizeToolCall({})).toContain('unknown-tool');
-    expect(summarizeToolResult({ name: 'q', result: { error: 'bad' } })).toContain('failed');
-    expect(summarizeToolResult(undefined)).toBeTruthy();
+  it('never throws and returns non-sensitive status strings', () => {
+    expect(summarizeToolCall(null)).toBe('Gathering live market context…');
+    expect(summarizeToolCall({})).toBe('Gathering live market context…');
+    expect(summarizeToolResult({ name: 'q', result: { error: 'bad' } })).toBe('✓ Market data received');
+    expect(summarizeToolResult(undefined)).toBe('✓ Market data received');
   });
 });
 

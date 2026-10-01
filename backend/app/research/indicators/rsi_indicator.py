@@ -1,8 +1,8 @@
-"""RSI Standard Indicator implementation for the Research Laboratory (§46)."""
+﻿"""RSI Standard Indicator implementation for the Research Laboratory (Â§46)."""
 
 from typing import Any
 
-from app.quant.indicators import calculate_rsi
+from app.market_core.indicators import calculate_rsi
 from app.research.enums import (
     IndicatorCategory,
     IndicatorLifecycle,
@@ -68,5 +68,5 @@ class RSIIndicator(BuiltinIndicator):
             },
             target_price=target_price,
             invalidation_price=invalidation_price,
-            metadata={"source": "quant.indicators.calculate_rsi"},
+            metadata={"source": "market_core.indicators.calculate_rsi"},
         )

@@ -1,4 +1,4 @@
-"""Phase 2b-1: unified paper-trade PnL and terminal-state ordering.
+﻿"""Phase 2b-1: unified paper-trade PnL and terminal-state ordering.
 
 Pins the post-consolidation contracts:
 
@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.paper import OrderPayload
-from app.quant.costs import calculate_option_costs
+from app.market_core.costs import calculate_option_costs
 from app.services.calendar_service import MarketSessionPermission, calendar_service
 from app.services.paper_service import paper_service
 from app.signals.audit_ledger import signal_audit_ledger
@@ -207,7 +207,7 @@ def _market_perm(allowed: bool) -> MarketSessionPermission:
     )
 
 
-# ── 1. ONE PnL SOURCE: reconciler net for final settlement ──────────────
+# â”€â”€ 1. ONE PnL SOURCE: reconciler net for final settlement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def test_t1_partial_plus_runner_equals_reconciler_net_exactly_once():
@@ -316,7 +316,7 @@ def test_direct_close_path_books_reconciler_net_when_reconciliation_exists():
 
 
 def test_audit_only_close_without_reconciliation_keeps_gross_fallback():
-    """No reconciliation record (audit-only) → previous gross computation stands."""
+    """No reconciliation record (audit-only) â†’ previous gross computation stands."""
     sid = "SIG-PNL-GROSS-ONLY"
     _register_signal(sid, entry=100.0, quantity=75, fsm_state="CONFIRMED", t1_done=False)
     _seed_audit(sid, 100.0, 75)
@@ -330,7 +330,7 @@ def test_audit_only_close_without_reconciliation_keeps_gross_fallback():
     assert closed.status == "WON"
 
 
-# ── 2. TERMINAL-STATE ORDERING: outcome tracker ─────────────────────────
+# â”€â”€ 2. TERMINAL-STATE ORDERING: outcome tracker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.asyncio
@@ -402,7 +402,7 @@ async def test_outcome_tracker_rejected_close_defers_terminal_state_and_retries(
     assert final.actual_pnl_inr < 0
 
 
-# ── 3. TERMINAL-STATE ORDERING: worker EOD settle ───────────────────────
+# â”€â”€ 3. TERMINAL-STATE ORDERING: worker EOD settle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.asyncio
@@ -423,12 +423,12 @@ async def test_worker_eod_rejected_close_retains_signal_and_retries_to_closed_on
         worker._last_market_open = True
         await worker._settle_eod_positions()
 
-    # Failed close → no forced CLOSED, nothing claimed/skipped.
+    # Failed close â†’ no forced CLOSED, nothing claimed/skipped.
     assert mock_close.await_count == 1
     assert signal_fsm.get(sid).fsm_state == "CONFIRMED"
     assert signal_audit_ledger.get(sid).status == "EXECUTED"
 
-    # Next pass succeeds → CLOSED exactly once, never re-settled.
+    # Next pass succeeds â†’ CLOSED exactly once, never re-settled.
     success = _close_success_result(sid, quantity=75)
     with patch.object(calendar_service, "can_trade_now", return_value=_market_perm(False)), \
          patch("app.signals.worker.MarketService"), \

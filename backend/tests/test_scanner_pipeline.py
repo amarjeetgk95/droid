@@ -184,8 +184,8 @@ def test_gate_chain_evaluation_passes_valid_candidate():
 
 def test_rsi_gate_rejection():
     cand = _sample_candidate(strategy="BREAKOUT", direction="LONG_CALL")
-    # RSI of 40 is below the 52-82 range for Breakout Call
-    cand.context_snapshot["indicators"]["rsi"] = 40.0
+    # RISK-ON: BREAKOUT call band is 40-90 (was 48-85); 30 still rejects.
+    cand.context_snapshot["indicators"]["rsi"] = 30.0
     gate = RSIGate()
     res = gate.evaluate(cand)
     assert res.passed is False

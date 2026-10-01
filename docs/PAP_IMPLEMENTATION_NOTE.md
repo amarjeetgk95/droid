@@ -98,7 +98,7 @@ Rule: **if a row below has an existing component, PAP extends or calls it. It do
 
 | Capability | Canonical component | Action |
 |---|---|---|
-| ATR / ADX / Bollinger | `app/quant/indicators.py` (`calculate_atr` :53, `calculate_adx` :84, `calculate_bollinger_bands` :158) | reuse |
+| ATR / ADX / Bollinger | `app/market_core/indicators.py` (`calculate_atr` :53, `calculate_adx` :84, `calculate_bollinger_bands` :158) | reuse |
 | Fisher Transform 9 | *none exists* | **add here** |
 | Linear Regression Slope | *none exists* | **add here** |
 | VWAP (session, causal) | `app/signals/pipeline/data_acquisition.py:calculate_session_vwap` | reuse semantics |
@@ -113,7 +113,7 @@ Rule: **if a row below has an existing component, PAP extends or calls it. It do
 | Calibrators | `app/ml/calibrators.py`, `app/ml/calibration/calibrators.py` | reuse |
 | Feature schema / extractor | `app/ml/features/schema.py` (f28-v3), `app/ml/features/feature_extractor_v3.py` | add new version |
 | Leakage checks | `app/ml/validation/leakage_checks.py`, `app/ml/leakage_gate.py` | extend |
-| Dataset provenance | `app/quant/data/dataset_manager.py` (`DatasetManager`, `DatasetMetadata.source`) | **enforce** |
+| Dataset provenance | `app/market_core/data/dataset_manager.py` (`DatasetManager`, `DatasetMetadata.source`) | **enforce** |
 | Model registry | `app/ml/registry.py` → `artifacts/registry.jsonl` | reuse |
 | Drift hooks | `app/ml/monitoring/drift_monitor.py` | reuse (non-blocking) |
 | Promotion gates | `app/quant/validation/gate_g1_evaluator.py`, `gate_g2_evaluator.py`, `promotion_gate.py` | leave untouched |
@@ -202,7 +202,7 @@ Precondition for any PAP result. Small, test-heavy.
 
 | File | Purpose |
 |---|---|
-| `app/quant/indicators.py` | **extend**: `calculate_fisher_transform`, `calculate_linreg_slope` |
+| `app/market_core/indicators.py` | **extend**: `calculate_fisher_transform`, `calculate_linreg_slope` |
 | `app/ml/features/pap_schema.py` | new versioned schema `f_pap-v1`, additive; f28-v3 consumers untouched |
 | `app/quant/data/provenance_gate.py` | Phase −1 gate |
 | `scripts/run_pap_experiment.py` | the runner |

@@ -342,14 +342,17 @@ async def acquire_market_context(
         diag.reasons.append(f"Candle fetch failed: {str(e)[:120]}")
 
     target_tf = timeframe.lower()
-    if target_tf == "1m":
-        active_candles = candles_dict.get("1m") or []
-        if not active_candles:
+    # Fail-closed on exact timeframe — never substitute 1m bars for a 5m/15m/1h
+    # strategy (timeframe skew fabricates S/R crosses, ATR, and VWAP slopes).
+    # A missing timeframe is OFFLINE, not an invitation to trade the wrong bars.
+    active_candles = candles_dict.get(target_tf) or []
+    if not active_candles:
+        if target_tf == "1m":
             diag.reasons.append("Scalp native 1m candles unavailable — fallback prohibited to prevent timeframe skew")
-    else:
-        active_candles = candles_dict.get(target_tf) or candles_dict.get("5m") or []
-        if not active_candles and "1m" in candles_dict:
-            active_candles = candles_dict.get("1m") or []
+        else:
+            diag.reasons.append(
+                f"{timeframe} candles unavailable — fallback to 1m/5m prohibited to prevent timeframe skew"
+            )
 
     diag.candles_count = len(active_candles)
     # P0-2 FAIL-CLOSE: no candles means no indicators, no VWAP, no regime.

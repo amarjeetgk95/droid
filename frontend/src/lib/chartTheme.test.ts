@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chartTokens, resetChartTokens } from './chartTheme';
+import { applyDisplayMode } from './displayMode';
 
 afterEach(() => {
   resetChartTokens();
@@ -10,11 +11,11 @@ describe('chartTokens', () => {
   it('returns the CSS-mirrored fallback during SSR (no window/document)', () => {
     const tokens = chartTokens();
     // Fallback values must mirror :root in globals.css.
-    expect(tokens.up).toBe('#4caf50');
-    expect(tokens.down).toBe('#df5148');
-    expect(tokens.accent).toBe('#387ed1');
-    expect(tokens.warn).toBe('#ff9500');
-    expect(tokens.text).toBe('#9b9b9b');
+    expect(tokens.up).toBe('#16a34a');
+    expect(tokens.down).toBe('#dc2626');
+    expect(tokens.accent).toBe('#7c3aed');
+    expect(tokens.warn).toBe('#f59e0b');
+    expect(tokens.text).toBe('#64748b');
     expect(tokens.surface).toBe('#ffffff');
 
     expect(chartTokens()).toBe(tokens);
@@ -35,7 +36,7 @@ describe('chartTokens', () => {
     expect(tokens.up).toBe('rgb(1, 2, 3)');
     expect(tokens.text).toBe('#abcdef');
     // Missing token => per-token fallback, not undefined/empty.
-    expect(tokens.down).toBe('#df5148');
+    expect(tokens.down).toBe('#dc2626');
 
     values['--ds-bull'] = 'rgb(9, 9, 9)';
     expect(chartTokens()).toBe(tokens);
@@ -53,7 +54,29 @@ describe('chartTokens', () => {
     });
 
     const tokens = chartTokens();
-    expect(tokens.up).toBe('#4caf50');
-    expect(tokens.down).toBe('#df5148');
+    expect(tokens.up).toBe('#16a34a');
+    expect(tokens.down).toBe('#dc2626');
+  });
+
+  it('re-reads the palette after the display mode changes', () => {
+    let bull = 'rgb(1, 2, 3)';
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('document', {
+      documentElement: {
+        setAttribute: () => {},
+        removeAttribute: () => {},
+      },
+      querySelector: () => null,
+    });
+    vi.stubGlobal('getComputedStyle', () => ({
+      getPropertyValue: (name: string) => (name === '--ds-bull' ? bull : ''),
+    }));
+
+    expect(chartTokens().up).toBe('rgb(1, 2, 3)');
+
+    // Windowing a chart onto the dark terminal must not keep the light candle.
+    bull = 'rgb(9, 9, 9)';
+    applyDisplayMode({ theme: 'dark', density: 'comfortable', contrast: 'normal' });
+    expect(chartTokens().up).toBe('rgb(9, 9, 9)');
   });
 });

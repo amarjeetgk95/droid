@@ -1,0 +1,21 @@
+{
+  "symbol": "BANKNIFTY",
+  "timeframe": "1m",
+  "version_tag": "v2",
+  "row_count": 94203,
+  "start_time": "2025-09-22T03:45:00+00:00",
+  "end_time": "2026-09-28T09:59:00+00:00",
+  "checksum_sha256": "a4f148d59ecf14c4c55e0cf9ecd8dceed80a6720a13df75a48a5edd3fee29b63",
+  "quality_score": 100.0,
+  "lineage": {
+    "engine_version": "1.0.0",
+    "provider_id": "fyers",
+    "provider_api_version": "v3",
+    "calendar_version": "2026.1",
+    "normalizer_version": "1.0.0",
+    "validation_ruleset_version": "1.0.0",
+    "created_at": "2026-09-29T07:57:48.536862Z"
+  },
+  "methodology_events": [],
+  "saved_at_utc": "2026-09-29T07:57:48.637208+00:00"
+}

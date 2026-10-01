@@ -164,6 +164,14 @@ class OpeningRangeBreakoutStrategy(Strategy):
                         f"Target 1 at 100% ORB Range Extension (₹{t1:,.2f})",
                     ],
                     option_contract=contract,
+                    # Active holding clock. Without it this candidate is
+                    # UNTRADEABLE BY CONSTRUCTION: friction_gate falls back to
+                    # candidate.time_stop_seconds, gets None, and hard-rejects
+                    # with REJECT_NO_HOLDING_CLOCK on 100% of evaluations.
+                    # 30 min is the horizon an opening-range extension plays
+                    # out over on a 5M bar.
+                    ttl_seconds=300,
+                    time_stop_seconds=1800,
                 )
 
         # ── BEARISH ORB (LONG_PUT): 5M close beyond OR low ──
@@ -218,6 +226,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
                         f"Target 1 at 100% ORB Range Extension (₹{t1:,.2f})",
                     ],
                     option_contract=contract,
+                    # See LONG_CALL branch: absent holding clock => deterministic
+                    # REJECT_NO_HOLDING_CLOCK at the friction gate.
+                    ttl_seconds=300,
+                    time_stop_seconds=1800,
                 )
 
         return None

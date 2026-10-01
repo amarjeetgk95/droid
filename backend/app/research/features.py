@@ -1,4 +1,4 @@
-"""Unified feature extraction layer for the Research Laboratory (§12).
+﻿"""Unified feature extraction layer for the Research Laboratory (Â§12).
 
 Computes point-in-time technical, statistical, structural, and options
 features once to be reused across all indicators and validation runs.
@@ -9,7 +9,7 @@ import math
 from typing import Any, Dict, List, Optional
 import structlog
 
-from app.quant.indicators import (
+from app.market_core.indicators import (
     calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
@@ -183,7 +183,7 @@ class FeatureLayer:
         # 5. Market Regime Determination
         regime = determine_market_regime(closes, highs, lows, current_price)
 
-        # 6. Options Features — only when upstream snapshot is available.
+        # 6. Options Features â€” only when upstream snapshot is available.
         # Missing fields stay None + assumptions (never silent 15.0/1.0).
         opt_features = {}
         if options_ctx and options_ctx.get("available", False):
@@ -263,7 +263,7 @@ class FeatureLayer:
 
         Each timeframe with >= 2 candles gets a full ``compute_features`` payload
         under ``per_timeframe``. Alignment votes come from each TF's
-        supertrend direction + RSI position — no forward-looking data.
+        supertrend direction + RSI position â€” no forward-looking data.
         """
         per_timeframe: Dict[str, Any] = {}
         for tf, candles in (timeframe_candles or {}).items():
@@ -336,7 +336,7 @@ class FeatureLayer:
 
 # ---------------------------------------------------------------------------
 # P2-2 additive v2 helpers (pure; NO behavior change to compute_features).
-# Each returns None on missing/invalid input — never a silent 0 — so the v2
+# Each returns None on missing/invalid input â€” never a silent 0 â€” so the v2
 # extractor can set its missing-mask flag. Used by
 # app.ml.feature_extractor_v2 (1H Forecast v2.3).
 # ---------------------------------------------------------------------------
@@ -349,10 +349,10 @@ IST_SESSION_MINUTES = IST_CLOSE_MINUTES - IST_OPEN_MINUTES  # 375
 def minutes_to_close_ist(ts: Any) -> Optional[int]:
     """Minutes from ``ts`` to the 15:30 IST regular-session close.
 
-    0 when at/past the close (no time left in today's window — overnight is
+    0 when at/past the close (no time left in today's window â€” overnight is
     never bridged); full 375 pre-open; None when ``ts`` is missing or
     unparseable. Accepts aware/naive datetimes (naive read as UTC) or ISO
-    strings. Pure clock math — not a market input, so no lookahead.
+    strings. Pure clock math â€” not a market input, so no lookahead.
     """
     if ts is None:
         return None

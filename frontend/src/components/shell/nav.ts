@@ -16,9 +16,9 @@ export const MODULE_NAV: ModuleNavItem[] = [
     description: 'Generate, execute and track paper P&L',
   },
   {
-    href: '/swing',
-    label: 'Swing Desk',
-    description: 'Multi-day options setups, positions and risk',
+    href: '/pap',
+    label: 'PAP Intelligence',
+    description: 'Shadow-only price action predictions, research and diagnostics',
   },
   {
     href: '/options',
@@ -39,6 +39,11 @@ export const MODULE_NAV: ModuleNavItem[] = [
     href: '/lab',
     label: 'Research Lab',
     description: 'Forecasts, indicators, experiments and ML models',
+  },
+  {
+    href: '/indicator-research',
+    label: 'Indicator Research',
+    description: 'Indicator lab, no-lookahead backtests, optimisation and walk-forward',
   },
   {
     href: '/historical-data',

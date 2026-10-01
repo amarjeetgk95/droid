@@ -500,11 +500,11 @@ def test_volatility_breakout_fails_closed_without_required_inputs():
 
 
 def test_scalp_confirmation_lunch_session_and_vix():
-    """Verify ScalpConfirmationEngine suppresses lunch session and extreme VIX.
+    """RISK-ON 2026-09-23: lunch prints pass with half-size note (was hard veto —
+    12:00-13:30 went dark daily); VIX suppresses only >= 90th pct (was 80).
 
-    P0-2 contract: GAMMA_SPIKE is NOT exempt anymore. Lunch/VIX suppression
-    applies to every scalp; the only override is proven executability
-    (spread <= 1.0pt AND RVOL >= 1.5).
+    Executability override (spread <= 1.0pt AND RVOL >= 1.5) still lets extreme
+    prints through.
     """
     from app.signals.scalp_confirmation import scalp_confirmation_engine
     from app.signals.strategies.base import SignalCandidate
@@ -531,10 +531,10 @@ def test_scalp_confirmation_lunch_session_and_vix():
         current_spot=Decimal("24005.0"),
         regime="RANGE",
     )
-    assert res_lunch.passed is False
-    assert res_lunch.reason_code == "REJECTED_LUNCH_SESSION"
+    # RISK-ON: lunch passes (half-size note appended) instead of veto.
+    assert res_lunch.passed is True
 
-    # GAMMA_SPIKE no longer receives a lunch exemption.
+    # GAMMA_SPIKE lunch also passes risk-on.
     gamma_cand = SignalCandidate(
         underlying="NIFTY",
         strategy="GAMMA_SPIKE",
@@ -557,8 +557,7 @@ def test_scalp_confirmation_lunch_session_and_vix():
         current_spot=Decimal("24005.0"),
         regime="VOLATILE_EXPANSION",
     )
-    assert res_gamma.passed is False
-    assert res_gamma.reason_code == "REJECTED_LUNCH_SESSION"
+    assert res_gamma.passed is True
 
     # Executability override: tight spread + strong RVOL lets GAMMA_SPIKE through.
     res_gamma_ok = scalp_confirmation_engine.validate(
@@ -571,7 +570,7 @@ def test_scalp_confirmation_lunch_session_and_vix():
     )
     assert res_gamma_ok.passed is True
 
-    # Extreme VIX suppresses every scalp — no GAMMA_SPIKE exemption.
+    # VIX 85 passes risk-on (bar now 90); 95 still suppresses.
     vwap_cand.lunch_session = False
     vwap_cand.vix_percentile = 85.0
     res_vix = scalp_confirmation_engine.validate(
@@ -579,8 +578,16 @@ def test_scalp_confirmation_lunch_session_and_vix():
         current_spot=Decimal("24005.0"),
         regime="RANGE",
     )
-    assert res_vix.passed is False
-    assert res_vix.reason_code == "REJECTED_VIX_EXTREME"
+    assert res_vix.passed is True
+
+    vwap_cand.vix_percentile = 95.0
+    res_vix95 = scalp_confirmation_engine.validate(
+        candidate=vwap_cand,
+        current_spot=Decimal("24005.0"),
+        regime="RANGE",
+    )
+    assert res_vix95.passed is False
+    assert res_vix95.reason_code == "REJECTED_VIX_EXTREME"
 
     gamma_cand.lunch_session = False
     gamma_cand.vix_percentile = 85.0

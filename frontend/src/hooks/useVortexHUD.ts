@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import {
+  VORTEX_STALE_AFTER_MS,
+  vortexBackendLive,
   vortexDataAgeMs,
   vortexLastCandleMs,
   vortexServerNowMs,
   type VortexMicrostructureHUD,
   type VortexStatus,
 } from '@/lib/api/vortex';
-import { DEFAULT_STALE_AFTER_MS } from '@/lib/feedState';
 import { payloadTimestampMs } from '@/lib/signalsNormalize';
 import { useSmartInterval } from './useSmartInterval';
 
@@ -95,8 +96,11 @@ export function useVortexHUD({
   const baseAgeMs = vortexDataAgeMs(hud);
   const clientElapsedMs = fetchedAtMs === null ? 0 : Math.max(0, Date.now() - fetchedAtMs);
   const ageMs = baseAgeMs === null ? null : baseAgeMs + (serverNowMs !== null ? clientElapsedMs : 0);
-  // Missing candle time is stale — unknown freshness is never "live".
-  const stale = ageMs === null || ageMs > DEFAULT_STALE_AFTER_MS;
+  // Tick-live WS feeds stay LIVE mid-bar (last closed 1m bar is legitimately
+  // 60-120s old); otherwise fall back to the 150s candle-age window. Missing
+  // candle time is stale — unknown freshness is never "live".
+  const backendLive = vortexBackendLive(hud);
+  const stale = backendLive ? false : ageMs === null || ageMs > VORTEX_STALE_AFTER_MS;
   // A simulated or stale feed can never claim LIVE.
   const live = hud !== null && !isSimulated && !stale;
   // Fail-closed gate: SIMULATED or STALE marks must not drive trade actions.

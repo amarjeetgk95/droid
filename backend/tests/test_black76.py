@@ -1,5 +1,5 @@
-import math
-from app.quant.black76 import black76_price, black76_greeks
+﻿import math
+from app.market_core.black76 import black76_price, black76_greeks
 
 
 class TestBlack76Engine:

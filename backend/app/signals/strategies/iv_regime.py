@@ -8,7 +8,6 @@ Exploits Implied Volatility vs Realized Volatility regime dislocations:
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Optional
 from app.signals.strategies.base import (
     Strategy,
     StrategyContext,
@@ -17,7 +16,45 @@ from app.signals.strategies.base import (
 from app.signals.contract_resolver import normalize_price, resolve_option_contract
 from app.signals.risk_engine import resolve_realistic_atr
 from app.signals.strategies.candidate import make_candidate
-from app.quant.strategies.s8_iv_regime import classify_iv_regime
+
+from typing import Literal, Optional
+
+
+# IV/RV regime thresholds. Pinned here rather than sourced from a research
+# config object so the live strategy has no dependency on a research package.
+IV_RV_COMPRESSION_THRESHOLD = 0.85   # IV/RV <= 0.85: vol cheap vs realised movement
+IV_RV_EXPANSION_THRESHOLD = 1.30     # IV/RV >= 1.30: vol expensive vs realised movement
+IV_PCT_COMPRESSION_MAX = 30.0        # IV percentile <= 30: depressed vol rank
+IV_PCT_EXPANSION_MIN = 70.0          # IV percentile >= 70: elevated vol rank
+
+
+def classify_iv_regime(
+    atm_iv: float,
+    realized_vol: float,
+    iv_percentile: Optional[float] = None,
+) -> Literal["COMPRESSION", "EXPANSION", "NEUTRAL"]:
+    """Classifies IV/RV regime as Compression, Expansion, or Neutral.
+
+    Either leg can fire: the IV/RV ratio, or the IV percentile rank when supplied.
+    When both fire the result is NEUTRAL rather than arbitrarily picking one.
+    """
+    if realized_vol <= 0.001 or atm_iv <= 0.001:
+        return "NEUTRAL"
+
+    iv_rv_ratio = atm_iv / realized_vol
+
+    is_compression = (iv_rv_ratio <= IV_RV_COMPRESSION_THRESHOLD) or (
+        iv_percentile is not None and iv_percentile <= IV_PCT_COMPRESSION_MAX
+    )
+    is_expansion = (iv_rv_ratio >= IV_RV_EXPANSION_THRESHOLD) or (
+        iv_percentile is not None and iv_percentile >= IV_PCT_EXPANSION_MIN
+    )
+
+    if is_compression and not is_expansion:
+        return "COMPRESSION"
+    if is_expansion and not is_compression:
+        return "EXPANSION"
+    return "NEUTRAL"
 
 
 class IVRegimeStrategy(Strategy):

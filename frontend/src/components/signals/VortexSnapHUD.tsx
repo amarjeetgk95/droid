@@ -221,6 +221,27 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
     levels?.resistance_distance_points,
   );
   const regimeFallback = regime?.is_fallback === true;
+  // Discrete pressure direction (-1/0/+1); backend ships it, older payloads
+  // fall back to the score so zero never mislabels as BEARISH.
+  const pressureDir =
+    typeof hud?.directional_pressure.direction === 'number' &&
+    Number.isFinite(hud.directional_pressure.direction)
+      ? Math.sign(hud.directional_pressure.direction)
+      : hud && hud.directional_pressure.score > 0
+        ? 1
+        : hud && hud.directional_pressure.score < 0
+          ? -1
+          : 0;
+  // Ratio is meaningless without tradable pressure (high-pressure threshold
+  // 0.60 mirrors TranslationRatioConfig): a NEUTRAL state on weak pressure
+  // renders as "—" instead of an alarming capped 99.99x.
+  const translationNeutral =
+    hud !== null &&
+    !hud.translation_ratio.is_directional_acceptance &&
+    !hud.translation_ratio.is_absorption_candidate &&
+    !hud.translation_ratio.is_rejection_conflict;
+  const translationMeaningless =
+    hud !== null && translationNeutral && Math.abs(hud.directional_pressure.score) < 0.6;
   const ageText = formatAgeMs(ageMs);
   const lastCandleText = formatIstTime(lastCandleTimestampMs);
   // No payload yet: SYNCING while the first fetch is in flight, NO DATA after
@@ -385,10 +406,16 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
       {status && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
           <div className="card p-3 bg-surface border border-border rounded-lg shadow-sm flex flex-col justify-between">
-            <span className="text-[10px] uppercase font-bold text-ink-2 tracking-wider">Market Session</span>
+            <span
+              className="text-[10px] uppercase font-bold text-ink-2 tracking-wider"
+              title="Wall-clock session phase (Asia/Kolkata). Independent of feed freshness — see STALE banner when marks are last-known."
+            >
+              Market Session (wall-clock)
+            </span>
             <div className="flex items-baseline justify-between mt-1">
               <span className="text-sm font-semibold text-ink font-mono">
                 {status.session.phase}
+                {!live && hud ? ' · FEED STALE' : ''}
               </span>
               <span className="text-xs text-ink-2 font-mono font-medium">
                 {formatMinutesToClose(status.session.minutes_to_market_close)}
@@ -418,7 +445,21 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
           <div className="card p-3 bg-surface border border-border rounded-lg shadow-sm flex flex-col justify-between">
             <span className="text-[10px] uppercase font-bold text-ink-2 tracking-wider">Trading Eligibility</span>
             <div className="flex items-center gap-2 mt-1">
-              {status.session.is_trading_allowed ? (
+              {!live ? (
+                <>
+                  <ShieldAlert className="w-4 h-4 text-warn-strong" />
+                  <span
+                    className="text-sm font-semibold text-warn-strong"
+                    title={
+                      isSimulated
+                        ? 'SIMULATED feed — trade actions disabled. No paper execution from simulated marks.'
+                        : `Feed is not live${ageText ? ` (last candle ${ageText})` : ''} — trade actions disabled until a fresh candle arrives.`
+                    }
+                  >
+                    {isSimulated ? 'Blocked — SIMULATED' : 'Blocked — STALE FEED'}
+                  </span>
+                </>
+              ) : status.session.is_trading_allowed ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-up-strong" />
                   <span className="text-sm font-semibold text-up-strong">Trading Window Open</span>
@@ -433,7 +474,9 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
               )}
             </div>
             <span className="text-[11px] text-ink-2 mt-1">
-              Forced Square-off strictly at 15:15 IST
+              {!live
+                ? 'Fail-closed: wall-clock session may be open, but marks are last-known.'
+                : 'Forced Square-off strictly at 15:15 IST'}
             </span>
           </div>
 
@@ -526,19 +569,28 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
               </span>
               <span
                 className={`px-2 py-0.5 rounded text-xs font-mono font-bold flex items-center gap-1 ${
-                  hud.directional_pressure.is_bullish
+                  pressureDir > 0
                     ? 'bg-up-wash text-up-strong border border-up-line'
-                    : 'bg-down-wash text-down-strong border border-down-line'
+                    : pressureDir < 0
+                      ? 'bg-down-wash text-down-strong border border-down-line'
+                      : 'bg-inset text-ink-2 border border-border'
                 }`}
+                title={
+                  pressureDir === 0
+                    ? 'Pressure inside the ±0.20 dead-band — no directional call'
+                    : undefined
+                }
               >
-                {hud.directional_pressure.is_bullish ? (
+                {pressureDir > 0 ? (
                   <>
                     <ArrowUpRight className="w-3.5 h-3.5" /> BULLISH
                   </>
-                ) : (
+                ) : pressureDir < 0 ? (
                   <>
                     <ArrowDownRight className="w-3.5 h-3.5" /> BEARISH
                   </>
+                ) : (
+                  <>NEUTRAL</>
                 )}
               </span>
             </div>
@@ -546,7 +598,11 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
             <div className="mt-3 flex items-baseline justify-between">
               <span
                 className={`text-2xl font-bold font-mono tracking-tight ${
-                  hud.directional_pressure.score >= 0 ? 'text-up-strong' : 'text-down-strong'
+                  hud.directional_pressure.score > 0
+                    ? 'text-up-strong'
+                    : hud.directional_pressure.score < 0
+                      ? 'text-down-strong'
+                      : 'text-ink'
                 }`}
               >
                 {hud.directional_pressure.score > 0 ? '+' : ''}
@@ -564,7 +620,11 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
             <div className="w-full bg-inset rounded-full h-2 mt-2 relative overflow-hidden">
               <div
                 className={`h-2 transition-all duration-300 ${
-                  hud.directional_pressure.score >= 0 ? 'bg-up-strong' : 'bg-down-strong'
+                  hud.directional_pressure.score > 0
+                    ? 'bg-up-strong'
+                    : hud.directional_pressure.score < 0
+                      ? 'bg-down-strong'
+                      : 'bg-border-strong'
                 }`}
                 style={{
                   width: `${Math.abs(hud.directional_pressure.score) * 50}%`,
@@ -621,8 +681,19 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
             </div>
 
             <div className="mt-3 flex items-baseline justify-between">
-              <span className="text-2xl font-bold font-mono text-warn-strong tracking-tight">
-                {hud.translation_ratio.ratio.toFixed(2)}x
+              <span
+                className={`text-2xl font-bold font-mono tracking-tight ${
+                  translationMeaningless ? 'text-ink-3' : 'text-warn-strong'
+                }`}
+                title={
+                  translationMeaningless
+                    ? `No tradable pressure (|score| ${Math.abs(hud.directional_pressure.score).toFixed(3)} < 0.60) — quotient capped at 99.99x, state NEUTRAL`
+                    : hud.translation_ratio.ratio >= 99.99
+                      ? 'Capped: pressure near zero makes the raw quotient meaningless (state stays NEUTRAL)'
+                      : undefined
+                }
+              >
+                {translationMeaningless ? '—' : `${Math.min(hud.translation_ratio.ratio, 99.99).toFixed(2)}x`}
               </span>
               <span
                 className="text-xs font-mono text-ink-2"
@@ -637,8 +708,14 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
 
             <div className="w-full bg-inset rounded-full h-2 mt-2 overflow-hidden">
               <div
-                className="bg-warn-strong h-2 rounded-full transition-all duration-300"
-                style={{ width: `${Math.min(100, (hud.translation_ratio.ratio / 2.0) * 100)}%` }}
+                className={`h-2 rounded-full transition-all duration-300 ${
+                  translationMeaningless ? 'bg-border-strong' : 'bg-warn-strong'
+                }`}
+                style={{
+                  width: translationMeaningless
+                    ? '0%'
+                    : `${Math.min(100, (Math.min(hud.translation_ratio.ratio, 99.99) / 2.0) * 100)}%`,
+                }}
               />
             </div>
 
@@ -675,8 +752,15 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
                 >
                   {hud.absorption.is_detected ? 'DETECTED' : 'IDLE'}
                 </span>
-                <span className="text-[10px] text-ink-2 mt-1 block">
-                  Shock: {hud.absorption.exhaustion_volume_ratio.toFixed(1)}x
+                <span
+                  className="text-[10px] text-ink-2 mt-1 block"
+                  title={
+                    hud.absorption.exhaustion_volume_ratio >= 99.9
+                      ? 'Capped: median volume near zero makes the raw quotient meaningless'
+                      : undefined
+                  }
+                >
+                  Shock: {Math.min(hud.absorption.exhaustion_volume_ratio, 99.9).toFixed(1)}x
                 </span>
               </div>
 
@@ -689,8 +773,15 @@ export function VortexSnapHUD({ initialSymbol = 'SENSEX' }: VortexSnapHUDProps) 
                 >
                   {hud.liquidity_vacuum.is_detected ? `VACUUM (${hud.liquidity_vacuum.thin_depth_side})` : 'NORMAL'}
                 </span>
-                <span className="text-[10px] text-ink-2 mt-1 block">
-                  Velocity: {hud.liquidity_vacuum.displacement_velocity.toFixed(1)}x
+                <span
+                  className="text-[10px] text-ink-2 mt-1 block"
+                  title={
+                    hud.liquidity_vacuum.displacement_velocity >= 99.9
+                      ? 'Capped: median true range near zero makes the raw quotient meaningless'
+                      : undefined
+                  }
+                >
+                  Velocity: {Math.min(hud.liquidity_vacuum.displacement_velocity, 99.9).toFixed(1)}x
                 </span>
               </div>
             </div>

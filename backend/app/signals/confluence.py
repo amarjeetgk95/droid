@@ -2,6 +2,11 @@
 Institutional Confluence Engine with Desk-Specific AI & Dynamic Weight Renormalization (§16, §35)
 Quality target: 80% win rate.
 
+RISK-ON overhaul 2026-09-23: ARMED 78->60 (scoring_weights.json), 2 domains +
+<=1 penalty can arm (was 3 + zero). Haircuts slashed (AI 3, FNO 4, VWAP 4)
+so offline-AI days still print. Take risk: WATCH-grade flow becomes VALIDATED
+signals with half size instead of silent drops.
+
 Unified weights (backend/config/scoring_weights.json v2):
   - Technical: 40%
   - MTF: 20%
@@ -12,7 +17,7 @@ Unified weights (backend/config/scoring_weights.json v2):
 
 Baseline is neutral (50.0) — each domain must EARN its contribution by scoring > 55.
 Scores below 45 are penalized. 2+ penalized domains → −10 fused penalty.
-ARMED threshold raised to 78.0.
+ARMED threshold is 60.0 (risk-on).
 """
 from __future__ import annotations
 
@@ -64,9 +69,10 @@ ARMED_THRESHOLD = float(_THRESH.get("armed"))
 AI_UNAVAILABLE_HAIRCUT = float(_PEN.get("ai_unavailable_haircut", 8.0))
 FNODEGRADED_HAIRCUT = float(_PEN.get("fno_degraded_haircut", 10.0))
 VWAPDEGRADED_HAIRCUT = float(_PEN.get("vwap_degraded_haircut", 10.0))
-# P0-2: degraded feeds must hurt. Cap raised 12 -> 24 so stacked
-# AI-missing + FNO-degraded + VWAP-degraded cannot hide behind the cap.
-MAX_TOTAL_HAIRCUT = 24.0
+# P0-2: degraded feeds must hurt. RISK-ON: cap 12 (was 24) so a single
+# degraded feed costs 3-4pts, not a full veto — stacked AI-missing +
+# FNO-degraded still leaves room for a 60+ ARMED print.
+MAX_TOTAL_HAIRCUT = 12.0
 
 
 class AIAdviceResult(BaseModel):
@@ -354,11 +360,12 @@ class ConfluenceEngine:
                 fused += _d
         except Exception as e:
             logger.debug("institutional_overlay_adjust_skipped", error=str(e)[:150])
-        # P0-2 ARMED bar: >=3 contributing domains AND zero penalties.
-        # Thin or contested confluence can never print an ARMED-grade score —
-        # cap it below the bar so the FSM stays VALIDATED (WATCH).
+        # P0-2 ARMED bar: RISK-ON — >=2 contributing domains AND <=1 penalty.
+        # Thin (1 domain) or heavily contested (2+ penalties) confluence stays
+        # VALIDATED (WATCH); but 2-domain agreement with a single soft penalty
+        # can now print an ARMED-grade score and take risk with half size.
         try:
-            if contributing_domains < 3 or penalty_count > 0:
+            if contributing_domains < 2 or penalty_count > 1:
                 fused = min(float(fused), ARMED_THRESHOLD - 0.1)
         except Exception as e:
             logger.debug("armed_threshold_cap_skipped", error=str(e)[:150])

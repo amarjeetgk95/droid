@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import { getObj, pickMs, pickNum, pickStr } from '@/lib/signalsNormalize';
-import { SIGNAL_STAGES, STAGE_META, closedOutcome, stageIndex, stageOf } from '@/lib/signalStages';
+import { getObj, pickMs, pickNum, pickStr, type ActiveRow } from '@/lib/signalsNormalize';
+import { closedOutcome, stageOf } from '@/lib/signalStages';
 import { Meter } from '@/components/ui/desk';
 import { safeNum } from '@/lib/utils';
 import { OptionPayoffDiagram } from '@/components/ui/OptionPayoffDiagram';
 import { GreeksBarometer } from '@/components/ui/GreeksBarometer';
+import type { VirtualPosition } from '@/lib/types';
+import { SignalFullCard } from './SignalFullCard';
 
 type DeepDive = {
   signal?: Record<string, unknown> | null;
@@ -98,15 +100,19 @@ function voteRows(list: unknown): VoteRow[] {
 }
 
 export function SignalDetailDrawer({
-  signalId,
+  row,
+  position,
   onClose,
 }: {
-  signalId: string | null;
+  row: ActiveRow | null;
+  position?: VirtualPosition;
   onClose: () => void;
 }) {
   const [data, setData] = useState<DeepDive | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const signalId = row?.id ?? null;
 
   useEffect(() => {
     if (!signalId) {
@@ -198,13 +204,12 @@ export function SignalDetailDrawer({
     [onClose],
   );
 
-  if (!signalId) return null;
+  if (!signalId || !row) return null;
 
   const state = signal ? pickStr(signal, 'fsm_state', 'status', 'state') ?? '—' : '—';
   const stage = stageOf(state);
   const outcome = stage === 'CLOSED' ? closedOutcome(state) : null;
   const riskReward1 = levels ? pickNum(levels, 'risk_reward_t1') : signal ? pickNum(signal, 'risk_reward_t1') : null;
-  const riskReward2 = levels ? pickNum(levels, 'risk_reward_t2') : signal ? pickNum(signal, 'risk_reward_t2') : null;
 
   // Payoff inputs must be real payload values — 0 / 100 / 25 are never used as
   // stand-ins. Missing strike, premium or lot size => "Unavailable", no chart.
@@ -231,13 +236,13 @@ export function SignalDetailDrawer({
           <div className="min-w-0">
             <div className="sg-eyebrow">SIGNAL DOSSIER</div>
             <h2 className="sg-dtitle truncate">
-              {signal ? `${pickStr(signal, 'underlying') ?? '—'} · ${pickStr(signal, 'strategy') ?? '—'}` : 'Loading…'}
+              {`${row.symbol} · ${row.strategy}`}
             </h2>
             <div className="sg-dtags">
               <span className={`sg-tag ${outcome === 'WIN' ? 'bull' : outcome === 'LOSS' ? 'bear' : 'info'}`}>
                 {state}
               </span>
-              <span className="sg-num">{signalId.slice(0, 12)}</span>
+              <span className="sg-num">{row.id.slice(0, 12)}</span>
               {riskReward1 !== null ? <span className="sg-tag neut">R:R {safeNum(riskReward1)}</span> : null}
             </div>
           </div>
@@ -246,19 +251,11 @@ export function SignalDetailDrawer({
           </button>
         </header>
 
-        <div className="flex items-center gap-1 border-b border-border-subtle px-3 py-2">
-          {SIGNAL_STAGES.map((entry, index) => (
-            <span
-              key={entry}
-              className={`sg-tag ${index <= stageIndex(stage) ? 'info' : 'neut'}`}
-              title={STAGE_META[entry].description}
-            >
-              {STAGE_META[entry].label}
-            </span>
-          ))}
-        </div>
-
         <div className="sg-dbody">
+          <div className="mb-3">
+            <SignalFullCard row={row} position={position} />
+          </div>
+
           {loading ? <p className="sg-note">Loading dossier…</p> : null}
           {error ? <p className="sg-err">{error}</p> : null}
 
@@ -319,54 +316,6 @@ export function SignalDetailDrawer({
               {rationale.map((line, index) => (
                 <p key={index} className="sg-note">• {line}</p>
               ))}
-            </section>
-          ) : null}
-
-          {signal ? (
-            <section>
-              <h3 className="sg-sect">Levels</h3>
-              <div className="sg-kvlist">
-                <Row label="Spot at detection" value={safeNum(pickNum(signal, 'spot_price'))} />
-                <Row label="Entry range" value={levels && Array.isArray(levels.entry_range) ? (levels.entry_range as unknown[]).map((v) => safeNum(Number(v))).join(' – ') : '—'} />
-                <Row label="Trigger" value={safeNum(pickNum(levels ?? signal, 'trigger'))} />
-                <Row label="Stop loss" value={safeNum(pickNum(levels ?? signal, 'stop_loss'))} />
-                <Row label="Target 1" value={safeNum(pickNum(levels ?? signal, 'target_1'))} />
-                <Row label="Target 2" value={safeNum(pickNum(levels ?? signal, 'target_2'))} />
-                <Row label="Risk points" value={safeNum(pickNum(levels ?? signal, 'risk_points'))} />
-                <Row label="R:R T1 / T2" value={`${safeNum(riskReward1)} / ${safeNum(riskReward2)}`} />
-                <Row label="Current market" value={safeNum(data?.current_market_price)} />
-              </div>
-            </section>
-          ) : null}
-
-          {signal ? (
-            <section>
-              <h3 className="sg-sect">Execution</h3>
-              <div className="sg-kvlist">
-                <Row label="Fill price" value={safeNum(pickNum(signal, 'actual_fill_price'))} />
-                <Row label="Intended qty" value={safeNum(pickNum(signal, 'intended_qty'), '—', 0)} />
-                <Row label="Remaining qty" value={safeNum(pickNum(signal, 'remaining_qty'), '—', 0)} />
-                <Row label="Exit price" value={safeNum(pickNum(signal, 'exit_price'))} />
-                <Row label="Realized R (net)" value={safeNum(pickNum(signal, 'realized_rr_net'))} />
-                <Row label="Terminal outcome" value={pickStr(signal, 'terminal_outcome') ?? '—'} />
-                <Row label="Outcome status" value={pickStr(signal, 'outcome_status') ?? '—'} />
-                <Row label="Execution eligible" value={signal.execution_eligibility === false ? 'NO' : 'YES'} />
-                <Row label="Created" value={pickStr(signal, 'created_at_str') ?? fmtTime(pickMs(signal, 'created_at_utc'))} />
-                <Row label="TTL" value={pickNum(signal, 'ttl_seconds') !== null ? `${pickNum(signal, 'ttl_seconds')}s` : '—'} />
-              </div>
-            </section>
-          ) : null}
-
-          {contract ? (
-            <section>
-              <h3 className="sg-sect">Option Contract</h3>
-              <div className="sg-kvlist">
-                <Row label="Symbol" value={pickStr(contract, 'symbol') ?? '—'} />
-                <Row label="Strike" value={safeNum(pickNum(contract, 'strike'))} />
-                <Row label="Type" value={pickStr(contract, 'option_type') ?? '—'} />
-                <Row label="Expiry" value={pickStr(contract, 'expiry') ?? '—'} />
-                <Row label="Lot size" value={safeNum(pickNum(contract, 'lot_size'), '—', 0)} />
-              </div>
             </section>
           ) : null}
 

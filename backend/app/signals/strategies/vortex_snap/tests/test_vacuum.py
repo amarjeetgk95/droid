@@ -45,6 +45,23 @@ class TestLiquidityVacuumDetector:
         assert res.is_vacuum_detected
         assert res.liquidity_vacuum_score >= 0.65
 
+    def test_expansion_clamped_after_flat_window(self):
+        # 20 zero-range bars pin med_tr at the epsilon floor; one normal bar
+        # must not produce a 1e10x HUD velocity.
+        candles = [
+            create_candle(1000 + i * 60000, 24000.0, 24000.0, 24000.0, 24000.0, volume=0.0)
+            for i in range(20)
+        ]
+        candles.append(
+            create_candle(1000 + 20 * 60000, 24000.0, 24010.0, 23995.0, 24008.0, volume=0.0)
+        )
+        comp = self.compression_engine.compute(candles)
+        res = self.vacuum_detector.compute(candles=candles, compression=comp)
+
+        assert res.range_expansion <= 99.99
+        assert res.volume_shock <= 99.99
+        assert 0.0 <= res.liquidity_vacuum_score <= 1.0
+
     def test_no_vacuum_on_continued_compression(self):
         candles = generate_flat_candles(30, base_price=24000.0, bar_range=3.0)
         comp = self.compression_engine.compute(candles)

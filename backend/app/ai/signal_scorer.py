@@ -22,10 +22,10 @@ from app.ai.schemas import (
 
 logger = structlog.get_logger()
 
-# P0-5: execution gate. A composite score >= 70 is the minimum for any live
-# execution path; the confluence ARMED threshold (scoring_weights.json, 78.0) is
-# stricter. Use `meets_execution_threshold(score)` — never re-hardcode 70.
-DEFAULT_EXECUTION_THRESHOLD = 70
+# P0-5: execution gate. RISK-ON 2026-09-23: composite >= 60 is the minimum
+# for any live execution path (was 70); the confluence ARMED threshold
+# (scoring_weights.json, 60.0) matches. Use `meets_execution_threshold(score)`.
+DEFAULT_EXECUTION_THRESHOLD = 60
 MIN_HISTORICAL_QUALITY_FOR_WEIGHT = SampleQuality.GOOD
 
 
@@ -140,7 +140,7 @@ class SignalScorer:
             except Exception:
                 calib_method = None
         if not calib_method:
-            raw_score -= 10.0
+            raw_score -= 4.0
 
         return min(100, max(0, int(raw_score)))
 
@@ -158,8 +158,8 @@ class SignalScorer:
 
     def _score_regime_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            # P0-5: missing regime is a risk signal — penalise (30), never neutral-wash (50).
-            return 30.0
+            # RISK-ON: missing regime costs 45 (was 30 — every regime-less print bled).
+            return 45.0
 
         if signal.regime == Regime.UNKNOWN:
             return 0.0
@@ -178,8 +178,8 @@ class SignalScorer:
 
     def _score_structure_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            # P0-5: penalise missing regime context.
-            return 30.0
+            # RISK-ON: 45 (was 30).
+            return 45.0
 
         base_score = 50.0
 
@@ -208,8 +208,8 @@ class SignalScorer:
 
     def _score_direction_alignment(self, signal: AISignal, regime: Optional[RegimeObject]) -> float:
         if regime is None:
-            # P0-5: penalise missing regime context.
-            return 30.0
+            # RISK-ON: 45 (was 30).
+            return 45.0
 
         if regime.direction == Direction.NEUTRAL:
             return 50.0
@@ -247,8 +247,8 @@ class SignalScorer:
 
     def _score_options(self, options: Optional[OptionsContext], signal: AISignal) -> float:
         if options is None:
-            # P0-5: missing options context is penalised (30), not neutral (50).
-            return 30.0
+            # RISK-ON: missing options costs 45 (was 30 — options-off days went dark).
+            return 45.0
 
         base_score = 50.0
 

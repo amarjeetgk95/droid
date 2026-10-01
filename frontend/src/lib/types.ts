@@ -857,3 +857,175 @@ export interface PortfolioGreeksSummary {
   expiry_concentrations: Record<string, number>;
   total_open_positions: number;
 }
+
+// ---------------------------------------------------------------------------
+// Structured Copilot Intelligence (DROID Copilot v1)
+// ---------------------------------------------------------------------------
+
+export type CopilotDirectionalState = 'BULLISH' | 'MILD_BULLISH' | 'NEUTRAL' | 'MILD_BEARISH' | 'BEARISH' | 'NO_SIGNAL';
+
+export interface CopilotMarketLevel {
+  price: number;
+  type: 'PRIMARY_SUPPORT' | 'SECONDARY_SUPPORT' | 'PRIMARY_RESISTANCE' | 'SECONDARY_RESISTANCE';
+  source: string[];
+  strength: number;
+  status: string;
+  distance_pct?: number | null;
+}
+
+export interface CopilotLevelsBlock {
+  support: CopilotMarketLevel[];
+  resistance: CopilotMarketLevel[];
+  bull_trigger: number | null;
+  bear_trigger: number | null;
+  bull_trigger_note?: string | null;
+  bear_trigger_note?: string | null;
+}
+
+export interface CopilotScenario {
+  id: string;
+  label: string;
+  probability: number | null;
+  probability_status: string;
+  conditions: string[];
+  expected_range?: { low: number | null; high: number | null } | null;
+}
+
+export interface CopilotFactor {
+  state: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'UNKNOWN';
+  strength: number;
+  confidence: number;
+  evidence: string[];
+}
+
+export interface CopilotConfluence {
+  dominant_state: CopilotDirectionalState;
+  directional_strength: number;
+  confluence: number;
+  label: string;
+  counts: Record<string, number>;
+  conflicting_factors: string[];
+  factor_states: Record<string, string>;
+  insufficient_evidence: boolean;
+}
+
+export interface CopilotEvidence {
+  bullish: string[];
+  bearish: string[];
+  neutral: string[];
+  conflicts: string[];
+}
+
+export interface CopilotConfidence {
+  model: number | null;
+  model_status: string;
+  data_quality: string;
+  confluence: number;
+  regime_stability: number | null;
+}
+
+export interface CopilotInvalidation {
+  current_state: string;
+  bullish_trigger: string | null;
+  bearish_trigger: string | null;
+  invalidation: string | null;
+  confirmation_rule: string | null;
+}
+
+export interface CopilotHistorical {
+  available: boolean;
+  analog_count: number;
+  similarity_threshold: number | null;
+  forward_outcome: Record<string, number> | null;
+  median_return: number | null;
+  mean_return: number | null;
+  win_rate: number | null;
+  message: string | null;
+}
+
+export interface CopilotSummary {
+  regime: string;
+  direction: CopilotDirectionalState;
+  bias_label: string;
+  tone: string;
+  confidence: number | null;
+  expected_range: { low: number | null; high: number | null };
+  ltp: number | null;
+  change_pct: number | null;
+}
+
+export interface CopilotMeta {
+  analysis_id: string;
+  symbol: string;
+  intent: string;
+  horizon: string;
+  generated_at: string;
+  latency_ms: number;
+  sources_count: number;
+  data_freshness: string;
+  partial: boolean;
+  missing_sources: string[];
+  versions: {
+    copilot: string;
+    feature_engine: string;
+    prediction_model: string;
+    calibration: string;
+    prompt: string;
+    analog_engine: string;
+    gate_engine: string;
+  };
+  provider: string | null;
+  model: string | null;
+  classifier: string;
+}
+
+export interface CopilotAnalysisResponse {
+  version: string;
+  meta: CopilotMeta;
+  summary: CopilotSummary;
+  market_state: Record<string, any>;
+  factors: Record<string, CopilotFactor>;
+  confluence: CopilotConfluence;
+  levels: CopilotLevelsBlock;
+  scenarios: CopilotScenario[];
+  evidence: CopilotEvidence;
+  historical: CopilotHistorical;
+  validation: Record<string, any> | null;
+  prediction: Record<string, any>;
+  invalidation: CopilotInvalidation;
+  explanation: string;
+  explanation_source: string;
+  warnings: string[];
+  data_quality: Record<string, any>;
+  tools: string[];
+}
+
+export interface CopilotAnalyzeRequest {
+  symbol?: string;
+  query: string;
+  horizon?: string;
+  depth?: string;
+  intent?: string;
+  provider?: string;
+  model?: string;
+  allow_paid?: boolean | null;
+  explain?: boolean;
+  openrouter_api_key?: string | null;
+  gemini_api_key?: string | null;
+  openai_api_key?: string | null;
+  ollama_base_url?: string | null;
+  ollama_model?: string | null;
+  signal_id?: string | null;
+  previous_analysis_id?: string | null;
+  entry_price?: number | null;
+  stop_loss?: number | null;
+  target_price?: number | null;
+}
+
+export interface CopilotAnalyzeState {
+  response: CopilotAnalysisResponse | null;
+  analyzing: boolean;
+  error: string | null;
+  analyze: (symbol: string, query: string, horizon?: string) => Promise<boolean>;
+}
+

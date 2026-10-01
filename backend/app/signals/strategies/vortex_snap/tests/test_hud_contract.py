@@ -1,5 +1,5 @@
-"""
-HUD data-contract tests for VORTEX-SNAP (§43): strict real-data default,
+﻿"""
+HUD data-contract tests for VORTEX-SNAP (Â§43): strict real-data default,
 explicit low-trust regime fallbacks, real ATR-14, and typed structural levels.
 """
 import pytest
@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 import app.api.vortex as vortex_api
 from app.main import app
-from app.quant.data.dataset_manager import DatasetManager
+from app.market_core.data.dataset_manager import DatasetManager
 from app.signals.strategies.vortex_snap.backtest.data_loader import HistoricalDataLoader
 from scripts.fetch_fyers_history import generate_synthetic_history
 from app.signals.strategies.vortex_snap.features.compression import CompressionEngine
@@ -149,6 +149,10 @@ class TestHudPayloadContract:
         assert data["market_regime"]["atr_14"] > 0.0
         assert "is_fallback" in data["market_regime"]
 
+        # discrete pressure direction drives the HUD pill (0 must render
+        # NEUTRAL, never mislabeled BEARISH)
+        assert data["directional_pressure"]["direction"] in (-1, 0, 1)
+
         # typed levels passthrough
         lvls = data["structural_levels"]
         assert "nearest_support_type" in lvls and "nearest_resistance_type" in lvls
@@ -161,7 +165,7 @@ class TestHudPayloadContract:
 
     def test_nearest_support_type_is_labeled_even_when_high_type(self):
         # Price broke above a prior swing high: nearest support below price keeps
-        # its native HIGH type — labeled, never silently relabelled.
+        # its native HIGH type â€” labeled, never silently relabelled.
         from app.signals.strategies.vortex_snap.features.structural_levels import (
             StructuralLevelEngine,
         )
@@ -171,5 +175,5 @@ class TestHudPayloadContract:
         res = engine.compute(candles_1m=candles, pdh=24050.0)
         assert res.nearest_support is not None
         assert res.nearest_support.price < candles[-1].close
-        # The type travels with the level — the HUD exposes it verbatim.
+        # The type travels with the level â€” the HUD exposes it verbatim.
         assert res.nearest_support.level_type is not None

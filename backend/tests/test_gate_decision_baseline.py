@@ -115,5 +115,5 @@ def test_scalp_confirmation_gate_rejections():
         current_spot=cand.spot_price,
         regime="RANGE",
     )
-    assert res.passed is False
-    assert res.reason_code == "REJECTED_LUNCH_SESSION"
+    # RISK-ON: lunch passes (was REJECTED_LUNCH_SESSION veto).
+    assert res.passed is True

@@ -65,7 +65,7 @@ async def get_dataset_details(dataset_id: str):
 async def get_candles(
     symbol: str = Query("SENSEX"),
     timeframe: str = Query("1m"),
-    version: str = Query("v1"),
+    version: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=10, le=1000),
     sort_desc: bool = Query(True),
@@ -73,7 +73,7 @@ async def get_candles(
     end_time: Optional[datetime] = None,
 ):
     try:
-        page_res = dataset_service.get_candle_page(
+        page_res = await dataset_service.get_candle_page(
             symbol=symbol,
             timeframe=timeframe,
             version_tag=version,
@@ -177,7 +177,7 @@ async def derive_datasets(req: DeriveRequest):
 async def export_dataset(
     symbol: str = Query("SENSEX"),
     timeframe: str = Query("1m"),
-    version: str = Query("v1"),
+    version: Optional[str] = Query(None),
     format: str = Query("csv"),
 ):
     try:

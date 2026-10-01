@@ -26,9 +26,10 @@ import { SignalChecklistCard } from './SignalChecklistCard';
 import { SignalDetailDrawer } from './SignalDetailDrawer';
 import { LedgerPanel } from '@/components/ledger/LedgerPanel';
 import { VortexSnapHUD } from './VortexSnapHUD';
+import { FisherMacdConfluenceHUD } from './FisherMacdConfluenceHUD';
 import { SignalFunnelDiagnostics } from './SignalFunnelDiagnostics';
 
-type ModuleTab = 'today' | 'history' | 'ledger' | 'vortex' | 'funnel';
+type ModuleTab = 'today' | 'history' | 'ledger' | 'vortex' | 'fisher_macd' | 'funnel';
 type DeskFilter = DeskScope | 'ALL';
 type ViewFilter = 'ALL' | 'LIVE' | 'CLOSED';
 
@@ -61,7 +62,7 @@ export function SignalsModule() {
   const [pendingDelete, setPendingDelete] = useState<ActiveRow | null>(null);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailRow, setDetailRow] = useState<ActiveRow | null>(null);
   const [busySignalId, setBusySignalId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
 
@@ -227,21 +228,26 @@ export function SignalsModule() {
           </span>
         </div>
         <div className="stat-chips" title="Counts scoped to today's IST trading day">
-          <span className="stat-chip" title="Signals created today (IST)">
-            today <b>{todayRows.length}</b>
-          </span>
-          <span className="stat-chip" title="Today's signals still live (not closed)">
-            live <b>{liveToday}</b>
-          </span>
-          <span className="stat-chip" title="Today's closed signals">
-            closed <b>{stageCounts.CLOSED ?? 0}</b>
-          </span>
-          <span className="stat-chip" title="Today's signals eligible for paper execution">
-            executable <b>{executableToday}</b>
-          </span>
-          <span className="stat-chip" title="Signals from previous days — see the History tab">
-            history <b>{historyRows.length}</b>
-          </span>
+          <div className="stat stat-compact" title="Signals created today (IST)">
+            <div className="stat-l">TODAY</div>
+            <div className="stat-v">{todayRows.length}</div>
+          </div>
+          <div className="stat stat-compact" title="Today's signals still live (not closed)">
+            <div className="stat-l">LIVE</div>
+            <div className="stat-v">{liveToday}</div>
+          </div>
+          <div className="stat stat-compact" title="Today's closed signals">
+            <div className="stat-l">CLOSED</div>
+            <div className="stat-v">{stageCounts.CLOSED ?? 0}</div>
+          </div>
+          <div className="stat stat-compact" title="Today's signals eligible for paper execution">
+            <div className="stat-l">EXECUTABLE</div>
+            <div className="stat-v v-bull">{executableToday}</div>
+          </div>
+          <div className="stat stat-compact" title="Signals from previous days — see the History tab">
+            <div className="stat-l">HISTORY</div>
+            <div className="stat-v">{historyRows.length}</div>
+          </div>
         </div>
         <div className="ds-filters">
           <span className="seg" title="View filter">
@@ -331,6 +337,15 @@ export function SignalsModule() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'fisher_macd'}
+          className={`tab ${tab === 'fisher_macd' ? 'is-active' : ''}`}
+          onClick={() => setTab('fisher_macd')}
+        >
+          Fisher-MACD Radar
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'funnel'}
           className={`tab ${tab === 'funnel' ? 'is-active' : ''}`}
           onClick={() => setTab('funnel')}
@@ -387,7 +402,7 @@ export function SignalsModule() {
               </div>
             )
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-1 items-stretch gap-2 lg:grid-cols-2 2xl:grid-cols-3">
               {visibleRows.map((row) => (
                 <SignalChecklistCard
                   key={row.id}
@@ -396,7 +411,7 @@ export function SignalsModule() {
                   position={matchPosition(row, ledger.positions)}
                   marketClosed={marketClosed}
                   busy={busySignalId === row.id}
-                  onOpen={(next) => setDetailId(next.id)}
+                  onOpen={(next) => setDetailRow(next)}
                   onExecute={setPendingExecute}
                   onDelete={setPendingDelete}
                 />
@@ -409,6 +424,7 @@ export function SignalsModule() {
 
       {tab === 'ledger' ? <LedgerPanel ledger={ledger} marketClosed={marketClosed} /> : null}
       {tab === 'vortex' ? <VortexSnapHUD initialSymbol={instrument} /> : null}
+      {tab === 'fisher_macd' ? <FisherMacdConfluenceHUD initialSymbol={instrument} /> : null}
       {tab === 'funnel' ? (
         <SignalFunnelDiagnostics
           initialInstrument={instrument}
@@ -416,7 +432,11 @@ export function SignalsModule() {
         />
       ) : null}
 
-      <SignalDetailDrawer signalId={detailId} onClose={() => setDetailId(null)} />
+      <SignalDetailDrawer
+        row={detailRow}
+        position={detailRow ? matchPosition(detailRow, ledger.positions) : undefined}
+        onClose={() => setDetailRow(null)}
+      />
 
       <ConfirmDialog
         open={pendingExecute !== null}

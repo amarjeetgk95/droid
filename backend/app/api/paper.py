@@ -1,4 +1,4 @@
-from typing import Optional
+﻿from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -148,7 +148,7 @@ async def preview_margin(
     session: Optional[AsyncSession] = Depends(get_db_session),
 ):
     """Estimate margin + premium for a hypothetical order without executing it."""
-    from app.quant.margin import calculate_required_margin
+    from app.market_core.margin import calculate_required_margin
 
     sym = (payload.symbol or "").upper()
     is_opt = "CE" in sym or "PE" in sym

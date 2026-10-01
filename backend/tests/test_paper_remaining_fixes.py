@@ -1,4 +1,4 @@
-"""Remaining approved paper-trading fixes (post-consolidation).
+﻿"""Remaining approved paper-trading fixes (post-consolidation).
 
 Pins the three fixes:
 
@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.paper import OrderPayload
-from app.quant.costs import calculate_option_costs
+from app.market_core.costs import calculate_option_costs
 from app.services.paper_service import (
     PaperTradingService,
     apply_friction,
@@ -164,7 +164,7 @@ def _patch_service_ltp(monkeypatch, price: float | None) -> None:
     )
 
 
-# ── 1. RECONCILER LOT DEFAULTS ──────────────────────────────────────────
+# â”€â”€ 1. RECONCILER LOT DEFAULTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def test_reconcile_entry_uses_contract_lot_size_for_staged_exit():
@@ -236,7 +236,7 @@ async def test_engine_reconciles_entry_with_contract_lot_size(monkeypatch):
     assert rec.intended_qty == 130
 
 
-# ── 2a. PENDING ORDERS: SWEEP + FILL ────────────────────────────────────
+# â”€â”€ 2a. PENDING ORDERS: SWEEP + FILL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.asyncio
@@ -349,7 +349,7 @@ async def test_worker_pending_sweep_resolves_option_symbols_via_service(monkeypa
     assert order.status == "FILLED"
 
 
-# ── 2b. ENGINE PENDING → CANCEL ─────────────────────────────────────────
+# â”€â”€ 2b. ENGINE PENDING â†’ CANCEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.asyncio
@@ -390,7 +390,7 @@ async def test_engine_cancels_pending_service_order(monkeypatch):
     assert position_registry.get_by_signal(sig.signal_id) is None
 
 
-# ── 3. OFF-DOMAIN PRE-FILL GUARD + POST-FILL ROLLBACK ───────────────────
+# â”€â”€ 3. OFF-DOMAIN PRE-FILL GUARD + POST-FILL ROLLBACK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.asyncio
@@ -442,7 +442,7 @@ async def test_postfill_off_domain_rolls_back_with_friction_only(monkeypatch):
     expected = round((exit_fill - entry_fill) * 75, 2)
     assert pos.realized_pnl == pytest.approx(expected)
     assert expected < 0
-    # Round trip is friction-bounded — never the (chain_mark - fill) move.
+    # Round trip is friction-bounded â€” never the (chain_mark - fill) move.
     assert abs(pos.realized_pnl) <= 0.005 * bad_live * 75
 
     assert position_registry.get_by_signal(sig.signal_id) is None

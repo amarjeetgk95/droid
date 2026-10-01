@@ -210,9 +210,24 @@ async def test_forecast_persists_through_supplied_session():
     assert result["persisted"] is True
     assert result["prediction_id"] is not None
     assert result["snapshot_id"] is not None
-    # snapshot + prediction rows were written through the caller's session.
-    assert len(session.inserts()) == 2
-    assert session.commits == 2
+    # snapshot + indicator-definition seed + prediction rows were written
+    # through the caller's session. The middle insert is the deliberate FK seed
+    # (research_indicator_definitions) that makes strict prediction inserts
+    # possible; it is ON CONFLICT DO NOTHING, so replay stays safe.
+    inserts = session.inserts()
+    assert len(inserts) == 3
+    assert session.commits == 3
+    kinds = []
+    for _, sql in inserts:
+        if "research_snapshots" in sql:
+            kinds.append("snapshot")
+        elif "research_indicator_definitions" in sql:
+            kinds.append("indicator_definition")
+        elif "research_predictions" in sql and "outcomes" not in sql:
+            kinds.append("prediction")
+        else:
+            kinds.append("other")
+    assert kinds == ["snapshot", "indicator_definition", "prediction"]
     # ...and the lookup guard ran before the inserts.
     assert len(session.selects()) == 1
 

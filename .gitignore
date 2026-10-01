@@ -109,3 +109,7 @@ backend/app/ml/artifacts/archive/
 # Event-bus failure log is runtime telemetry, not source (already tracked once by accident)
 event_bus_failures.jsonl
 backend/event_bus_failures.jsonl
+
+# Windows Service wrapper binary (fetch via backend\service\download-winsw.bat)
+backend/service/*.exe
+backend/service/*.log

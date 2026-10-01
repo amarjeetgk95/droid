@@ -84,9 +84,11 @@ class TestInstitutionalSignalCentre:
     def test_5_strategies_detection(self):
         # Versioned registry contract: renames must update this test + REGISTRY_VERSION,
         # never silently change the traded portfolio.
-        # Freeze 2026-09-20: registry SHAPE unchanged (11+alias), auto-scan
-        # restricted to 3 keepers via STRATEGY_ENABLED (scanner enforces).
-        assert REGISTRY_VERSION == "2026.09.20-freeze3+g2gate"
+        # Freeze 2026-09-29: registry SHAPE unchanged (11+alias), auto-scan
+        # restricted to enabled keepers via STRATEGY_ENABLED (scanner enforces).
+        # QUANT_EXPANSION_STRATEGIES renamed to RESEARCH_STRATEGIES and the dead
+        # quant falsification gate reference removed; nothing trades differently.
+        assert REGISTRY_VERSION == "2026.09.29-freeze4-noquant"
         assert set(INTRADAY_STRATEGIES.keys()) == set(EXPECTED_INTRADAY_STRATEGIES) == {
             "REGIME_ADAPTIVE_TREND",
             "VOLATILITY_BREAKOUT",

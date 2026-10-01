@@ -8,9 +8,9 @@ describe('isActivePath', () => {
   });
 
   it('matches a module and its nested routes', () => {
-    expect(isActivePath('/swing', '/swing')).toBe(true);
-    expect(isActivePath('/swing/setup/42', '/swing')).toBe(true);
-    expect(isActivePath('/swingbench', '/swing')).toBe(false);
+    expect(isActivePath('/signals', '/signals')).toBe(true);
+    expect(isActivePath('/signals/setup/42', '/signals')).toBe(true);
+    expect(isActivePath('/signalsbench', '/signals')).toBe(false);
   });
 
   it('treats a missing pathname as inactive', () => {

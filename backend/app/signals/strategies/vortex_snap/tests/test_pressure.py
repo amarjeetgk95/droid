@@ -45,6 +45,28 @@ class TestDirectionalPressureEngine:
         res = self.engine.compute(candles, prior_persistence=3)
         assert res.pressure_persistence == 4
 
+    def test_zero_volume_falls_back_to_body_efficiency(self):
+        # Index spot WS ticks carry no volume: directional bodies must still
+        # read as pressure (equal-weight efficiency fallback).
+        candles = [
+            create_candle(1000 + i * 60000, 24000 + i * 10, 24000 + i * 10 + 12, 24000 + i * 10, 24000 + i * 10 + 10, volume=0.0)
+            for i in range(15)
+        ]
+        res = self.engine.compute(candles)
+
+        assert res.pressure_score > 0.30
+        assert res.pressure_direction == 1
+
+    def test_zero_volume_bearish_fallback(self):
+        candles = [
+            create_candle(1000 + i * 60000, 24200 - i * 10, 24200 - i * 10 + 1, 24200 - i * 10 - 11, 24200 - i * 10 - 10, volume=0.0)
+            for i in range(15)
+        ]
+        res = self.engine.compute(candles)
+
+        assert res.pressure_score < -0.30
+        assert res.pressure_direction == -1
+
     def test_flat_doji_candles_neutral_pressure(self):
         # Candles where open == close (doji)
         candles = [

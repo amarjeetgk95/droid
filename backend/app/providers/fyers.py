@@ -1,5 +1,6 @@
 import asyncio
 import math
+import random
 import httpx
 from datetime import date, datetime, timezone
 from app.providers.base import MarketDataProvider
@@ -96,6 +97,12 @@ class FyersProvider(MarketDataProvider):
     _OHLC_COHERENCE_EPS_FACTOR = 0.05  # tolerance, in units of the quote's tick size 0.05
     _SANITY_REJECT_WINDOW_S = 60.0
     _SANITY_REJECT_ALERT_THRESHOLD = 5  # rejections per symbol within window → warn once
+
+    # History API retry budget. FYERS answers an over-budget burst with HTTP
+    # 429 "request limit reached"; the scan fan-out hits it routinely, so a
+    # single unretried 429 silently killed one (symbol, timeframe) and made the
+    # scanner report OFFLINE as if the market had no data.
+    _HISTORY_MAX_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -288,7 +295,16 @@ class FyersProvider(MarketDataProvider):
         range_from: int | None = None,
         range_to: int | None = None,
     ) -> list[NormalizedCandle]:
-        """Fetch historical candles directly from official FYERS History API v3."""
+        """Fetch historical candles directly from official FYERS History API v3.
+
+        429/5xx are RETRIED with backoff. FYERS answers an over-budget burst
+        with HTTP 429 "request limit reached"; the scan fan-out (3 underlyings
+        x 4 timeframes) trips it routinely. Returning [] on 429 looked exactly
+        like an empty market — the scanner fail-closed to no_active_candles
+        and reported OFFLINE, so an infrastructure limit silently masqueraded
+        as "no tradable setup". Mirrors the retry contract already used by the
+        EOD ingester (app/historical_data/providers/fyers.py::fetch_chunk).
+        """
         try:
             token = await self.token_manager.get_valid_token()
         except Exception:
@@ -328,14 +344,35 @@ class FyersProvider(MarketDataProvider):
         }
         res_str = res_map.get(resolution, "5")
 
-        try:
-            client = self._get_http_client(timeout=6.0)
-            url = (
-                f"https://api-t1.fyers.in/data/history"
-                f"?symbol={fyers_sym}&resolution={res_str}&date_format=0"
-                f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
-            )
-            resp = await client.get(url, headers={"Authorization": auth_header})
+        url = (
+            f"https://api-t1.fyers.in/data/history"
+            f"?symbol={fyers_sym}&resolution={res_str}&date_format=0"
+            f"&range_from={from_ts}&range_to={to_ts}&cont_flag=1"
+        )
+
+        last_status: int | str = "unknown"
+        for attempt in range(1, self._HISTORY_MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                # Each attempt costs a token; re-acquire so a retry storm from
+                # several scanners cannot burst past the bucket cap.
+                await self.rate_limiter.acquire()
+            try:
+                client = self._get_http_client(timeout=6.0)
+                resp = await client.get(url, headers={"Authorization": auth_header})
+            except Exception as e:
+                last_status = f"EXC:{type(e).__name__}"
+                logger.warning(
+                    "fyers_history_transport_error",
+                    symbol=symbol, resolution=res_str,
+                    attempt=attempt, error=str(e)[:150],
+                )
+                if attempt < self._HISTORY_MAX_ATTEMPTS:
+                    await asyncio.sleep(self._history_backoff(attempt))
+                    continue
+                return []
+
+            last_status = resp.status_code
+
             if resp.status_code in (401, 403):
                 # Same honesty as the quotes path: a rejected history call
                 # means the daily token is dead — park it so health/subsystems
@@ -345,38 +382,95 @@ class FyersProvider(MarketDataProvider):
                 logger.warning("fyers_history_unauthorized", symbol=symbol, status_code=resp.status_code)
                 self.token_manager.mark_expired(f"FYERS history unauthorized (HTTP {resp.status_code})")
                 return []
+
+            if resp.status_code == 429 or resp.status_code >= 500:
+                # Rate limited / transient server fault. Loud, because an
+                # unretried 429 is the single largest source of phantom
+                # OFFLINE scans.
+                logger.warning(
+                    "fyers_history_retryable_status",
+                    symbol=symbol, resolution=res_str,
+                    status_code=resp.status_code, attempt=attempt,
+                    max_attempts=self._HISTORY_MAX_ATTEMPTS,
+                )
+                if attempt < self._HISTORY_MAX_ATTEMPTS:
+                    await asyncio.sleep(self._history_backoff(attempt, resp.headers.get("Retry-After")))
+                    continue
+                return []
+
             if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("s") == "ok" and "candles" in data and isinstance(data["candles"], list):
-                        candles = []
-                        for c in data["candles"]:
-                            if len(c) >= 5:
-                                ts = datetime.fromtimestamp(c[0], tz=timezone.utc)
-                                candles.append(
-                                    NormalizedCandle(
-                                        timestamp=ts,
-                                        open=float(c[1]),
-                                        high=float(c[2]),
-                                        low=float(c[3]),
-                                        close=float(c[4]),
-                                        volume=int(c[5]) if len(c) > 5 else 0,
-                                        vwap=None,
-                                    )
+                data = resp.json()
+                if data.get("s") == "ok" and "candles" in data and isinstance(data["candles"], list):
+                    candles = []
+                    for c in data["candles"]:
+                        if len(c) >= 5:
+                            ts = datetime.fromtimestamp(c[0], tz=timezone.utc)
+                            candles.append(
+                                NormalizedCandle(
+                                    timestamp=ts,
+                                    open=float(c[1]),
+                                    high=float(c[2]),
+                                    low=float(c[3]),
+                                    close=float(c[4]),
+                                    volume=int(c[5]) if len(c) > 5 else 0,
+                                    vwap=None,
                                 )
-                        return candles
-                    # FYERS answers some auth failures as HTTP 200 + s=error
-                    # (mirrors the quotes path) — park the token so the outage
-                    # is loud instead of an endless silent [].
-                    if data.get("s") == "error" and (
-                        "token" in str(data).lower()
-                        or "auth" in str(data).lower()
-                        or data.get("code") in (-100, 401, 403)
-                    ):
-                        logger.warning("fyers_history_auth_error", symbol=symbol, response=str(data)[:150])
-                        self.token_manager.mark_expired("FYERS history token expired or invalid")
-        except Exception as e:
-            logger.debug("fyers_history_failed", symbol=symbol, error=str(e)[:150])
+                            )
+                    return candles
+                # FYERS answers some auth failures as HTTP 200 + s=error
+                # (mirrors the quotes path) — park the token so the outage
+                # is loud instead of an endless silent [].
+                if data.get("s") == "error" and (
+                    "token" in str(data).lower()
+                    or "auth" in str(data).lower()
+                    or data.get("code") in (-100, 401, 403)
+                ):
+                    logger.warning("fyers_history_auth_error", symbol=symbol, response=str(data)[:150])
+                    self.token_manager.mark_expired("FYERS history token expired or invalid")
+                    return []
+                # Any other 200 body (e.g. s=error carrying a rate-limit
+                # message) is retryable when it names a limit, per the
+                # ingester's contract.
+                msg = str(data.get("message", ""))
+                if "limit" in msg.lower() and attempt < self._HISTORY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "fyers_history_rate_limited_body",
+                        symbol=symbol, resolution=res_str,
+                        attempt=attempt, response=msg[:120],
+                    )
+                    await asyncio.sleep(self._history_backoff(attempt))
+                    continue
+                logger.warning(
+                    "fyers_history_unexpected_body",
+                    symbol=symbol, resolution=res_str,
+                    status=data.get("s"), code=data.get("code"),
+                )
+                return []
+
+            # 4xx that is not auth: a bad request will not improve on retry.
+            logger.warning(
+                "fyers_history_non_retryable_status",
+                symbol=symbol, resolution=res_str,
+                status_code=resp.status_code, body=resp.text[:200],
+            )
+            return []
+
+        logger.warning(
+            "fyers_history_exhausted",
+            symbol=symbol, resolution=res_str,
+            attempts=self._HISTORY_MAX_ATTEMPTS, last_status=last_status,
+        )
         return []
+
+    @staticmethod
+    def _history_backoff(attempt: int, retry_after: str | None = None) -> float:
+        """Exponential backoff with jitter; honours a server Retry-After."""
+        if retry_after:
+            try:
+                return max(0.25, min(5.0, float(retry_after)))
+            except (TypeError, ValueError):
+                pass
+        return min(4.0, (2 ** attempt) * 0.5) + random.uniform(0.05, 0.3)
 
     async def get_quote(self, symbol: str) -> NormalizedQuote:
         """Fetch quote from FYERS API — returns OFFLINE if unauthenticated or unavailable."""
@@ -679,101 +773,114 @@ class FyersProvider(MarketDataProvider):
             # `s=error "Please provide valid expiry"` and the chain would come
             # back empty. Fall back to the broker's nearest expiry instead of
             # serving an empty chain — all data stays live FYERS truth.
-            param_sets: list[dict[str, str | int]] = []
-            if expiry:
-                param_sets.append({"symbol": fyers_sym, "strikecount": 40, "timestamp": str(int(expiry.timestamp()))})
-            param_sets.append({"symbol": fyers_sym, "strikecount": 40})
             try:
-                client = self._get_http_client(timeout=5.0)
-                for attempt, params in enumerate(param_sets):
-                    try:
-                        resp = await client.get(
-                            "https://api-t1.fyers.in/data/options-chain-v3",
-                            params=params,
-                            headers={"Authorization": auth_header},
-                        )
-                    except Exception as e:
-                        logger.debug("fyers_option_chain_api_failed", error=str(e))
-                        continue
-                    if resp.status_code != 200:
-                        continue
-                    try:
-                        data = resp.json()
-                    except Exception:
-                        continue
-                    if data.get("s") != "ok" or "data" not in data:
-                        if attempt == 0 and len(param_sets) > 1:
-                            logger.debug(
-                                "fyers_option_chain_expiry_rejected_fallback_latest",
-                                underlying=underlying,
-                                detail=str(data.get("message"))[:120],
-                            )
-                        continue
-                    chain_items = data["data"].get("optionsChain", [])
-                    if not chain_items:
-                        continue
-                    quotes: list[NormalizedOptionQuote] = []
-                    now = datetime.now(timezone.utc)
-                    # True expiry labelling: the broker honours an explicit
-                    # timestamp with that expiry; the nearest-expiry fallback
-                    # carries the broker calendar date from `expiryData`
-                    # (never the stale requested date, never today).
-                    broker_expiry = _nearest_fyers_expiry(data["data"].get("expiryData"))
-                    if attempt == 0 and expiry is not None:
-                        exp_dt = expiry
-                    elif broker_expiry is not None:
-                        exp_dt = datetime.combine(broker_expiry, datetime.min.time(), tzinfo=timezone.utc)
-                    else:
-                        exp_dt = now
-                    for item in chain_items:
-                        strike = float(item.get("strike_price", 0.0))
-                        opt_type = str(item.get("option_type", "")).upper()
-                        if not strike or opt_type not in ("CE", "PE"):
-                            continue
-                        ltp = float(item.get("ltp") or 0.0)
-                        oi = int(item.get("oi") or 0)
-                        vol = int(item.get("volume") or 0)
-                        raw_bid = item.get("bid")
-                        raw_ask = item.get("ask")
-                        bid = float(raw_bid) if raw_bid not in (None, "") else (round(ltp - 0.25, 2) if ltp > 0 else 0.0)
-                        ask = float(raw_ask) if raw_ask not in (None, "") else (round(ltp + 0.25, 2) if ltp > 0 else 0.0)
-                        bid = max(0.0, bid)
-                        ask = max(0.0, ask)
-                        oi_chg = int(item.get("oich") or item.get("oi_change") or 0)
-                        prev_p = float(item.get("prev_close_price") or ltp)
-                        chg = float(item.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
-                        chg_pct = float(item.get("chp") or 0.0)
-                        contract_id = item.get("symbol") or f"{underlying}_{int(strike)}_{opt_type}"
+                client = self._get_http_client(timeout=8.0)
+                # First attempt: request nearest chain without timestamp.
+                # This always succeeds, returns the nearest active strikes, and provides
+                # authoritative expiryData with exact broker timestamps for all expiries.
+                resp = await client.get(
+                    "https://api-t1.fyers.in/data/options-chain-v3",
+                    params={"symbol": fyers_sym, "strikecount": 40},
+                    headers={"Authorization": auth_header},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("s") == "ok" and "data" in data:
+                        chain_items = data["data"].get("optionsChain", [])
+                        expiry_data = data["data"].get("expiryData", [])
+                        broker_expiry = _nearest_fyers_expiry(expiry_data)
 
-                        quotes.append(
-                            NormalizedOptionQuote(
-                                timestamp=now,
-                                provider=self.PROVIDER_ID,
-                                instrument=contract_id,
-                                contract_id=contract_id,
-                                underlying=underlying,
-                                expiry=exp_dt,
-                                strike=strike,
-                                option_type=opt_type,
-                                ltp=round(ltp, 2),
-                                bid=round(bid, 2),
-                                ask=round(ask, 2),
-                                volume=vol,
-                                oi=oi,
-                                oi_change=oi_chg,
-                                change=round(chg, 2),
-                                change_percent=round(chg_pct, 2),
-                                previous_close=round(prev_p, 2),
-                            )
+                        target_expiry_date = expiry.date() if isinstance(expiry, datetime) else expiry
+                        is_target_different = (
+                            target_expiry_date is not None
+                            and broker_expiry is not None
+                            and target_expiry_date != broker_expiry
                         )
-                    if quotes:
-                        if attempt == 1 and expiry:
-                            logger.info(
-                                "fyers_option_chain_served_latest_expiry",
-                                symbol=underlying,
-                                actual_expiry=exp_dt.date().isoformat(),
-                            )
-                        return quotes
+
+                        # If a specific future expiry was requested and differs from nearest:
+                        if is_target_different and expiry_data:
+                            target_str = target_expiry_date.strftime("%d-%m-%Y")
+                            matched_ts = None
+                            for ed in expiry_data:
+                                if isinstance(ed, dict) and ed.get("date") == target_str and ed.get("expiry"):
+                                    matched_ts = str(ed["expiry"])
+                                    break
+                            if matched_ts:
+                                try:
+                                    resp_spec = await client.get(
+                                        "https://api-t1.fyers.in/data/options-chain-v3",
+                                        params={"symbol": fyers_sym, "strikecount": 40, "timestamp": matched_ts},
+                                        headers={"Authorization": auth_header},
+                                    )
+                                    if resp_spec.status_code == 200:
+                                        data_spec = resp_spec.json()
+                                        if data_spec.get("s") == "ok" and "data" in data_spec:
+                                            spec_chain = data_spec["data"].get("optionsChain", [])
+                                            if spec_chain:
+                                                chain_items = spec_chain
+                                                broker_expiry = target_expiry_date
+                                except Exception as e_spec:
+                                    logger.debug("fyers_specific_expiry_fetch_failed", error=str(e_spec))
+
+                        if chain_items:
+                            quotes: list[NormalizedOptionQuote] = []
+                            now = datetime.now(timezone.utc)
+                            if broker_expiry is not None:
+                                exp_dt = datetime.combine(broker_expiry, datetime.min.time(), tzinfo=timezone.utc)
+                            elif expiry is not None:
+                                exp_dt = expiry
+                            else:
+                                exp_dt = now
+
+                            for item in chain_items:
+                                strike = float(item.get("strike_price", 0.0))
+                                opt_type = str(item.get("option_type", "")).upper()
+                                if not strike or opt_type not in ("CE", "PE"):
+                                    continue
+                                ltp = float(item.get("ltp") or 0.0)
+                                oi = int(item.get("oi") or 0)
+                                vol = int(item.get("volume") or 0)
+                                raw_bid = item.get("bid")
+                                raw_ask = item.get("ask")
+                                bid = float(raw_bid) if raw_bid not in (None, "") else (round(ltp - 0.25, 2) if ltp > 0 else 0.0)
+                                ask = float(raw_ask) if raw_ask not in (None, "") else (round(ltp + 0.25, 2) if ltp > 0 else 0.0)
+                                bid = max(0.0, bid)
+                                ask = max(0.0, ask)
+                                oi_chg = int(item.get("oich") or item.get("oi_change") or 0)
+                                prev_p = float(item.get("prev_close_price") or ltp)
+                                chg = float(item.get("ch") or (round(ltp - prev_p, 2) if prev_p else 0.0))
+                                chg_pct = float(item.get("chp") or 0.0)
+                                contract_id = item.get("symbol") or f"{underlying}_{int(strike)}_{opt_type}"
+
+                                quotes.append(
+                                    NormalizedOptionQuote(
+                                        timestamp=now,
+                                        provider=self.PROVIDER_ID,
+                                        instrument=contract_id,
+                                        contract_id=contract_id,
+                                        underlying=underlying,
+                                        expiry=exp_dt,
+                                        strike=strike,
+                                        option_type=opt_type,
+                                        ltp=round(ltp, 2),
+                                        bid=round(bid, 2),
+                                        ask=round(ask, 2),
+                                        volume=vol,
+                                        oi=oi,
+                                        oi_change=oi_chg,
+                                        change=round(chg, 2),
+                                        change_percent=round(chg_pct, 2),
+                                        previous_close=round(prev_p, 2),
+                                    )
+                                )
+                            if quotes:
+                                if broker_expiry is not None and target_expiry_date is not None and broker_expiry != target_expiry_date:
+                                    logger.info(
+                                        "fyers_option_chain_served_latest_expiry",
+                                        symbol=underlying,
+                                        actual_expiry=broker_expiry.isoformat(),
+                                    )
+                                return quotes
             except Exception as e:
                 logger.debug("fyers_option_chain_api_failed", error=str(e))
 
@@ -1011,6 +1118,16 @@ class FyersProvider(MarketDataProvider):
         lock = self._get_start_lock()
         async with lock:
             if self._stream_running and self._poll_task and not self._poll_task.done():
+                return
+            if self.token_manager.is_token_expired() or self.token_manager.state == ConnectionState.AUTH_EXPIRED:
+                self.token_manager.mark_expired("FYERS daily token expired — stream start skipped, poller will park when opened")
+                logger.warning(
+                    "fyers_stream_start_skipped_auth_expired",
+                    hint="Re-auth FYERS via /api/v1/tokens/fyers/auth-url — no synthetic ticks emitted",
+                )
+                self._stream_running = True
+                self._poll_task = None
+                self._stream_task = None
                 return
             # Drop any dead task handle before starting a fresh loop.
             self._poll_task = None

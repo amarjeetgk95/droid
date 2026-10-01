@@ -1,9 +1,9 @@
-from app.quant.costs import calculate_option_costs
+﻿from app.market_core.costs import calculate_option_costs
 
 
 class TestOptionCosts:
     def test_option_costs_breakdown(self):
-        # 1 lot buy at ₹150, 1 lot sell at ₹200 (Lot size = 75, turnover buy=11250, sell=15000)
+        # 1 lot buy at â‚¹150, 1 lot sell at â‚¹200 (Lot size = 75, turnover buy=11250, sell=15000)
         buy_to = 11250.0
         sell_to = 15000.0
         costs = calculate_option_costs(

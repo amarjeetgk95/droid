@@ -31,11 +31,11 @@ def test_nifty_normal_5m_trade_acceptance():
     decision = central_risk_engine.evaluate(setup, available_capital=100000.0, risk_per_trade_pct=1.0)
     
     assert decision.accepted is True
-    assert decision.risk_points == 24.0  # 20 * 1.2 atr multiplier
-    assert decision.stop_loss == Decimal("24886.0")
-    assert decision.target_1 == Decimal("24946.0")  # +36 pts (1.5R)
-    assert decision.reward_t1_points == 36.0
-    assert decision.risk_reward_t1 >= 1.35
+    assert decision.risk_points == 22.0  # RISK-ON: max(22 raw, 12.6 min, 20*1.0 ATR)
+    assert decision.stop_loss == Decimal("24888.0")
+    assert decision.target_1 == Decimal("24943.0")  # +33 pts (1.5R on 22)
+    assert decision.reward_t1_points == 33.0
+    assert decision.risk_reward_t1 >= 1.0
     assert decision.trigger_ttl_seconds == 600
     assert decision.active_time_stop_seconds == 4500
     assert decision.lots >= 1

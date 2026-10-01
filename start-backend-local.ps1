@@ -7,7 +7,7 @@ Set-Location -LiteralPath (Join-Path $PSScriptRoot "backend")
 $venvPython = Join-Path $PSScriptRoot "backend\.venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $venvPython)) {
     Write-Host "ERROR: backend\.venv not found." -ForegroundColor Red
-    Write-Host "Run the first-time setup in docs/LOCAL_HOSTING.md, then retry."
+    Write-Host "Run the first-time setup (see the Setup section of README.md), then retry."
     exit 1
 }
 

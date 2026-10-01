@@ -1,4 +1,4 @@
-﻿"""
+"""
 Signal Factory & Registration Module for Quantitative Scanning Pipeline (Phase 3)
 Constructs SignalInstance from validated, sized, and enriched candidate,
 registers with SignalFSMManager, logs to SignalAuditLedger, and queues Telegram notifications.
@@ -108,6 +108,14 @@ def build_signal_instance(
         except Exception:
             pass
 
+    if getattr(risk_decision, "execution_blocked_reason", None):
+        try:
+            cand.rationale.append(
+                f"Execution Constraint: {getattr(risk_decision, 'execution_status', 'BLOCKED')} — {risk_decision.execution_blocked_reason}"
+            )
+        except Exception:
+            pass
+
     instance = SignalInstance(
         underlying=cand.underlying,
         strategy=cand.strategy,
@@ -135,6 +143,15 @@ def build_signal_instance(
         lots=risk_decision.lots,
         quantity=risk_decision.quantity,
         max_rupee_loss=risk_decision.max_rupee_loss,
+        live_lots=getattr(risk_decision, "live_lots", 0),
+        hypothetical_paper_lots=getattr(risk_decision, "hypothetical_paper_lots", 0),
+        live_executable=getattr(risk_decision, "live_executable", False),
+        paper_eligible=getattr(risk_decision, "paper_eligible", False),
+        observation_eligible=getattr(risk_decision, "observation_eligible", False),
+        execution_status=getattr(risk_decision, "execution_status", "SAFETY_BLOCKED"),
+        execution_blocked_reason=getattr(risk_decision, "execution_blocked_reason", None),
+        opportunity_score=getattr(risk_decision, "opportunity_score", None) or (float(fused_score) if fused_score is not None else None),
+        execution_score=getattr(risk_decision, "execution_score", None),
         confidence=fused_score,
         confluence_breakdown={
             "technical": cand.technical_score,
@@ -172,9 +189,10 @@ def build_signal_instance(
 async def register_and_notify(instance: SignalInstance) -> None:
     """Registers signal in FSM, records into audit ledger, and enqueues Telegram alert.
 
-    Fail-closed: geometry and live chain-mark are re-validated BEFORE registering.
-    Audit/Telegram failures roll back the FSM registration (and audit row) and
-    raise — never leave a ghost signal that exists in one store but not the others.
+    RISK-ON: geometry is still re-validated (no-edge triggers die here), but a
+    missing live chain-mark downgrades to formula-mark VALIDATED paper instead of
+    raising — offline mornings print 1-lot WATCH signals with contract_source
+    stamped, never ghost fills. Audit/Telegram failures still roll back.
     """
     _validate_geometry_from_levels(
         underlying=instance.underlying,
@@ -193,8 +211,26 @@ async def register_and_notify(instance: SignalInstance) -> None:
         is_scalp=getattr(instance, "is_scalp", False),
         timeframe=getattr(instance, "timeframe", "5M"),
     )
+    _formula_fallback = False
     if not has_chain_mark(getattr(instance, "option_contract", None)):
-        raise ValueError("CHAIN_MARK_UNAVAILABLE: no live FYERS chain quote for contract")
+        _formula_fallback = True
+        logger.warning(
+            "chain_mark_formula_fallback",
+            signal_id=getattr(instance, "signal_id", "?"),
+            underlying=getattr(instance, "underlying", "?"),
+            note="no live FYERS chain quote — VALIDATED-grade formula mark, size capped 1 lot",
+        )
+        try:
+            if getattr(instance, "live_executable", False) and int(getattr(instance, "lots", 1) or 1) > 1:
+                instance.lots = 1
+        except Exception as _lot_err:
+            logger.debug("formula_fallback_lot_cap_skipped", error=str(_lot_err)[:120])
+        try:
+            rationale = getattr(instance, "rationale", None)
+            if isinstance(rationale, list):
+                rationale.append("Chain formula fallback (no live FYERS quote) — VALIDATED paper, 1-lot cap")
+        except Exception as _rat_err:
+            logger.debug("formula_fallback_rationale_skipped", error=str(_rat_err)[:120])
 
     signal_fsm.register(instance)
 

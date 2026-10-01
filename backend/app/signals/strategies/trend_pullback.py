@@ -181,7 +181,16 @@ class TrendPullbackStrategy(Strategy):
                         greeks=greeks,
                         path_simulation=path_sim,
                         ttl_seconds=600,
-                        time_stop_seconds=180 * 60,  # v3.1 §20: 180 min max holding
+                        # Active holding clock = 15 min, NOT the old 180 min.
+                        # This is a 5M/15M intraday pullback armed for 600s; a
+                        # 3-hour hold is not a clock this setup can survive, and
+                        # the friction gate prices theta over exactly this value
+                        # (friction_gate._resolve_holding_seconds). At 10800s the
+                        # ATM-leg theta drag alone exceeded the entire 1.5R
+                        # option target, so every candidate was rejected with
+                        # REJECT_FRICTION / REJECT_POOR_NET_RR — a 0% hit rate
+                        # that had nothing to do with market conditions.
+                        time_stop_seconds=900,
                     )
 
         # ── BEARISH TREND PULLBACK (LONG_PUT) ──
@@ -276,7 +285,16 @@ class TrendPullbackStrategy(Strategy):
                         greeks=greeks,
                         path_simulation=path_sim,
                         ttl_seconds=600,
-                        time_stop_seconds=180 * 60,  # v3.1 §20: 180 min max holding
+                        # Active holding clock = 15 min, NOT the old 180 min.
+                        # This is a 5M/15M intraday pullback armed for 600s; a
+                        # 3-hour hold is not a clock this setup can survive, and
+                        # the friction gate prices theta over exactly this value
+                        # (friction_gate._resolve_holding_seconds). At 10800s the
+                        # ATM-leg theta drag alone exceeded the entire 1.5R
+                        # option target, so every candidate was rejected with
+                        # REJECT_FRICTION / REJECT_POOR_NET_RR — a 0% hit rate
+                        # that had nothing to do with market conditions.
+                        time_stop_seconds=900,
                     )
 
         return None

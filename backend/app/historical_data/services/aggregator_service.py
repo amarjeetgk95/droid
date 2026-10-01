@@ -91,7 +91,10 @@ async def derive_higher_timeframe_datasets(
         target_timeframes = ["5m", "15m", "30m", "1h", "1D"]
 
     try:
-        df_1m = parquet_repo.load_candles(symbol, source_timeframe)
+        source_dataset_id = f"{symbol.upper()}_{source_timeframe.upper()}"
+        source_dataset = await db_repo.get_dataset(source_dataset_id)
+        source_version = source_dataset.current_version_id.rsplit("_", 1)[-1] if source_dataset and source_dataset.current_version_id else "v1"
+        df_1m = parquet_repo.load_candles(symbol, source_timeframe, version_tag=source_version)
     except Exception as e:
         logger.error("derive_failed_source_not_found", symbol=symbol, source_tf=source_timeframe, error=str(e))
         return []
